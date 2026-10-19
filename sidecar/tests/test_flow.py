@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -867,3 +868,154 @@ def test_stock_snapshots_batch_and_a_429_retries():
     assert len(seen) == 2
     assert seen[0] == ",".join(symbols)
     assert any(pause > 0.2 for pause in slept)
+
+
+def test_page_cap_truncates_one_tape_and_the_scan_continues(tmp_path: Path, caplog):
+    trade_ends: list[str] = []
+    trade_pages = {"SPY": 0, "QQQ": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/v2/calendar"):
+            return httpx.Response(200, json=[{"date": "2026-10-16", "open": "09:30", "close": "16:00"}])
+        if "/options/snapshots/" in path:
+            underlying = path.rstrip("/").split("/")[-1]
+            symbol = f"{underlying}261219C00600000"
+            return httpx.Response(
+                200,
+                json={
+                    "snapshots": {
+                        symbol: {
+                            "dailyBar": {"v": 400},
+                            "latestQuote": {"bp": 1.0, "ap": 1.2},
+                            "latestTrade": {"p": 1.2, "s": 10, "t": "2026-10-16T14:00:00Z"},
+                        }
+                    },
+                    "next_page_token": None,
+                },
+            )
+        if path.endswith("/v2/options/contracts"):
+            underlying = request.url.params["underlying_symbols"]
+            return httpx.Response(
+                200,
+                json={
+                    "option_contracts": [
+                        {
+                            "symbol": f"{underlying}261219C00600000",
+                            "open_interest": "1500",
+                            "open_interest_date": "2026-10-16",
+                        }
+                    ],
+                    "next_page_token": None,
+                },
+            )
+        if path.endswith("/v2/stocks/snapshots"):
+            return httpx.Response(
+                200,
+                json={"SPY": {"latestTrade": {"p": 500}}, "QQQ": {"latestTrade": {"p": 400}}},
+            )
+        if path.endswith("/options/trades"):
+            trade_ends.append(request.url.params["end"])
+            assert "feed" not in request.url.params
+            symbols = request.url.params["symbols"].split(",")
+            underlying = "SPY" if symbols[0].startswith("SPY") else "QQQ"
+            trade_pages[underlying] += 1
+            body = {
+                "trades": {symbol: [{"p": 1.2, "s": 10, "t": "2026-10-16T18:00:00Z"}] for symbol in symbols},
+            }
+            if underlying == "SPY":
+                body["next_page_token"] = "more"
+            return httpx.Response(200, json=body)
+        return httpx.Response(404, json={})
+
+    from sidecar.flow.__main__ import run_scan
+    from sidecar.flow.session import NY
+
+    client = FlowDataClient(
+        "key",
+        "secret",
+        transport=httpx.MockTransport(handler),
+        max_pages=2,
+        min_interval=0,
+    )
+    with caplog.at_level(logging.WARNING, logger="sidecar.flow"):
+        scan = run_scan(
+            feed="indicative",
+            out=tmp_path / "scan.json",
+            markdown=tmp_path / "scan.md",
+            history_path=tmp_path / "history.jsonl",
+            symbols=("SPY", "QQQ"),
+            as_of=datetime(2026, 10, 19, 0, 50, tzinfo=NY),
+            client=client,
+            alerts_dir=tmp_path / "flow",
+        )
+    assert trade_pages == {"SPY": 2, "QQQ": 1}
+    assert scan["tape_truncated"] == ["SPY"]
+    assert scan["tape_truncated_contracts"] == ["SPY261219C00600000"]
+    assert scan["chain_truncated"] == []
+    assert scan["max_pages"] == 2
+    assert scan["orders_submitted"] == 0
+    assert scan["top_n"] == 15
+    assert scan["max_per_underlying"] == 3
+    assert {row["underlying"] for row in scan["contracts"]} == {"SPY", "QQQ"}
+    assert "truncated" in caplog.text.lower()
+    assert "SPY" in caplog.text
+    close = datetime(2026, 10, 16, 20, 0, tzinfo=timezone.utc)
+    assert [datetime.fromisoformat(item) for item in trade_ends] == [close, close, close]
+    text = (tmp_path / "scan.md").read_text(encoding="utf-8")
+    assert "Trade tape truncated" in text
+    assert "SPY" in text
+    payload = json.loads((tmp_path / "flow" / "top_alerts_2026-10-16.json").read_text(encoding="utf-8"))
+    assert payload["tape_truncated"] == ["SPY"]
+    assert payload["chain_truncated"] == []
+    assert payload["orders_submitted"] == 0
+
+
+def test_scan_cli_defaults_to_the_full_watchlist(monkeypatch, tmp_path: Path):
+    from sidecar.flow.__main__ import main
+    from sidecar.flow.config import FLOW_UNIVERSE, page_cap
+
+    assert page_cap() == 400
+    monkeypatch.setenv("SIDECAR_FLOW_MAX_PAGES", "120")
+    assert page_cap() == 120
+    with pytest.raises(FlowError):
+        page_cap("0")
+    monkeypatch.delenv("SIDECAR_FLOW_WATCHLIST", raising=False)
+    captured: dict = {}
+
+    def fake_run_scan(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr("sidecar.flow.__main__.run_scan", fake_run_scan)
+    main(
+        [
+            "scan",
+            "--out",
+            str(tmp_path / "scan.json"),
+            "--markdown",
+            str(tmp_path / "scan.md"),
+            "--history",
+            str(tmp_path / "history.jsonl"),
+        ]
+    )
+    assert captured["symbols"] == FLOW_UNIVERSE
+    assert len(captured["symbols"]) == 33
+    assert captured["max_pages"] is None
+    captured.clear()
+    main(
+        [
+            "scan",
+            "--symbols",
+            "SPY",
+            "--max-pages",
+            "12",
+            "--out",
+            str(tmp_path / "scan.json"),
+            "--markdown",
+            str(tmp_path / "scan.md"),
+            "--history",
+            str(tmp_path / "history.jsonl"),
+        ]
+    )
+    assert captured["symbols"] == ("SPY",)
+    assert captured["max_pages"] == 12

@@ -628,6 +628,8 @@ def top_alerts_payload(scan: dict) -> dict:
         "session_date": scan["session_date"],
         "feed": scan.get("feed"),
         "tape": scan.get("tape"),
+        "tape_truncated": list(scan.get("tape_truncated") or []),
+        "chain_truncated": list(scan.get("chain_truncated") or []),
         "orders_submitted": 0,
         "live_trading": False,
         "scanned_contracts": scan.get("scanned_contracts"),
@@ -656,6 +658,22 @@ def render_markdown(scan: dict) -> str:
         lines.append(str(scan.get("tape_reason") or "Tape unavailable. Snapshot latest trades only."))
         lines.append(
             "Aggressor is low-confidence. One snapshot print does not set direction and does not award the aggressive flag."
+        )
+        lines.append("")
+    truncated = [str(item) for item in (scan.get("tape_truncated") or [])]
+    if truncated:
+        lines.append(
+            "Trade tape truncated at the page cap for: "
+            + ", ".join(truncated)
+            + ". Prints for those names are incomplete. The scan continued with the other names."
+        )
+        lines.append("")
+    chain = [str(item) for item in (scan.get("chain_truncated") or [])]
+    if chain:
+        lines.append(
+            "Snapshot or open-interest pages truncated at the page cap for: "
+            + ", ".join(chain)
+            + ". Those chains are incomplete. The scan continued."
         )
         lines.append("")
     note = scan.get("volume_z_note")

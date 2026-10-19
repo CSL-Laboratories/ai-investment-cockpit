@@ -106,7 +106,13 @@ TRADE_BATCH = 100
 TRADE_DELAY_MINUTES = 16
 STOCK_BATCH = 50
 CONTRACT_PAGE_LIMIT = 1000
-MAX_PAGES = 40
+# SPY's 2026-10-19 full-session option trade tape exceeded 40 pages.
+# A cap of 400 finished that tape (12,730 contracts). Each underlying,
+# and each 100-symbol trade batch, has its own cap. Hitting it truncates
+# that tape and the scan continues.
+DEFAULT_MAX_PAGES = 400
+MAX_PAGES = DEFAULT_MAX_PAGES
+MAX_PAGES_ENV = "SIDECAR_FLOW_MAX_PAGES"
 REQUEST_RETRIES = 4
 DEFAULT_REQUEST_INTERVAL = 0.3
 
@@ -140,6 +146,28 @@ def flow_watchlist(value: str | None = None) -> tuple[str, ...]:
     if len(chosen) != len(set(chosen)):
         raise FlowError("flow watchlist has a duplicate symbol")
     return chosen
+
+
+def page_cap(value: str | None = None) -> int:
+    """Pages for one underlying request or one trade batch.
+
+    Unset uses 400. ``SIDECAR_FLOW_MAX_PAGES`` or an explicit string overrides
+    it. The cap is not shared across symbols: one long tape cannot spend
+    another's budget, and it cannot abort the scan.
+    """
+    if value is None:
+        raw = os.environ.get(MAX_PAGES_ENV, "").strip()
+        if not raw:
+            return DEFAULT_MAX_PAGES
+    else:
+        raw = value.strip()
+    try:
+        pages = int(raw)
+    except ValueError as exc:
+        raise FlowError("SIDECAR_FLOW_MAX_PAGES must be a positive integer") from exc
+    if pages < 1:
+        raise FlowError("SIDECAR_FLOW_MAX_PAGES must be a positive integer")
+    return pages
 
 
 def request_interval(value: str | None = None) -> float:

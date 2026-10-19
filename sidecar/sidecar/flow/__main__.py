@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 
@@ -14,6 +15,8 @@ from sidecar.flow.score import ContractView, render_markdown, score_book, top_al
 from sidecar.flow.session import NY, completed_trading_session, expiration_bounds, historical_trade_window, session_window
 from sidecar.flow.study import DEFAULT_BARS, write_null_study
 from sidecar.jsonutil import write_json
+
+logger = logging.getLogger("sidecar.flow")
 
 
 def _load_history(path: Path | None) -> list[dict]:
@@ -39,6 +42,11 @@ def _append_history(path: Path, rows: list[dict], session: str) -> None:
             handle.write(json.dumps(row, sort_keys=True) + "\n")
 
 
+def _remember(names: list[str], symbol: str) -> None:
+    if symbol not in names:
+        names.append(symbol)
+
+
 def run_scan(
     *,
     feed: str,
@@ -50,10 +58,11 @@ def run_scan(
     as_of: datetime | None = None,
     client: FlowDataClient | None = None,
     alerts_dir: Path | None = None,
+    max_pages: int | None = None,
 ) -> dict:
     owns_client = client is None
     if client is None:
-        client = FlowDataClient.from_sidecar_credentials()
+        client = FlowDataClient.from_sidecar_credentials(max_pages=max_pages)
     if as_of is not None:
         moment = as_of.astimezone(NY)
     elif today is not None:
@@ -66,6 +75,9 @@ def run_scan(
     contracts: list[ContractView] = []
     tape_available = True
     tape_reason = None
+    tape_truncated: list[str] = []
+    tape_truncated_contracts: list[str] = []
+    chain_truncated: list[str] = []
     try:
         calendar = client.calendar(
             (calendar_day - timedelta(days=14)).isoformat(),
@@ -78,9 +90,23 @@ def run_scan(
         spots = client.stock_prices(list(symbols))
         for underlying in symbols:
             snapshots = client.snapshots(underlying, feed)
+            if snapshots.get("truncated"):
+                _remember(chain_truncated, underlying)
+                logger.warning(
+                    "option snapshot chain for %s stopped at %s pages and is truncated",
+                    underlying,
+                    client.max_pages,
+                )
             symbols_on_chain = list(snapshots.get("snapshots", {}))
             expiry_gte, expiry_lte = expiration_bounds(symbols_on_chain, session)
             reference = client.contracts(underlying, expiration_gte=expiry_gte, expiration_lte=expiry_lte)
+            if reference.get("truncated"):
+                _remember(chain_truncated, underlying)
+                logger.warning(
+                    "option contract reference for %s stopped at %s pages and is truncated",
+                    underlying,
+                    client.max_pages,
+                )
             spot = spots.get(underlying)
             rough = assemble_chain(
                 underlying=underlying,
@@ -100,6 +126,16 @@ def run_scan(
             if not fetched["available"]:
                 tape_available = False
                 tape_reason = fetched["reason"]
+            if fetched.get("truncated"):
+                _remember(tape_truncated, underlying)
+                for contract in fetched.get("truncated_symbols") or []:
+                    if contract not in tape_truncated_contracts:
+                        tape_truncated_contracts.append(contract)
+                logger.warning(
+                    "options trade tape for %s stopped at the %s-page cap and is truncated; scanning continues",
+                    underlying,
+                    client.max_pages,
+                )
             contracts.extend(
                 assemble_chain(
                     underlying=underlying,
@@ -123,6 +159,11 @@ def run_scan(
     scan["trade_end"] = trade_end.isoformat()
     scan["tape"] = tape_name
     scan["tape_reason"] = tape_reason
+    scan["symbols"] = list(symbols)
+    scan["max_pages"] = client.max_pages
+    scan["tape_truncated"] = tape_truncated
+    scan["tape_truncated_contracts"] = tape_truncated_contracts
+    scan["chain_truncated"] = chain_truncated
     if calendar_day != session:
         scan["session_note"] = (
             "The scan session is the last completed Alpaca session. "
@@ -146,7 +187,17 @@ def main(argv: list[str] | None = None) -> None:
     scan.add_argument("--out", type=Path, required=True)
     scan.add_argument("--markdown", type=Path, required=True)
     scan.add_argument("--history", type=Path, required=True)
-    scan.add_argument("--symbols", nargs="*")
+    scan.add_argument(
+        "--symbols",
+        nargs="*",
+        help="Subset of the 33-name flow watchlist. Omit this to scan every name.",
+    )
+    scan.add_argument(
+        "--max-pages",
+        type=int,
+        default=None,
+        help="Page cap for one underlying request or one trade batch. Default 400, or SIDECAR_FLOW_MAX_PAGES.",
+    )
     scan.add_argument("--alerts-dir", type=Path, default=Path("artifacts/flow"))
     study = sub.add_parser("study")
     study.add_argument("--bars", type=Path, default=DEFAULT_BARS)
@@ -158,6 +209,8 @@ def main(argv: list[str] | None = None) -> None:
         unknown = [symbol for symbol in chosen if symbol not in FLOW_UNIVERSE]
         if unknown:
             raise SystemExit(f"symbol not on the flow watchlist: {unknown[0]}")
+        if args.max_pages is not None and args.max_pages < 1:
+            raise SystemExit("max pages must be a positive integer")
         run_scan(
             feed=resolve_feed(args.feed),
             out=args.out,
@@ -165,6 +218,7 @@ def main(argv: list[str] | None = None) -> None:
             history_path=args.history,
             symbols=chosen,
             alerts_dir=args.alerts_dir,
+            max_pages=args.max_pages,
         )
         return
     write_null_study(args.bars, args.out, args.ledger)

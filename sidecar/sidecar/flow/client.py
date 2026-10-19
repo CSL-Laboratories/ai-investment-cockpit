@@ -7,6 +7,7 @@ This client has no write method.
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
@@ -18,15 +19,17 @@ from sidecar.flow.config import (
     CONTRACT_PAGE_LIMIT,
     FEEDS,
     FLOW_UNIVERSE,
-    MAX_PAGES,
     REQUEST_RETRIES,
     STOCK_BATCH,
     TRADE_BATCH,
     TRADE_DELAY_MINUTES,
     FlowError,
+    page_cap,
     request_interval,
 )
 from sidecar.harness.paper_credentials import load_sidecar_paper_credentials
+
+logger = logging.getLogger("sidecar.flow")
 
 DATA_HOST = "data.alpaca.markets"
 PAPER_HOST = "paper-api.alpaca.markets"
@@ -108,11 +111,16 @@ class FlowDataClient:
         transport: httpx.BaseTransport | None = None,
         min_interval: float | None = None,
         sleeper: Callable[[float], None] | None = None,
+        max_pages: int | None = None,
     ) -> None:
         if not key_id or not secret_key:
             raise FlowError("missing sidecar paper credentials")
         self._key_id = key_id
         self._secret_key = secret_key
+        chosen_pages = page_cap() if max_pages is None else max_pages
+        if isinstance(chosen_pages, bool) or not isinstance(chosen_pages, int) or chosen_pages < 1:
+            raise FlowError("max pages must be a positive integer")
+        self.max_pages = chosen_pages
         self._min_interval = 0.0 if min_interval is None else min_interval
         if self._min_interval < 0:
             raise FlowError("request interval must be >= 0")
@@ -121,9 +129,20 @@ class FlowDataClient:
         self._client = httpx.Client(transport=transport, timeout=30.0)
 
     @classmethod
-    def from_sidecar_credentials(cls, *, transport: httpx.BaseTransport | None = None) -> FlowDataClient:
+    def from_sidecar_credentials(
+        cls,
+        *,
+        transport: httpx.BaseTransport | None = None,
+        max_pages: int | None = None,
+    ) -> FlowDataClient:
         key_id, secret_key = load_sidecar_paper_credentials()
-        return cls(key_id, secret_key, transport=transport, min_interval=request_interval())
+        return cls(
+            key_id,
+            secret_key,
+            transport=transport,
+            min_interval=request_interval(),
+            max_pages=max_pages,
+        )
 
     def __repr__(self) -> str:
         return "FlowDataClient()"
@@ -180,9 +199,18 @@ class FlowDataClient:
         return body
 
     def _pages(self, url: str, params: dict[str, str], collection: str) -> dict:
-        merged: dict = {collection: {} if collection != "option_contracts" else [], "pages": 0}
+        """Follow page tokens up to this client's cap.
+
+        A token still present after the cap is a truncated result, not a failed
+        scan. The rows already received are kept.
+        """
+        merged: dict = {
+            collection: {} if collection != "option_contracts" else [],
+            "pages": 0,
+            "truncated": False,
+        }
         token: str | None = None
-        for page in range(MAX_PAGES):
+        for page in range(self.max_pages):
             query = dict(params)
             if token:
                 query["page_token"] = token
@@ -206,7 +234,13 @@ class FlowDataClient:
             token = _next_token(body)
             if not token:
                 return merged
-        raise FlowError("pagination did not finish")
+        merged["truncated"] = True
+        logger.warning(
+            "flow pagination stopped after %s pages for %s; the response is truncated",
+            self.max_pages,
+            url,
+        )
+        return merged
 
     def snapshots(self, underlying: str, feed: str) -> dict:
         if underlying not in FLOW_UNIVERSE:
@@ -225,11 +259,20 @@ class FlowDataClient:
         """
         _require_delayed_trade_window(start, end, now)
         if not symbols:
-            return {"trades": {}, "pages": 0, "batches": 0, "available": True, "reason": None}
+            return {
+                "trades": {},
+                "pages": 0,
+                "batches": 0,
+                "available": True,
+                "reason": None,
+                "truncated": False,
+                "truncated_symbols": [],
+            }
         url = f"https://{DATA_HOST}/v1beta1/options/trades"
         merged: dict[str, list] = {}
         pages = 0
         batches = 0
+        truncated_symbols: list[str] = []
         try:
             for offset in range(0, len(symbols), TRADE_BATCH):
                 batch = symbols[offset : offset + TRADE_BATCH]
@@ -242,6 +285,8 @@ class FlowDataClient:
                 pages += int(page["pages"])
                 for symbol, rows in page["trades"].items():
                     merged.setdefault(symbol, []).extend(rows)
+                if page.get("truncated"):
+                    truncated_symbols.extend(batch)
         except FlowHttpError as exc:
             if exc.status != 403:
                 raise
@@ -255,8 +300,18 @@ class FlowDataClient:
                     "15 minutes of OPRA. Scoring uses each snapshot's latest trade only, "
                     "so sweeps are not detected."
                 ),
+                "truncated": False,
+                "truncated_symbols": [],
             }
-        return {"trades": merged, "pages": pages, "batches": batches, "available": True, "reason": None}
+        return {
+            "trades": merged,
+            "pages": pages,
+            "batches": batches,
+            "available": True,
+            "reason": None,
+            "truncated": bool(truncated_symbols),
+            "truncated_symbols": truncated_symbols,
+        }
 
     def contracts(self, underlying: str, *, expiration_gte: str, expiration_lte: str) -> dict:
         if underlying not in FLOW_UNIVERSE:
