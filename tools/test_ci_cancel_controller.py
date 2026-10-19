@@ -1,5 +1,7 @@
 """Offline cancellation/controller and queue-policy regressions; no GitHub writes."""
+import contextlib
 import copy
+import io
 import json
 import shutil
 import subprocess
@@ -92,6 +94,43 @@ class FakeGitHub:
 
     def reconcile(self):
         return m.reconcile(self, REPO, 'workflow_run', self.event)
+
+
+SECRET = 'ghp_SECRET0123456789'
+CONFLICT = f'HTTP/2.0 409 Conflict\nAuthorization: token {SECRET}\n\n{{"message": "{SECRET}"}}'
+ACCEPTED = 'HTTP/2.0 202 Accepted\nContent-Type: application/json\n\n{}'
+
+
+def response(stdout, returncode):
+    return Mock(stdout=stdout, returncode=returncode,
+                stderr=f'gh: Authorization: token {SECRET} (HTTP 409)')
+
+
+class TransportFake(FakeGitHub):
+    """FakeGitHub evidence with real POST classification over mocked gh."""
+    def __init__(self, calls=0):
+        super().__init__()
+        self.client = m.GitHub(clock=lambda: 0)
+        self.client.calls = calls
+        self.post_at = None
+
+    def read(self, path):
+        self.client.budget()  # One shared read/write budget, as in production.
+        return super().read(path)
+
+    def cancel(self, path):
+        self.post_at = len(self.reads)
+        self.client.cancel(path)
+        super().cancel(path)
+
+    def rereads(self):
+        return [] if self.post_at is None else self.reads[self.post_at:]
+
+    def run_with(self, *responses):
+        self.output = io.StringIO()
+        with (patch.object(m.subprocess, 'run', side_effect=list(responses)) as self.transport,
+              contextlib.redirect_stdout(self.output)):
+            return self.reconcile()
 
 
 class ControllerTests(unittest.TestCase):
@@ -517,6 +556,185 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaises(TimeoutError):
             api.reconcile()
         self.assertEqual(api.cancel.call_count, 1)
+
+    def test_conflict_is_noop_only_after_one_reread_proves_same_attempt_terminal(self):
+        cases = [(conclusion, 1) for conclusion in sorted(m.TERMINAL)] + [('cancelled', 0)]
+        for conclusion, code in cases:
+            api = TransportFake()
+            def settle(path, value, api=api, conclusion=conclusion):
+                if api.post_at is not None and path.endswith('/actions/runs/1'):
+                    return {**value, 'status': 'completed', 'conclusion': conclusion}
+                return value
+            api.hook = settle
+            with self.subTest(conclusion=conclusion, code=code):
+                self.assertEqual(api.run_with(response(CONFLICT, code)), [])
+                self.assertEqual(api.cancelled, [])
+                self.assertEqual(api.rereads(), [f'repos/{REPO}/actions/runs/1'])
+                self.assertEqual(api.transport.call_count, 1)
+                self.assertEqual(api.transport.call_args.args[0],
+                                 ['gh', 'api', '--include', '--method', 'POST',
+                                  f'repos/{REPO}/actions/runs/1/cancel'])
+                self.assertFalse(api.transport.call_args.kwargs['check'])
+                self.assertEqual(api.client.calls, len(api.reads) + 1)
+                self.assertNotIn('Requested cancellation', api.output.getvalue())
+                self.assertIn('no cancellation requested', api.output.getvalue())
+                self.assertNotIn(SECRET, api.output.getvalue())
+
+    def test_unverified_conflict_remains_visible_refusal_after_one_reread(self):
+        def done(**fields):
+            return lambda r: {**r, 'status': 'completed', 'conclusion': 'cancelled', **fields}
+        def unreadable(value):
+            raise OSError(f'token {SECRET}')
+        changes = [('active', lambda r: r),
+                   ('unknown', done(status='mystery')),
+                   ('missing-status', lambda r: {k: v for k, v in done()(r).items() if k != 'status'}),
+                   ('missing-conclusion',
+                    lambda r: {k: v for k, v in done()(r).items() if k != 'conclusion'}),
+                   ('null-conclusion', done(conclusion=None)),
+                   ('invalid-conclusion', done(conclusion='bogus')),
+                   ('list-conclusion', done(conclusion=[])),
+                   ('object-conclusion', done(conclusion={})),
+                   ('attempt', done(run_attempt=2)),
+                   ('sha', done(head_sha=X)),
+                   ('workflow', done(workflow_id=99)),
+                   ('repo', done(repository={'id': 99, 'full_name': REPO})),
+                   ('pr', lambda r: {**done()(r), 'pull_requests': []}),
+                   ('malformed', lambda r: None),
+                   ('list', lambda r: [r]),
+                   ('unreadable', unreadable)]
+        for name, change in changes:
+            api = TransportFake()
+            def reread(path, value, api=api, change=change):
+                if api.post_at is not None and path.endswith('/actions/runs/1'):
+                    return change(copy.deepcopy(value))
+                return value
+            api.hook = reread
+            with self.subTest(name=name):
+                with self.assertRaises(m.CancelRefused) as caught:
+                    api.run_with(response(CONFLICT, 1))
+                error = caught.exception
+                self.assertEqual((error.category, error.status, error.exit_code),
+                                 ('conflict-unverified', 409, 1))
+                self.assertTrue(error.__suppress_context__)
+                self.assertNotIn(SECRET, str(error))
+                self.assertEqual(api.rereads(), [f'repos/{REPO}/actions/runs/1'])
+                self.assertEqual(api.transport.call_count, 1)
+                self.assertEqual(api.cancelled, [])
+                self.assertNotIn('Requested cancellation', api.output.getvalue())
+                self.assertNotIn(SECRET, api.output.getvalue())
+
+    def test_other_cancel_failures_are_refused_without_retry_or_reread(self):
+        timeout = subprocess.TimeoutExpired(['gh'], 10, output=SECRET, stderr=SECRET)
+        cases = [(response(f'HTTP/2.0 {code} Error\nAuthorization: token {SECRET}\n\n{SECRET}', 1),
+                  'http', code, 1) for code in (403, 404, 500)] + [
+            (response('', 1), 'unparsed-status', None, 1),
+            (response(None, 1), 'unparsed-status', None, 1),
+            (response(f'{{"message": "HTTP/1.1 409 Conflict {SECRET}"}}', 1),
+             'unparsed-status', None, 1),
+            (response('HTTP/2.0 500 Error\n\nHTTP/1.1 409 Conflict', 1),
+             'unparsed-status', None, 1),
+            (response('HTTP/1.1 409 Conflict\nHTTP/1.1 202 Accepted\n\n', 1),
+             'unparsed-status', None, 1),
+            (response('HTTP/1.1 409 Conflict', 1), 'unparsed-status', None, 1),
+            (response('HTTP/1.1 409 Conflict\n\nHTTP/1.1 202 Accepted\n\n{}', 1),
+             'unparsed-status', None, 1),
+            (response('HTTP/2.0 4090 Conflict\n\n', 1), 'unparsed-status', None, 1),
+            (response(' HTTP/2.0 409 Conflict\n\n', 1), 'unparsed-status', None, 1),
+            (response(b'HTTP/1.1 403 Forbidden\r\n\r\n{}', 1), 'http', 403, 1),
+            (response('HTTP/2.0 202 Accepted\n\n{}', 1), 'http', 202, 1),
+            (response('{}', 0), 'unparsed-status', None, 0),
+            (response('HTTP/2.0 202 Accepted\n\nnot json', 0), 'malformed-success', 202, 0),
+            (timeout, 'timeout', None, None),
+            (OSError(SECRET), 'transport', None, None),
+            (UnicodeDecodeError('utf-8', b'\xff', 0, 1, 'invalid byte'),
+             'transport', None, None)]
+        for index, (outcome, category, status, code) in enumerate(cases):
+            api = TransportFake()
+            with self.subTest(index=index, category=category, status=status):
+                with self.assertRaises(m.CancelRefused) as caught:
+                    api.run_with(outcome)
+                error = caught.exception
+                self.assertEqual((error.category, error.status, error.exit_code),
+                                 (category, status, code))
+                self.assertIsNone(error.__cause__)
+                self.assertNotIn(SECRET, str(error))
+                self.assertNotIn(SECRET, api.output.getvalue())
+                self.assertEqual(api.rereads(), [])
+                self.assertEqual(api.transport.call_count, 1)
+                self.assertEqual(api.cancelled, [])
+
+    def test_successful_post_keeps_existing_requested_behavior(self):
+        for stdout in (ACCEPTED, 'HTTP/1.1 204 No Content\n\n'):
+            api = TransportFake()
+            with self.subTest(stdout=stdout):
+                self.assertEqual(api.run_with(response(stdout, 0)), [1])
+                self.assertEqual(api.cancelled, [1])
+                self.assertEqual(api.rereads(), [])
+                self.assertEqual(api.transport.call_count, 1)
+                self.assertEqual(api.client.calls, len(api.reads) + 1)
+                self.assertIn('Requested cancellation of verified ancestor run 1',
+                              api.output.getvalue())
+
+    def test_conflict_accepts_crlf_bytes_but_reread_cannot_reset_deadline(self):
+        api = TransportFake()
+        def settle(path, value):
+            if api.post_at is not None and path.endswith('/actions/runs/1'):
+                return {**value, 'status': 'completed', 'conclusion': 'cancelled'}
+            return value
+        api.hook = settle
+        self.assertEqual(api.run_with(response(CONFLICT.replace('\n', '\r\n').encode(), 1)), [])
+        self.assertEqual(api.transport.call_count, 1)
+        api = TransportFake()
+        # post_at is set just before the real POST's budget check: expire only
+        # once subprocess has been called, leaving no time for the conflict GET.
+        api.client.clock = lambda: 121 if getattr(api, 'transport', None) and api.transport.called else 0
+        with self.assertRaises(m.CancelRefused) as caught:
+            api.run_with(response(CONFLICT, 1))
+        self.assertEqual(caught.exception.category, 'conflict-unverified')
+        self.assertEqual(api.client.deadline, 120)
+        self.assertEqual(api.rereads(), [])
+        self.assertEqual(api.transport.call_count, 1)
+
+    def test_verified_conflict_noop_continues_to_later_targets(self):
+        api = TransportFake()
+        api.runs.extend([run(3, A, 'rust'), run(4, B, 'rust', status='queued')])
+        def settle(path, value):
+            if api.post_at is not None and path.endswith('/actions/runs/1'):
+                return {**value, 'status': 'completed', 'conclusion': 'cancelled'}
+            return value
+        api.hook = settle
+        self.assertEqual(api.run_with(response(CONFLICT, 1), response(ACCEPTED, 0)), [3])
+        self.assertEqual(api.cancelled, [3])
+        self.assertEqual([c.args[0][-1] for c in api.transport.call_args_list],
+                         [f'repos/{REPO}/actions/runs/1/cancel',
+                          f'repos/{REPO}/actions/runs/3/cancel'])
+        self.assertEqual(api.reads.count(f'repos/{REPO}/actions/runs/1'), 2)
+        self.assertEqual(api.client.calls, len(api.reads) + 2)
+        self.assertIn('Requested cancellation of verified ancestor run 3', api.output.getvalue())
+        self.assertNotIn('Requested cancellation of verified ancestor run 1', api.output.getvalue())
+
+    def test_conflict_reread_shares_remaining_budget_and_never_retries_post(self):
+        baseline = FakeGitHub()
+        baseline.reconcile()
+        api = TransportFake(calls=159 - len(baseline.reads))
+        with self.assertRaises(m.CancelRefused) as caught:
+            api.run_with(response(CONFLICT, 1))
+        self.assertEqual((caught.exception.category, caught.exception.status),
+                         ('conflict-unverified', 409))
+        self.assertEqual(api.client.calls, 161)
+        self.assertEqual(api.rereads(), [])
+        self.assertEqual(api.transport.call_count, 1)
+        self.assertEqual(api.cancelled, [])
+        client = m.GitHub(clock=lambda: 0)
+        client.calls = 160
+        with (patch.object(m.subprocess, 'run') as transport,
+              self.assertRaisesRegex(m.Refused, 'budget exceeded')):
+            client.cancel(f'repos/{REPO}/actions/runs/1/cancel')
+        transport.assert_not_called()
+        client = m.GitHub(clock=Mock(side_effect=[0, 115]))
+        with patch.object(m.subprocess, 'run', return_value=response(ACCEPTED, 0)) as transport:
+            client.cancel(f'repos/{REPO}/actions/runs/1/cancel')
+        self.assertEqual(transport.call_args.kwargs['timeout'], 5)
 
     def test_transport_budget_and_timeout_are_bounded(self):
         api = m.GitHub(clock=Mock(side_effect=[0, 121]))

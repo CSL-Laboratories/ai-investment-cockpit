@@ -15,6 +15,9 @@ WORKFLOWS = {'.github/workflows/ci.yml': 'ci.yml',
              '.github/workflows/rust.yml': 'rust.yml'}
 ACTIVE = {'queued', 'pending', 'requested', 'waiting', 'in_progress'}
 SHA = re.compile(r'[0-9a-f]{40}')
+TERMINAL = {'action_required', 'cancelled', 'failure', 'neutral', 'skipped', 'stale',
+            'startup_failure', 'success', 'timed_out'}
+STATUS_LINE = re.compile(r'HTTP/[0-9](?:\.[0-9])? ([1-5][0-9]{2})(?: [^\r\n]*)?')
 
 
 class Refused(RuntimeError):
@@ -27,21 +30,72 @@ class GitHub:
         self.deadline = clock() + 120
         self.calls = 0
 
-    def request(self, method, path):
+    def budget(self):
         remaining = self.deadline - self.clock()
         self.calls += 1
         if remaining <= 0 or self.calls > 160:
             raise Refused('Controller read/write budget exceeded')
+        return min(10, remaining)
+
+    def request(self, method, path):
+        timeout = self.budget()
         result = subprocess.run(['gh', 'api', '--method', method, path], check=True,
-                                capture_output=True, text=True, timeout=min(10, remaining))
+                                capture_output=True, text=True, timeout=timeout)
         return json.loads(result.stdout) if result.stdout.strip() else None
 
     def read(self, path):
         return self.request('GET', path)
 
     def cancel(self, path):
-        # No retry on an uncertain write, and no force-cancel endpoint.
-        self.request('POST', path)
+        # One POST only: no retry on an uncertain write, and no force-cancel endpoint.
+        # --include only adds the status line and headers; neither is ever printed.
+        timeout = self.budget()
+        try:
+            result = subprocess.run(['gh', 'api', '--include', '--method', 'POST', path],
+                                    check=False, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise CancelRefused('timeout') from None
+        except (OSError, UnicodeError):
+            raise CancelRefused('transport') from None
+        code = result.returncode if type(result.returncode) is int else None
+        status, body = http_response(result.stdout)
+        if status is None:
+            raise CancelRefused('unparsed-status', None, code)
+        if status == 409:
+            raise CancelRefused('conflict', 409, code)
+        if code != 0 or not 200 <= status < 300:
+            raise CancelRefused('http', status, code)
+        if body.strip():
+            try:
+                json.loads(body)
+            except ValueError:
+                raise CancelRefused('malformed-success', status, code) from None
+
+
+class CancelRefused(Refused):
+    """Unconfirmed cancellation; carries only sanitized write diagnostics."""
+
+    def __init__(self, category, status=None, exit_code=None):
+        self.category, self.status, self.exit_code = category, status, exit_code
+        super().__init__(f'Cancellation not confirmed: method=POST category={category} '
+                         f'status={status} exit={exit_code}')
+
+
+def text(value):
+    if isinstance(value, bytes):
+        return value.decode('utf-8', 'replace')
+    return value if isinstance(value, str) else ''
+
+
+def http_response(output):
+    """Split one --include response; reject missing or ambiguous status lines."""
+    head, separator, body = text(output).replace('\r\n', '\n').partition('\n\n')
+    lines = head.split('\n')
+    match = STATUS_LINE.fullmatch(lines[0])
+    if (not separator or match is None
+            or any(line.startswith('HTTP/') for line in lines[1:] + body.split('\n'))):
+        return None, body
+    return int(match.group(1)), body
 
 
 def positive(value):
@@ -200,6 +254,21 @@ def current_witness(identified, live, workflow_id):
     return identity if successor(witness) else None
 
 
+def conflict_settled(api, repo, repo_id, workflows, identity):
+    """One reread after HTTP 409: settled only if this exact attempt is now terminal.
+
+    This never proves the run was terminal when the POST was made.
+    """
+    try:
+        target = api.read(f'repos/{repo}/actions/runs/{identity[0]}')
+    except (Refused, OSError, subprocess.SubprocessError, ValueError):
+        return False
+    return (run_identity(target, repo, repo_id, workflows) == identity
+            and target.get('status') == 'completed'
+            and isinstance(target.get('conclusion'), str)
+            and target['conclusion'] in TERMINAL)
+
+
 def reconcile(api, repo, event_name, event):
     if not isinstance(event, dict):
         raise Refused('Malformed triggering event')
@@ -276,7 +345,16 @@ def reconcile(api, repo, event_name, event):
             raise Refused('Current-head successor changed before cancellation')
         if live_pr(api, repo, repo_id, live[0]) != live:
             raise Refused('Live head or PR state changed before cancellation')
-        api.cancel(f'repos/{repo}/actions/runs/{identity[0]}/cancel')
+        try:
+            api.cancel(f'repos/{repo}/actions/runs/{identity[0]}/cancel')
+        except CancelRefused as error:
+            if error.status != 409:
+                raise
+            if not conflict_settled(api, repo, repo_id, workflows, identity):
+                raise CancelRefused('conflict-unverified', 409, error.exit_code) from None
+            print(f'Run {identity[0]} attempt {identity[1]} returned HTTP 409 and a reread shows '
+                  'that attempt completed; no cancellation requested', flush=True)
+            continue
         requested.append(identity[0])
         print(f'Requested cancellation of verified ancestor run {identity[0]}', flush=True)
     return requested
