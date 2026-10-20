@@ -80,6 +80,8 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 ## Session workflow
 1. Read `docs/README.md`, `PRODUCT.md` for product scope/acceptance, then
    `docs/PLAN.md` for current delivery order and `docs/REGISTER.md` for claims.
+   Linear holds execution assignment/status; REGISTER keeps package IDs, claims,
+   scope and completion contracts. See `AGENTS.md` Linear-first workflow.
    The adopted product contracts supply required behavior; subsystem/reference
    documents do not independently change delivery order or current runtime authority.
 2. Pick **ONE** work package (RW-xx refactor, or W-xx production). Confirm its
