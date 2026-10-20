@@ -835,7 +835,7 @@ class WorkflowWiringTests(unittest.TestCase):
                 self.assertEqual(len(action), 1)
                 inputs = action[0]["with"]
                 self.assertEqual(inputs["github_token"], "${{ github.token }}")
-                self.assertEqual(inputs["classify_inline_comments"], "false")
+                self.assertEqual(inputs["classify_inline_comments"], "false")  # CSL-383
                 self.assertEqual((inputs["bot_id"], inputs["bot_name"]), ("209825114", "claude[bot]"))
                 allow = inputs["claude_args"].split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0]
                 self.assertNotIn("git push", allow)

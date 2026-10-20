@@ -1879,5 +1879,21 @@ jobs:
                 self.assertEqual(result.returncode == 0, passes, result.stdout + result.stderr)
 
 
+class ClaudeActionInlineCommentTests(unittest.TestCase):
+    """CSL-383: no claude-code-action step publishes the model-writable comment buffer."""
+
+    def test_every_claude_action_step_disables_buffered_inline_comments(self) -> None:
+        import re
+
+        steps = []
+        for path in sorted(WORKFLOW_PATH.parent.glob("*.y*ml")):
+            for step in re.split(r"uses:\s*[\"']?anthropics/claude-code-action@", path.read_text(encoding="utf-8"))[1:]:
+                steps.append((path.name, re.split(r"\n      - ", step, maxsplit=1)[0]))
+        self.assertGreaterEqual(len(steps), 3)
+        for index, (name, inputs) in enumerate(steps):
+            with self.subTest(workflow=name, step=index):
+                self.assertIn('\n          classify_inline_comments: "false"\n', inputs)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
