@@ -163,10 +163,10 @@ provisioned.
    Remove it once its full-matrix run has passed on the current head and the PR
    needs no further automatic READY. A manual removal is a human hold: the
    Codex gate skips READY on the head where it first sees the removal, and with
-   the candidate coordinator on, READY delivery and candidate runs stay blocked
-   on every later head until someone re-adds `ci:full`. Re-add it before the PR
-   needs READY or a candidate run. Codex READY's own label is cleared
-   automatically.
+   the candidate coordinator on, READY delivery, candidate runs and
+   `CODEX-GATE: MEDIATE` human handoffs stay blocked on every later head until
+   someone re-adds `ci:full`. Re-add it before the PR needs READY, a candidate
+   run or a MEDIATE handoff. Codex READY's own label is cleared automatically.
 7. Any order-path change needs an adversarial-review round.
 8. The release-blocking local matrix is **native Windows plus Ubuntu under WSL2**, each on
    Python 3.11 and 3.12. Run all four cells on the operator's Windows workstation. Hosted
