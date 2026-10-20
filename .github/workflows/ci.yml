@@ -272,7 +272,9 @@ jobs:
             echo "Could not fetch diff endpoints; fail open to running tests."
             exit 0
           fi
-          if ! files="$(git diff --name-only "$BASE" "$HEAD" --)"; then
+          # --no-renames lists both sides of a rename, so renaming a test-read file
+          # out of a run-tests path still runs tests (CSL-397).
+          if ! files="$(git diff --no-renames --name-only "$BASE" "$HEAD" --)"; then
             emit true false
             echo "Could not diff endpoints; fail open to running tests."
             exit 0

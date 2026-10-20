@@ -133,12 +133,32 @@ class DecideScriptTests(unittest.TestCase):
         head = self.git('rev-parse', 'HEAD')
         self.assertEqual(sorted(self.git('diff', '--name-only', self.base, head).splitlines()),
                          sorted(paths))
+        return self.decide(self.base, head)
+
+    def run_tests_for_rename(self, source: str, destination: str) -> str:
+        # PR base holds `source`; the PR head only renames it (identical content).
+        self.git('checkout', '-q', '--detach', self.base)
+        target = self.root / source
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text('renamed content\n' * 20, encoding='utf-8')
+        self.git('add', source)
+        self.git('commit', '-q', '-m', 'add source')
+        base = self.git('rev-parse', 'HEAD')
+        (self.root / destination).parent.mkdir(parents=True, exist_ok=True)
+        self.git('mv', source, destination)
+        self.git('commit', '-q', '-m', 'rename')
+        head = self.git('rev-parse', 'HEAD')
+        # Git's default rename detection reports only the destination.
+        self.assertEqual(self.git('diff', '--name-only', base, head), destination)
+        return self.decide(base, head)
+
+    def decide(self, base: str, head: str) -> str:
         output = self.root / '.git' / 'github-output'
         output.write_text('', encoding='utf-8')
         env = {key: value for key, value in os.environ.items()
                if key not in {'EVENT_NAME', 'PR_BASE', 'PR_HEAD', 'MG_BASE', 'MG_HEAD',
                               'PUSH_BEFORE', 'PUSH_HEAD'}}
-        env.update({'EVENT_NAME': 'pull_request', 'PR_BASE': self.base, 'PR_HEAD': head,
+        env.update({'EVENT_NAME': 'pull_request', 'PR_BASE': base, 'PR_HEAD': head,
                     'GITHUB_OUTPUT': str(output)})
         result = subprocess.run(['bash', '-c', self.script], cwd=self.root, env=env,
                                 text=True, capture_output=True, check=False)
@@ -159,6 +179,14 @@ class DecideScriptTests(unittest.TestCase):
 
     def test_plain_documentation_still_skips(self):
         self.assertEqual(self.run_tests_for(list(STILL_SKIPPED)), 'false')
+
+    def test_renaming_a_test_read_file_runs_tests(self):
+        self.assertEqual(self.run_tests_for_rename('docs/PLAN.md', 'docs/old-plan.md'), 'true')
+        self.assertEqual(self.run_tests_for_rename('app/workflows/prompts/a.v1.md', 'docs/a.v1.md'),
+                         'true')
+
+    def test_renaming_plain_documentation_still_skips(self):
+        self.assertEqual(self.run_tests_for_rename('docs/notes-a.md', 'docs/notes-b.md'), 'false')
 
     def test_mixed_diff_runs_tests(self):
         self.assertEqual(self.run_tests_for(['docs/example.md', 'docs/setup/accounts-and-keys.md']),
@@ -189,6 +217,9 @@ class TestSourceGuardTests(unittest.TestCase):
             self.assertFalse(skipped_by_filter(path), path)
         for path in STILL_SKIPPED:
             self.assertTrue(skipped_by_filter(path), path)
+        # A real tracked document that no linux-job test reads keeps skipping.
+        self.assertTrue((ROOT / 'docs/ci-queue-rollout.md').is_file())
+        self.assertTrue(skipped_by_filter('docs/ci-queue-rollout.md'))
 
     def test_no_test_references_a_file_the_filter_skips(self):
         tracked = subprocess.check_output(['git', 'ls-files'], cwd=ROOT, text=True).splitlines()
