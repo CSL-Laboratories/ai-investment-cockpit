@@ -133,7 +133,7 @@ provisioned.
 1. Read `docs/README.md` and the relevant plan before editing.
 2. Before proposing architecture or direction, read `docs/adr/` and the linked
    decision issues; do not re-argue a recorded decision without new evidence.
-3. Keep changes to one work package and add tests with the change.
+3. Keep changes to one work package, or one admitted process issue with `REGISTER: none`, and add tests with the change.
 4. Use the project virtual environment. Create it once with `python -m venv .venv`
    from the repo root — note the `py` launcher is not present on every dev box —
    then install the full runtime and validation dependency set CI installs (see
