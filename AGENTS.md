@@ -158,7 +158,11 @@ provisioned.
    the reason and rerun the combined gates. Never edit
    `.github/workflows/**` unless a Linear issue explicitly assigned by a human
    asks for it; bots mark a PR ready with their own identity, never
-   `GITHUB_TOKEN`.
+   `GITHUB_TOKEN`. Remove a `ci:full` added by a person or Devin once its
+   full-matrix run has passed on the current head, and add it again if a later
+   change needs the full matrix: the label persists, so every later qualifying
+   push otherwise reruns Windows, macOS and Rust Windows (CSL-385 G8). Codex
+   READY's own label is cleared automatically.
 7. Any order-path change needs an adversarial-review round.
 8. The release-blocking local matrix is **native Windows plus Ubuntu under WSL2**, each on
    Python 3.11 and 3.12. Run all four cells on the operator's Windows workstation. Hosted
