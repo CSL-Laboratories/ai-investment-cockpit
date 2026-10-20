@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -203,6 +204,47 @@ def test_ci_pin_mismatch_fails_and_drops_the_stamp(project):
     assert code == 0
     assert "deps=FAIL" in out
     assert not (project / STAMP).exists()
+
+
+# Records every `pip install` (argv plus a copy of each -r file, since the hook
+# deletes its temporary requirements file) and reports success without
+# installing; every other call runs the real interpreter.
+PIP_RECORDER = (
+    "#!/bin/sh\n"
+    'if [ "$1 $2 $3" = "-m pip install" ]; then\n'
+    '  n=$(ls "$PIP_LOG_DIR" | wc -l)\n'
+    '  printf "%s\\n" "$*" > "$PIP_LOG_DIR/$n.argv"\n'
+    '  prev=""; i=0\n'
+    '  for a in "$@"; do\n'
+    '    if [ "$prev" = "-r" ]; then i=$((i+1)); cp "$a" "$PIP_LOG_DIR/$n.r$i"; fi\n'
+    '    prev="$a"\n'
+    "  done\n"
+    "  exit 0\n"
+    "fi\n"
+    f'exec "{PY}" "$@"\n'
+)
+
+
+def test_install_uses_pyproject_benchmarks_and_ci_pins_in_one_run(project):
+    from importlib.metadata import version
+    _pin(project, f"pytest=={version('pytest')}\nruff=={version('ruff')}\n")
+    _write(project / ".venv/bin/python", PIP_RECORDER)  # no stamp: install must run
+    logs = project.parent / "pip-log"
+    logs.mkdir()
+    code, out = _run(project, HEALTHY_TOOLS, PIP_LOG_DIR=str(logs))
+    assert code == 0
+    assert "venv=ok deps=ok" in out
+    installs = sorted(p for p in logs.glob("*.argv"))
+    full = [p for p in installs if "-r " in p.read_text()]
+    assert len(full) == 1, [p.read_text() for p in installs]
+    argv = full[0].read_text()
+    assert "-r app/benchmarks/requirements.txt" in argv
+    assert f"-r {PINS.as_posix()}" in argv
+    copied = "\n".join(p.read_text() for p in logs.glob(f"{full[0].stem}.r*"))
+    pyproject_deps = tomllib.loads((project / "app/pyproject.toml").read_text())
+    for dep in pyproject_deps["project"]["dependencies"] + ["pytest", "ruff"]:
+        assert dep in copied.splitlines(), f"{dep} not passed to the pip run"
+    assert (project / STAMP).read_text().strip() == _deps_hash(project)
 
 
 def test_violated_version_constraint_fails(project):
