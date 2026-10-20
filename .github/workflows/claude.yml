@@ -670,11 +670,15 @@ jobs:
                   return LOOP_CAP
               count = 0
               for item in reversed(commits):
-                  login = str((item.get("author") or {}).get("login") or "-")
-                  name = str(((item.get("commit") or {}).get("author") or {}).get("name") or "-")
-                  if login == "claude[bot]" or name in {"claude[bot]", "claude"}:
+                  # Author and committer both: the model can pass `git commit --author`,
+                  # but its committer comes from the job's git config (claude[bot]).
+                  # A commit is human only when neither side is Claude or a bot.
+                  meta = item.get("commit") or {}
+                  logins = [str((item.get(key) or {}).get("login") or "-") for key in ("author", "committer")]
+                  names = [str((meta.get(key) or {}).get("name") or "-") for key in ("author", "committer")]
+                  if "claude[bot]" in logins or any(name in {"claude[bot]", "claude"} for name in names):
                       count += 1
-                  elif login.endswith("[bot]") or name.endswith("[bot]"):
+                  elif any(value.endswith("[bot]") for value in logins + names):
                       continue
                   else:
                       break
@@ -713,7 +717,8 @@ jobs:
                   streak = claude_streak(repo, number)
                   if streak >= LOOP_CAP:
                       print(f"::notice::@claude skipped: {streak} Claude commits since the last human commit "
-                            f"(cap {LOOP_CAP}). A human commit resets the streak.")
+                            f"(cap {LOOP_CAP}). A human commit resets the streak, except on a PR listing "
+                            f"{COMMIT_LIST_LIMIT}+ commits, where a human has to take over.")
                       emit("true")
                       return
                   emit("false", sha=sha, ref=ref)
@@ -1519,11 +1524,15 @@ jobs:
                   return LOOP_CAP
               count = 0
               for item in reversed(commits):
-                  login = str((item.get("author") or {}).get("login") or "-")
-                  name = str(((item.get("commit") or {}).get("author") or {}).get("name") or "-")
-                  if login == "claude[bot]" or name in {"claude[bot]", "claude"}:
+                  # Author and committer both: the model can pass `git commit --author`,
+                  # but its committer comes from the job's git config (claude[bot]).
+                  # A commit is human only when neither side is Claude or a bot.
+                  meta = item.get("commit") or {}
+                  logins = [str((item.get(key) or {}).get("login") or "-") for key in ("author", "committer")]
+                  names = [str((meta.get(key) or {}).get("name") or "-") for key in ("author", "committer")]
+                  if "claude[bot]" in logins or any(name in {"claude[bot]", "claude"} for name in names):
                       count += 1
-                  elif login.endswith("[bot]") or name.endswith("[bot]"):
+                  elif any(value.endswith("[bot]") for value in logins + names):
                       continue
                   else:
                       break
@@ -1562,7 +1571,8 @@ jobs:
                   streak = claude_streak(repo, number)
                   if streak >= LOOP_CAP:
                       print(f"::notice::@claude skipped: {streak} Claude commits since the last human commit "
-                            f"(cap {LOOP_CAP}). A human commit resets the streak.")
+                            f"(cap {LOOP_CAP}). A human commit resets the streak, except on a PR listing "
+                            f"{COMMIT_LIST_LIMIT}+ commits, where a human has to take over.")
                       emit("true")
                       return
                   emit("false", sha=sha, ref=ref)
@@ -1620,15 +1630,19 @@ jobs:
         run: |
           set -euo pipefail
           # Count claude[bot] commits after the newest human commit. Other bots
-          # (e.g. merge/dependabot) neither count nor reset the streak.
+          # (e.g. merge/dependabot) neither count nor reset the streak. Author
+          # and committer both: the model can pass `git commit --author`, but its
+          # committer comes from the job's git config, so a commit is human only
+          # when neither side is Claude or a bot.
           commits="$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/commits?per_page=100" \
-            --jq '.[] | [(.author.login // "-"), (.commit.author.name // "-")] | @tsv')"
+            --jq '.[] | [(.author.login // "-"), (.commit.author.name // "-"), (.committer.login // "-"), (.commit.committer.name // "-")] | @tsv')"
           count=0
-          while IFS=$'\t' read -r login name; do
-            [ -z "$login$name" ] && continue
-            if [ "$login" = "claude[bot]" ] || [ "$name" = "claude[bot]" ] || [ "$name" = "claude" ]; then
+          while IFS=$'\t' read -r login name clogin cname; do
+            [ -z "$login$name$clogin$cname" ] && continue
+            if [ "$login" = "claude[bot]" ] || [ "$name" = "claude[bot]" ] || [ "$name" = "claude" ] \
+                || [ "$clogin" = "claude[bot]" ] || [ "$cname" = "claude[bot]" ] || [ "$cname" = "claude" ]; then
               count=$((count + 1))
-            elif [[ "$login" == *"[bot]" || "$name" == *"[bot]" ]]; then
+            elif [[ "$login" == *"[bot]" || "$name" == *"[bot]" || "$clogin" == *"[bot]" || "$cname" == *"[bot]" ]]; then
               continue
             else
               break
@@ -2163,7 +2177,7 @@ jobs:
               if int(count) >= 8:
                   pause = f"<!-- claude-fixer-loop-cap:{head} -->"
                   if not any(bot(c.get("user") or {}, "github-actions[bot]", ACTIONS_ID) and pause in str(c.get("body") or "") for c in comments):
-                      post(repo, number, pause + "\nClaude PR Fixer paused: eight consecutive Claude commits and pending Devin findings. A human needs to inspect them; a human commit resets this guard. Manual retry does not bypass it.")
+                      post(repo, number, pause + "\nClaude PR Fixer paused: eight or more Claude commits since the last human commit (or a PR commit listing at GitHub's 250-commit limit) and pending Devin findings. A human needs to inspect them; a human commit resets this guard, except on a PR with 250+ commits. Manual retry does not bypass it.")
                   emit([], head, "loop-commit-limit")
                   return
               key = attempt_key(head, items)

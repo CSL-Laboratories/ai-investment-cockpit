@@ -91,11 +91,15 @@ def claude_streak(repo: str, number: str) -> int:
         return LOOP_CAP
     count = 0
     for item in reversed(commits):
-        login = str((item.get("author") or {}).get("login") or "-")
-        name = str(((item.get("commit") or {}).get("author") or {}).get("name") or "-")
-        if login == "claude[bot]" or name in {"claude[bot]", "claude"}:
+        # Author and committer both: the model can pass `git commit --author`,
+        # but its committer comes from the job's git config (claude[bot]).
+        # A commit is human only when neither side is Claude or a bot.
+        meta = item.get("commit") or {}
+        logins = [str((item.get(key) or {}).get("login") or "-") for key in ("author", "committer")]
+        names = [str((meta.get(key) or {}).get("name") or "-") for key in ("author", "committer")]
+        if "claude[bot]" in logins or any(name in {"claude[bot]", "claude"} for name in names):
             count += 1
-        elif login.endswith("[bot]") or name.endswith("[bot]"):
+        elif any(value.endswith("[bot]") for value in logins + names):
             continue
         else:
             break
@@ -134,7 +138,8 @@ def main() -> None:
         streak = claude_streak(repo, number)
         if streak >= LOOP_CAP:
             print(f"::notice::@claude skipped: {streak} Claude commits since the last human commit "
-                  f"(cap {LOOP_CAP}). A human commit resets the streak.")
+                  f"(cap {LOOP_CAP}). A human commit resets the streak, except on a PR listing "
+                  f"{COMMIT_LIST_LIMIT}+ commits, where a human has to take over.")
             emit("true")
             return
         emit("false", sha=sha, ref=ref)

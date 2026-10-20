@@ -1362,6 +1362,16 @@ class FixerLoopCapTests(unittest.TestCase):
         out, _ = self._run(c + [("claude[bot]", "claude[bot]")] * 5, [])
         self.assertIn("loop_commit_count=8", out)
 
+    def test_forged_author_does_not_reset_the_loop_cap(self) -> None:
+        # Columns: author login, author name, committer login, committer name.
+        claude = ("claude[bot]", "claude[bot]\tgithub-actions[bot]\tclaude[bot]")
+        forged = ("alice", "Alice\tgithub-actions[bot]\tclaude[bot]")
+        human = ("alice", "Alice\talice\tAlice")
+        out, _ = self._run([claude] * 8 + [forged], [])
+        self.assertIn("loop_commit_count=9", out)
+        out, _ = self._run([claude] * 8 + [human], [])
+        self.assertIn("loop_commit_count=0", out)
+
     def test_truncated_commit_list_counts_as_at_cap(self) -> None:
         # GitHub lists at most 250 PR commits; the newest may be missing.
         out, posted = self._run([("alice", "Alice")] * 250, [])
@@ -1683,8 +1693,25 @@ class FixerPreflightTests(unittest.TestCase):
                     self.assertIn("skip=false", output)
 
     @staticmethod
-    def commit(login, name=None):
-        return {"author": {"login": login} if login else None, "commit": {"author": {"name": name or login or "-"}}}
+    def commit(login, name=None, committer=None):
+        item = {"author": {"login": login} if login else None, "commit": {"author": {"name": name or login or "-"}}}
+        if committer is not None:
+            item["committer"] = {"login": committer[0]}
+            item["commit"]["committer"] = {"name": committer[1]}
+        return item
+
+    def test_forged_author_does_not_reset_the_mention_cap(self) -> None:
+        # The model can pass `git commit --author`, but its committer is claude[bot].
+        pr = dict(pr_payload(), draft=False)
+        claude = self.commit("github-actions[bot]", "claude[bot]", ("github-actions[bot]", "claude[bot]"))
+        forged = self.commit("alice", "Alice", ("github-actions[bot]", "claude[bot]"))
+        human = self.commit("alice", "Alice", ("alice", "Alice"))
+        web_merge = self.commit("lucas", "Lucas", ("web-flow", "GitHub"))
+        for commits, skip in (([claude] * 8 + [forged], "true"), ([claude] * 7 + [forged], "true"),
+                              ([claude] * 8 + [human], "false"), ([claude] * 8 + [web_merge], "false")):
+            with self.subTest(last=commits[-1]["commit"], n=len(commits)):
+                output, _paths, _graphql = self.run_mode("mention", pr, commits)
+                self.assertIn("skip=" + skip, output)
 
     def test_mention_respects_the_claude_commit_cap(self) -> None:
         pr = dict(pr_payload(), draft=False)

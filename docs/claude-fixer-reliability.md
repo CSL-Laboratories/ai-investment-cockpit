@@ -86,7 +86,11 @@ names match case-insensitively.
   pushed is not undone; the label stops later runs.
 - **Mentions are bounded:** `@claude` skips once eight or more Claude commits
   follow the newest human commit, the same rule as the Devin-path loop cap.
-  A human commit resets the streak. The skip is a run notice only.
+  A commit is human only when neither its author nor its committer is Claude
+  or another bot, so `git commit --author` cannot reset the count. A human
+  commit resets the streak, except on a PR listing 250 or more commits
+  (GitHub's limit for that endpoint), where a human has to take over. The skip
+  is a run notice only.
 
 A pause never resets budgets, receipts or the commit cap, and never resolves
 threads. `do-not-merge` does not pause Claude; `needs-decision` stops only the
