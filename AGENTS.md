@@ -159,9 +159,13 @@ provisioned.
    `.github/workflows/**` unless a Linear issue explicitly assigned by a human
    asks for it; bots mark a PR ready with their own identity, never
    `GITHUB_TOKEN`. A `ci:full` added by a person or Devin persists, so every
-   later qualifying push reruns Windows, macOS and Rust Windows (CSL-385 G8).
-   Remove it once its full-matrix run has passed on the current head and the PR
-   needs no further automatic READY. A manual removal is a human hold: the
+   later qualifying push reruns Windows and macOS, plus Rust Windows when the
+   Rust path list matches (CSL-385 G8). Remove it once its full-matrix run has
+   passed on the current head and the PR needs no further automatic READY.
+   Removing it keeps the Linux pytest cells, including order-path, `risk/` and
+   PnL tests, on every push that is not docs-only; Windows, macOS and Rust
+   Windows wait until the label is back or a full dispatch runs. A manual
+   removal is a human hold: the
    Codex gate skips READY on the head where it first sees the removal, and with
    the candidate coordinator on, READY delivery, candidate runs and
    `CODEX-GATE: MEDIATE` human handoffs stay blocked on every later head until
