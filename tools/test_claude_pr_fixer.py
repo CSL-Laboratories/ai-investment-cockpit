@@ -1139,7 +1139,7 @@ class ConflictScanTests(unittest.TestCase):
         prep = text.split("  conflict-resolve:", 1)[1].split("id: prep", 1)[1].split("      - uses:", 1)[0]
         self.assertLess(prep.index('"${CLAUDE_FIXER_PAUSE:-}" = "true"'), prep.index("git merge"))
         self.assertLess(prep.index('select(. == "claude:pause" or . == "hold")'), prep.index("git checkout"))
-        self.assertIn('if (.labels | type) != "array" then "unreadable"', prep)
+        self.assertIn('if (.labels | type) != "array" or any(.labels[]; type != "object") then "unreadable"', prep)
         self.assertIn("steps.prep.outputs.proceed == 'true'",
                       text.split("  conflict-resolve:", 1)[1].split("      - id: claude", 1)[1].split("uses:", 1)[0])
 
@@ -1367,6 +1367,7 @@ class FixerLoopCapTests(unittest.TestCase):
         out, posted = self._run([("alice", "Alice")] * 250, [])
         self.assertIn("loop_commit_count=8", out)
         self.assertEqual(posted, "")
+        self.assertIn("A human commit cannot reset this, so a human has to take over this PR.", self.script)
         out, _ = self._run([("alice", "Alice")] * 249, [])
         self.assertIn("loop_commit_count=0", out)
         out, _ = self._run([("alice", "Alice")] * 240 + [("claude[bot]", "claude[bot]")] * 12, [])
@@ -1708,8 +1709,14 @@ class FixerPreflightTests(unittest.TestCase):
         human = self.commit("lucas")
         for commits, skip in (([human] * 250, "true"), ([human] * 249, "false"), ([human] * 300, "true")):
             with self.subTest(n=len(commits)):
-                output, _paths, _graphql = self.run_mode("mention", pr, commits)
+                import contextlib
+                import io
+                notices = io.StringIO()
+                with contextlib.redirect_stdout(notices):
+                    output, _paths, _graphql = self.run_mode("mention", pr, commits)
                 self.assertIn("skip=" + skip, output)
+                # A human commit cannot reset a truncated listing; say so.
+                self.assertEqual("a human has to take over this PR" in notices.getvalue(), skip == "true")
 
 
 class GuardTamperDenyTests(unittest.TestCase):

@@ -35,6 +35,10 @@ class GuardTests(unittest.TestCase):
         self.state = self.path / "attempt.json"
         self.execution = self.path / "execution.json"
         self.execution.write_text(json.dumps([{"type": "result", "subtype": "success", "num_turns": 12}]))
+        # model-api writes re-read the live PR; default to an unpaused one.
+        live = patch.object(m, "api", return_value=pr())
+        live.start()
+        self.addCleanup(live.stop)
 
     def push(self, read=lambda _: pr(), updates=None, config=CONFIG, remote="origin"):
         return m.guard(config, f"HEAD {B} refs/heads/fix {A}\n" if updates is None else updates, remote, self.state, remote_url=URL,
@@ -179,6 +183,25 @@ class GuardTests(unittest.TestCase):
         m.model_api(CONFIG | {"label": "needs-decision"}, ["label"], run=run)
         run.assert_called_once_with(["gh", "api", "--method", "POST", "repos/acme/example/issues/7/labels",
                                      "--input", "-"], input=json.dumps({"labels": ["needs-decision"]}))
+
+    def test_pause_refuses_model_api_writes_but_not_reads(self):
+        from unittest.mock import Mock
+        (self.path / ".claude-fixer-replies").mkdir()
+        (self.path / ".claude-fixer-replies/body.txt").write_text("Status", encoding="utf-8")
+        target = json.dumps({"id": 123, "pull_request_url": "https://api.github.com/repos/acme/example/pulls/7"})
+        writes = ((CONFIG, ["comment", ".claude-fixer-replies/body.txt"]),
+                  (CONFIG, ["reply", "123", ".claude-fixer-replies/body.txt"]),
+                  (CONFIG | {"label": "needs-decision"}, ["label"]))
+        for live in (pr(labels=["claude:pause"]), pr(labels=["HOLD"]), pr() | {"labels": None}):
+            for config, args in writes:
+                with self.subTest(live=live["labels"], op=args[0]), patch.object(m.Path, "cwd", return_value=self.path):
+                    run = Mock(return_value=target)
+                    with self.assertRaises(m.PauseRefused):
+                        m.model_api(config, args, run=run, read=lambda _path, live=live: live)
+                    self.assertFalse(any("POST" in call.args[0] for call in run.call_args_list))
+            run = Mock(return_value="[]")
+            m.model_api(CONFIG, ["comments"], run=run, read=lambda _path, live=live: live)
+            run.assert_called_once()
 
     def test_install_accepts_only_the_handoff_label(self):
         env = {"REPO": CONFIG["repo"], "PR_NUMBER": "7", "HEAD_SHA": A, "HEAD_REF": "fix"}

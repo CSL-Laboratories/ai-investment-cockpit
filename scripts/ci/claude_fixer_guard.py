@@ -229,9 +229,17 @@ def terminal(config, state_path, execution, outcome, read=api, consumer=None):
             "The PR author should relay any remaining blocker to its Linear issue.")
 
 
-def model_api(config, args, run=command):
-    """Fixed same-PR API operations. No model-supplied endpoint, method or flags."""
+def model_api(config, args, run=command, read=None):
+    """Fixed same-PR API operations. No model-supplied endpoint, method or flags.
+
+    Writes (comment, reply, label) re-read the live PR first and refuse on a
+    human pause, like the push. Reads stay available to a paused run.
+    """
     validate(config)
+
+    def refuse_if_paused():
+        current_pr(config, read or api, refuse_pause=True)
+
     root = f"repos/{config['repo']}"
     pull = f"{root}/pulls/{config['number']}"
     reads = {"read": pull, "comments": f"{root}/issues/{config['number']}/comments",
@@ -251,6 +259,7 @@ def model_api(config, args, run=command):
         return run(["gh", "api", "--method", "GET", reads[args[0]], *paging])
     if args == ["label"] and config.get("label") == HANDOFF_LABEL:
         # Only the conflict job installs this: the one human-handoff label.
+        refuse_if_paused()
         return run(["gh", "api", "--method", "POST", f"{root}/issues/{config['number']}/labels",
                     "--input", "-"], input=json.dumps({"labels": [HANDOFF_LABEL]}))
     if len(args) == 2 and args[0] == "comment":
@@ -283,6 +292,7 @@ def model_api(config, args, run=command):
                 or target["id"] != int(args[1]) or target.get("in_reply_to_id") is not None
                 or str(target.get("pull_request_url") or "").casefold() != ("https://api.github.com/" + pull).casefold()):
             raise ValueError("reply target is not a root on this PR")
+    refuse_if_paused()
     return run(["gh", "api", "--method", "POST", endpoint, "--input", "-"], input=json.dumps({"body": body}))
 
 

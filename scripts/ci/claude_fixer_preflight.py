@@ -86,6 +86,8 @@ def claude_streak(repo: str, number: str) -> int:
             break
         page += 1
     if len(commits) >= COMMIT_LIST_LIMIT:
+        print(f"::notice::{len(commits)} PR commits listed (GitHub's limit is {COMMIT_LIST_LIMIT}); "
+              "the Claude commit streak cannot be counted, so a human has to take over this PR.")
         return LOOP_CAP
     count = 0
     for item in reversed(commits):
