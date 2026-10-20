@@ -381,8 +381,8 @@ class ControllerTests(unittest.TestCase):
                 api.reconcile()
             self.assertEqual(api.cancelled, [])
 
-    def test_draft_closed_fork_and_retarget_refuse_until_live_ready(self):
-        for change in [lambda p: p.update(draft=True), lambda p: p.update(state='closed'),
+    def test_closed_fork_and_retarget_refuse_until_live_ready(self):
+        for change in [lambda p: p.update(state='closed'),
                        lambda p: p['head']['repo'].update(id=99),
                        lambda p: p['head'].update(ref='different'),
                        lambda p: p['base'].update(ref='different')]:
@@ -410,6 +410,67 @@ class ControllerTests(unittest.TestCase):
                                              for p in api.reads))
                         self.assertEqual(api.reads[-1], f'repos/{REPO}/pulls/42')
                         self.assertIn(f'::notice::PR #42 is {word}', output.getvalue())
+
+    def test_verified_draft_trigger_pr_is_notice_noop(self):
+        for action in ('requested', 'completed'):
+            api = FakeGitHub()
+            api.pr['draft'] = True
+            api.event['action'] = action
+            output = io.StringIO()
+            with self.subTest(action=action):
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(api.reconcile(), [])
+                self.assertEqual(api.cancelled, [])
+                self.assertFalse(any('/runs?' in p or '/compare/' in p for p in api.reads))
+                self.assertEqual(api.reads[-1], f'repos/{REPO}/pulls/42')
+                self.assertIn('::notice::PR #42 is draft', output.getvalue())
+
+    def test_draft_trigger_pr_still_requires_full_identity_evidence(self):
+        changes = [lambda a: a.pr.update(draft='true'),
+                   lambda a: a.pr.update(draft=1),
+                   lambda a: a.pr.update(state='closed'),
+                   lambda a: a.pr.update(state=None),
+                   lambda a: a.pr['head']['repo'].update(id=99),
+                   lambda a: a.pr['base']['repo'].update(full_name='foreign/repo'),
+                   lambda a: a.pr['head'].update(ref='different'),
+                   lambda a: a.pr['base'].update(ref='different'),
+                   lambda a: a.pr['head'].update(sha=None),
+                   lambda a: a.pr.update(id=None),
+                   lambda a: a.pr.update(number=43),
+                   lambda a: a.event['workflow_run'].update(run_attempt=2),
+                   lambda a: a.event['workflow_run'].update(pull_requests=[]),
+                   lambda a: a.event['repository'].update(id=99)]
+        for change in changes:
+            api = FakeGitHub()
+            api.pr['draft'] = True
+            change(api)
+            with self.subTest(change=change), self.assertRaises(m.Refused):
+                api.reconcile()
+            self.assertEqual(api.cancelled, [])
+            self.assertFalse(any('/runs?' in p for p in api.reads))
+
+    def test_pr_turning_draft_during_cancellation_plan_still_refuses(self):
+        api = FakeGitHub()
+        count = 0
+        def race(path, value):
+            nonlocal count
+            if path.endswith('/pulls/42'):
+                count += 1
+                if count == 2:
+                    return {**value, 'draft': True}
+            return value
+        api.hook = race
+        with self.assertRaises(m.Refused):
+            api.reconcile()
+        self.assertEqual(count, 2)
+        self.assertTrue(any('/runs?' in p for p in api.reads))
+        self.assertEqual(api.cancelled, [])
+
+    def test_strict_live_reread_never_admits_draft(self):
+        api = FakeGitHub()
+        api.pr['draft'] = True
+        with self.assertRaises(m.Refused):
+            m.live_pr(api, REPO, RID, 42)
 
     def test_closed_trigger_pr_still_requires_full_identity_evidence(self):
         changes = [lambda a: a.pr.update(draft=True),
