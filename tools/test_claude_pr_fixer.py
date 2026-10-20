@@ -1395,6 +1395,25 @@ class FixerLoopCapTests(unittest.TestCase):
         out, _ = self._run([claude] * 8 + [human], [])
         self.assertIn("loop_commit_count=0", out)
 
+    def test_commit_listing_jq_emits_author_then_committer_columns(self) -> None:
+        # The fake gh above serves ready-made TSV, so run the workflow's own jq on a REST-shaped listing.
+        import re
+        import shutil
+
+        if shutil.which("jq") is None:
+            self.skipTest("jq not available")
+        text = Path(".github/workflows/claude.yml").read_text(encoding="utf-8")
+        filters = re.findall(r"--jq '(\.\[\] \| \[\(\.author\.login[^']*)'", text)
+        self.assertEqual(len(filters), 1, filters)
+        listing = [
+            {"author": {"login": "alice"}, "committer": {"login": "web-flow"},
+             "commit": {"author": {"name": "Alice"}, "committer": {"name": "GitHub"}}},
+            {"author": None, "committer": None, "commit": {"author": {"name": "x"}, "committer": {}}},
+        ]
+        result = subprocess.run(["jq", "-r", filters[0]], input=json.dumps(listing), text=True,
+                                capture_output=True, check=True)
+        self.assertEqual(result.stdout.splitlines(), ["alice\tAlice\tweb-flow\tGitHub", "-\tx\t-\t-"])
+
     def test_truncated_commit_list_counts_as_at_cap(self) -> None:
         # GitHub lists at most 250 PR commits; the newest may be missing.
         out, posted = self._run([("alice", "Alice")] * 250, [])
