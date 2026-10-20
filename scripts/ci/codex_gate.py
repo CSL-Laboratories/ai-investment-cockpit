@@ -48,6 +48,10 @@ def ready_comments(comments, sha):
             and (not checked or type(c.get("id")) is not int or c["id"] <= checked))]
 
 CODEX_BOT = "chatgpt-codex-connector[bot]"
+# Same App id as merge_candidate.CODEX_ID (verified from genuine #147 reviews).
+CODEX_ID = 199175422
+# Bot classification only: the bare alias is an ordinary user login on this
+# public repo, so it never authorizes a verdict (see is_codex_reviewer).
 CODEX_BOTS = frozenset({CODEX_BOT, "chatgpt-codex-connector"})
 MARKER_RE = re.compile(r"<!--\s*codex-gate:([0-9a-f]{40}|[0-9a-f]{64})\s*-->")
 ACTION_RE = re.compile(
@@ -509,12 +513,24 @@ def fixer_runs_on_day(comments: list[dict[str, Any]], day: str) -> int:
     return count
 
 
+def is_codex_reviewer(user: dict[str, Any] | None) -> bool:
+    """Only the Codex App may author an actionable gate verdict.
+
+    The ``[bot]`` login is reserved to that App; REST type/id, when present,
+    must also match so a look-alike account can never pass.
+    """
+    user = user if isinstance(user, dict) else {}
+    if str(user.get("login") or "") != CODEX_BOT:
+        return False
+    if "type" in user and str(user.get("type") or "") != "Bot":
+        return False
+    return "id" not in user or (type(user.get("id")) is int and user["id"] == CODEX_ID)
+
+
 def verdict_from_reviews(reviews: list[dict[str, Any]], sha: str) -> str:
     found = ""
     for review in reviews:
-        user = (review or {}).get("user") or {}
-        login = str(user.get("login") or "")
-        if login not in CODEX_BOTS:
+        if not is_codex_reviewer((review or {}).get("user")):
             continue
         commit = safe_sha(review.get("commit_id") or review.get("commitId"))
         if sha and commit != sha:
@@ -1200,7 +1216,7 @@ def _handle_review(
 ) -> list[str]:
     review = event.get("review") if isinstance(event.get("review"), dict) else {}
     login = str((review.get("user") or {}).get("login") or "")
-    if login not in CODEX_BOTS:
+    if not is_codex_reviewer(review.get("user")):
         return [f"codex-gate: skip=not-codex login={login or '-'}"]
     pr = event.get("pull_request") if isinstance(event.get("pull_request"), dict) else {}
     number = safe_pr(pr.get("number"))
