@@ -1,5 +1,7 @@
 """Offline cancellation/controller and queue-policy regressions; no GitHub writes."""
+import contextlib
 import copy
+import io
 import json
 import shutil
 import subprocess
@@ -92,6 +94,43 @@ class FakeGitHub:
 
     def reconcile(self):
         return m.reconcile(self, REPO, 'workflow_run', self.event)
+
+
+SECRET = 'synthetic redaction fixture'
+CONFLICT = f'HTTP/2.0 409 Conflict\nAuthorization: token {SECRET}\n\n{{"message": "{SECRET}"}}'
+ACCEPTED = 'HTTP/2.0 202 Accepted\nContent-Type: application/json\n\n{}'
+
+
+def response(stdout, returncode):
+    return Mock(stdout=stdout, returncode=returncode,
+                stderr=f'gh: Authorization: token {SECRET} (HTTP 409)')
+
+
+class TransportFake(FakeGitHub):
+    """FakeGitHub evidence with real POST classification over mocked gh."""
+    def __init__(self, calls=0):
+        super().__init__()
+        self.client = m.GitHub(clock=lambda: 0)
+        self.client.calls = calls
+        self.post_at = None
+
+    def read(self, path):
+        self.client.budget()  # One shared read/write budget, as in production.
+        return super().read(path)
+
+    def cancel(self, path):
+        self.post_at = len(self.reads)
+        self.client.cancel(path)
+        super().cancel(path)
+
+    def rereads(self):
+        return [] if self.post_at is None else self.reads[self.post_at:]
+
+    def run_with(self, *responses):
+        self.output = io.StringIO()
+        with (patch.object(m.subprocess, 'run', side_effect=list(responses)) as self.transport,
+              contextlib.redirect_stdout(self.output)):
+            return self.reconcile()
 
 
 class ControllerTests(unittest.TestCase):
@@ -207,7 +246,7 @@ class ControllerTests(unittest.TestCase):
                 nonlocal seen
                 if '/workflows/11/runs?' in path and 'page=1' in path:
                     seen += 1
-                    if seen == 4:  # The second read of the final pre-cancel snapshot.
+                    if seen >= 4 and seen % 2 == 0:  # Every final corroborating read.
                         value = copy.deepcopy(value)
                         change(value)
                 return value
@@ -354,6 +393,87 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(api.cancelled, [])
         self.assertEqual(FakeGitHub().reconcile(), [1])
 
+    def test_verified_closed_or_merged_trigger_pr_is_notice_noop(self):
+        for merged, word, merged_at in ((True, 'merged', '2026-10-18T00:00:00Z'),
+                                        (False, 'closed', None)):
+            for action in ('requested', 'completed'):
+                for fields in ({}, {'merged_at': merged_at}):
+                    api = FakeGitHub()
+                    api.pr.update(state='closed', merged=merged, **fields)
+                    api.event['action'] = action
+                    output = io.StringIO()
+                    with self.subTest(merged=merged, action=action, fields=fields):
+                        with contextlib.redirect_stdout(output):
+                            self.assertEqual(api.reconcile(), [])
+                        self.assertEqual(api.cancelled, [])
+                        self.assertFalse(any('/runs?' in p or '/compare/' in p
+                                             for p in api.reads))
+                        self.assertEqual(api.reads[-1], f'repos/{REPO}/pulls/42')
+                        self.assertIn(f'::notice::PR #42 is {word}', output.getvalue())
+
+    def test_closed_trigger_pr_still_requires_full_identity_evidence(self):
+        changes = [lambda a: a.pr.update(draft=True),
+                   lambda a: a.pr.update(draft=None),
+                   lambda a: a.pr['head']['repo'].update(id=99),
+                   lambda a: a.pr['base']['repo'].update(full_name='foreign/repo'),
+                   lambda a: a.pr['head'].update(ref='different'),
+                   lambda a: a.pr['base'].update(ref='different'),
+                   lambda a: a.pr['head'].update(sha=None),
+                   lambda a: a.pr.update(id=None),
+                   lambda a: a.pr.update(number=43),
+                   lambda a: a.event['workflow_run'].update(run_attempt=2),
+                   lambda a: a.event['workflow_run'].update(pull_requests=[]),
+                   lambda a: a.event['repository'].update(id=99)]
+        for change in changes:
+            for merged in (True, False):
+                api = FakeGitHub()
+                api.pr.update(state='closed', merged=merged)
+                change(api)
+                with self.subTest(change=change, merged=merged), self.assertRaises(m.Refused):
+                    api.reconcile()
+                self.assertEqual(api.cancelled, [])
+                self.assertFalse(any('/runs?' in p for p in api.reads))
+
+    def test_malformed_or_contradictory_closed_lifecycle_refuses(self):
+        cases = ([{'state': 'closed', 'merged': v} for v in (None, 'true', 1, 0, [], {})]
+                 + [{'state': 'closed'}]
+                 + [{'state': s, 'merged': True} for s in ('merged', 'Closed', None, '')]
+                 + [{'state': 'closed', 'merged': True, 'merged_at': v} for v in (None, '', 1)]
+                 + [{'state': 'closed', 'merged': False, 'merged_at': v}
+                    for v in ('2026-10-18T00:00:00Z', '')])
+        for fields in cases:
+            api = FakeGitHub()
+            api.pr.update(fields)
+            if 'merged' not in fields:
+                api.pr.pop('merged', None)
+            with self.subTest(fields=fields), self.assertRaises(m.Refused):
+                api.reconcile()
+            self.assertEqual(api.cancelled, [])
+        api = FakeGitHub()
+        api.pr.pop('state')
+        api.pr['merged'] = True
+        with self.assertRaises(m.Refused):
+            api.reconcile()
+        self.assertEqual(api.cancelled, [])
+
+    def test_pr_closing_during_cancellation_plan_still_refuses(self):
+        for merged in (True, False):
+            api = FakeGitHub()
+            count = 0
+            def race(path, value, merged=merged):
+                nonlocal count
+                if path.endswith('/pulls/42'):
+                    count += 1
+                    if count == 2:
+                        return {**value, 'state': 'closed', 'merged': merged}
+                return value
+            api.hook = race
+            with self.subTest(merged=merged), self.assertRaises(m.Refused):
+                api.reconcile()
+            self.assertEqual(count, 2)
+            self.assertTrue(any('/runs?' in p for p in api.reads))
+            self.assertEqual(api.cancelled, [])
+
     def test_live_head_advance_or_divergence_before_cancel_aborts(self):
         for new in (C, X, A):
             api = FakeGitHub()
@@ -478,11 +598,118 @@ class ControllerTests(unittest.TestCase):
                         value['total_count'] = 3
                     elif mutation == 'capped':
                         value['total_count'] = 1000
-                    elif calls == 2:
+                    elif calls % 2 == 0:
+                        value = copy.deepcopy(value)
                         value['workflow_runs'][0]['status'] = 'completed'
                 return value
             api.hook = corrupt
             with self.subTest(mutation=mutation), self.assertRaises(m.Refused):
+                api.reconcile()
+            self.assertEqual(api.cancelled, [])
+
+    def test_transient_snapshot_churn_restarts_complete_discovery_and_final_read(self):
+        for changed_read in (2, 4):
+            api = FakeGitHub()
+            calls = 0
+            def churn(path, value, changed_read=changed_read):
+                nonlocal calls
+                if '/workflows/11/runs?' in path:
+                    calls += 1
+                    if calls == changed_read:
+                        value = copy.deepcopy(value)
+                        value['workflow_runs'][0]['status'] = 'queued'
+                return value
+            api.hook = churn
+            with self.subTest(changed_read=changed_read):
+                self.assertEqual(api.reconcile(), [1])
+                self.assertEqual(calls, 6)
+                self.assertEqual(api.cancelled, [1])
+
+    def test_changed_page_count_discards_partial_snapshot(self):
+        api = FakeGitHub()
+        api.runs = [run(i, A, status='completed') for i in range(3, 103)] + api.runs
+        changed = False
+        def churn(path, value):
+            nonlocal changed
+            if '/workflows/11/runs?' in path and 'page=2' in path and not changed:
+                changed = True
+                value['total_count'] += 1
+            return value
+        api.hook = churn
+        self.assertEqual(api.reconcile(), [1])
+        pages = [parse_qs(urlsplit(p).query)['page'][0] for p in api.reads
+                 if '/workflows/11/runs?' in p]
+        self.assertEqual(pages[:5], ['1', '2', '1', '2', '1'])
+
+    def test_sustained_snapshot_churn_exhausts_three_attempts_without_writes(self):
+        api = FakeGitHub()
+        calls = 0
+        def churn(path, value):
+            nonlocal calls
+            if '/runs?' in path:
+                calls += 1
+                if calls % 2 == 0:
+                    value = copy.deepcopy(value)
+                    value['workflow_runs'][0]['status'] = 'queued'
+            return value
+        api.hook = churn
+        with self.assertRaisesRegex(m.Refused, 'snapshot changed'):
+            api.reconcile()
+        self.assertEqual(calls, 6)
+        self.assertEqual(api.cancelled, [])
+
+    def test_malformed_corroboration_is_not_retried(self):
+        for bad in (None, {}, {'total_count': 1000, 'workflow_runs': []},
+                    {'total_count': 2, 'workflow_runs': [run(), run()]},
+                    {'total_count': 3, 'workflow_runs': [run(), run(2)]}):
+            api = FakeGitHub()
+            calls = 0
+            def corrupt(path, value, bad=bad):
+                nonlocal calls
+                if '/runs?' in path:
+                    calls += 1
+                    if calls == 2:
+                        return bad
+                return value
+            api.hook = corrupt
+            with self.subTest(bad=bad), self.assertRaises(m.Refused):
+                api.reconcile()
+            self.assertEqual(calls, 2)
+            self.assertEqual(api.cancelled, [])
+
+    def test_snapshot_retry_keeps_shared_deadline_and_call_budget(self):
+        first = {'total_count': 1, 'workflow_runs': [run()]}
+        changed = copy.deepcopy(first)
+        changed['workflow_runs'][0]['status'] = 'queued'
+        for clock, initial_calls in ((Mock(side_effect=[0, 0, 119, 120]), 0),
+                                     (lambda: 0, 158)):
+            api = m.GitHub(clock=clock)
+            api.calls = initial_calls
+            responses = [Mock(stdout=json.dumps(p)) for p in (first, changed)]
+            with (patch.object(m.subprocess, 'run', side_effect=responses) as transport,
+                  self.assertRaisesRegex(m.Refused, 'budget exceeded')):
+                m.run_snapshot(api, REPO, 11, 'feature')
+            self.assertEqual(transport.call_count, 2)
+            self.assertTrue(all(c.args[0][3] == 'GET' for c in transport.call_args_list))
+            self.assertEqual(api.deadline, 120)
+
+    def test_retry_does_not_preserve_a_cancelled_witness_or_stale_head(self):
+        for change in ('witness', 'head'):
+            api = FakeGitHub()
+            calls = 0
+            def churn(path, value, change=change, api=api):
+                nonlocal calls
+                if '/workflows/11/runs?' in path:
+                    calls += 1
+                    if calls == 4:
+                        if change == 'witness':
+                            api.runs[1].update(status='completed', conclusion='cancelled')
+                        else:
+                            api.pr = pr(C)
+                        value['workflow_runs'][0]['status'] = 'queued'
+                return value
+            api.hook = churn
+            with self.subTest(change=change), self.assertRaises(m.Refused):
                 api.reconcile()
             self.assertEqual(api.cancelled, [])
 
@@ -517,6 +744,185 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaises(TimeoutError):
             api.reconcile()
         self.assertEqual(api.cancel.call_count, 1)
+
+    def test_conflict_is_noop_only_after_one_reread_proves_same_attempt_terminal(self):
+        cases = [(conclusion, 1) for conclusion in sorted(m.TERMINAL)] + [('cancelled', 0)]
+        for conclusion, code in cases:
+            api = TransportFake()
+            def settle(path, value, api=api, conclusion=conclusion):
+                if api.post_at is not None and path.endswith('/actions/runs/1'):
+                    return {**value, 'status': 'completed', 'conclusion': conclusion}
+                return value
+            api.hook = settle
+            with self.subTest(conclusion=conclusion, code=code):
+                self.assertEqual(api.run_with(response(CONFLICT, code)), [])
+                self.assertEqual(api.cancelled, [])
+                self.assertEqual(api.rereads(), [f'repos/{REPO}/actions/runs/1'])
+                self.assertEqual(api.transport.call_count, 1)
+                self.assertEqual(api.transport.call_args.args[0],
+                                 ['gh', 'api', '--include', '--method', 'POST',
+                                  f'repos/{REPO}/actions/runs/1/cancel'])
+                self.assertFalse(api.transport.call_args.kwargs['check'])
+                self.assertEqual(api.client.calls, len(api.reads) + 1)
+                self.assertNotIn('Requested cancellation', api.output.getvalue())
+                self.assertIn('no cancellation requested', api.output.getvalue())
+                self.assertNotIn(SECRET, api.output.getvalue())
+
+    def test_unverified_conflict_remains_visible_refusal_after_one_reread(self):
+        def done(**fields):
+            return lambda r: {**r, 'status': 'completed', 'conclusion': 'cancelled', **fields}
+        def unreadable(value):
+            raise OSError(f'token {SECRET}')
+        changes = [('active', lambda r: r),
+                   ('unknown', done(status='mystery')),
+                   ('missing-status', lambda r: {k: v for k, v in done()(r).items() if k != 'status'}),
+                   ('missing-conclusion',
+                    lambda r: {k: v for k, v in done()(r).items() if k != 'conclusion'}),
+                   ('null-conclusion', done(conclusion=None)),
+                   ('invalid-conclusion', done(conclusion='bogus')),
+                   ('list-conclusion', done(conclusion=[])),
+                   ('object-conclusion', done(conclusion={})),
+                   ('attempt', done(run_attempt=2)),
+                   ('sha', done(head_sha=X)),
+                   ('workflow', done(workflow_id=99)),
+                   ('repo', done(repository={'id': 99, 'full_name': REPO})),
+                   ('pr', lambda r: {**done()(r), 'pull_requests': []}),
+                   ('malformed', lambda r: None),
+                   ('list', lambda r: [r]),
+                   ('unreadable', unreadable)]
+        for name, change in changes:
+            api = TransportFake()
+            def reread(path, value, api=api, change=change):
+                if api.post_at is not None and path.endswith('/actions/runs/1'):
+                    return change(copy.deepcopy(value))
+                return value
+            api.hook = reread
+            with self.subTest(name=name):
+                with self.assertRaises(m.CancelRefused) as caught:
+                    api.run_with(response(CONFLICT, 1))
+                error = caught.exception
+                self.assertEqual((error.category, error.status, error.exit_code),
+                                 ('conflict-unverified', 409, 1))
+                self.assertTrue(error.__suppress_context__)
+                self.assertNotIn(SECRET, str(error))
+                self.assertEqual(api.rereads(), [f'repos/{REPO}/actions/runs/1'])
+                self.assertEqual(api.transport.call_count, 1)
+                self.assertEqual(api.cancelled, [])
+                self.assertNotIn('Requested cancellation', api.output.getvalue())
+                self.assertNotIn(SECRET, api.output.getvalue())
+
+    def test_other_cancel_failures_are_refused_without_retry_or_reread(self):
+        timeout = subprocess.TimeoutExpired(['gh'], 10, output=SECRET, stderr=SECRET)
+        cases = [(response(f'HTTP/2.0 {code} Error\nAuthorization: token {SECRET}\n\n{SECRET}', 1),
+                  'http', code, 1) for code in (403, 404, 500)] + [
+            (response('', 1), 'unparsed-status', None, 1),
+            (response(None, 1), 'unparsed-status', None, 1),
+            (response(f'{{"message": "HTTP/1.1 409 Conflict {SECRET}"}}', 1),
+             'unparsed-status', None, 1),
+            (response('HTTP/2.0 500 Error\n\nHTTP/1.1 409 Conflict', 1),
+             'unparsed-status', None, 1),
+            (response('HTTP/1.1 409 Conflict\nHTTP/1.1 202 Accepted\n\n', 1),
+             'unparsed-status', None, 1),
+            (response('HTTP/1.1 409 Conflict', 1), 'unparsed-status', None, 1),
+            (response('HTTP/1.1 409 Conflict\n\nHTTP/1.1 202 Accepted\n\n{}', 1),
+             'unparsed-status', None, 1),
+            (response('HTTP/2.0 4090 Conflict\n\n', 1), 'unparsed-status', None, 1),
+            (response(' HTTP/2.0 409 Conflict\n\n', 1), 'unparsed-status', None, 1),
+            (response(b'HTTP/1.1 403 Forbidden\r\n\r\n{}', 1), 'http', 403, 1),
+            (response('HTTP/2.0 202 Accepted\n\n{}', 1), 'http', 202, 1),
+            (response('{}', 0), 'unparsed-status', None, 0),
+            (response('HTTP/2.0 202 Accepted\n\nnot json', 0), 'malformed-success', 202, 0),
+            (timeout, 'timeout', None, None),
+            (OSError(SECRET), 'transport', None, None),
+            (UnicodeDecodeError('utf-8', b'\xff', 0, 1, 'invalid byte'),
+             'transport', None, None)]
+        for index, (outcome, category, status, code) in enumerate(cases):
+            api = TransportFake()
+            with self.subTest(index=index, category=category, status=status):
+                with self.assertRaises(m.CancelRefused) as caught:
+                    api.run_with(outcome)
+                error = caught.exception
+                self.assertEqual((error.category, error.status, error.exit_code),
+                                 (category, status, code))
+                self.assertIsNone(error.__cause__)
+                self.assertNotIn(SECRET, str(error))
+                self.assertNotIn(SECRET, api.output.getvalue())
+                self.assertEqual(api.rereads(), [])
+                self.assertEqual(api.transport.call_count, 1)
+                self.assertEqual(api.cancelled, [])
+
+    def test_successful_post_keeps_existing_requested_behavior(self):
+        for stdout in (ACCEPTED, 'HTTP/1.1 204 No Content\n\n'):
+            api = TransportFake()
+            with self.subTest(stdout=stdout):
+                self.assertEqual(api.run_with(response(stdout, 0)), [1])
+                self.assertEqual(api.cancelled, [1])
+                self.assertEqual(api.rereads(), [])
+                self.assertEqual(api.transport.call_count, 1)
+                self.assertEqual(api.client.calls, len(api.reads) + 1)
+                self.assertIn('Requested cancellation of verified ancestor run 1',
+                              api.output.getvalue())
+
+    def test_conflict_accepts_crlf_bytes_but_reread_cannot_reset_deadline(self):
+        api = TransportFake()
+        def settle(path, value):
+            if api.post_at is not None and path.endswith('/actions/runs/1'):
+                return {**value, 'status': 'completed', 'conclusion': 'cancelled'}
+            return value
+        api.hook = settle
+        self.assertEqual(api.run_with(response(CONFLICT.replace('\n', '\r\n').encode(), 1)), [])
+        self.assertEqual(api.transport.call_count, 1)
+        api = TransportFake()
+        # post_at is set just before the real POST's budget check: expire only
+        # once subprocess has been called, leaving no time for the conflict GET.
+        api.client.clock = lambda: 121 if getattr(api, 'transport', None) and api.transport.called else 0
+        with self.assertRaises(m.CancelRefused) as caught:
+            api.run_with(response(CONFLICT, 1))
+        self.assertEqual(caught.exception.category, 'conflict-unverified')
+        self.assertEqual(api.client.deadline, 120)
+        self.assertEqual(api.rereads(), [])
+        self.assertEqual(api.transport.call_count, 1)
+
+    def test_verified_conflict_noop_continues_to_later_targets(self):
+        api = TransportFake()
+        api.runs.extend([run(3, A, 'rust'), run(4, B, 'rust', status='queued')])
+        def settle(path, value):
+            if api.post_at is not None and path.endswith('/actions/runs/1'):
+                return {**value, 'status': 'completed', 'conclusion': 'cancelled'}
+            return value
+        api.hook = settle
+        self.assertEqual(api.run_with(response(CONFLICT, 1), response(ACCEPTED, 0)), [3])
+        self.assertEqual(api.cancelled, [3])
+        self.assertEqual([c.args[0][-1] for c in api.transport.call_args_list],
+                         [f'repos/{REPO}/actions/runs/1/cancel',
+                          f'repos/{REPO}/actions/runs/3/cancel'])
+        self.assertEqual(api.reads.count(f'repos/{REPO}/actions/runs/1'), 2)
+        self.assertEqual(api.client.calls, len(api.reads) + 2)
+        self.assertIn('Requested cancellation of verified ancestor run 3', api.output.getvalue())
+        self.assertNotIn('Requested cancellation of verified ancestor run 1', api.output.getvalue())
+
+    def test_conflict_reread_shares_remaining_budget_and_never_retries_post(self):
+        baseline = FakeGitHub()
+        baseline.reconcile()
+        api = TransportFake(calls=159 - len(baseline.reads))
+        with self.assertRaises(m.CancelRefused) as caught:
+            api.run_with(response(CONFLICT, 1))
+        self.assertEqual((caught.exception.category, caught.exception.status),
+                         ('conflict-unverified', 409))
+        self.assertEqual(api.client.calls, 161)
+        self.assertEqual(api.rereads(), [])
+        self.assertEqual(api.transport.call_count, 1)
+        self.assertEqual(api.cancelled, [])
+        client = m.GitHub(clock=lambda: 0)
+        client.calls = 160
+        with (patch.object(m.subprocess, 'run') as transport,
+              self.assertRaisesRegex(m.Refused, 'budget exceeded')):
+            client.cancel(f'repos/{REPO}/actions/runs/1/cancel')
+        transport.assert_not_called()
+        client = m.GitHub(clock=Mock(side_effect=[0, 115]))
+        with patch.object(m.subprocess, 'run', return_value=response(ACCEPTED, 0)) as transport:
+            client.cancel(f'repos/{REPO}/actions/runs/1/cancel')
+        self.assertEqual(transport.call_args.kwargs['timeout'], 5)
 
     def test_transport_budget_and_timeout_are_bounded(self):
         api = m.GitHub(clock=Mock(side_effect=[0, 121]))

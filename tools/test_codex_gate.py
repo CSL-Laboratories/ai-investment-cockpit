@@ -1494,7 +1494,7 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertEqual(scan.get('permissions', doc['permissions']),
                          {'contents': 'read', 'pull-requests': 'read', 'issues': 'read'})
         self.assertEqual(scan['steps'][1]['env'],
-                         {'GH_TOKEN': '${{ github.token }}', 'CANDIDATE_SCAN': 'true'})
+                         {'GH_TOKEN': '${{ github.token }}', 'CANDIDATE_SCAN': '${{ vars.CANDIDATE_COORDINATOR }}'})
         self.assertEqual(gate['permissions'],
                          {'contents': 'read', 'pull-requests': 'read', 'issues': 'write'})
         for job in (scan, gate):
@@ -1515,6 +1515,58 @@ class WorkflowStructureTests(unittest.TestCase):
                          "github.event_name == 'pull_request' && "
                          'github.event.pull_request.head.repo.full_name == github.repository')
         self.assertNotIn('secrets.', yaml.dump(tests))
+
+    def test_legacy_route_runs_only_when_coordinator_is_off(self) -> None:
+        doc = yaml.load(self.text, Loader=yaml.BaseLoader)
+        legacy = doc['jobs']['legacy']
+        condition = ' '.join(legacy['if'].split())
+        self.assertTrue(condition.startswith("vars.CANDIDATE_COORDINATOR != 'true' && ("), condition)
+        # Every clause of main's pre-CSL-259 gate condition, unchanged.
+        for clause in ("github.event_name == 'schedule'",
+                       "github.event_name == 'workflow_dispatch'",
+                       "github.event_name == 'pull_request' &&",
+                       ("github.event_name == 'pull_request_review' && "
+                        "github.event.review.user.login == 'chatgpt-codex-connector[bot]' && "
+                        "github.event.pull_request.head.repo.full_name == github.repository")):
+            self.assertIn(clause, condition)
+        self.assertEqual(condition.count('github.event.pull_request.head.repo.full_name == github.repository'), 2)
+        # Only main's four pull_request actions, on non-draft PRs, reach the legacy handlers.
+        self.assertIn("github.event.pull_request.draft == false", legacy['if'])
+        self.assertIn('contains(fromJSON(\'["opened","synchronize","reopened","ready_for_review"]\'), '
+                      'github.event.action)', condition)
+        self.assertNotIn('needs', legacy)
+        self.assertEqual(legacy['concurrency'], {'group': 'codex-gate', 'cancel-in-progress': 'false'})
+        self.assertEqual(legacy['permissions'], {'contents': 'read', 'pull-requests': 'read', 'issues': 'write'})
+        self.assertEqual(legacy['runs-on'], 'ubuntu-latest')
+        self.assertEqual(legacy['timeout-minutes'], '10')
+        self.assertEqual([s.get('name') or s.get('uses') for s in legacy['steps']],
+                         ['Check trigger PAT', 'actions/checkout@v4', 'Run Codex gate'])
+        checkout = legacy['steps'][1]
+        self.assertEqual(checkout['if'], "steps.pat.outputs.skip != 'true'")
+        self.assertEqual(checkout['with'], {'ref': '${{ github.event.repository.default_branch }}',
+                                            'persist-credentials': 'false', 'fetch-depth': '1'})
+        execute = legacy['steps'][2]
+        self.assertEqual(execute['if'], "steps.pat.outputs.skip != 'true'")
+        self.assertEqual(execute['env'], {
+            'GH_TOKEN': '${{ github.token }}', 'CODEX_TRIGGER_PAT': '${{ secrets.CODEX_TRIGGER_PAT }}',
+            'LINEAR_API_KEY': '${{ secrets.LINEAR_API_KEY }}', 'GITHUB_REPOSITORY': '${{ github.repository }}',
+            'GITHUB_EVENT_NAME': '${{ github.event_name }}', 'GITHUB_EVENT_PATH': '${{ github.event_path }}'})
+        self.assertNotIn('CODEX_CANDIDATE_PR', yaml.dump(legacy))
+        self.assertIn('python3 -X utf8 -B scripts/ci/codex_gate.py', execute['run'])
+
+    def test_coordinator_route_runs_only_when_coordinator_is_on(self) -> None:
+        doc = yaml.load(self.text, Loader=yaml.BaseLoader)
+        gate, scan = doc['jobs']['gate'], doc['jobs']['scan']
+        self.assertEqual(' '.join(gate['if'].split()),
+                         "vars.CANDIDATE_COORDINATOR == 'true' && needs.scan.outputs.prs != '[]' && "
+                         "needs.scan.outputs.prs != ''")
+        self.assertEqual(scan['steps'][1]['env']['CANDIDATE_SCAN'], '${{ vars.CANDIDATE_COORDINATOR }}')
+
+    def test_only_gate_jobs_see_trigger_pat(self) -> None:
+        doc = yaml.load(self.text, Loader=yaml.BaseLoader)
+        with_pat = {name for name, job in doc['jobs'].items() if 'CODEX_TRIGGER_PAT' in yaml.dump(job)}
+        self.assertEqual(with_pat, {'legacy', 'gate'})
+        self.assertNotIn('CODEX_TRIGGER_PAT', yaml.dump({k: v for k, v in doc.items() if k != 'jobs'}))
 
     def test_claude_dispatch_triggers(self) -> None:
         self.assertIn("repository_dispatch:", self.claude)
@@ -1641,7 +1693,11 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("pull-requests: read", self.text)
         self.assertIn("issues: read", self.text)
         self.assertNotIn("actions: write", self.text)
-        self.assertEqual(self.text.count("issues: write"), 1)
+        # Only the two mutually exclusive PAT jobs may write receipts.
+        jobs = yaml.load(self.text, Loader=yaml.BaseLoader)["jobs"]
+        self.assertEqual({name for name, job in jobs.items()
+                          if (job.get("permissions") or {}).get("issues") == "write"}, {"legacy", "gate"})
+        self.assertEqual(self.text.count("issues: write"), 2)
         self.assertNotIn("pull-requests: write", self.text)
         self.assertIn("ACTIONLINT_SHA256", self.text)
         self.assertIn("sha256sum -c", self.text)

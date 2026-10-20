@@ -11,6 +11,20 @@ order and the reviewed migration from the current implementation described below
 The nine invariants and runtime rules here remain in force until their separately
 scoped, reviewed implementation amendments; ratification alone grants no new authority.
 
+For the replacement program, read
+[SUCCESSOR-PRODUCT.md](docs/replacement/SUCCESSOR-PRODUCT.md),
+[MONTH-PROGRAM.md](docs/replacement/MONTH-PROGRAM.md) and the exact acceptance
+record in [program.json](docs/replacement/program.json). Accepted bytes and scoped
+gates remain controlling. Follow [AGENTS.md's founder decision and integration rules](AGENTS.md#founder-decisions-and-integration)
+for operational authority; they do not amend accepted contracts, activate R2a or
+unlock live capital. Founders merge after the required current-head reviews and checks;
+agents never merge. A founder's own PR requires another founder's approval before merge,
+regardless of ruleset enforcement. Non-author approval checks alone do not establish
+founder identity. All three founders participate in the final
+release decision; Lucas has final say in any founder disagreement, including a 2-1 split.
+
+For issue admission, decision holds, claim release and handoff, manual ownership and shared research evidence, follow [AGENTS.md's bounded issue execution and shared evidence rules](AGENTS.md#bounded-issue-execution-and-shared-evidence). They grant no new authority, settings or spend and leave review-loop roles unchanged.
+
 Current implementation:
 A solo-developer, subscription-powered, **human-gated** AI investing copilot.
 **Paper-first** — no live capital moves until the pre-live gates pass. Think of it
@@ -56,7 +70,8 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 - **Execution stays model-free.** Models serve awareness/reasoning only.
 - **Research/dev host is Cursor Cloud Agent Linux VM.** Cursor-native fresh
   sessions are preferred; Codex/OpenCode development routes require exact-host
-  qualification and admitted budgets. Devin is retired. Muse synthesis requires
+  qualification and admitted budgets. Devin is retired from research/dev swarm dispatch;
+  its GitHub PR-review role in `AGENTS.md` remains active. Muse synthesis requires
   a different model family; OpenRouter/Hive are capped fallback synthesis only.
   Current process: `docs/research/agent-swarm-rebase-2026-09-14.md`.
   Cloud handoff: `docs/research/cursor-cloud-rdt-handoff-2026-09-14.md`.
@@ -65,20 +80,26 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 ## Session workflow
 1. Read `docs/README.md`, `PRODUCT.md` for product scope/acceptance, then
    `docs/PLAN.md` for current delivery order and `docs/REGISTER.md` for claims.
+   Linear holds execution assignment/status; REGISTER keeps package IDs, claims,
+   scope and completion contracts. See `AGENTS.md` Linear-first workflow.
    The adopted product contracts supply required behavior; subsystem/reference
    documents do not independently change delivery order or current runtime authority.
-2. Pick **ONE** work package (RW-xx refactor, or W-xx production). Confirm its
-   scope and its deterministic gate before writing code. Decision or direction
-   work: see `AGENTS.md` Linear-first (assignee Parallel Task API brief; Grok Bots
-   do not research or resolve those issues).
+2. For package work, pick **ONE** work package (RW-xx refactor, or W-xx
+   production). For process-only work, use one admitted CSL issue with
+   `REGISTER: none`; do not allocate a package solely for that work. Confirm
+   the chosen scope and its deterministic gate before writing code. Decision
+   or direction work: see `AGENTS.md` Linear-first (assignee Parallel Task API
+   brief; Grok Bots do not research or resolve those issues).
 3. Implement. Preserve the invariants. Add tests alongside.
 4. Run the gates (below). Green before you stop.
 5. **Do not re-litigate settled decisions** — the corpus is a one-way pipeline
    (research → architecture → build → security → enhancements). Recorded
    architecture and direction live in `docs/adr/` and the linked Linear
    `decision` issues.
-6. Commit only when the operator asks. Message convention:
-   `feat(RW-xx): …` / `fix(RW-xx): …` / `docs(RW-xx): …`.
+6. Commit only when the operator asks. For package work, use the package ID
+   in the message, for example `feat(RW-xx): …` / `fix(RW-xx): …` /
+   `docs(RW-xx): …`. For process-only work with `REGISTER: none`, use the
+   admitted issue ID, for example `docs(CSL-N): …` or `chore(CSL-N): …`.
 7. **CI etiquette (CSL-255):** open PRs as drafts; batch pushes; mark ready
    once after validation and only when no owner hold remains. Never merge a
    PR, rebase, or force-push. Avoid routine base merges; a normal base merge
@@ -124,6 +145,11 @@ ruff check .
 Install the full runtime set in every matrix cell, including `discord.py`. The Discord
 command-tree tests run offline with the real dependency; a separate isolated subprocess
 forces its import to fail and covers the fallback without skipping either path.
+`discord.py` 2.7.1 declares `audioop-lts; python_version >= "3.13"` in its PyPI
+`requires_dist`. On 3.11 and 3.12 the stdlib `audioop` import in `discord.player` is a
+DeprecationWarning, and pytest ignores that one warning only. That marker is why a
+`<3.13` cap is not added for this warning. A 3.13 matrix cell stays a separate support
+decision.
 
 ## Where things are
 - **Core engines (solid — change with care + adversarial review):** `app/risk/`,

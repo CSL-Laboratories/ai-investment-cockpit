@@ -18,6 +18,8 @@ from types import SimpleNamespace
 
 import merge_candidate as candidate_api
 
+RESERVATION_KINDS = frozenset({"request", "dispatch", "mediate-intent"})
+REQUEST_BUDGET = 3
 KINDS = {"ci": ".github/workflows/ci.yml", "rust": ".github/workflows/rust.yml"}
 HOLD_LABELS = frozenset({"hold", "ci:hold", "do-not-merge", "needs-decision"})
 POLICY_ENV = ("CODEX_POLICY_SHA", "CODEX_POLICY_BRANCH")
@@ -116,12 +118,26 @@ class Coordinator:
             records = self.receipts.records(body, "candidate-" + kind)
             for record in records:
                 if not comment.get("created_at") or comment.get("updated_at") != comment["created_at"]:
-                    raise ValueError("edited or unversioned candidate journal; reconcile manually")
+                    # An edited or unversioned record fails verification. A release
+                    # record (abort/rejection) is skipped, so a forged copy cannot
+                    # halt every reconcile. A reservation record stays fail-closed:
+                    # dropping it would let a new reservation duplicate a dispatch
+                    # or a mediation handoff. Its ownership cannot be established
+                    # from an edited body, so this holds every candidate until
+                    # records are authenticated (CSL-272).
+                    if kind in RESERVATION_KINDS:
+                        raise ValueError("edited or unversioned candidate reservation; reconcile manually")
+                    continue
                 # A machine record must be the whole comment, not a quoted example.
                 if body.strip() != self.receipts.marker("candidate-" + kind, record):
                     continue
                 result.append({**record, "id": comment["id"], "created_at": comment.get("created_at")})
         return sorted(result, key=lambda x: x["id"])
+
+    def verify_reservations(self, comments):
+        """Fail closed on any edited or unversioned reservation, whatever kind the caller reads next."""
+        for kind in RESERVATION_KINDS:
+            self.journal(comments, kind)
 
     def record(self, kind, data):
         body = self.receipts.marker("candidate-" + kind, data)
@@ -222,11 +238,22 @@ class Coordinator:
         if pr.get("state") != "open" or pr.get("draft") is not False:
             return None
         identity, comments, reviews, held = self.head_snapshot()
+        try:
+            self.verify_reservations(comments)
+        except ValueError:
+            # Refuse only after removing a receipt-proven gate-owned label;
+            # revoke never deletes a human-owned one.
+            self.revoke(SimpleNamespace(head=identity[2]))
+            raise
         if held:
             return None
         review = candidate_api.head_mediate_review(reviews, identity[2])
         if not review:
             return None
+        # A stale MEDIATE on an already-approved PR: _act would skip the handoff,
+        # so stop before revoke withdraws a gate-owned ci:full.
+        if self.legacy.pr_is_approved(reviews):
+            return "mediate-skip-approved"
         head = identity[2]
         pause = self.receipts.latest_pause_id(comments, head)
         self.fresh_mediate(identity, review, pause)
@@ -237,6 +264,9 @@ class Coordinator:
         origin = (pause, frozenset(invalidations))
         pause = max([pause, *invalidations])
         comments, reviews = self.fresh_mediate(identity, review, pause, origin)
+        self.verify_reservations(comments)
+        if self.legacy.pr_is_approved(reviews):
+            return "mediate-skip-approved"
         nonce = hashlib.sha256(f"{head}:{review['id']}:{pause}".encode()).hexdigest()[:32]
         trusted = self.legacy.trusted_comments(comments, self.legacy.marker_authors(self.gh))
         # Keep the established head-scoped MEDIATE idempotence when upgrading
@@ -318,6 +348,10 @@ class Coordinator:
         matching = [x for x in self.journal(comments, "request") if x.get("candidate") == candidate.key and x.get("pause") == pause and x["id"] not in aborted]
         if matching:
             return matching[-1]
+        # Every reservation made for this candidate and pause generation,
+        # aborted or not, consumes the same request budget.
+        if len([x for x in self.journal(comments, "request") if x.get("candidate") == candidate.key and x.get("pause") == pause]) >= REQUEST_BUDGET:
+            return "request-budget-exhausted"
         request = self.record("request", {"candidate": candidate.key, "nonce": uuid.uuid4().hex, "pause": pause, "identity": candidate.record()})
         try:
             current, refreshed, _reviews, _events, held = self.snapshot()
@@ -334,9 +368,19 @@ class Coordinator:
             "If a human decision is needed, end with CODEX-GATE: MEDIATE. Findings without READY never authorize CI.\n\n"
             f"CODEX-CANDIDATE: {candidate.key}\nCODEX-REQUEST: {request['nonce']}"
         )
-        # Reservation precedes mention. Unknown delivery is not retried. A
-        # legitimate manually repeated mention can reference the same nonce.
-        self.gh.post(f"{self.issue}/comments", {"body": prompt})
+        # Reservation precedes mention. A definitive rejection (known 4xx/429)
+        # is positive evidence nothing was posted, so the reservation is
+        # released and the next reconcile re-requests. An unknown outcome is
+        # not retried: the reservation stays and holds against a duplicate
+        # mention. A legitimate manually repeated mention can reference the
+        # same nonce.
+        try:
+            self.gh.post(f"{self.issue}/comments", {"body": prompt})
+        except Exception as error:
+            status = self.receipts.known_label_rejection(error)
+            if status:
+                self.record("request-aborted", {"request": request["id"], "status": status})
+            raise
         return request
 
     def action_get(self, path):
@@ -435,6 +479,7 @@ class Coordinator:
         if type(actor.get("id")) is not int or not actor.get("login"):
             raise ValueError("dispatch actor unavailable")
         comments = self.comments()
+        self.verify_reservations(comments)
         intents = [x for x in self.journal(comments, "dispatch") if x.get("candidate") == candidate.key and x.get("kind") == kind]
         rejected = {x.get("nonce") for x in self.journal(comments, "rejected") if x.get("status") in {400, 401, 403, 404, 409, 422, 429}}
         aborted = {x.get("nonce") for x in self.journal(comments, "aborted") if x.get("reason") == "pre-dispatch-refused"}
@@ -515,6 +560,11 @@ class Coordinator:
         if ineligible:
             return ineligible
         candidate, comments, reviews, _events, blocked = self.snapshot()
+        try:
+            self.verify_reservations(comments)
+        except ValueError:
+            self.revoke(candidate)
+            raise
         if blocked:
             self.revoke(candidate)
             return "held-or-fixer-pending"
@@ -533,7 +583,10 @@ class Coordinator:
             current, refreshed, _reviews, _events, held = self.snapshot()
             if current != candidate or held:
                 raise ValueError("request changed before mention")
-            self.request(candidate, refreshed)
+            self.verify_reservations(refreshed)
+            state = self.request(candidate, refreshed)
+            if state == "request-budget-exhausted":
+                return state
             return "awaiting-independent-candidate-review"
         # READY is candidate-scoped, not a persistent label. Adding ci:full here
         # would make later ordinary pushes start duplicate full matrices before
@@ -580,9 +633,18 @@ def scan(gh, repository, event_name, event):
 
 if __name__ == "__main__":
     import os
-    import codex_gate
+    # Off by default. CANDIDATE_SCAN carries `vars.CANDIDATE_COORDINATOR`: the
+    # repository variable or an organization variable of the same name
+    # (precedence: environment, then repository, then organization). Only the
+    # exact string "true" enables the coordinator; turning it on is Lucas's
+    # decision after CSL-272. Switching it off stops new scans only: gate jobs
+    # already queued behind `claude-<PR>` still finish.
     if os.environ.get("CANDIDATE_SCAN") != "true":
-        raise SystemExit("candidate helper is invoked through the locked gate")
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+            output.write("prs=[]\n")
+        print('::notice::Candidate coordinator is off (repo variable CANDIDATE_COORDINATOR is not "true").')
+        raise SystemExit(0)
+    import codex_gate
     numbers = scan(codex_gate.GitHub(os.environ["GH_TOKEN"]), os.environ["GITHUB_REPOSITORY"],
                    os.environ["GITHUB_EVENT_NAME"], codex_gate.load_event(os.environ["GITHUB_EVENT_PATH"]))
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:

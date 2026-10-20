@@ -14,6 +14,7 @@ import os
 import re
 import runpy
 import sys
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -27,6 +28,7 @@ try:
     SPEC = importlib.util.spec_from_file_location("candidate_gate_under_test", ROOT / "scripts/ci/candidate_gate.py")
     gate = importlib.util.module_from_spec(SPEC)
     SPEC.loader.exec_module(gate)
+    import codex_gate as legacy_gate
 finally:
     sys.path.pop(0)
 
@@ -257,7 +259,7 @@ class CandidateCoordinatorTests(unittest.TestCase):
             _act=Mock(return_value=["mediation-enqueued"]),
             trusted_comments=Mock(return_value=[]), marker_authors=Mock(return_value={"trusted"}),
             action_for_sha=Mock(return_value=""), ready_comments=lambda comments, head: comments,
-            utc_day=Mock(return_value="2026-10-16"))
+            utc_day=Mock(return_value="2026-10-16"), pr_is_approved=legacy_gate.pr_is_approved)
         self.coordinator = gate.Coordinator(self.legacy, self.gh, REPO, PR, POLICY)
 
     def reconcile(self, policy=POLICY):
@@ -954,6 +956,59 @@ class CandidateCoordinatorTests(unittest.TestCase):
         self.legacy._act.assert_called_once()
         self.assertEqual(self.gh.dispatches, [])
 
+    def human_review(self, state, identifier, submitted_at):
+        return {"id": identifier, "user": {"id": 55, "login": "owner", "type": "User"},
+                "state": state, "submitted_at": submitted_at}
+
+    def test_mediate_skips_approved_pr_before_any_side_effect(self):
+        self.prime_head_mediate()
+        self.gh.reviews.append(self.human_review("APPROVED", 8000, "2026-10-16T00:02:00Z"))
+        before = copy.deepcopy(self.gh.comments)
+        self.assertEqual(self.reconcile(), "mediate-skip-approved")
+        self.receipts.revoke_owned_ci.assert_not_called()
+        self.legacy._act.assert_not_called()
+        self.assertEqual(self.journal("mediate-intent"), [])
+        self.assertEqual(self.gh.comments, before)
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_mediate_still_runs_when_latest_human_review_is_not_approval(self):
+        for later in ("CHANGES_REQUESTED", "DISMISSED", "COMMENTED"):
+            with self.subTest(later=later):
+                self.setUp()
+                self.prime_head_mediate()
+                approval = self.human_review("APPROVED", 8000, "2026-10-16T00:02:00Z")
+                self.gh.reviews.append(approval)
+                if later == "DISMISSED":
+                    # GitHub rewrites the dismissed review's own state.
+                    approval["state"] = "DISMISSED"
+                else:
+                    self.gh.reviews.append(self.human_review(later, 8001, "2026-10-16T00:03:00Z"))
+                result = self.reconcile()
+                if later == "CHANGES_REQUESTED":
+                    # The human hold wins before mediation, as before.
+                    self.assertEqual(result, "held-or-fixer-pending")
+                    self.legacy._act.assert_not_called()
+                    continue
+                # DISMISSED drops the approval; a plain COMMENTED leaves it in force.
+                if later == "DISMISSED":
+                    self.assertEqual(result, "mediation-enqueued")
+                    self.legacy._act.assert_called_once()
+                    self.assertEqual(len(self.journal("mediate-intent")), 1)
+                else:
+                    self.assertEqual(result, "mediate-skip-approved")
+                    self.legacy._act.assert_not_called()
+
+    def test_mediate_skips_when_approval_arrives_between_listings(self):
+        self.prime_head_mediate()
+        approval = self.human_review("APPROVED", 8000, "2026-10-16T00:02:00Z")
+        self.receipts.revoke_owned_ci.side_effect = (
+            lambda *args, **kwargs: self.gh.reviews.append(approval) or "nothing-owned")
+        self.assertEqual(self.reconcile(), "mediate-skip-approved")
+        self.receipts.revoke_owned_ci.assert_called_once()
+        self.legacy._act.assert_not_called()
+        self.assertEqual(self.journal("mediate-intent"), [])
+        self.assertEqual(self.journal("mediate"), [])
+
     def test_forged_mediate_neither_dispatches_nor_starts_mediation(self):
         self.prime_ready()
         self.gh.reviews[-1]["body"] = self.gh.reviews[-1]["body"].replace(
@@ -1391,6 +1446,56 @@ class CandidateCoordinatorTests(unittest.TestCase):
               redirect_stdout(output), self.assertRaises(SystemExit) as exited):
             runpy.run_path(str(ROOT / "scripts/ci/codex_gate.py"), run_name="__main__")
         return exited.exception.code, output.getvalue()
+
+    def run_main(self, scan_value, github=None):
+        """Run candidate_gate.py as the workflow's scan step does, with fake GitHub boundaries."""
+        def refuse(*args, **kwargs):
+            raise AssertionError("coordinator off: no GitHub client or event read")
+        fake = SimpleNamespace(GitHub=github or refuse, load_event=Mock(return_value={}) if github else refuse)
+        environment = {"GH_TOKEN": "read-token", "GITHUB_REPOSITORY": REPO, "GITHUB_EVENT_NAME": "schedule",
+                       "GITHUB_EVENT_PATH": "fake-event.json"}
+        if scan_value is not None:
+            environment["CANDIDATE_SCAN"] = scan_value
+        stdout, code = io.StringIO(), None
+        with tempfile.TemporaryDirectory() as directory:
+            environment["GITHUB_OUTPUT"] = str(Path(directory) / "output")
+            with (patch.dict(os.environ, environment, clear=True),
+                  patch.dict(sys.modules, {"codex_gate": fake, "merge_candidate": gate.candidate_api}),
+                  redirect_stdout(stdout)):
+                try:
+                    runpy.run_path(str(ROOT / "scripts/ci/candidate_gate.py"), run_name="__main__")
+                except SystemExit as exited:
+                    code = exited.code
+            written = Path(environment["GITHUB_OUTPUT"]).read_text(encoding="utf-8")
+        return code, written, stdout.getvalue()
+
+    def assert_inert(self, scan_value):
+        code, written, stdout = self.run_main(scan_value)
+        self.assertEqual(code, 0)
+        self.assertEqual(written, "prs=[]\n")
+        self.assertIn('::notice::Candidate coordinator is off (repo variable CANDIDATE_COORDINATOR is not "true").',
+                      stdout)
+
+    def test_main_is_inert_when_coordinator_variable_unset(self):
+        """An unset repo variable leaves the coordinator off: prs=[] and no GitHub API call."""
+        self.assert_inert(None)
+
+    def test_main_is_inert_for_non_true_values(self):
+        for value in ("", "false", "TRUE", "1", "yes", " true"):
+            with self.subTest(value=value):
+                self.assert_inert(value)
+
+    def test_main_scans_only_when_variable_is_exactly_true(self):
+        """Exactly "true" runs the real scan() against the read token and writes its result."""
+        client = SimpleNamespace(get=Mock(return_value=[{"id": 1, "number": PR, "draft": False,
+                                                         "head": {"repo": {"full_name": REPO}}}]))
+        github = Mock(return_value=client)
+        code, written, stdout = self.run_main("true", github)
+        self.assertIsNone(code)
+        github.assert_called_once_with("read-token")
+        self.assertTrue(client.get.call_args.args[0].startswith(f"repos/{REPO}/pulls?state=open"))
+        self.assertEqual(written, f'prs=["{PR}"]\n')
+        self.assertNotIn("Candidate coordinator is off", stdout)
 
     def test_edited_machine_receipt_fails_closed_without_redispatch(self):
         for kind in ("request", "dispatch"):
@@ -1892,6 +1997,411 @@ class CandidateCoordinatorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.reconcile()
         self.receipts.revoke_owned_ci.assert_not_called()
+        self.legacy._act.assert_not_called()
+
+    # --- Regressions for Dan's 2026-10-17 re-review on f785b732 (CSL-259) ---
+
+    def test_known_rejection_on_review_mention_releases_reservation_and_reposts(self):
+        """A definitive 4xx/429 on the @codex review POST records request-aborted and re-requests next time."""
+        original = self.gh.post
+
+        def rejected(path, payload):
+            if path.endswith("/comments"):
+                raise ApiError(429)
+            return original(path, payload)
+
+        self.gh.post = rejected
+        with self.assertRaises(ApiError):
+            self.reconcile()
+        requests = self.journal("request")
+        aborted = self.journal("request-aborted")
+        self.assertEqual(len(requests), 1)
+        self.assertEqual([x["request"] for x in aborted], [requests[0]["id"]])
+        self.assertEqual(aborted[0]["status"], 429)
+        self.assertEqual(self.gh.mentions, [])
+        self.gh.post = original
+        self.assertEqual(self.reconcile(), "awaiting-independent-candidate-review")
+        self.assertEqual(len(self.gh.mentions), 1)
+        self.assertEqual(len(self.journal("request")), 2)
+        self.assertNotEqual(self.journal("request")[-1]["nonce"], requests[0]["nonce"])
+
+    def test_unknown_review_mention_outcome_stays_held_without_duplicate(self):
+        """An unclassified failure leaves the reservation active: no abort receipt, no second mention."""
+        original = self.gh.post
+
+        def unknown(path, payload):
+            if path.endswith("/comments"):
+                raise RuntimeError("connection reset")
+            return original(path, payload)
+
+        self.gh.post = unknown
+        with self.assertRaises(RuntimeError):
+            self.reconcile()
+        self.assertEqual(self.journal("request-aborted"), [])
+        self.gh.post = original
+        for _ in range(4):
+            self.assertEqual(self.reconcile(), "awaiting-independent-candidate-review")
+        self.assertEqual(self.gh.mentions, [])
+        self.assertEqual(len(self.journal("request")), 1)
+
+    def test_edited_release_record_is_skipped_not_raised(self):
+        """A forged-then-edited abort/rejection record no longer halts every reconcile."""
+        self.gh.add_comment(FakeReceipts.marker("candidate-request-aborted", {"request": 1}))
+        self.gh.comments[-1]["updated_at"] = "2026-10-16T00:00:01Z"
+        self.assertEqual(self.journal("request-aborted"), [])
+        self.assertEqual(self.reconcile(), "awaiting-independent-candidate-review")
+        self.assertEqual(len(self.gh.mentions), 1)
+
+    def test_edited_reservation_record_still_fails_closed(self):
+        """Dropping an edited request/dispatch record could duplicate a dispatch, so it still holds."""
+        self.prime_ready()
+        record = next(c for c in self.gh.comments if "<!-- candidate-request:" in c["body"])
+        record["updated_at"] = "2026-10-16T00:00:01Z"
+        with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation"):
+            self.reconcile()
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_whole_comment_bot_record_is_still_trusted_by_login_only(self):
+        """Documents Major 3 (open): any github-actions[bot] whole-comment record is accepted by journal()."""
+        self.gh.add_comment(FakeReceipts.marker("candidate-request-aborted", {"request": 123}))
+        self.assertEqual([x["request"] for x in self.journal("request-aborted")], [123])
+
+    # --- Regressions for Devin findings on 8533e522 (CSL-259) ---
+
+    def test_edited_mediate_intent_fails_closed_without_second_handoff(self):
+        """An edited mediate-intent fails closed for every head: dropping it could repeat the mediation handoff."""
+        review = self.prime_head_mediate()
+        self.gh.add_comment(FakeReceipts.marker("candidate-mediate-intent",
+            {"head": HEAD, "review": review["id"], "pause": 0, "nonce": "0" * 32}))
+        self.gh.comments[-1]["updated_at"] = "2026-10-16T00:00:01Z"
+        message = "edited or unversioned candidate reservation; reconcile manually"
+        for call in (lambda: self.journal("mediate-intent"), self.coordinator.mediate, self.reconcile):
+            with self.assertRaisesRegex(ValueError, message):
+                call()
+        # Ownership cannot be read from the edited body, so another head holds too.
+        self.gh.drift("head")
+        review["commit_id"] = self.gh.pr["head"]["sha"]
+        with self.assertRaisesRegex(ValueError, message):
+            self.reconcile()
+        intents = [c for c in self.gh.comments if self.receipts.records(c["body"], "candidate-mediate-intent")]
+        self.assertEqual(len(intents), 1)
+        self.legacy._act.assert_not_called()
+        self.assertEqual(self.gh.mentions, [])
+
+    def reject_mentions(self, status):
+        original = self.gh.post
+
+        def rejected(path, payload):
+            if path.endswith("/comments"):
+                raise ApiError(status)
+            return original(path, payload)
+
+        self.gh.post = rejected
+        return original
+
+    def test_permanent_review_mention_rejection_exhausts_request_budget(self):
+        """A permanent 403 is re-requested at most REQUEST_BUDGET times for one candidate."""
+        original = self.reject_mentions(403)
+        for _ in range(gate.REQUEST_BUDGET):
+            with self.assertRaises(ApiError):
+                self.reconcile()
+        self.assertEqual(len(self.journal("request")), 3)
+        self.assertEqual(len(self.journal("request-aborted")), 3)
+        self.gh.post = original
+        comments = len(self.gh.comments)
+        self.assertEqual(self.reconcile(), "request-budget-exhausted")
+        self.assertEqual(len(self.gh.comments), comments)
+        self.assertEqual(self.gh.mentions, [])
+
+    def test_request_budget_resets_for_a_new_candidate(self):
+        """The budget is per candidate key: a new head records a fresh request."""
+        original = self.reject_mentions(403)
+        for _ in range(gate.REQUEST_BUDGET):
+            with self.assertRaises(ApiError):
+                self.reconcile()
+        self.gh.post = original
+        old_key = self.candidate().key
+        self.assertEqual(self.reconcile(), "request-budget-exhausted")
+        self.gh.drift("head")
+        self.assertEqual(self.reconcile(), "awaiting-independent-candidate-review")
+        latest = self.journal("request")[-1]
+        self.assertNotEqual(latest["candidate"], old_key)
+        self.assertEqual(latest["candidate"], self.candidate().key)
+        self.assertEqual(len(self.gh.mentions), 1)
+
+    def test_active_reservation_is_reused_before_the_request_budget(self):
+        """An unaborted matching reservation is returned, not counted out; any pause consumes budget."""
+        for pause in range(gate.REQUEST_BUDGET):
+            self.receipts.pause = pause
+            self.assertEqual(self.reconcile(), "awaiting-independent-candidate-review")
+        requests = self.journal("request")
+        self.assertEqual(len(requests), 3)
+        self.assertEqual(self.coordinator.request(self.candidate(), self.gh.comments), requests[-1])
+        self.assertEqual(self.reconcile(), "awaiting-independent-candidate-review")
+        self.assertEqual(len(self.gh.mentions), 3)
+        # The budget is per pause generation: a fourth pause records a fresh request.
+        self.receipts.pause = gate.REQUEST_BUDGET
+        self.assertEqual(self.reconcile(), "awaiting-independent-candidate-review")
+        self.assertEqual(len(self.journal("request")), 4)
+        self.assertEqual(len(self.gh.mentions), 4)
+
+    # --- Regressions for Dan's 07:31Z re-review on e49efb89 (CSL-259) ---
+
+    def test_request_budget_resets_for_a_new_pause_on_the_same_candidate(self):
+        """A permanent rejection exhausts one pause; a new fixer pause on the same candidate gets a fresh budget."""
+        original = self.reject_mentions(403)
+        for _ in range(gate.REQUEST_BUDGET):
+            with self.assertRaises(ApiError):
+                self.reconcile()
+        self.gh.post = original
+        self.assertEqual(self.reconcile(), "request-budget-exhausted")
+        key = self.candidate().key
+        self.receipts.pause = 1
+        self.assertEqual(self.reconcile(), "awaiting-independent-candidate-review")
+        latest = self.journal("request")[-1]
+        self.assertEqual((latest["candidate"], latest["pause"]), (key, 1))
+        self.assertEqual(len(self.gh.mentions), 1)
+
+    def test_edited_reservation_holds_every_candidate(self):
+        """An edited request/dispatch fails closed for candidate A and for a later candidate B alike."""
+        for kind, append in (("request", False), ("dispatch", False), ("request", True), ("dispatch", True)):
+            with self.subTest(kind=kind, append=append):
+                self.setUp()
+                self.dispatch()
+                receipt = next(c for c in self.gh.comments if self.receipts.records(c["body"], "candidate-" + kind))
+                receipt["updated_at"] = "2026-10-16T00:03:00Z"
+                if append:
+                    # No longer a whole-comment record, but still an edited reservation.
+                    receipt["body"] += "\nedited"
+                for _ in range(2):
+                    with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually"):
+                        self.reconcile()
+                self.gh.drift("head")
+                # Every reservation kind is verified before any side effect, so
+                # candidate B gets neither a review request nor a dispatch.
+                with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually"):
+                    self.reconcile()
+                self.assertEqual(len(self.gh.dispatches), 2)
+                self.assertEqual(len(self.gh.mentions), 1)
+                self.assertEqual(len([c for c in self.gh.comments
+                                      if self.receipts.records(c["body"], "candidate-request")]), 1)
+                dispatches = [c for c in self.gh.comments if self.receipts.records(c["body"], "candidate-dispatch")]
+                self.assertEqual(len(dispatches), 2)
+
+    def test_reservation_edited_between_listings_fails_closed(self):
+        """An edit that lands after reconcile's listing is caught by deliver()'s re-scan of its own listing."""
+        # A request edit is invisible to deliver()'s dispatch journal; only the
+        # all-kinds re-scan of the refreshed listing catches it.
+        for kind in ("dispatch", "request"):
+            with self.subTest(kind=kind):
+                self.setUp()
+                self.dispatch()
+                original = self.gh._run
+
+                def edit_after_listing(args, token, kind=kind, original=original):
+                    if args == ["api", "user"]:
+                        receipt = next(c for c in self.gh.comments
+                                       if self.receipts.records(c["body"], "candidate-" + kind))
+                        receipt["updated_at"] = "2026-10-16T00:03:00Z"
+                    return original(args, token)
+
+                self.gh._run = edit_after_listing
+                with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually"):
+                    self.reconcile()
+                self.assertEqual(len(self.gh.dispatches), 2)
+                self.gh._run = original
+                with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually"):
+                    self.reconcile()
+                self.assertEqual(len(self.gh.dispatches), 2)
+
+    def edit_on_revoke(self, kind):
+        def edit(*args, **kwargs):
+            receipt = next(c for c in self.gh.comments if self.receipts.records(c["body"], "candidate-" + kind))
+            receipt["updated_at"] = "2026-10-16T00:03:00Z"
+            return "nothing-owned"
+        self.receipts.revoke_owned_ci.side_effect = edit
+
+    def test_request_edited_after_reconcile_check_is_not_duplicated(self):
+        """An edit that lands during revoke is caught on request()'s own listing: no second mention."""
+        self.assertEqual(self.reconcile(), "awaiting-independent-candidate-review")
+        self.edit_on_revoke("request")
+        with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually"):
+            self.reconcile()
+        requests = [c for c in self.gh.comments if self.receipts.records(c["body"], "candidate-request")]
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(len(self.gh.mentions), 1)
+
+    def test_mediate_intent_edited_after_head_check_is_not_handed_off_again(self):
+        """An edit that lands during revoke is caught on the listing mediate()'s intent decision uses."""
+        review = self.prime_head_mediate()
+        self.gh.add_comment(FakeReceipts.marker("candidate-mediate-intent",
+            {"head": HEAD, "review": review["id"], "pause": 0, "nonce": "0" * 32}))
+        self.edit_on_revoke("mediate-intent")
+        with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually"):
+            self.reconcile()
+        intents = [c for c in self.gh.comments if self.receipts.records(c["body"], "candidate-mediate-intent")]
+        self.assertEqual(len(intents), 1)
+        self.legacy._act.assert_not_called()
+
+    # --- Global fail-closed on edited reservations (Devin 4301947709, CSL-259) ---
+
+    def rewrite_owner(self, kind, field, value):
+        """Edit a whole-comment reservation so its body names a different owner."""
+        comment = next(c for c in self.gh.comments if self.receipts.records(c["body"], "candidate-" + kind))
+        record = self.receipts.records(comment["body"], "candidate-" + kind)[0]
+        comment["body"] = FakeReceipts.marker("candidate-" + kind, {**record, field: value})
+        comment["updated_at"] = "2026-10-16T00:03:00Z"
+
+    def test_edited_dispatch_with_rewritten_candidate_blocks_the_original_candidate(self):
+        """Rewriting candidate A's dispatch to name B must not free A to dispatch a second full matrix."""
+        self.dispatch()
+        mentions, comments = len(self.gh.mentions), len(self.gh.comments)
+        self.rewrite_owner("dispatch", "candidate", "b" * 64)
+        with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually"):
+            self.reconcile()
+        self.assertEqual(len(self.gh.dispatches), 2)
+        self.assertEqual(len(self.gh.mentions), mentions)
+        records = [c for c in self.gh.comments[comments:]
+                   if self.receipts.records(c["body"], "candidate-dispatch") or self.receipts.records(c["body"], "candidate-request")]
+        self.assertEqual(records, [])
+
+    def test_edited_request_with_rewritten_candidate_blocks_the_original_candidate(self):
+        """Rewriting candidate A's request to name B must not free A to request a second review."""
+        self.assertEqual(self.reconcile(), "awaiting-independent-candidate-review")
+        self.rewrite_owner("request", "candidate", "b" * 64)
+        with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually"):
+            self.reconcile()
+        requests = [c for c in self.gh.comments if self.receipts.records(c["body"], "candidate-request")]
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(len(self.gh.mentions), 1)
+
+    def test_edited_mediate_intent_with_rewritten_head_blocks_the_original_head(self):
+        """Rewriting an unresolved mediate-intent to name another head must not free a second handoff."""
+        self.prime_head_mediate()
+        self.legacy._act.side_effect = TimeoutError("unknown mediation outcome")
+        with self.assertRaises(TimeoutError):
+            self.reconcile()
+        self.rewrite_owner("mediate-intent", "head", "f" * 40)
+        with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually"):
+            self.coordinator.mediate()
+        with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually"):
+            self.reconcile()
+        intents = [c for c in self.gh.comments if self.receipts.records(c["body"], "candidate-mediate-intent")]
+        self.assertEqual(len(intents), 1)
+        self.legacy._act.assert_called_once()
+
+    # --- Verify every reservation kind first; revoke before refusing (Devin 4301979507, 4301979544) ---
+
+    def add_edited(self, kind, record):
+        self.gh.add_comment(FakeReceipts.marker("candidate-" + kind, record))
+        self.gh.comments[-1]["updated_at"] = "2026-10-16T00:03:00Z"
+
+    def label_ci_full(self, owned):
+        """Real receipt ownership: only a ci-owned record for the current label event proves gate ownership."""
+        from scripts.ci import codex_gate as legacy
+        real = legacy.FIXER_RECEIPTS
+        self.gh.pr["labels"] = [{"name": "ci:full"}]
+        self.gh.events = [{"id": 700, "event": "labeled", "label": {"name": "ci:full"}}]
+        if owned:
+            self.gh.add_comment(real.marker("ci-owned", {"head": HEAD, "event": 700}))
+        self.receipts.revoke_owned_ci = Mock(side_effect=real.revoke_owned_ci)
+
+        def delete(path):
+            self.assertEqual(path, f"{PREFIX}/issues/{PR}/labels/ci:full")
+            self.gh.pr["labels"] = []
+        self.gh.delete_read_token = Mock(side_effect=delete)
+
+    def test_edited_reservation_revokes_owned_full_ci_label_before_refusing(self):
+        """An edited reservation refuses only after removing a gate-owned ci:full; a human label stays."""
+        for owned in (True, False):
+            with self.subTest(owned=owned):
+                self.setUp()
+                self.assertEqual(self.reconcile(), "awaiting-independent-candidate-review")
+                self.label_ci_full(owned)
+                receipt = next(c for c in self.gh.comments if self.receipts.records(c["body"], "candidate-request"))
+                receipt["updated_at"] = "2026-10-16T00:03:00Z"
+                with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually"):
+                    self.reconcile()
+                self.receipts.revoke_owned_ci.assert_called()
+                if owned:
+                    self.gh.delete_read_token.assert_called_once()
+                    self.assertEqual(self.gh.pr["labels"], [])
+                    self.assertTrue(any("claude-fixer-ci-invalidated:" in c["body"] for c in self.gh.comments))
+                else:
+                    self.gh.delete_read_token.assert_not_called()
+                    self.assertEqual(self.gh.pr["labels"], [{"name": "ci:full"}])
+                self.assertEqual(len(self.gh.mentions), 1)
+                self.assertEqual(self.gh.dispatches, [])
+
+    def test_edited_dispatch_blocks_review_request_after_pause_change(self):
+        """request() reads only request records; the all-kinds scan stops a new mention on an edited dispatch."""
+        self.assertEqual(self.reconcile(), "awaiting-independent-candidate-review")
+        key = self.candidate().key
+        self.add_edited("dispatch", {"candidate": key, "kind": "ci", "nonce": "2" * 32})
+        self.receipts.pause = 1
+        with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually"):
+            self.reconcile()
+        self.assertEqual(len(self.gh.mentions), 1)
+        requests = [c for c in self.gh.comments if self.receipts.records(c["body"], "candidate-request")]
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_edited_mediate_intent_blocks_request_and_dispatch(self):
+        """An edited mediate-intent stops a review request and a full dispatch, not only a handoff."""
+        for path in ("request", "dispatch"):
+            with self.subTest(path=path):
+                self.setUp()
+                if path == "request":
+                    self.assertEqual(self.reconcile(), "awaiting-independent-candidate-review")
+                    self.receipts.pause = 1
+                else:
+                    self.prime_ready()
+                self.add_edited("mediate-intent", {"head": HEAD, "review": 1, "pause": 0, "nonce": "3" * 32})
+                with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually"):
+                    self.reconcile()
+                self.assertEqual(len(self.gh.mentions), 1)
+                requests = [c for c in self.gh.comments if self.receipts.records(c["body"], "candidate-request")]
+                self.assertEqual(len(requests), 1)
+                self.assertEqual(self.gh.dispatches, [])
+                self.legacy._act.assert_not_called()
+
+    def test_reservation_edited_after_mediate_check_revokes_before_refusing(self):
+        """reconcile()'s own scan, not only mediate()'s, removes the owned label before refusing."""
+        self.assertEqual(self.reconcile(), "awaiting-independent-candidate-review")
+        self.label_ci_full(owned=True)
+        original = gate.Coordinator.ineligible
+
+        def edit_then_check(coordinator):
+            receipt = next(c for c in self.gh.comments if self.receipts.records(c["body"], "candidate-request"))
+            receipt["updated_at"] = "2026-10-16T00:03:00Z"
+            return original(coordinator)
+
+        with (patch.object(gate.Coordinator, "ineligible", edit_then_check),
+              self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually")):
+            self.reconcile()
+        self.gh.delete_read_token.assert_called_once()
+        self.assertEqual(self.gh.pr["labels"], [])
+        self.assertEqual(len(self.gh.mentions), 1)
+
+    def test_dispatch_edited_before_review_request_blocks_mention(self):
+        """The refreshed listing handed to request() is scanned for every kind, not only requests."""
+        self.gh.add_comment(FakeReceipts.marker("candidate-dispatch",
+            {"candidate": self.candidate().key, "kind": "ci", "nonce": "2" * 32}))
+        self.edit_on_revoke("dispatch")
+        with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually"):
+            self.reconcile()
+        self.assertEqual(self.gh.mentions, [])
+        self.assertEqual([c for c in self.gh.comments if self.receipts.records(c["body"], "candidate-request")], [])
+
+    def test_request_edited_before_mediate_intent_blocks_handoff(self):
+        """mediate() scans its refreshed listing for every kind before recording an intent."""
+        self.prime_head_mediate()
+        self.gh.add_comment(FakeReceipts.marker("candidate-request",
+            {"candidate": self.candidate().key, "nonce": "4" * 32, "pause": 0}))
+        self.edit_on_revoke("request")
+        with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually"):
+            self.reconcile()
+        self.assertEqual([c for c in self.gh.comments if self.receipts.records(c["body"], "candidate-mediate-intent")], [])
         self.legacy._act.assert_not_called()
 
 

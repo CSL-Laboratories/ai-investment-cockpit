@@ -1,0 +1,139 @@
+{
+  "kind": "commands",
+  "api_version": "o7.operator.v0",
+  "candidate_maturity": "researched",
+  "commands": [
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.audit.export",
+      "request_id": "req_cmd_operator_audit_export",
+      "arguments": {},
+      "confirmation": "not_required"
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.budgets.inspect",
+      "request_id": "req_cmd_operator_budgets_inspect",
+      "arguments": {},
+      "confirmation": "not_required"
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.decisions.inspect",
+      "request_id": "req_cmd_operator_decisions_inspect",
+      "arguments": {},
+      "confirmation": "not_required"
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.evidence.inspect",
+      "request_id": "req_cmd_operator_evidence_inspect",
+      "arguments": {},
+      "confirmation": "not_required"
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.export.bundle",
+      "request_id": "req_cmd_operator_export_bundle",
+      "arguments": {},
+      "confirmation": "not_required"
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.health.inspect",
+      "request_id": "req_cmd_operator_health_inspect",
+      "arguments": {},
+      "confirmation": "not_required"
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.interventions.request_reconciliation",
+      "request_id": "req_cmd_operator_interventions_request_reconciliation",
+      "arguments": {
+        "scope": "operator_session"
+      },
+      "confirmation": "explicit"
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.interventions.request_revocation",
+      "request_id": "req_cmd_operator_interventions_request_revocation",
+      "arguments": {
+        "scope": "operator_session"
+      },
+      "confirmation": "explicit"
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.interventions.request_stop",
+      "request_id": "req_cmd_operator_interventions_request_stop",
+      "arguments": {
+        "scope": "operator_session"
+      },
+      "confirmation": "explicit"
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.positions.inspect",
+      "request_id": "req_cmd_operator_positions_inspect",
+      "arguments": {},
+      "confirmation": "not_required"
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.profiles.inspect",
+      "request_id": "req_cmd_operator_profiles_inspect",
+      "arguments": {},
+      "confirmation": "not_required"
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.recovery.inspect",
+      "request_id": "req_cmd_operator_recovery_inspect",
+      "arguments": {},
+      "confirmation": "not_required"
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.strategies.inspect",
+      "request_id": "req_cmd_operator_strategies_inspect",
+      "arguments": {},
+      "confirmation": "not_required"
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.uncertainty.inspect",
+      "request_id": "req_cmd_operator_uncertainty_inspect",
+      "arguments": {},
+      "confirmation": "not_required"
+    }
+  ]
+}

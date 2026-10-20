@@ -12,6 +12,50 @@ implementation and the boundaries below remain authoritative until their separat
 scoped, reviewed implementation amendments. Product ratification grants no runtime
 permission or empirical PASS.
 
+For the replacement program, read
+[SUCCESSOR-PRODUCT.md](docs/replacement/SUCCESSOR-PRODUCT.md),
+[MONTH-PROGRAM.md](docs/replacement/MONTH-PROGRAM.md) and the exact acceptance
+record in [program.json](docs/replacement/program.json). Their accepted bytes and
+scoped gates remain controlling; these operating instructions do not amend them.
+
+## Founder decisions and integration
+
+The recorded [CSL-44 authority direction](https://linear.app/csl-laboratories/issue/CSL-44#comment-bbe42521-10fa-4ef0-b799-1c56fec9ddad)
+allows any founder to decide product and implementation questions from research,
+research-lane outcomes, feature admission within a lane and research continuation
+within its approved budget.
+Founders decide the consequential A1b core language/runtime commitment.
+Reversible implementation choices remain developer discretion within the accepted envelope,
+subject to SCOPE-AUDIT §5’s escalation triggers. This instruction selects no language or runtime.
+Lucas retains spend/new services, sensitive company credentials, company-server
+deployments and the final tie-break when founders disagree. All three founders
+participate in the final release decision; Lucas has final say in any founder disagreement,
+including a 2-1 split.
+
+Founders merge after the required current-head reviews and checks; agents never merge.
+A founder's own PR requires another founder's approval before merge, regardless of
+ruleset enforcement. Non-author approval checks alone do not establish founder identity.
+Protected-path amendments require a separately recorded founder-approved
+authoring session; this paragraph grants no blanket editing permission.
+Accepted contracts require their own versioned amendment, exact acceptance and reviewed
+promotion. No person-level decision unlocks live capital or bypasses the nine invariants,
+paper-only boundary or pre-live gates. Existing account, credential and runtime restrictions
+remain in force; this wording does not activate R2a or grant a live run.
+
+## Bounded issue execution and shared evidence
+
+The loop starts only from objectives, feature admission and direction decisions approved by a founder acting within the founder decisions section above. Within them, agents run bounded autonomous research, implementation and tests, then close out with evidence. When blocked, an agent preserves its work, records the blocker and releases its execution claim, then moves to the next eligible issue. A human-decision hold needs an explicit decision receipt; a technical or dependency blocker needs evidence that its condition cleared. In either case, recompute readiness and obtain a fresh ownership claim before resuming. Closeout records the exact tested head, commands and results, unresolved criteria, review evidence and linked follow-ups. Mark work complete only under its existing acceptance criteria; a merge or issue status is not empirical acceptance.
+
+An issue is admitted only when it states its objective, non-goals, evidence dependencies, allowed effects and files, budget and stop condition, acceptance criteria and falsifiers, and verifier and rollback. Existing authorizations persist: routine, reversible work and fixes inside an admitted issue do not ask again and do not force new paid research. Decision and direction issues still follow the Linear-first research requirement. A new consequential feature, architecture, risk, public-semantics, effect or budget question stops only the affected lane, with options and a recommendation posted on the Linear issue for founder decision under the founder decisions section above. Human decisions are never inferred from silence, elapsed time, a merge, CI results or issue status. When an agent relays a human decision, it labels the source and attribution and never invents a human receipt or an exact-digest acceptance.
+
+Ownership is currently manual. The human-designated ownership coordinator (not the CI candidate coordinator) serializes overlapping writers on Linear; a claim is replaced only after an explicit release and acknowledgement. Record scope, writer, branch/head and handoff evidence on the issue, following existing assignment conventions. This execution claim is coordination only: it does not allocate, replace or close a REGISTER package claim. Before publishing, read the remote head. Preserve uncertain in-flight work and stop on ambiguity. Each agent holds at most one execution lane; this guide sets no numeric project WIP cap; any new cap is a separate founder decision. RW-33 swarm depth and leaf limits are unaffected. Atomic compare-and-set claims, leases, fencing, a transactional cost ledger and WIP enforcement are proposed and unimplemented; do not treat them as current machine guarantees. This section changes no platform state, status or claim schema and does not rewrite REGISTER policy.
+
+Shared research lives in the private repository [CSL-Laboratories/csl-research](https://github.com/CSL-Laboratories/csl-research). Do not assume published records, a record schema or a validator exist until they are actually present there. A research record should carry sanitized prompt and result hashes; provider, model and processor; run ID or the reason no paid run was made; retrieval date; estimated, reserved and actual costs and any unknowns; a mapping from sources to claims; limitations; what it supersedes; and an artifact manifest. An exact evidence reference requires the repository, the full 40-hex commit, the record path, and the claim and its limitations. Cite the owning product's authenticated exact-digest human receipt when the consumed fragment requires acceptance; otherwise label the material candidate-only and cite its authorized research scope. A receipt identifier alone does not verify identity, digest, scope, conditions or revocation; the responsible reviewer checks those at the source. A bootstrap commit alone proves no research finding. Keep submissions, reviewed knowledge and human decision pointers separate; agents do not promote their own submissions.
+
+Never commit secrets, private account details, raw chats, signed URLs, bulk copyrighted material or large dataset dumps to Git; reference approved storage through manifests only. An access denial stops the affected transfer; do not look for alternative routes. Existing approved budgets and subscription routes remain subject to their actual authority; this section activates no API fallback, overage or new spend. New research spend follows the founder decisions section above: Lucas retains spend and new services; any founder may decide research continuation within an already approved budget.
+
+None of this amends accepted contracts, founder-reserved decisions, the nine invariants, the paper-only boundary, pre-live gates, current runtime, CI, fixer or review-loop roles. Agents still never merge.
+
 ## Codex boundary
 
 - Codex and Claude may perform schema-gated analysis jobs (briefing, triage,
@@ -53,7 +97,7 @@ Naming and installation alone do not qualify a CLI or grant production authority
   resets. ChatGPT is manual steering only. Chiron/Recursion remain future PD-029
   integrations, not a prerequisite or a current routing destination.
 - Head prepares reviewable changes and draft PR material. Existing operator
-  commit/publication instructions apply; Lucas remains the merger. Swarm tests
+  commit/publication instructions and the founder integration rules above apply. Swarm tests
   and receipts never satisfy empirical, paper-day or pre-live gates.
 
 Current process: `docs/research/agent-swarm-rebase-2026-09-14.md`.
@@ -89,7 +133,7 @@ provisioned.
 1. Read `docs/README.md` and the relevant plan before editing.
 2. Before proposing architecture or direction, read `docs/adr/` and the linked
    decision issues; do not re-argue a recorded decision without new evidence.
-3. Keep changes to one work package and add tests with the change.
+3. Keep changes to one work package, or one admitted process issue with `REGISTER: none`, and add tests with the change.
 4. Use the project virtual environment. Create it once with `python -m venv .venv`
    from the repo root — note the `py` launcher is not present on every dev box —
    then install the full runtime and validation dependency set CI installs (see
@@ -159,12 +203,13 @@ Agents trigger CI and reviews via these commands/tools or the `ci:full` label.
 
 ## Linear-first workflow
 
-Agents must stay Linear-aware and proactive. Linear is the source of truth.
+Agents must stay Linear-aware and proactive. Linear is the source of truth for execution: assignment, status and discussion. `docs/REGISTER.md` remains the package record: it allocates package IDs and holds package claims, scope and completion contracts. These are separate records, and neither replaces the other. A Linear assignment is an execution claim only; it does not allocate, replace or close a REGISTER package claim, and a runtime `claim_id` remains the existing REGISTER package ID. Process work with no package says so and does not mint an ID. Cycle decisions stay with [CSL-8](https://linear.app/csl-laboratories/issue/CSL-8); this section sets no cycle. Admission, blocker, claim-release, resume and evidence rules are in [Bounded issue execution and shared evidence](#bounded-issue-execution-and-shared-evidence). Releasing a blocked execution claim does not release the hold. After a blocker, take only a separately admitted issue that is next under an explicit human-approved order; if no such order exists or it is ambiguous, propose the next choice on Linear and wait.
 
 - **Before starting work**, find or create the Linear issue (team **CSL**, project **ai-investment-cockpit**) via the Linear MCP or the Devin Linear integration. Do not start a change without a `CSL-N`.
 - **When you are the assignee** (developer or their coding agent working in the repo) of an issue that needs a decision or sets direction, run Parallel Task API deep research before proposing or deciding, in addition to Search/Extract. Post the cited brief (options, tradeoffs, recommendation, target metrics) on the Linear issue, then decide or @mention for approval. Grok Bots do not research or resolve decision issues.
 - Branch names come from Linear's copied branch name, so the PR auto-links. PR title includes `CSL-N`. One issue per PR; keep PRs small and stackable.
-- Comment progress on the issue. Move it to **In Progress** when work starts, then **In Review** when the PR is up.
+- In the PR body, write `Related to CSL-N` by default; use a closing keyword (`Fixes CSL-N`) only when this PR completes the issue's acceptance criteria. Name the REGISTER package ID, or `none` for process work. Linear automation moving an issue to **Done**, a merge, or an AI PASS is not acceptance evidence.
+- Comment progress on the issue. Move it to **In Progress** when work starts, then **In Review** when the PR is up. A hosted agent without Linear access reports its blocker on the PR to the PR author through its existing channel; the author relays it to the current Linear owner. The hosted agent does not invent API access, and this guide changes no workflow prompts.
 - Grok Bots must read the Linear PR-sync comment (`<!-- pr-sync:<repo>#<n> -->`, written by [`.github/workflows/linear-pr-sync.yml`](.github/workflows/linear-pr-sync.yml)) on the issue before touching shared files. Three people work this repo at once; that comment is the live PR link, mergeable/conflict state, head SHA, and top files.
 - When work reveals follow-ups, bugs, or next steps, create new **Triage** issues with one Type label, the repo label `ai-investment-cockpit`, the project, and a link back to the parent issue or PR — not drive-by changes.
 - **Assignees:** the three founders are Lucas (NotSkittlz), Chaandan (CDanTheMan), and Samir (samir-shah-ahmed). All are admins, and ownership changes over time, so never hardcode owners. Check the current assignee or project lead in Linear. Assign new issues to the owner of the parent issue, or leave them in Triage unassigned when unclear.
@@ -193,7 +238,7 @@ Hosted split (PR #102):
 - **Codex** has two allowed GitHub review paths, neither a Devin substitute:
   1. **CI/fixer gate** (CSL-103/259, `.github/workflows/codex-gate.yml`) - one nonce-bound `@codex review` per exact head/base/merge/tree candidate and fixer generation; the reply echoes that identity and ends with `CODEX-GATE: READY|MEDIATE`. See Code Review Rules.
   2. **Stuck-thread watch** (CSL-86 / PR #124, `.github/workflows/stuck-thread-watch.yml`) — one advisory `@codex review` on unresolved Devin threads Claude could not settle, and **one** Linear `needs-decision` Triage roll-up per PR titled `Stuck PR threads: <repo>#<PR>`. Shared keys with the Codex CI/fixer gate: `<!-- stuck-pr-threads:owner/repo#N -->` and `<!-- codex-gate-mediate:owner/repo:N -->`; each writer owns only its fenced block. It adopts an existing roll-up only by that `stuck-pr-threads` HTML marker, never by title, and writes Linear only when at least one thread is actionable after the per-PR cap and `CODEX_TRIGGER_PAT` checks (or to create a missing roll-up after an earlier Linear outage). It skips already-approved PRs and updates that roll-up instead of filing a new issue per thread. That reply must **not** include a `CODEX-GATE:` line, and must not push, merge, resolve the thread, or open a fix PR.
-- **Blacksmith** hosts the paid test matrix. That is the GitHub test-CI path, not a revival of the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired" still apply to research/dev swarm jobs.
+- **Blacksmith** hosts the paid test matrix. That is the GitHub test-CI path, not a revival of the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired from research/dev swarm dispatch" still apply to research/dev swarm jobs.
 - Cursor, Codex (as a coding agent), Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs, except the stuck-thread watcher. A founder may have their own bot post reviews under their account when they direct it. The author agent may fix CI failures on its own PR.
 
 ## Review loop

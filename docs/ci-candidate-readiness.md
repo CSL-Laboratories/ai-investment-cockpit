@@ -211,5 +211,29 @@ The bootstrap limit is unchanged: until the default branch contains this
 coordinator, no policy commit can be pinned or compared, and the first live
 default-branch advancement is the first point at which release can be exercised.
 
-Budget/cadence (P2) remains an owner decision. Timestamp-derived runtime times
-published rates is an estimate, not reconciled billed usage or remaining credit.
+The coordinator is off by default behind the `CANDIDATE_COORDINATOR` Actions
+variable. Only the exact value `true` enables it, and an organization variable of
+the same name applies when no repository variable is set, so an explicit
+repository-level `false` is recommended. While it is off, the legacy head-scoped
+Codex gate job keeps running as it did before CSL-259. Off is not an instant kill
+switch: it stops new scans, but gate jobs already queued behind `claude-<PR>` still
+finish. Enabling it is an owner decision gated on authenticated records (CSL-272).
+
+Lucas approved the $100/month planning target with $60–75 planned core compute;
+see [budget/accounting and publication guidance](ci-cost-budget.md). This is not
+an enforced cap. Additional #174 qualification cadence remains separately priced.
+Timestamp-derived runtime times published rates is an estimate, not reconciled
+billed usage or remaining credit.
+
+## Published head
+
+Job B composed cockpit #166 by a normal merge of #165
+`4c579b0df0aff5cca0ed8798656da9e0152c29b5` into
+`fe1227b9e145c4f2de8eed000a26b34e50ca6ac0`. The published head is this merge.
+Those parents replace the older combined-head pointer `d118181f0a9c96a62f2b066801b4aa7df88b56ac`.
+
+Historical full-matrix receipts on `d118181f0a9c96a62f2b066801b4aa7df88b56ac`
+remain and do not validate this head:
+
+- [Full CI 38980660457](https://github.com/CSL-Laboratories/ai-investment-cockpit/actions/runs/38980660457)
+- [Full Rust 38980663366](https://github.com/CSL-Laboratories/ai-investment-cockpit/actions/runs/38980663366)

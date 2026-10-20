@@ -28,6 +28,7 @@ import logging
 import math
 import sys
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 log = logging.getLogger(__name__)
@@ -47,7 +48,9 @@ def _load_native() -> None:
     need a Rust toolchain. A present extension that fails to import is broken
     and the error propagates. A non-float observation, a non-float lambda, or
     an order-flow quantity that is not a signed 64-bit int leaves the extension
-    and finishes on the Python path. The extension is arithmetic only.
+    and finishes on the Python path. A present module missing an estimator
+    core, or ``EwmaCore.feed``, is a partial wheel. The extension is
+    arithmetic only.
     """
     global _NATIVE, SIGNALS_BACKEND
     if importlib.util.find_spec("cockpit_quant") is None:
@@ -57,6 +60,8 @@ def _load_native() -> None:
 
     required = ("EwmaCore", "ZScoreCore", "OfiCore", "BetaCore")
     missing = [name for name in required if not hasattr(native, name)]
+    if not missing and not hasattr(native.EwmaCore, "feed"):
+        missing.append("EwmaCore.feed")
     if missing:
         # The module was found. A partial wheel is a broken install, not a
         # reason to keep trading on the Python path without saying so.
@@ -132,7 +137,11 @@ class EwmaVolatility:
         self._core = None
 
     def update(self, price: float) -> float | None:
-        """Feed one price; return the current volatility estimate, or None if not yet warm."""
+        """Feed one price; return the current volatility estimate, or None if not yet warm.
+
+        An exact float stays on the extension. Anything else leaves it and
+        finishes on the Python path. A finished series uses ``update_many``.
+        """
         core = self._core
         if core is not None and (type(self.lam) is not float or self.lam != core.lam):
             self._leave_rust()
@@ -151,6 +160,24 @@ class EwmaVolatility:
         self._count += 1
         self._variance = self.lam * self._variance + (1.0 - self.lam) * ret * ret
         return self.value
+
+    def update_many(self, prices: Sequence[float]) -> list[float | None]:
+        """Feed a finished series and leave this estimator at the end of it.
+
+        Exact floats are one ``EwmaCore.feed`` call. An int or any other
+        observation uses ``update``, which leaves the extension. A one-shot
+        iterable is copied before that scan. NaN stays on the extension, where
+        it matches ``math.log``. A non-finite ratio still raises, and the
+        prices before it stay on the core.
+        """
+        prices = list(prices)
+        core = self._core
+        if core is not None and (type(self.lam) is not float or self.lam != core.lam):
+            self._leave_rust()
+            core = None
+        if core is not None and all(type(price) is float for price in prices):
+            return list(core.feed(prices))
+        return [self.update(price) for price in prices]
 
     @property
     def value(self) -> float | None:
