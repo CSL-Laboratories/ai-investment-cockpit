@@ -16,6 +16,10 @@ PROTECTED_REFS = frozenset({"master", "main", "HEAD"})
 # every PR. Checked under the shared lock before any checkout or reservation.
 PAUSE_LABELS = frozenset({"claude:pause", "hold"})
 LOOP_CAP = 8
+# GitHub's PR commits endpoint lists at most 250 commits (oldest first), so a
+# longer PR may hide its newest commits. Treat a possibly truncated list as at
+# the cap: fail closed until a human reviews the branch.
+COMMIT_LIST_LIMIT = 250
 QUERY = """query($owner:String!, $name:String!, $number:Int!, $cursor:String) {
   repository(owner:$owner, name:$name) { pullRequest(number:$number) {
     reviewThreads(first:100, after:$cursor) {
@@ -81,6 +85,8 @@ def claude_streak(repo: str, number: str) -> int:
         if len(batch) < 100:
             break
         page += 1
+    if len(commits) >= COMMIT_LIST_LIMIT:
+        return LOOP_CAP
     count = 0
     for item in reversed(commits):
         login = str((item.get("author") or {}).get("login") or "-")

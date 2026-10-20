@@ -1361,6 +1361,16 @@ class FixerLoopCapTests(unittest.TestCase):
         out, _ = self._run(c + [("claude[bot]", "claude[bot]")] * 5, [])
         self.assertIn("loop_commit_count=8", out)
 
+    def test_truncated_commit_list_counts_as_at_cap(self) -> None:
+        # GitHub lists at most 250 PR commits; the newest may be missing.
+        out, posted = self._run([("alice", "Alice")] * 250, [])
+        self.assertIn("loop_commit_count=8", out)
+        self.assertEqual(posted, "")
+        out, _ = self._run([("alice", "Alice")] * 249, [])
+        self.assertIn("loop_commit_count=0", out)
+        out, _ = self._run([("alice", "Alice")] * 240 + [("claude[bot]", "claude[bot]")] * 12, [])
+        self.assertIn("loop_commit_count=12", out)
+
     def test_existing_marker_suppresses_duplicate_comment(self) -> None:
         out, posted = self._run([("claude[bot]", "claude[bot]")] * 8, ["<!-- claude-fixer-loop-cap:abc123 -->"])
         self.assertIn("loop_commit_count=8", out)
@@ -1690,6 +1700,15 @@ class FixerPreflightTests(unittest.TestCase):
                 self.assertEqual(sum("/commits?" in p for p in paths), len(commits) // 100 + 1)
         with self.assertRaises(ValueError):
             self.run_mode("mention", pr, commits={"not": "a list"})
+
+    def test_mention_cap_fails_closed_on_truncated_commit_list(self) -> None:
+        # GitHub's PR commits endpoint lists at most 250 commits, oldest first.
+        pr = dict(pr_payload(), draft=False)
+        human = self.commit("lucas")
+        for commits, skip in (([human] * 250, "true"), ([human] * 249, "false"), ([human] * 300, "true")):
+            with self.subTest(n=len(commits)):
+                output, _paths, _graphql = self.run_mode("mention", pr, commits)
+                self.assertIn("skip=" + skip, output)
 
 
 class FixerQueueTests(unittest.TestCase):
