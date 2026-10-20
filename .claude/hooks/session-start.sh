@@ -2,8 +2,8 @@
 # Claude Code cloud-session bootstrap. Local sessions skip it.
 # Toolchains (python3 >= 3.11, uv, rustup) come from the cloud environment's
 # setup script. This fetches the latest refs (HEAD is not moved), prepares the
-# project .venv the gates use (AGENTS.md: run ../.venv/bin/python from app/),
-# and prefetches Rust crates. It always exits 0 so the status line below reaches
+# project .venv the gates use (AGENTS.md: run ../.venv/bin/python from app/)
+# with CI's pinned run-gates set when present, and prefetches Rust crates. It always exits 0 so the status line below reaches
 # Claude's context; each step is marked ok or FAIL there. No secrets
 # (invariant 4).
 [ "${CLAUDE_CODE_REMOTE:-}" = "true" ] || exit 0
@@ -13,6 +13,8 @@ export GIT_TERMINAL_PROMPT=0
 
 fetch=ok venv=ok deps=ok rust=ok
 py=.venv/bin/python
+# CI's pinned install set; when present, cloud sessions use the same versions.
+pins=.github/actions/run-gates/requirements.txt
 
 git fetch --quiet origin '+refs/heads/main:refs/remotes/origin/main' || fetch=FAIL
 git fetch --quiet --prune origin || fetch=FAIL
@@ -37,17 +39,22 @@ fi
 # an allowed version.
 verify_deps() {
   "$py" - <<'EOF'
-import sys, tomllib
+import os, sys, tomllib
 from importlib.metadata import PackageNotFoundError, distribution
 try:
     from packaging.requirements import Requirement
 except ImportError:
     from pip._vendor.packaging.requirements import Requirement
 
+def lines(path):
+    with open(path) as f:
+        return [l for l in (x.split("#")[0].strip() for x in f) if l]
+
 with open("app/pyproject.toml", "rb") as f:
     reqs = tomllib.load(f)["project"]["dependencies"]
-with open("app/benchmarks/requirements.txt") as f:
-    reqs += [l for l in (x.split("#")[0].strip() for x in f) if l]
+reqs += lines("app/benchmarks/requirements.txt")
+if os.path.exists(".github/actions/run-gates/requirements.txt"):
+    reqs += lines(".github/actions/run-gates/requirements.txt")  # CI pins
 
 problems, seen = {}, set()
 
@@ -86,6 +93,12 @@ EOF
 
 install_deps() {
   local reqs rc=1
+  "$py" -m pip install --quiet -U pip || return 1
+  if [ -f "$pins" ]; then
+    # Same pinned direct set as CI's run-gates (covers pyproject, pytest, ruff).
+    "$py" -m pip install --quiet -r "$pins" -r app/benchmarks/requirements.txt
+    return
+  fi
   reqs="$(mktemp)"
   if "$py" - > "$reqs" <<'EOF'
 import tomllib
@@ -94,8 +107,7 @@ with open("app/pyproject.toml", "rb") as f:
 print("\n".join(deps + ["pytest", "ruff"]))
 EOF
   then
-    "$py" -m pip install --quiet -U pip &&
-      "$py" -m pip install --quiet -r "$reqs" -r app/benchmarks/requirements.txt && rc=0
+    "$py" -m pip install --quiet -r "$reqs" -r app/benchmarks/requirements.txt && rc=0
   fi
   rm -f "$reqs"
   return $rc
@@ -105,7 +117,9 @@ EOF
 # verifies, so resume stays cheap. A failed check always drops the stamp.
 stamp=.venv/.cloud-deps.sha256
 if [ "$venv" = ok ]; then
-  want="$(cat app/pyproject.toml app/benchmarks/requirements.txt | sha256sum | cut -d' ' -f1)"
+  dep_files=(app/pyproject.toml app/benchmarks/requirements.txt)
+  [ -f "$pins" ] && dep_files+=("$pins")
+  want="$(cat "${dep_files[@]}" | sha256sum | cut -d' ' -f1)"
   if [ "$(cat "$stamp" 2>/dev/null)" = "$want" ] && verify_deps 2>/dev/null; then
     deps=ok
   else

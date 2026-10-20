@@ -63,9 +63,14 @@ def _write(path: Path, text: str, mode: int = 0o755) -> None:
     path.chmod(mode)
 
 
+PINS = Path(".github/actions/run-gates/requirements.txt")
+
+
 def _deps_hash(project: Path) -> str:
     data = (project / "app/pyproject.toml").read_bytes()
     data += (project / "app/benchmarks/requirements.txt").read_bytes()
+    if (project / PINS).exists():
+        data += (project / PINS).read_bytes()
     return hashlib.sha256(data).hexdigest()
 
 
@@ -173,6 +178,31 @@ def test_missing_dependency_fails_and_drops_the_stamp(project):
     assert code == 0
     assert "deps=FAIL" in out and "Setup incomplete" in out
     assert not (project / STAMP).exists(), "a failed check must drop the stamp"
+
+
+def _pin(project: Path, text: str) -> None:
+    (project / PINS).parent.mkdir(parents=True, exist_ok=True)
+    (project / PINS).write_text(text)
+
+
+def test_ci_pins_matching_the_venv_are_ok(project):
+    from importlib.metadata import version
+    _pin(project, f"pytest=={version('pytest')}\nruff=={version('ruff')}\n")
+    _write(project / ".venv/bin/python", GOOD)
+    (project / STAMP).write_text(_deps_hash(project) + "\n")
+    code, out = _run(project, HEALTHY_TOOLS)
+    assert code == 0
+    assert "venv=ok deps=ok" in out
+
+
+def test_ci_pin_mismatch_fails_and_drops_the_stamp(project):
+    _pin(project, "pytest==0.0.1\n")
+    _write(project / ".venv/bin/python", GOOD)
+    (project / STAMP).write_text(_deps_hash(project) + "\n")
+    code, out = _run(project, HEALTHY_TOOLS)
+    assert code == 0
+    assert "deps=FAIL" in out
+    assert not (project / STAMP).exists()
 
 
 def test_violated_version_constraint_fails(project):
