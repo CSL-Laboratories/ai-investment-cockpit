@@ -14,6 +14,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import textwrap
@@ -411,8 +412,18 @@ class RecordedFetchAndPushTests(GitCase):
         self.remote_git("update-ref", "refs/heads/fix", side)
         config = dict(self.config("conflict"), base=side, merge_base=side)
         repo = p.FreshRepo(tempfile.mkdtemp(dir=self.root))
-        with self.assertRaisesRegex(p.Refused, "not on the base branch"):
+        with self.assertRaisesRegex(p.Refused, "base branch moved since the recorded checkout"):
             p.fetch_recorded(repo, config, TOKEN)
+
+    def test_conflict_base_that_advanced_is_refused_and_an_unmoved_base_passes(self):
+        side = self.side_commit()
+        self.remote_git("update-ref", "refs/heads/fix", side)
+        config = dict(self.config("conflict"), base=side, merge_base=self.head)
+        p.fetch_recorded(p.FreshRepo(tempfile.mkdtemp(dir=self.root)), config, TOKEN)  # base still at the record
+        tree = self.remote_git("rev-parse", self.head + "^{tree}")
+        self.remote_git("update-ref", "refs/heads/main", self.remote_git("commit-tree", tree, "-p", self.head, "-m", "base moved"))
+        with self.assertRaisesRegex(p.Refused, "base branch moved since the recorded checkout"):
+            p.fetch_recorded(p.FreshRepo(tempfile.mkdtemp(dir=self.root)), config, TOKEN)
 
 
 class ConflictValidationTests(GitCase):
@@ -577,6 +588,7 @@ class Harness:
                     "BASE_SHA": C if mode == "conflict" else "", "BASE_REF": "main" if mode == "conflict" else "",
                     "RECEIPT_CONTEXT": json.dumps(context), "ARTIFACT_DIR": str(self.artifact),
                     "PUBLISH_STATE_DIR": str(self.state), "MODEL_OUTCOME": "success",
+                    "PACKAGE_STATUS": "bundled" if bundle else "unchanged",
                     "PREPARED_RUN_ATTEMPT": "1", "GITHUB_RUN_ATTEMPT": "1", "GH_TOKEN": "gh-job-token"}
         self.heads = [A]
         self.labels = []
@@ -789,7 +801,43 @@ class PublishFlowTests(unittest.TestCase):
         self.assertEqual(h.run(), 0)
         self.assertEqual(h.minted, 0)
         self.assertIn("model-step-failed-or-timed-out", h.audits[0])
+        self.assertIn("model step did not succeed (failure); nothing published", h.audits[0])
+
+    def test_missing_artifact_after_success_publishes_nothing(self):
+        h = Harness(self)
+        h.env["ARTIFACT_DIR"] = str(h.dir / "missing")
+        self.assertEqual(h.run(), 0)
+        self.assertEqual(h.minted, 0)
         self.assertIn("no candidate commits and no queued writes", h.audits[0])
+
+    def test_unsuccessful_model_publishes_no_commits_and_no_queued_writes(self):
+        records = [{"op": "reply", "comment_id": 11, "body": "fixed in this run"},
+                   {"op": "receipt", "root": 11, "status": "addressed"}, {"op": "comment", "body": "summary"}]
+        for outcome, named in (("failure", "failure"), ("cancelled", "cancelled"), ("skipped", "skipped"),
+                               ("", "unknown"), ("neutral", "unknown")):
+            with self.subTest(outcome=outcome):
+                h = Harness(self, bundle=True, records=records)
+                h.env["MODEL_OUTCOME"] = outcome
+                self.assertEqual(h.run(), 0)
+                self.assertEqual((h.minted, h.pushed, h.writes), (0, [], []))
+                self.assertIn(f"model step did not succeed ({named}); nothing published", h.audits[0])
+
+    def test_failed_or_inconsistent_packaging_publishes_no_queued_writes(self):
+        records = [{"op": "reply", "comment_id": 11, "body": "fixed in this run"}, {"op": "comment", "body": "summary"}]
+        for status, bundle in (("failed", False), ("", False), ("bundled", False), ("unchanged", True),
+                               ("failed", True), ("BUNDLED", True)):
+            with self.subTest(status=status, bundle=bundle):
+                h = Harness(self, bundle=bundle, records=records)
+                h.env["PACKAGE_STATUS"] = status
+                self.assertEqual(h.run(), 0)
+                self.assertEqual((h.minted, h.pushed, h.writes), (0, [], []))
+                self.assertIn("model output packaging failed or is inconsistent; nothing published", h.audits[0])
+
+    def test_unchanged_package_still_posts_queued_writes(self):
+        h = Harness(self, records=[{"op": "comment", "body": "no change was needed"}])
+        self.assertEqual(h.run(), 0)
+        self.assertEqual(h.pushed, [])
+        self.assertEqual([w[1].rsplit("/repos/", 1)[1] for w in h.writes], [f"{REPO}/issues/7/comments"])
 
     def test_audit_post_failure_keeps_summary_and_fails(self):
         h = Harness(self)
@@ -1029,7 +1077,37 @@ class WorkflowWiringTests(unittest.TestCase):
                 self.assertEqual(package["if"], "always()")
                 self.assertIn('bundle create "$out/candidate.bundle" HEAD "^$HEAD_SHA"', package["run"])
                 self.assertNotIn('cp "$EXECUTION_FILE"', package["run"])  # never upload the transcript
-                self.assertEqual(model["outputs"], {"claude_outcome": "${{ steps.claude.outcome }}"})
+                self.assertEqual(package["id"], "package")
+                self.assertIn('echo "package_status=$status" >> "$GITHUB_OUTPUT"', package["run"])
+                self.assertEqual(model["outputs"], {"claude_outcome": "${{ steps.claude.outcome }}",
+                                                    "package_status": "${{ steps.package.outputs.package_status }}"})
+
+    def test_package_status_reports_unchanged_bundled_and_a_failed_bundle(self):
+        # Runs each model job's real package script against a repo, with a git wrapper that can fail `bundle`.
+        for name, _prep, model, _pub, _group, ids in self.pipelines():
+            script = [s for s in model["steps"] if s.get("name") == "Package untrusted model output"][0]["run"]
+            for case in ("unchanged", "bundled", "failed"):
+                with self.subTest(workflow=name, job=ids[1], case=case), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    work = Work(root / "repo")
+                    subprocess.run(["git", "init", "-q", "-b", "main", str(work.path)], env=git_env(), check=True)
+                    head = work.commit({"a.txt": "a\n"}, message="head")
+                    if case != "unchanged":
+                        work.commit({"a.txt": "b\n"}, message="model fix")
+                    shim = root / "bin"
+                    shim.mkdir()
+                    real_git = shutil.which("git")
+                    (shim / "git").write_text("#!/bin/sh\n"
+                                              + ('for a in "$@"; do [ "$a" = bundle ] && exit 1; done\n' if case == "failed" else "")
+                                              + f'exec "{real_git}" "$@"\n')
+                    (shim / "git").chmod(0o755)
+                    output = root / "output"
+                    env = dict(git_env(), PATH=f"{shim}{os.pathsep}{os.environ['PATH']}", RUNNER_TEMP=str(root),
+                               GITHUB_OUTPUT=str(output), HEAD_SHA=head, BASE_SHA=head, EXECUTION_FILE="")
+                    subprocess.run(["bash", "-c", script], cwd=work.path, env=env, check=True, capture_output=True)
+                    self.assertEqual(output.read_text(), f"package_status={case}\n")
+                    bundle = root / "claude-writer-out" / "candidate.bundle"
+                    self.assertEqual(bundle.exists(), case == "bundled")
 
     def test_publish_jobs_mint_and_never_run_repository_code(self):
         for name, _prep, _model, publish, _group, ids in self.pipelines():
@@ -1063,6 +1141,9 @@ class WorkflowWiringTests(unittest.TestCase):
                 self.assertEqual(env["GH_TOKEN"], "${{ github.token }}")
                 self.assertEqual(env["CLAUDE_FIXER_PAUSE"], "${{ vars.CLAUDE_FIXER_PAUSE }}")
                 self.assertEqual(env["HEAD_SHA"], f"${{{{ needs.{ids[0]}.outputs.head_sha }}}}")
+                self.assertEqual(env["MODEL_OUTCOME"],
+                                 f"${{{{ needs.{ids[1]}.outputs.claude_outcome || needs.{ids[1]}.result }}}}")
+                self.assertEqual(env["PACKAGE_STATUS"], f"${{{{ needs.{ids[1]}.outputs.package_status }}}}")
                 self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", yaml.dump(publish))
 
     def test_prepare_jobs_are_model_free_and_hold_no_id_token(self):

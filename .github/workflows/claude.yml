@@ -796,6 +796,7 @@ jobs:
       issues: read
     outputs:
       claude_outcome: ${{ steps.claude.outcome }}
+      package_status: ${{ steps.package.outputs.package_status }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -1200,6 +1201,7 @@ jobs:
               raise SystemExit(main())
           CLAUDE_DENIALS_REPORT
       - name: Package untrusted model output
+        id: package
         if: always()
         env:
           HEAD_SHA: ${{ needs.mention-prepare.outputs.head_sha }}
@@ -1212,11 +1214,20 @@ jobs:
           rm -rf "$out"
           mkdir -p "$out"
           echo "claude-writer-output v1" > "$out/manifest.txt"
+          # The publish job refuses every queued write unless this status matches the artifact,
+          # so a failed bundle never looks like a run without commits.
+          status=failed
           head="$(git -c core.hooksPath=/dev/null rev-parse --verify -q HEAD || true)"
-          if [ -n "$head" ] && [ "$head" != "$HEAD_SHA" ]; then
-            git -c core.hooksPath=/dev/null bundle create "$out/candidate.bundle" HEAD "^$HEAD_SHA" \
-              || rm -f "$out/candidate.bundle"
+          if [ -n "$head" ] && [ "$head" = "$HEAD_SHA" ]; then
+            status=unchanged
+          elif [ -n "$head" ]; then
+            if git -c core.hooksPath=/dev/null bundle create "$out/candidate.bundle" HEAD "^$HEAD_SHA"; then
+              status=bundled
+            else
+              rm -f "$out/candidate.bundle"
+            fi
           fi
+          echo "package_status=$status" >> "$GITHUB_OUTPUT"
           if [ -f .claude-fixer-out/outbox.jsonl ] && [ ! -L .claude-fixer-out/outbox.jsonl ]; then
             cp .claude-fixer-out/outbox.jsonl "$out/outbox.jsonl"
           fi
@@ -1279,6 +1290,7 @@ jobs:
           PREPARED_RUN_ATTEMPT: ${{ needs.mention-prepare.outputs.run_attempt }}
           CLAUDE_FIXER_PAUSE: ${{ vars.CLAUDE_FIXER_PAUSE }}
           MODEL_OUTCOME: ${{ needs.claude-mention.outputs.claude_outcome || needs.claude-mention.result }}
+          PACKAGE_STATUS: ${{ needs.claude-mention.outputs.package_status }}
           ARTIFACT_DIR: ${{ runner.temp }}/claude-writer-in
         run: |
           mkdir -p "$RUNNER_TEMP/claude-fixer-publish"
@@ -2359,9 +2371,9 @@ jobs:
                   raise Refused("PR branch moved since the recorded checkout")
               if config["mode"] == "conflict":
                   repo.run_git(["fetch", "-q", "--no-tags", url, f"+refs/heads/{config['base_ref']}:refs/claude/base"], token=token)
-                  on_base = repo.run_git(["merge-base", "--is-ancestor", config["merge_base"], "refs/claude/base"], ok=(0, 1))[1]
-                  if on_base != 0:
-                      raise Refused("recorded base is not on the base branch")
+                  # A merge against a base that has since moved would leave the PR conflicted; a fresh scan retries.
+                  if repo.text("rev-parse", "--verify", "refs/claude/base^{commit}") != config["merge_base"]:
+                      raise Refused("base branch moved since the recorded checkout")
 
 
           def push_candidate(repo, config, candidate, token):
@@ -2568,6 +2580,9 @@ jobs:
                   return None
 
 
+          MODEL_FAILURES = {"failure", "cancelled", "skipped"}
+
+
           def publish(config, env, state_path, artifact, deps):
               """Validate and publish. Returns (pushed SHA or "", fixed note strings)."""
               notes = []
@@ -2576,7 +2591,15 @@ jobs:
               # One publish attempt per prepared run: exclusive creation, like the guard.
               with state_path.open("x", encoding="utf-8") as handle:
                   handle.write("{}")
+              # Only a model step that succeeded publishes: no partial commits, no queued claims.
+              outcome = env.get("MODEL_OUTCOME", "")
+              if outcome != "success":
+                  raise Refused(f"model step did not succeed ({outcome if outcome in MODEL_FAILURES else 'unknown'})")
               bundle = artifact_file(artifact, "candidate.bundle")
+              # A failed `git bundle create` must not look like a run with no commits.
+              package = env.get("PACKAGE_STATUS", "")
+              if package not in {"bundled", "unchanged"} or (package == "bundled") != (bundle is not None):
+                  raise Refused("model output packaging failed or is inconsistent")
               outbox = artifact_file(artifact, "outbox.jsonl")
               try:
                   roots = {item["root"] for item in config["receipts"]}
@@ -3524,6 +3547,7 @@ jobs:
       issues: read
     outputs:
       claude_outcome: ${{ steps.claude.outcome }}
+      package_status: ${{ steps.package.outputs.package_status }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -3933,6 +3957,7 @@ jobs:
               raise SystemExit(main())
           CLAUDE_DENIALS_REPORT
       - name: Package untrusted model output
+        id: package
         if: always()
         env:
           HEAD_SHA: ${{ needs.fixer-prepare.outputs.head_sha }}
@@ -3945,11 +3970,20 @@ jobs:
           rm -rf "$out"
           mkdir -p "$out"
           echo "claude-writer-output v1" > "$out/manifest.txt"
+          # The publish job refuses every queued write unless this status matches the artifact,
+          # so a failed bundle never looks like a run without commits.
+          status=failed
           head="$(git -c core.hooksPath=/dev/null rev-parse --verify -q HEAD || true)"
-          if [ -n "$head" ] && [ "$head" != "$HEAD_SHA" ]; then
-            git -c core.hooksPath=/dev/null bundle create "$out/candidate.bundle" HEAD "^$HEAD_SHA" \
-              || rm -f "$out/candidate.bundle"
+          if [ -n "$head" ] && [ "$head" = "$HEAD_SHA" ]; then
+            status=unchanged
+          elif [ -n "$head" ]; then
+            if git -c core.hooksPath=/dev/null bundle create "$out/candidate.bundle" HEAD "^$HEAD_SHA"; then
+              status=bundled
+            else
+              rm -f "$out/candidate.bundle"
+            fi
           fi
+          echo "package_status=$status" >> "$GITHUB_OUTPUT"
           if [ -f .claude-fixer-out/outbox.jsonl ] && [ ! -L .claude-fixer-out/outbox.jsonl ]; then
             cp .claude-fixer-out/outbox.jsonl "$out/outbox.jsonl"
           fi
@@ -4012,6 +4046,7 @@ jobs:
           PREPARED_RUN_ATTEMPT: ${{ needs.fixer-prepare.outputs.run_attempt }}
           CLAUDE_FIXER_PAUSE: ${{ vars.CLAUDE_FIXER_PAUSE }}
           MODEL_OUTCOME: ${{ needs.devin-review-fix.outputs.claude_outcome || needs.devin-review-fix.result }}
+          PACKAGE_STATUS: ${{ needs.devin-review-fix.outputs.package_status }}
           ARTIFACT_DIR: ${{ runner.temp }}/claude-writer-in
           RECEIPT_CONTEXT: ${{ needs.fixer-prepare.outputs.receipt_context }}
         run: |
@@ -5093,9 +5128,9 @@ jobs:
                   raise Refused("PR branch moved since the recorded checkout")
               if config["mode"] == "conflict":
                   repo.run_git(["fetch", "-q", "--no-tags", url, f"+refs/heads/{config['base_ref']}:refs/claude/base"], token=token)
-                  on_base = repo.run_git(["merge-base", "--is-ancestor", config["merge_base"], "refs/claude/base"], ok=(0, 1))[1]
-                  if on_base != 0:
-                      raise Refused("recorded base is not on the base branch")
+                  # A merge against a base that has since moved would leave the PR conflicted; a fresh scan retries.
+                  if repo.text("rev-parse", "--verify", "refs/claude/base^{commit}") != config["merge_base"]:
+                      raise Refused("base branch moved since the recorded checkout")
 
 
           def push_candidate(repo, config, candidate, token):
@@ -5302,6 +5337,9 @@ jobs:
                   return None
 
 
+          MODEL_FAILURES = {"failure", "cancelled", "skipped"}
+
+
           def publish(config, env, state_path, artifact, deps):
               """Validate and publish. Returns (pushed SHA or "", fixed note strings)."""
               notes = []
@@ -5310,7 +5348,15 @@ jobs:
               # One publish attempt per prepared run: exclusive creation, like the guard.
               with state_path.open("x", encoding="utf-8") as handle:
                   handle.write("{}")
+              # Only a model step that succeeded publishes: no partial commits, no queued claims.
+              outcome = env.get("MODEL_OUTCOME", "")
+              if outcome != "success":
+                  raise Refused(f"model step did not succeed ({outcome if outcome in MODEL_FAILURES else 'unknown'})")
               bundle = artifact_file(artifact, "candidate.bundle")
+              # A failed `git bundle create` must not look like a run with no commits.
+              package = env.get("PACKAGE_STATUS", "")
+              if package not in {"bundled", "unchanged"} or (package == "bundled") != (bundle is not None):
+                  raise Refused("model output packaging failed or is inconsistent")
               outbox = artifact_file(artifact, "outbox.jsonl")
               try:
                   roots = {item["root"] for item in config["receipts"]}

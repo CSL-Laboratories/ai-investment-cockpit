@@ -546,9 +546,9 @@ def fetch_recorded(repo, config, token):
         raise Refused("PR branch moved since the recorded checkout")
     if config["mode"] == "conflict":
         repo.run_git(["fetch", "-q", "--no-tags", url, f"+refs/heads/{config['base_ref']}:refs/claude/base"], token=token)
-        on_base = repo.run_git(["merge-base", "--is-ancestor", config["merge_base"], "refs/claude/base"], ok=(0, 1))[1]
-        if on_base != 0:
-            raise Refused("recorded base is not on the base branch")
+        # A merge against a base that has since moved would leave the PR conflicted; a fresh scan retries.
+        if repo.text("rev-parse", "--verify", "refs/claude/base^{commit}") != config["merge_base"]:
+            raise Refused("base branch moved since the recorded checkout")
 
 
 def push_candidate(repo, config, candidate, token):
@@ -755,6 +755,9 @@ def load_consumer(directory):
         return None
 
 
+MODEL_FAILURES = {"failure", "cancelled", "skipped"}
+
+
 def publish(config, env, state_path, artifact, deps):
     """Validate and publish. Returns (pushed SHA or "", fixed note strings)."""
     notes = []
@@ -763,7 +766,15 @@ def publish(config, env, state_path, artifact, deps):
     # One publish attempt per prepared run: exclusive creation, like the guard.
     with state_path.open("x", encoding="utf-8") as handle:
         handle.write("{}")
+    # Only a model step that succeeded publishes: no partial commits, no queued claims.
+    outcome = env.get("MODEL_OUTCOME", "")
+    if outcome != "success":
+        raise Refused(f"model step did not succeed ({outcome if outcome in MODEL_FAILURES else 'unknown'})")
     bundle = artifact_file(artifact, "candidate.bundle")
+    # A failed `git bundle create` must not look like a run with no commits.
+    package = env.get("PACKAGE_STATUS", "")
+    if package not in {"bundled", "unchanged"} or (package == "bundled") != (bundle is not None):
+        raise Refused("model output packaging failed or is inconsistent")
     outbox = artifact_file(artifact, "outbox.jsonl")
     try:
         roots = {item["root"] for item in config["receipts"]}

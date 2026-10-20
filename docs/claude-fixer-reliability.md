@@ -38,14 +38,20 @@ The publisher refuses everything when the live PR is closed, on another
 branch or repository, has moved from the recorded head, carries `claude:pause`
 or `hold` (any case), has unreadable labels, or `CLAUDE_FIXER_PAUSE` is `true`.
 It enforces one attempt per prepared run (exclusive state file plus the
-prepared `run_attempt`). It fetches the recorded head into a fresh bare
+prepared `run_attempt`). It publishes nothing, neither commits nor queued
+writes, unless the model step succeeded: a failed, cancelled or timed-out run's
+partial commits are never pushed. The model job reports how it packaged its
+commits (`unchanged`, `bundled` or `failed`), and the publisher drops every
+queued write unless that status matches the artifact, so a failed
+`git bundle create` cannot look like a run without commits. It fetches the recorded head into a fresh bare
 repository (no system/global config, hooks or fsmonitor; the credential travels
 in environment-scoped config, never argv or disk), verifies and fetches the
 bundle, runs `git fsck` on every object (`.`, `..` and `.git` tree entries are
 errors), and accepts at most 20 new commits that:
 
 - descend linearly from the recorded head (conflict job: exactly one merge
-  commit whose parents are the recorded head and recorded base);
+  commit whose parents are the recorded head and recorded base, and the base
+  branch must still be at the recorded base, so a stale merge is never pushed);
 - have committer `claude[bot]` with the pinned noreply email, so
   `GIT_COMMITTER_NAME=…` cannot forge a human commit and reset the eight-commit
   streak;
@@ -75,7 +81,8 @@ Interleaving: GitHub releases the lock between jobs, so another run's job can
 take it between this run's prepare, model and publish. The publisher's
 live-head check makes such interleaving fail closed (no push and no queued
 writes), and Git's ordinary non-fast-forward rejection remains the final race
-protection. App-token pushes trigger workflows as before.
+protection. App-token pushes are expected to trigger workflows; the post-merge
+canary has to confirm it.
 
 Not in this cut (phase 2): sandboxing the model job (for example bubblewrap).
 The model job still runs PR code with the model's OAuth token in its process
