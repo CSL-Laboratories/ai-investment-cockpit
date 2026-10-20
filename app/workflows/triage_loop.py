@@ -39,6 +39,7 @@ from workflows.budget import (
     rank_candidates,
 )
 from workflows.constants import (
+    DEEP_BUDGET_RELEASE_ERROR,
     DEEP_BUDGET_RELEASE_NOOP,
     EVENT_ESCALATION_DEFERRED,
     EVENT_TRIAGE_BATCH,
@@ -446,12 +447,19 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
                 dispatched = agent_dispatched()
             except Exception:
                 if not agent_dispatched():
+                    # Leave the unit spent. Record the release outcome (Inv 7 —
+                    # recorded, never dropped) and keep the handler exception.
                     try:
-                        budget.release(
+                        released = budget.release(
                             day=day, event_id=ev.id, reason="pre_dispatch_exception",
                             entry_id=entry_id)
+                    except BudgetIntegrityError:
+                        _defer(state, dispositions, ev, "deep_budget_integrity")
                     except Exception:
-                        pass  # leave the unit spent; the handler exception still aborts
+                        _defer(state, dispositions, ev, DEEP_BUDGET_RELEASE_ERROR)
+                    else:
+                        if not released:
+                            _defer(state, dispositions, ev, DEEP_BUDGET_RELEASE_NOOP)
                 raise
             finally:
                 restore_agent_dispatch_watch(watch)
