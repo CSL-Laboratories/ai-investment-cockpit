@@ -1,0 +1,35 @@
+{
+  "kind": "errors",
+  "api_version": "o7.operator.v0",
+  "candidate_maturity": "researched",
+  "errors": [
+    {
+      "code": "usage",
+      "status_code": "usage",
+      "message": "Usage: the command arguments are not in the catalog.",
+      "recovery": "Read the command schema and retry the same surface.",
+      "color_only": false
+    },
+    {
+      "code": "refused",
+      "status_code": "refused",
+      "message": "Refused: watch_only. No order was submitted.",
+      "recovery": "Inspect health and the illustrative profile. Do not retry an order from this surface.",
+      "color_only": false
+    },
+    {
+      "code": "stale_or_unreconciled",
+      "status_code": "stale_or_unreconciled",
+      "message": "Stale: evidence is not current. No order was submitted.",
+      "recovery": "Refresh the evidence feed and read health again.",
+      "color_only": false
+    },
+    {
+      "code": "unavailable",
+      "status_code": "unavailable",
+      "message": "Unavailable: the dependency could not be read.",
+      "recovery": "Retry the read after the dependency reports ok.",
+      "color_only": false
+    }
+  ]
+}

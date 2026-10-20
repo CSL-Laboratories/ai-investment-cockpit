@@ -53,14 +53,20 @@ class ToolStarvationError(Exception):
     tool/MCP starvation. Raised to FAIL CLOSED — the job must not run; an auto mode must not arm."""
 
 
+def _flag_value_at(tokens: list[str], i: int) -> str | None:
+    """Value for the flag token at ``tokens[i]``: the inline ``=`` part when present, else
+    the following token (``None`` when the flag is the last token)."""
+    _, sep, inline = tokens[i].partition("=")
+    if sep:
+        return inline
+    return tokens[i + 1] if i + 1 < len(tokens) else None
+
+
 def _flag_value(tokens: list[str], *names: str) -> str | None:
     for i, tok in enumerate(tokens):
-        flag, sep, inline = tok.partition("=")
-        if flag.lower() not in names:
+        if tok.partition("=")[0].lower() not in names:
             continue
-        if sep:
-            return inline
-        return tokens[i + 1] if i + 1 < len(tokens) else None
+        return _flag_value_at(tokens, i)
     return None
 
 
@@ -96,12 +102,11 @@ def _inspect_codex_decision_argv(tokens: list[str]) -> None:
             )
 
     # The only config override allowed is the exact deny value for built-in web search.
-    config_values: list[str] = []
-    for i, tok in enumerate(tokens):
-        flag, sep, inline = tok.partition("=")
-        if flag.lower() not in {"-c", "--config"}:
-            continue
-        config_values.append(inline if sep else (tokens[i + 1] if i + 1 < len(tokens) else ""))
+    config_values = [
+        _flag_value_at(tokens, i) or ""
+        for i, tok in enumerate(tokens)
+        if tok.partition("=")[0].lower() in {"-c", "--config"}
+    ]
     if config_values != ['web_search="disabled"']:
         raise ToolStarvationError(
             "Codex decision argv must carry only `-c web_search=\"disabled\"` (SEC-06)"
@@ -217,7 +222,7 @@ def inspect_argv(argv, *, decision_stage: bool = True) -> None:
             )
         if flag in _ALLOWED_TOOLS_FLAGS:
             # value may be inline (--allowedTools=Bash) or the next token (--allowedTools Bash)
-            value = tok.split("=", 1)[1] if "=" in tok else (tokens[i + 1] if i + 1 < len(tokens) else "")
+            value = _flag_value_at(tokens, i) or ""
             granted = _tool_entries(value)
             if granted:
                 raise ToolStarvationError(
@@ -244,14 +249,14 @@ def assert_decision_cwd(cwd, *, pinned_cwd) -> None:
 
 
 def default_decision_stage_specs(settings=None):
-    """Representative specs for the canonical decision-stage aliases (triage, deep) — the argv the
-    deployment WOULD launch. ``arm_auto_mode`` inspects these when the caller passes no explicit
-    specs, so a wiring that made a decision alias non-Claude (Inv 2) or tool-bearing (SEC-06) is
-    caught at arm time, not at first run."""
+    """Representative specs for the decision-stage aliases — the argv the deployment WOULD
+    launch. ``arm_auto_mode`` inspects these when the caller passes no explicit specs, so a
+    wiring that made a decision alias non-Claude (Inv 2) or tool-bearing (SEC-06) is caught
+    at arm time, not at first run."""
     from agent_runner.spec import AgentSpec
-    from config.models import configured_decision_runtime, runtime_for
+    from config.models import DECISION_STAGE_ALIASES, configured_decision_runtime, runtime_for
 
-    aliases = ("triage", "deep")
+    aliases = DECISION_STAGE_ALIASES
     selected = configured_decision_runtime(settings) if settings is not None else None
     return [
         AgentSpec(job_id=f"arm-check:{a}",

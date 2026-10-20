@@ -1,19 +1,25 @@
 //! Python bindings for the FIFO book, the fee schedule, and PnL attribution.
 //! The wrappers in `quant` turn these tuples back into the dataclasses the rest
-//! of the engine already uses.
+//! of the engine already uses. `apply_many` / `apply_quiet` run a sequence of
+//! book ops in one call so a replay does not pay the interpreter per order.
 
-use cockpit_book::{match_order, Aggressive, Book, BookError, Order, SelfTrade, Side, TimeInForce};
+use cockpit_book::{
+    match_order, Aggressive, Book, BookError, MatchOutput, Order, SelfTrade, Side, TimeInForce,
+};
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
-use pyo3::types::PyInt;
+use pyo3::types::{PyInt, PyList};
 
+mod batch;
 mod costs;
+mod ingest;
+mod signals;
 
 pyo3::create_exception!(cockpit_quant, NotFound, PyException);
 pyo3::create_exception!(cockpit_quant, IntegrityError, PyException);
 pyo3::create_exception!(cockpit_quant, BookValueError, PyException);
 
-fn raise(err: BookError) -> PyErr {
+pub(crate) fn raise(err: BookError) -> PyErr {
     match err {
         BookError::NotFound(id) => NotFound::new_err(id),
         BookError::Integrity(message) => IntegrityError::new_err(message),
@@ -35,7 +41,7 @@ fn raise(err: BookError) -> PyErr {
 
 /// A Python int that fits in `i64`. Out-of-range ints are `ValueError`, not
 /// PyO3's `OverflowError`. The book domain is signed 64-bit.
-struct FitI64(i64);
+pub(crate) struct FitI64(pub(crate) i64);
 
 impl<'py> FromPyObject<'py> for FitI64 {
     fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
@@ -51,12 +57,12 @@ impl<'py> FromPyObject<'py> for FitI64 {
     }
 }
 
-fn parse_side(value: &str) -> Result<Side, BookError> {
+pub(crate) fn parse_side(value: &str) -> Result<Side, BookError> {
     Side::parse(value).ok_or_else(|| BookError::Value(format!("unknown side {value}")))
 }
 
-type OrderTuple = (String, String, i64, i64, i64, i64, Option<String>, i64, i64);
-type MatchTuple = (
+pub(crate) type OrderTuple = (String, String, i64, i64, i64, i64, Option<String>, i64, i64);
+pub(crate) type MatchTuple = (
     String,
     i64,
     i64,
@@ -67,7 +73,7 @@ type MatchTuple = (
     Vec<(String, i64)>,
 );
 
-fn order_tuple(order: Order) -> OrderTuple {
+pub(crate) fn order_tuple(order: Order) -> OrderTuple {
     (
         order.order_id,
         order.side.as_str().to_string(),
@@ -78,6 +84,33 @@ fn order_tuple(order: Order) -> OrderTuple {
         order.owner,
         order.original_qty,
         order.qty_ahead_at_entry,
+    )
+}
+
+pub(crate) fn match_tuple(result: MatchOutput) -> MatchTuple {
+    let fills = result
+        .fills
+        .into_iter()
+        .map(|fill| {
+            (
+                fill.order_id,
+                fill.side.as_str().to_string(),
+                fill.price_ticks,
+                fill.qty,
+                fill.liquidity.to_string(),
+                fill.queue_position_at_entry,
+            )
+        })
+        .collect();
+    (
+        result.status.to_string(),
+        result.filled_qty,
+        result.remaining_qty,
+        result.trades,
+        fills,
+        result.resting_order_id,
+        result.stp_cancelled,
+        result.touched,
     )
 }
 
@@ -248,6 +281,12 @@ impl BookCore {
         self.book.orders().into_iter().map(order_tuple).collect()
     }
 
+    fn order_at(&self, index: usize) -> PyResult<OrderTuple> {
+        self.book.order_at(index).map(order_tuple).ok_or_else(|| {
+            pyo3::exceptions::PyIndexError::new_err("resting order index out of range")
+        })
+    }
+
     fn last_stamps(&self) -> (i64, i64) {
         self.book.last_stamps()
     }
@@ -297,30 +336,22 @@ impl BookCore {
             stp,
         };
         let result = match_order(&mut self.book, &aggressive, seq, exchange_ts).map_err(raise)?;
-        let fills = result
-            .fills
-            .into_iter()
-            .map(|fill| {
-                (
-                    fill.order_id,
-                    fill.side.as_str().to_string(),
-                    fill.price_ticks,
-                    fill.qty,
-                    fill.liquidity.to_string(),
-                    fill.queue_position_at_entry,
-                )
-            })
-            .collect();
-        Ok((
-            result.status.to_string(),
-            result.filled_qty,
-            result.remaining_qty,
-            result.trades,
-            fills,
-            result.resting_order_id,
-            result.stp_cancelled,
-            result.touched,
-        ))
+        Ok(match_tuple(result))
+    }
+
+    /// Apply a sequence of add/cancel/reduce/replace/match ops. Returns one tagged
+    /// tuple per op. An error leaves the earlier ops applied.
+    fn apply_many<'py>(
+        &mut self,
+        py: Python<'py>,
+        ops: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyList>> {
+        batch::apply_many(py, &mut self.book, ops)
+    }
+
+    /// Same sequence as `apply_many`, returning only how many ops were applied.
+    fn apply_quiet(&mut self, ops: &Bound<'_, PyAny>) -> PyResult<usize> {
+        batch::apply_quiet(&mut self.book, ops)
     }
 }
 
@@ -331,5 +362,7 @@ fn cockpit_quant(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("IntegrityError", m.py().get_type::<IntegrityError>())?;
     m.add("BookValueError", m.py().get_type::<BookValueError>())?;
     costs::register(m)?;
+    ingest::register(m)?;
+    signals::register(m)?;
     Ok(())
 }

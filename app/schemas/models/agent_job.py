@@ -55,9 +55,9 @@ class AgentJob(Base):
     # Lifecycle status (e.g. queued / running / done / quarantined / failed).
     status: Mapped[str] = mapped_column(String)
 
-    # Estimated usage/cost for the run (money -> Numeric(18, 2)); nullable
-    # until accounted.
-    usage_estimate: Mapped[float | None] = mapped_column(Numeric(18, 2), nullable=True)
+    # Estimated usage/cost for the run in USD. Scale 8 holds a sub-cent Haiku
+    # decision (about $0.001). Nullable until the workflow cost log fills it.
+    usage_estimate: Mapped[float | None] = mapped_column(Numeric(18, 8), nullable=True)
 
     # Captured headless session id for resume/interrogation; nullable until
     # the subprocess returns it.

@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "O7 operator command",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "api_version",
+    "candidate_maturity",
+    "surface",
+    "command",
+    "request_id",
+    "arguments",
+    "confirmation"
+  ],
+  "properties": {
+    "api_version": {"const": "o7.operator.v0"},
+    "candidate_maturity": {"const": "researched"},
+    "surface": {"enum": ["gui", "cli"]},
+    "command": {
+      "type": "string",
+      "enum": [
+        "operator.audit.export",
+        "operator.budgets.inspect",
+        "operator.decisions.inspect",
+        "operator.evidence.inspect",
+        "operator.export.bundle",
+        "operator.health.inspect",
+        "operator.interventions.request_reconciliation",
+        "operator.interventions.request_revocation",
+        "operator.interventions.request_stop",
+        "operator.positions.inspect",
+        "operator.profiles.inspect",
+        "operator.recovery.inspect",
+        "operator.strategies.inspect",
+        "operator.uncertainty.inspect"
+      ]
+    },
+    "request_id": {"type": "string", "pattern": "^req_[a-z0-9_.:-]{1,80}$"},
+    "arguments": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "scope": {"enum": ["operator_session"]}
+      }
+    },
+    "confirmation": {"enum": ["not_required", "explicit"]}
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["command"],
+        "properties": {
+          "command": {
+            "enum": [
+              "operator.interventions.request_reconciliation",
+              "operator.interventions.request_revocation",
+              "operator.interventions.request_stop"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "confirmation": {"const": "explicit"},
+          "arguments": {
+            "required": ["scope"],
+            "properties": {"scope": {"const": "operator_session"}}
+          }
+        }
+      },
+      "else": {
+        "properties": {"confirmation": {"const": "not_required"}}
+      }
+    }
+  ]
+}
