@@ -27,6 +27,7 @@
       "Bash(gh pr list *)",
       "Bash(gh run list)",
       "Bash(gh run list *)",
+      "Bash(gh run view)",
       "Bash(gh run view *)",
       "mcp__linear__get_issue",
       "mcp__linear__list_issues",
