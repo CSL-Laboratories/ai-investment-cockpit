@@ -392,7 +392,7 @@ class FreshRepo:
         prefix = ["git", "-c", "core.hooksPath=" + os.devnull, "-c", "core.fsmonitor=false",
                   "-c", "credential.helper="]
         if fsck:
-            # Untrusted objects (the bundle) are fsck-checked as they arrive.
+            # Before Git 2.46 a bundle fetch ignores these; check_objects() runs a full fsck.
             prefix += ["-c", "fetch.fsckObjects=true", "-c", "transfer.fsckObjects=true"]
         if bare:
             prefix += ["--git-dir", str(self.dir)]
@@ -424,6 +424,8 @@ def diff_entries(raw):
             raise Refused("changed path is not UTF-8") from None
         if not name or any(ord(ch) < 32 or ord(ch) == 127 for ch in name):
             raise Refused("changed path has control characters")
+        if any(part in {"", ".", ".."} for part in name.split("/")):
+            raise Refused("changed path has an empty, '.' or '..' component")
         entries.append({"old_mode": parts[0], "new_mode": parts[1], "new": parts[3], "status": parts[4], "path": name})
     return entries
 
@@ -459,6 +461,20 @@ def bounded_size(repo, entries):
         raise Refused("candidate diff too large")
 
 
+def check_objects(repo):
+    """fsck every object, including the bundle's, whatever the runner's Git version.
+
+    `.`, `..` and `.git` tree entries are errors here, not warnings; duplicate entries already are.
+    """
+    severities = []
+    for msg in ("hasDot", "hasDotdot", "hasDotgit"):
+        severities += ["-c", f"fsck.{msg}=error"]
+    try:
+        repo.run_git(severities + ["fsck", "--no-dangling", "--no-progress"])
+    except Refused:
+        raise Refused("candidate objects fail git fsck") from None
+
+
 def check_committers(repo, commits):
     for commit in commits:
         name, _, email = repo.text("show", "-s", "--format=%cn%x00%ce", commit).partition("\0")
@@ -474,6 +490,7 @@ def validate_candidate(repo, config, bundle):
     if len(heads) != 1 or not re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})? HEAD", heads[0]):
         raise Refused("bundle must carry exactly one HEAD")
     repo.run_git(["fetch", "-q", "--no-tags", str(bundle), "HEAD:refs/claude/candidate"], fsck=True)
+    check_objects(repo)
     candidate = repo.text("rev-parse", "--verify", "refs/claude/candidate^{commit}")
     if not SHA.fullmatch(candidate) or candidate in {head, merge_base}:
         raise Refused("bundle adds no new commit")
@@ -688,7 +705,7 @@ def execution_reason(path, outcome):
             if result.get("is_error") or result.get("subtype") != "success":
                 return "model-error"
         return "model-completed" if outcome == "success" else fallback
-    except (OSError, ValueError, TypeError, Refused):
+    except (OSError, ValueError, TypeError, RecursionError, Refused):
         return fallback
 
 

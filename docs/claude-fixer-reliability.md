@@ -40,8 +40,9 @@ or `hold` (any case), has unreadable labels, or `CLAUDE_FIXER_PAUSE` is `true`.
 It enforces one attempt per prepared run (exclusive state file plus the
 prepared `run_attempt`). It fetches the recorded head into a fresh bare
 repository (no system/global config, hooks or fsmonitor; the credential travels
-in environment-scoped config, never argv or disk), verifies and fsck-fetches the
-bundle, and accepts at most 20 new commits that:
+in environment-scoped config, never argv or disk), verifies and fetches the
+bundle, runs `git fsck` on every object (`.`, `..` and `.git` tree entries are
+errors), and accepts at most 20 new commits that:
 
 - descend linearly from the recorded head (conflict job: exactly one merge
   commit whose parents are the recorded head and recorded base);

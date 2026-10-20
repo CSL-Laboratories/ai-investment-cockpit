@@ -267,6 +267,108 @@ class LinearValidationTests(GitCase):
             p.validate_candidate(repo, self.config(), late)
 
 
+class TreeEntryTests(GitCase):
+    """Hand-built trees that `git mktree` would not write; fsck refuses them on any Git version."""
+
+    def raw_tree(self, entries):
+        body = b"".join(mode + b" " + name + b"\0" + bytes.fromhex(sha) for mode, name, sha in entries)
+        raw = self.root / "raw-tree"
+        raw.write_bytes(body)
+        return self.model.git("hash-object", "-t", "tree", "-w", "--literally", str(raw))
+
+    def commit_tree(self, entries):
+        blob = self.model.git("hash-object", "-w", "--stdin", input="x\n")
+        inner = self.raw_tree([(b"100644", b"x", blob)])
+        root = self.raw_tree([(b"40000", name, inner) if kind == "tree" else (b"100644", name, blob)
+                              for kind, name in entries])
+        commit = self.model.git("commit-tree", root, "-p", self.head, "-m", "crafted")
+        self.model.git("update-ref", "HEAD", commit)
+
+    def test_dot_dotdot_and_duplicate_entries_are_refused(self):
+        for entries in ([("tree", b".."), ("blob", b"z")], [("tree", b"."), ("blob", b"z")],
+                        [("blob", b"z"), ("blob", b"z")]):
+            with self.subTest(entries=entries):
+                self.model.git("update-ref", "HEAD", self.head)
+                self.commit_tree(entries)
+                self.refused("fail git fsck")
+
+    def test_diff_paths_with_dot_or_empty_components_are_refused(self):
+        for path in (b"../x", b"./x", b"a/../x", b"a//x", b"a/.", b"a/"):
+            with self.subTest(path=path):
+                raw = b":000000 100644 " + b"0" * 40 + b" " + b"1" * 40 + b" A\0" + path + b"\0"
+                with self.assertRaisesRegex(p.Refused, "component"):
+                    p.diff_entries(raw)
+
+
+class RecordedFetchAndPushTests(GitCase):
+    """fetch_recorded and push_candidate against a real file:// remote."""
+
+    def setUp(self):
+        super().setUp()
+        self.host = self.root / "host"
+        self.remote = self.host / f"{REPO}.git"
+        subprocess.run(["git", "clone", "-q", "--bare", str(self.src.path), str(self.remote)], env=git_env(), check=True)
+        self.remote_git("update-ref", "refs/heads/fix", self.head)
+        patcher = patch.object(p, "GITHUB_HOST", "file://" + str(self.host))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def remote_git(self, *args):
+        return subprocess.run(["git", "--git-dir", str(self.remote), *args], env=git_env(),
+                              capture_output=True, text=True, check=True).stdout.strip()
+
+    def side_commit(self):
+        """A commit on the remote only, as if another writer pushed."""
+        tree = self.remote_git("rev-parse", self.head + "^{tree}")
+        return self.remote_git("commit-tree", tree, "-p", self.head, "-m", "other writer")
+
+    def candidate(self, config):
+        repo = p.FreshRepo(tempfile.mkdtemp(dir=self.root))
+        p.fetch_recorded(repo, config, TOKEN)
+        return repo, p.validate_candidate(repo, config, self.bundle())
+
+    def test_happy_path_pushes_exactly_the_candidate_without_leaving_the_token_on_disk(self):
+        commit = self.model.commit({"app/a.py": "a = 2\n"})
+        config = self.config()
+        repo, candidate = self.candidate(config)
+        self.assertEqual(candidate, commit)
+        p.push_candidate(repo, config, candidate, TOKEN)
+        self.assertEqual(self.remote_git("rev-parse", "refs/heads/fix"), commit)
+        import base64
+        encoded = base64.b64encode(f"x-access-token:{TOKEN}".encode())
+        for base in (repo.dir, repo.home, self.remote):
+            for file in Path(base).rglob("*"):
+                if file.is_file():
+                    data = file.read_bytes()
+                    self.assertNotIn(TOKEN.encode(), data, file)
+                    self.assertNotIn(encoded, data, file)
+
+    def test_moved_branch_is_refused_before_validation(self):
+        self.model.commit({"app/a.py": "a = 2\n"})
+        self.remote_git("update-ref", "refs/heads/fix", self.side_commit())
+        repo = p.FreshRepo(tempfile.mkdtemp(dir=self.root))
+        with self.assertRaisesRegex(p.Refused, "moved since the recorded checkout"):
+            p.fetch_recorded(repo, self.config(), TOKEN)
+
+    def test_push_after_a_remote_move_is_rejected_without_force(self):
+        self.model.commit({"app/a.py": "a = 2\n"})
+        config = self.config()
+        repo, candidate = self.candidate(config)
+        other = self.side_commit()
+        self.remote_git("update-ref", "refs/heads/fix", other)
+        with self.assertRaisesRegex(p.Refused, "git operation failed: push"):
+            p.push_candidate(repo, config, candidate, TOKEN)
+        self.assertEqual(self.remote_git("rev-parse", "refs/heads/fix"), other)
+
+    def test_conflict_base_not_on_the_base_branch_is_refused(self):
+        side = self.side_commit()
+        self.remote_git("update-ref", "refs/heads/fix", side)
+        config = dict(self.config("conflict"), base=side, merge_base=side)
+        repo = p.FreshRepo(tempfile.mkdtemp(dir=self.root))
+        with self.assertRaisesRegex(p.Refused, "not on the base branch"):
+            p.fetch_recorded(repo, config, TOKEN)
+
+
 class ConflictValidationTests(GitCase):
     def setUp(self):
         super().setUp()
@@ -338,6 +440,15 @@ class ConflictValidationTests(GitCase):
         self.model.git("add", "-A")
         self.model.git("commit", "-q", "-m", "merge", committer=("Alice", "alice@example.com"))
         self.refused("non-Claude committer", "conflict")
+
+
+class ExecutionReasonTests(unittest.TestCase):
+    def test_deeply_nested_result_falls_back_instead_of_suppressing_the_audit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "result.json"
+            path.write_text("[" * 200_000 + "]" * 200_000)
+            self.assertEqual(p.execution_reason(str(path), "success"), "execution-result-unavailable")
+            self.assertEqual(p.execution_reason(str(path), "failure"), "model-step-failed-or-timed-out")
 
 
 class OutboxSchemaTests(unittest.TestCase):
