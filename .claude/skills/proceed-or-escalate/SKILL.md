@@ -1,7 +1,8 @@
----
-name: proceed-or-escalate
-description: Decide whether to act on your own or raise a question to a human, and how to write comments that speak for a developer. Use before starting or continuing work on an issue or PR, before posting a Linear or GitHub comment, before resolving a review thread, before citing or recording a decision, and on every run of a scheduled or unattended loop.
----
+--- name: proceed-or-escalate description: Decide whether to act on your own or
+  raise a question to a human, and how to write comments that speak for a developer.
+  Use before starting or continuing work on an issue or PR, before posting a Linear
+  or GitHub comment, before resolving a review thread, before citing or recording a
+  decision, and on every run of a scheduled or unattended loop. ---
 
 # Proceed or escalate
 
@@ -11,9 +12,9 @@ and make each one quick to answer. Everything else, do yourself.
 **Scope.** These rules govern agents acting through a developer's account or
 session: interactive sessions, scheduled loops and Grok Bots. Repository workflows
 (the `claude.yml` fixer, the Codex gate, stuck-thread-watch, conflict-scan,
-linear-pr-sync) and Devin automations keep the roles in AGENTS.md "Review roles"
-and "Automations". Their documented markers, receipts and audit comments are
-unchanged.
+linear-pr-sync and other repository workflows) and Devin automations keep the roles
+in AGENTS.md "Review roles" and "Automations". Their documented markers, receipts
+and audit comments are unchanged.
 
 ## Proceed on your own when ALL of these hold
 
@@ -42,11 +43,11 @@ unchanged.
 - It would start paid CI without a human asking for that run, or its CI cost is
   unclear.
 - An automation signal says a human must act: the fixer is paused
-  (`claude-fixer-paused`, its 8-commit loop cap, a pause label such as
-  `claude:pause` or `hold`); a fix receipt cannot be verified (short SHA, commit
+  (`claude-fixer-paused`, its 8-commit loop cap, or a pause label or marker the
+  repo documents); a fix receipt cannot be verified (short SHA, commit
   not reachable from the PR head, fingerprint mismatch, no push); a branch with
   fixer receipts was rebased or force-pushed; or `ci:full` label ownership is
-  uncertain. Never remove a pause label yourself, never dispatch the fixer to get
+  uncertain. Never remove a pause yourself, never dispatch the fixer to get
   around its budget, and never report an unverified fix as fixed.
 
 When unsure, escalate, in the short form below.
@@ -78,7 +79,8 @@ Recommendation: <letter>, because <one line>
 Meanwhile: paused (or: <other work from the proceed list>)
 ```
 
-"Meanwhile" is never the option you are asking about. In recursion, also record
+"Meanwhile" is never the option you are asking about, nor work that presupposes
+any option. In recursion, also record
 the blocker in `state/INBOX.md`. Then stop that line of work, release your claim
 under the repo's existing convention, and take only other admitted work that is
 next under the human-approved order. If there is no such order, propose one and
@@ -102,17 +104,18 @@ wrote a comment from the author field. Make it visible in the text.
 
 ## Decisions
 
-A decision exists only if a human posted it, approved its exact text, or it is
-recorded in `state/DECISIONS.md` or `docs/adr/`. When you rely on one, link it.
+A decision exists only if a human posted it from their own account, or it is recorded in
+`state/DECISIONS.md` or `docs/adr/`. A developer-approved comment carries direction but
+never releases a hold or counts as a decision on its own. When you rely on one, link it.
 If you can only find agents repeating it, treat it as unverified and ask.
 Silence, elapsed time, a green check, a merge, an issue moving to Done (Linear
 auto-closes issues on merge) or any other status is never a decision.
 
 ## Scheduled and unattended runs
 
-A loop that acts through a developer's account while nobody watches may only do
-work from the "proceed" list. It must not resolve human-authored threads, change
-scope, close issues as decided, or post developer-approved comments. It never
-marks a PR ready, labels, dispatches, re-runs or cancels. Label every comment
-`Agent (unattended run, for <developer>):`. If a run finds nothing on the proceed
-list, it posts nothing.
+A loop that acts through a developer's account while nobody watches may only do work
+from the "proceed" list. It must not resolve human-authored threads, change scope,
+close issues as decided, or post developer-approved comments. It never marks a PR
+ready, adds or removes GitHub labels, dispatches, re-runs or cancels. Label every
+comment `Agent (unattended run, for <developer>):`. If a run finds nothing on the
+proceed list, it posts nothing.

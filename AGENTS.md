@@ -61,15 +61,16 @@ None of this amends accepted contracts, founder-reserved decisions, the nine inv
 The founder decision rules above still decide who decides. This section is the
 short test for when an agent acts on its own and when it asks. Claude Code can
 invoke the `proceed-or-escalate` skill
-(`.claude/skills/proceed-or-escalate/SKILL.md`), whose text matches this section;
+(`.claude/skills/proceed-or-escalate/SKILL.md`), which expands on this section;
 Cursor, Codex and Grok follow this section.
 
 **Scope.** This governs agents acting through a developer's account or session:
 interactive sessions, scheduled loops and Grok Bots. Repository workflows
 (`claude.yml` fixer, Codex CI/fixer gate, stuck-thread-watch, linear-pr-sync,
-the CSL-259 candidate coordinator) and Devin automations keep the roles in
-[Review roles](#review-roles) and [Automations](#automations); their documented
-markers, receipts and audit comments are unchanged.
+conflict-scan, review-gate, the CSL-259 candidate coordinator and other repository
+workflows) and Devin automations keep the roles in [Review roles](#review-roles) and
+[Automations](#automations); their documented markers, receipts and audit comments
+are unchanged.
 
 **Proceed** only when all hold: the work is within an admitted issue's acceptance
 criteria (routine, reversible work inside an admitted issue does not ask again),
@@ -92,15 +93,14 @@ work; a tool or platform refused the action; you would state a decision you cann
 link to its record; the CI cost is unclear; or an automation signal needs a human
 (fixer paused or at its loop cap, a pause label, an unverifiable fix receipt, a
 rebased branch with fixer receipts, uncertain `ci:full` ownership). Never remove a
-pause label, dispatch the fixer around its budget, or report an unverified fix as
-fixed.
+pause, dispatch the fixer around its budget, or report an unverified fix as fixed.
 
-**How:** if the PR has a `Stuck PR threads: ai-investment-cockpit#<PR>` roll-up,
-add to it. Otherwise post one Linear comment @mentioning the issue owner with the
+**How:** if the PR has a `Stuck PR threads: ai-investment-cockpit#<PR>` roll-up, add
+to it. Otherwise post one Linear comment @mentioning the issue owner with the
 question, two or three options, your recommendation, and what you will do meanwhile
-("paused" or other proceed-list work, never the option you are asking about). Then
-release your claim and take only other admitted work that is next under the
-human-approved order.
+("paused" or other proceed-list work, never the option you are asking about or work
+that presupposes one). Then release your claim and take only other admitted work
+that is next under the human-approved order.
 
 **Comment labels.** Agents usually post through a developer's account, so start
 every agent comment with `Agent (<tool/session>, for <developer>):`. A comment the
@@ -109,15 +109,16 @@ approved by <developer> before posting:` and carries their direction, but a
 labelled relay is still not a personal human receipt: decision receipts, contract
 acceptance and founder review approvals are posted by the human from their own
 account. Never post decision language as an agent comment; link the record
-instead. A decision exists only if a human posted it, approved its exact text, or
-it is recorded in `docs/adr/` or a linked Linear decision issue. Agent repetition,
+instead. A decision exists only if a human posted it from their own account, or it is
+recorded in `docs/adr/` or a linked Linear decision issue; a developer-approved
+comment never releases a hold on its own. Agent repetition,
 silence, a merge or an issue auto-closing to Done is not a decision.
 
 **Unattended runs** (loops acting through a developer's account while nobody
 watches) may only do "proceed" work. They do not resolve human-authored threads,
 change scope, close issues as decided or post developer-approved comments. They
-never mark ready, label, dispatch, re-run or cancel, and they label every comment
-`Agent (unattended run, for <developer>):`.
+never mark ready, add or remove GitHub labels, dispatch, re-run or cancel, and they
+label every comment `Agent (unattended run, for <developer>):`.
 
 ## Codex boundary
 
