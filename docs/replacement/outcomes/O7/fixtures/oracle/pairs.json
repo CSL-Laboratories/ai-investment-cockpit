@@ -1,0 +1,241 @@
+{
+  "kind": "pairs",
+  "api_version": "o7.operator.v0",
+  "candidate_maturity": "researched",
+  "pairs": [
+    {
+      "pair_id": "positions.inspect.parity",
+      "gui": {
+        "api_version": "o7.operator.v0",
+        "candidate_maturity": "researched",
+        "surface": "gui",
+        "command": "operator.positions.inspect",
+        "request_id": "req_positions",
+        "profile": {
+          "profile_id": "illustrative_profile_a",
+          "profile_class": "A",
+          "digest": "sha256:abababababababababababababababababababababababababababababababab",
+          "signature_state": "illustrative_unsigned_fixture"
+        },
+        "enforcement_route": "risk_pass_mode_approval_order_gateway",
+        "authority_effect": "none",
+        "order_path": "none",
+        "status_code": "ok",
+        "visibility": {
+          "uncertainty": "absent_not_hidden",
+          "refusal": "absent_not_hidden",
+          "stale_data": "absent_not_hidden",
+          "reconciliation": "reconciled"
+        },
+        "result": {
+          "positions": [
+            {
+              "instrument_id": "AAPL",
+              "venue": "stock",
+              "quantity": "1",
+              "currency": "USD"
+            },
+            {
+              "instrument_id": "KXDEMO-1",
+              "venue": "kalshi_demo",
+              "quantity": "0",
+              "currency": "USD"
+            }
+          ],
+          "collateral": {
+            "currency": "USD",
+            "amount": "0.00",
+            "state": "known"
+          }
+        },
+        "errors": [],
+        "presentation": {
+          "exit_code": 0,
+          "machine_readable": true,
+          "ansi_in_machine_output": false,
+          "color_only_signal": false,
+          "text_status": "ok",
+          "rendered": "status=ok GUI positions"
+        }
+      },
+      "cli": {
+        "api_version": "o7.operator.v0",
+        "candidate_maturity": "researched",
+        "surface": "cli",
+        "command": "operator.positions.inspect",
+        "request_id": "req_positions",
+        "profile": {
+          "profile_id": "illustrative_profile_a",
+          "profile_class": "A",
+          "digest": "sha256:abababababababababababababababababababababababababababababababab",
+          "signature_state": "illustrative_unsigned_fixture"
+        },
+        "enforcement_route": "risk_pass_mode_approval_order_gateway",
+        "authority_effect": "none",
+        "order_path": "none",
+        "status_code": "ok",
+        "visibility": {
+          "uncertainty": "absent_not_hidden",
+          "refusal": "absent_not_hidden",
+          "stale_data": "absent_not_hidden",
+          "reconciliation": "reconciled"
+        },
+        "result": {
+          "positions": [
+            {
+              "instrument_id": "AAPL",
+              "venue": "stock",
+              "quantity": "1",
+              "currency": "USD"
+            },
+            {
+              "instrument_id": "KXDEMO-1",
+              "venue": "kalshi_demo",
+              "quantity": "0",
+              "currency": "USD"
+            }
+          ],
+          "collateral": {
+            "currency": "USD",
+            "amount": "0.00",
+            "state": "known"
+          }
+        },
+        "errors": [],
+        "presentation": {
+          "exit_code": 0,
+          "machine_readable": true,
+          "ansi_in_machine_output": false,
+          "color_only_signal": false,
+          "text_status": "ok",
+          "rendered": "status=ok canonical positions"
+        }
+      }
+    },
+    {
+      "pair_id": "decisions.inspect.parity",
+      "gui": {
+        "api_version": "o7.operator.v0",
+        "candidate_maturity": "researched",
+        "surface": "gui",
+        "command": "operator.decisions.inspect",
+        "request_id": "req_decisions",
+        "profile": {
+          "profile_id": "illustrative_profile_a",
+          "profile_class": "A",
+          "digest": "sha256:abababababababababababababababababababababababababababababababab",
+          "signature_state": "illustrative_unsigned_fixture"
+        },
+        "enforcement_route": "risk_pass_mode_approval_order_gateway",
+        "authority_effect": "none",
+        "order_path": "none",
+        "status_code": "refused",
+        "visibility": {
+          "uncertainty": "absent_not_hidden",
+          "refusal": "visible",
+          "stale_data": "absent_not_hidden",
+          "reconciliation": "reconciled"
+        },
+        "result": {
+          "decisions": [
+            {
+              "decision_id": "dec_recorded",
+              "outcome": "recorded",
+              "reason_code": "proposal_only_no_order"
+            },
+            {
+              "decision_id": "dec_refused",
+              "outcome": "refused",
+              "reason_code": "watch_only"
+            }
+          ],
+          "refusals": [
+            {
+              "decision_id": "dec_refused",
+              "reason_code": "watch_only",
+              "visible": true
+            }
+          ]
+        },
+        "errors": [
+          {
+            "code": "refused",
+            "status_code": "refused",
+            "message": "Refused: watch_only. No order was submitted.",
+            "recovery": "Inspect health and the illustrative profile. Do not retry an order from this surface.",
+            "color_only": false
+          }
+        ],
+        "presentation": {
+          "exit_code": 2,
+          "machine_readable": true,
+          "ansi_in_machine_output": false,
+          "color_only_signal": false,
+          "text_status": "refused",
+          "rendered": "status=refused GUI decisions"
+        }
+      },
+      "cli": {
+        "api_version": "o7.operator.v0",
+        "candidate_maturity": "researched",
+        "surface": "cli",
+        "command": "operator.decisions.inspect",
+        "request_id": "req_decisions",
+        "profile": {
+          "profile_id": "illustrative_profile_a",
+          "profile_class": "A",
+          "digest": "sha256:abababababababababababababababababababababababababababababababab",
+          "signature_state": "illustrative_unsigned_fixture"
+        },
+        "enforcement_route": "risk_pass_mode_approval_order_gateway",
+        "authority_effect": "none",
+        "order_path": "none",
+        "status_code": "refused",
+        "visibility": {
+          "uncertainty": "absent_not_hidden",
+          "refusal": "visible",
+          "stale_data": "absent_not_hidden",
+          "reconciliation": "reconciled"
+        },
+        "result": {
+          "decisions": [
+            {
+              "decision_id": "dec_recorded",
+              "outcome": "recorded",
+              "reason_code": "proposal_only_no_order"
+            },
+            {
+              "decision_id": "dec_refused",
+              "outcome": "refused",
+              "reason_code": "watch_only"
+            }
+          ],
+          "refusals": [
+            {
+              "decision_id": "dec_refused",
+              "reason_code": "watch_only",
+              "visible": true
+            }
+          ]
+        },
+        "errors": [
+          {
+            "code": "refused",
+            "status_code": "refused",
+            "message": "Refused: watch_only. No order was submitted.",
+            "recovery": "Inspect health and the illustrative profile. Do not retry an order from this surface.",
+            "color_only": false
+          }
+        ],
+        "presentation": {
+          "exit_code": 2,
+          "machine_readable": true,
+          "ansi_in_machine_output": false,
+          "color_only_signal": false,
+          "text_status": "refused",
+          "rendered": "status=refused canonical decisions"
+        }
+      }
+    }
+  ]
+}
