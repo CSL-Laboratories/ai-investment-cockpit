@@ -72,13 +72,7 @@
       "Bash(gh run list)",
       "Bash(gh run list *)",
       "Bash(gh run view)",
-      "Bash(gh run view *)",
-      "mcp__linear__get_issue",
-      "mcp__linear__list_issues",
-      "mcp__linear__list_comments",
-      "mcp__Linear__get_issue",
-      "mcp__Linear__list_issues",
-      "mcp__Linear__list_comments"
+      "Bash(gh run view *)"
     ],
     "ask": [
       "Bash(gh * -R*)",

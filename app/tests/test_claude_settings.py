@@ -19,8 +19,6 @@ GUARD = ROOT / ".claude" / "hooks" / "guard-substitution.sh"
 
 PYTHONS = ("python", "python3")
 GH_READ = ("gh pr view", "gh pr diff", "gh pr checks", "gh pr list", "gh run list", "gh run view")
-LINEAR = {f"mcp__{server}__{tool}" for server in ("linear", "Linear")
-          for tool in ("get_issue", "list_issues", "list_comments")}
 # Script tests are allowed one exact rule each; a new tools/test_*.py fails this
 # guard until its rule is added on purpose.
 TOOL_TESTS = {f"Bash({py} -X utf8 -B tools/{path.name})"
@@ -36,7 +34,6 @@ ALLOW = (
     | {"Bash(cargo fmt --check)", "Bash(cargo fmt --all --check)",
        "Bash(cargo fmt --manifest-path rust/Cargo.toml --all --check)", "Bash(actionlint)"}
     | {f"Bash({cmd}{tail})" for cmd in GH_READ for tail in ("", " *")}
-    | LINEAR
 )
 CONTINUE = chr(92) + chr(10)  # backslash-newline: bash joins the lines first
 ASK = {"Bash(gh * -R*)", "Bash(gh * --repo*)", "Bash(gh *://*)"}
@@ -65,6 +62,11 @@ def test_no_allowed_bash_rule_can_publish_spend_or_reach_the_network():
         if rule.startswith("Bash(") and rule not in TOOL_TESTS:
             assert not any(word in rule for word in FORBIDDEN), rule
 
+
+def test_no_mcp_tool_is_auto_approved():
+    # AGENTS.md cloud boundary: no automatic MCP approval (Codex review, #214).
+    allow = _settings()["permissions"]["allow"]
+    assert [rule for rule in allow if rule.startswith("mcp__")] == []
 
 def test_only_read_only_gh_rules_take_arguments():
     # Code-running commands are exact: a wildcard would also admit options such
