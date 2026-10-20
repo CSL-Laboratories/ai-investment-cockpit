@@ -163,8 +163,9 @@ provisioned.
    Rust path list matches (CSL-385 G8). Remove it once its full-matrix run has
    passed on the current head and the PR needs no further automatic READY.
    Removing it keeps the Linux pytest cells, including order-path, `risk/` and
-   PnL tests, on every push that is not docs-only; Windows, macOS and Rust
-   Windows wait until the label is back or a full dispatch runs. A manual
+   PnL tests, on every push that is not docs-only once the PR is ready for
+   review (drafts run no test matrix); Windows, macOS and Rust Windows wait
+   until the label is back or a full dispatch runs. A manual
    removal is a human hold: the
    Codex gate skips READY on the head where it first sees the removal, and with
    the candidate coordinator on, READY delivery, candidate runs and
