@@ -105,6 +105,10 @@ def _guard(command: str, **extra: str) -> subprocess.CompletedProcess:
     "gh pr view 1 $" + CONTINUE + "(id)",
     "cargo test <" + CONTINUE + "(echo x)",
     "python -m pytest >" + CONTINUE + CONTINUE + "(id)",
+    "gh pr view ${x:='$''(touch /tmp/pwn)'} ${x@P}",  # prompt expansion runs it
+    "gh pr view ${a:='y[$''(id)]'} $[a]",  # arithmetic subscript runs it
+    "gh pr view $[1+1]",
+    "gh pr view ${HOME}",
     "gh pr view 1 ${ id; }",  # bash 5.3 command substitution forms
     "cargo test ${|id;}",
     "python -m pytest ${" + chr(9) + "id; }",
@@ -136,7 +140,7 @@ def test_escaped_json_forms_also_force_a_prompt():
     "python -m pytest -q",
     "../.venv/bin/ruff check .",
     "cargo test --manifest-path rust/Cargo.toml",
-    "echo $HOME && ls ${HOME}",
+    "echo $HOME && ls $HOME/x",
     "python -m pytest" + CONTINUE + "-q",
 ])
 def test_plain_commands_pass_without_output(command):
