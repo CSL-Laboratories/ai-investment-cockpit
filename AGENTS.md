@@ -56,6 +56,50 @@ Never commit secrets, private account details, raw chats, signed URLs, bulk copy
 
 None of this amends accepted contracts, founder-reserved decisions, the nine invariants, the paper-only boundary, pre-live gates, current runtime, CI, fixer or review-loop roles. Agents still never merge.
 
+## Proceed or escalate
+
+The founder decision rules above still decide who decides. This section is the
+short test for when an agent acts on its own and when it asks. Claude Code loads the
+same rules as the `proceed-or-escalate` skill
+(`.claude/skills/proceed-or-escalate/SKILL.md`); Cursor, Codex and Grok follow this
+section.
+
+**Proceed** only when all hold: a clear defect or failing check with an evident
+cause; inside the issue's scope and its REGISTER package or `REGISTER: none`
+contract; no change to product behavior, UX, public API, contract or data meaning;
+reversible and covered by a test; no new spend, credentials, permissions, settings
+or workflow edits; the nine invariants untouched; no other claim on the branch,
+files or package; no paid CI started. Marking ready, pushing to a non-draft PR,
+adding a label a workflow listens for (`ci:full`, `enhancement`), and any dispatch,
+re-run or `/ci` command all start paid Blacksmith runs, and superseded heads are not
+reliably cancelled. Pushes to drafts or to branches without a PR, and read-only API
+queries, are fine.
+
+**Escalate** when any holds: a product detail, UX choice, scope or priority change
+is needed; the request has more than one reasonable reading; it is an architecture,
+language, dependency or data-source choice; it touches the order path, risk,
+brokers, audit, governance files, decision records, contracts or another owner's
+work; a tool or platform refused the action; or you would state a decision you
+cannot link to a human's own comment.
+
+**How:** one Linear comment @mentioning the issue owner with the question, two or
+three options, your recommendation and what you will do meanwhile. Then release
+your claim and take other admitted work.
+
+**Comment labels.** Agents usually post through a developer's account, so start
+every agent comment with `Agent (<tool/session>, for <developer>):`. A comment
+counts as the developer's own only when they approved its exact text before it was
+posted; mark it `Drafted by agent, approved by <developer> before posting:`. A
+labelled relay is still not a personal human receipt. Never post decision language
+as an agent comment; link the human's comment instead. A decision that only agents
+repeat is unverified.
+
+**Unattended runs** (scheduled loops, automations nobody is watching) may only do
+"proceed" work. They do not resolve human-authored threads, change scope, close
+issues as decided or post developer-approved comments. They never mark ready,
+label, dispatch, re-run or cancel, and they label every comment
+`Agent (unattended run, for <developer>):`.
+
 ## Codex boundary
 
 - Codex and Claude may perform schema-gated analysis jobs (briefing, triage,
