@@ -34,6 +34,8 @@
       "Bash(python3 -X utf8 -B tools/test_claude_pr_fixer.py)",
       "Bash(python -X utf8 -B tools/test_codex_gate.py)",
       "Bash(python3 -X utf8 -B tools/test_codex_gate.py)",
+      "Bash(python -X utf8 -B tools/test_codex_gate_identity.py)",
+      "Bash(python3 -X utf8 -B tools/test_codex_gate_identity.py)",
       "Bash(python -X utf8 -B tools/test_fixer_failure_escalation.py)",
       "Bash(python3 -X utf8 -B tools/test_fixer_failure_escalation.py)",
       "Bash(python -X utf8 -B tools/test_fixer_failure_watcher.py)",
