@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest)",
+      "Bash(python -m pytest *)",
+      "Bash(python3 -m pytest)",
+      "Bash(python3 -m pytest *)",
+      "Bash(ruff check)",
+      "Bash(ruff check *)",
+      "Bash(python -X utf8 -B tools/test_*.py)",
+      "Bash(python3 -X utf8 -B tools/test_*.py)",
+      "Bash(cargo test)",
+      "Bash(cargo test *)",
+      "Bash(cargo check)",
+      "Bash(cargo check *)",
+      "Bash(cargo clippy)",
+      "Bash(cargo clippy *)",
+      "Bash(cargo fmt --check)",
+      "Bash(actionlint)",
+      "Bash(actionlint *)",
+      "Bash(gh pr view)",
+      "Bash(gh pr view *)",
+      "Bash(gh pr diff)",
+      "Bash(gh pr diff *)",
+      "Bash(gh pr checks)",
+      "Bash(gh pr checks *)",
+      "Bash(gh pr list)",
+      "Bash(gh pr list *)",
+      "Bash(gh run list)",
+      "Bash(gh run list *)",
+      "Bash(gh run view *)",
+      "mcp__linear__get_issue",
+      "mcp__linear__list_issues",
+      "mcp__linear__list_comments"
+    ]
+  }
+}
