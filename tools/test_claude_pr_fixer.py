@@ -55,6 +55,7 @@ def pr_payload(
         "state": state,
         "author_association": author_association,
         "user": {"login": author, "type": "User"},
+        "labels": [],
         "head": {"ref": head_ref, "sha": head_sha, "repo": {"full_name": head_repo}},
     }
 
@@ -1457,7 +1458,7 @@ class FixerPreflightTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {
                 "REPO": REPO, "PR_NUMBER": "42", "EXPECTED_HEAD_REF": "feature/fix",
                 "REQUEST_MODE": "mention", "MENTION_ACTOR": "alice", "GITHUB_OUTPUT": str(Path(d)/"out")}), \
-                    patch.object(self.mod, "api", side_effect=[pr, {"permission": "write"}, {"permission": permission}]), \
+                    patch.object(self.mod, "api", side_effect=[pr, {"permission": "write"}, {"permission": permission}, []]), \
                     patch.object(self.mod.subprocess, "check_output") as graphql:
                 self.mod.main()
                 output = (Path(d)/"out").read_text()
@@ -1564,6 +1565,87 @@ class FixerPreflightTests(unittest.TestCase):
         self.assertIn("steps.preflight.outputs.head_ref", checkout_and_fixer)
         self.assertIn("github.event_name == 'pull_request_review' ||", job)
         self.assertNotIn("github.event_name == 'pull_request_review_comment' ||", job)
+
+    def test_every_embedded_preflight_matches_source_and_reads_pause_switch(self) -> None:
+        text = WORKFLOW_PATH.read_text()
+        chunks = text.split("python3 - <<'CLAUDE_FIXER_PREFLIGHT'\n")[1:]
+        self.assertEqual(len(chunks), 2)
+        source = (ROOT / "scripts/ci/claude_fixer_preflight.py").read_text().rstrip()
+        for chunk in chunks:
+            self.assertEqual(textwrap.dedent(chunk.split("          CLAUDE_FIXER_PREFLIGHT", 1)[0]).rstrip(), source)
+        for job in ("  claude-mention:", "  devin-review-fix:"):
+            step = text.split(job, 1)[1].split("id: preflight", 1)[1].split("run: |", 1)[0]
+            self.assertIn("CLAUDE_FIXER_PAUSE: ${{ vars.CLAUDE_FIXER_PAUSE }}", step)
+
+    def run_mode(self, mode, pr, commits=(), pause=None):
+        """Run preflight in devin or mention mode; return (output, api paths, graphql calls)."""
+        from unittest.mock import patch
+        paths = []
+        review = DevinMatrixTests._review(self)["review"]
+        def api(path):
+            paths.append(path)
+            if path.endswith("/permission"):
+                return {"permission": "write"}
+            if "/commits?" in path:
+                if not isinstance(commits, (list, tuple)):
+                    return commits
+                page = int(path.rsplit("page=", 1)[1])
+                return list(commits[(page - 1) * 100:page * 100])
+            if "/reviews/" in path:
+                return review
+            return pr
+        env = {"REPO": REPO, "PR_NUMBER": "42", "EXPECTED_HEAD_REF": "feature/fix",
+               "REQUEST_MODE": mode, "MENTION_ACTOR": "alice", "REVIEW_ID": "1"}
+        if pause is not None:
+            env["CLAUDE_FIXER_PAUSE"] = pause
+        reply = json.dumps({"data": {"repository": {"pullRequest": {"reviewThreads": {
+            "nodes": [self.thread()], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}})
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, env | {"GITHUB_OUTPUT": str(Path(d) / "out")}), \
+                patch.object(self.mod, "api", side_effect=api), \
+                patch.object(self.mod.subprocess, "check_output", return_value=reply) as graphql:
+            if pause is None:
+                os.environ.pop("CLAUDE_FIXER_PAUSE", None)  # Restored by patch.dict.
+            self.mod.main()
+            return (Path(d) / "out").read_text(), paths, graphql.call_count
+
+    def test_human_pause_stops_both_writers_before_any_other_lookup(self) -> None:
+        base = dict(pr_payload(), draft=False)
+        pauses = [({"labels": [{"name": "claude:pause"}]}, None), ({"labels": [{"name": "hold"}]}, None),
+                  ({"labels": [{"name": "bug"}, {"name": "hold"}]}, None), ({}, "true"),
+                  ({"labels": None}, None), ({"labels": ["hold"]}, None), ({"labels": "hold"}, None)]
+        for mode in ("devin", "mention"):
+            for change, switch in pauses:
+                with self.subTest(mode=mode, change=change, switch=switch):
+                    output, paths, graphql = self.run_mode(mode, base | change, pause=switch)
+                    self.assertIn("skip=true", output)
+                    self.assertEqual(paths, ["repos/acme/example/pulls/42"])
+                    self.assertEqual(graphql, 0)
+            for change, switch in (({"labels": [{"name": "do-not-merge"}]}, None), ({}, "TRUE"),
+                                   ({}, "1"), ({}, "")):
+                with self.subTest(mode=mode, unpaused=change, switch=switch):
+                    output, _, _ = self.run_mode(mode, base | change, pause=switch)
+                    self.assertIn("skip=false", output)
+
+    @staticmethod
+    def commit(login, name=None):
+        return {"author": {"login": login} if login else None, "commit": {"author": {"name": name or login or "-"}}}
+
+    def test_mention_respects_the_claude_commit_cap(self) -> None:
+        pr = dict(pr_payload(), draft=False)
+        claude = self.commit("github-actions[bot]", "claude[bot]")  # Observed live attribution.
+        human = self.commit("lucas")
+        cases = [([human] + [claude] * 7, "false"), ([human] + [claude] * 8, "true"),
+                 ([claude] * 8 + [human], "false"),
+                 ([human] + [claude] * 4 + [self.commit("dependabot[bot]")] + [claude] * 4, "true"),
+                 ([claude] * 120, "true"), ([human] * 100 + [claude] * 7, "false"), ([], "false")]
+        for commits, skip in cases:
+            with self.subTest(n=len(commits), skip=skip):
+                output, paths, graphql = self.run_mode("mention", pr, commits)
+                self.assertIn("skip=" + skip, output)
+                self.assertEqual(graphql, 0)
+                self.assertEqual(sum("/commits?" in p for p in paths), len(commits) // 100 + 1)
+        with self.assertRaises(ValueError):
+            self.run_mode("mention", pr, commits={"not": "a list"})
 
 
 class FixerQueueTests(unittest.TestCase):

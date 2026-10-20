@@ -62,6 +62,31 @@ failures remain eligible for a fresh bounded retry rather than a needs-human
 receipt. One audit is intentional even after model success, which alone cannot
 prove every per-root receipt was valid.
 
+## Human pause and bounded mentions (CSL-352)
+
+Both Claude PR writers (`devin-review-fix` and `claude-mention`) share one
+preflight, which runs under the per-PR `claude-<PR>` lock before any checkout,
+GraphQL read or attempt reservation.
+
+- **One PR:** add the label `claude:pause` (or the existing human-hold label
+  `hold`). Queued and new runs skip with a notice; nothing is reserved, so the
+  three-attempt budget is untouched. Remove the label to resume; the next Devin
+  review, `@claude` mention or authorized manual `devin-review-fix` dispatch
+  proceeds.
+- **Every PR:** set the repository variable `CLAUDE_FIXER_PAUSE` to exactly
+  `true` (Settings → Secrets and variables → Actions → Variables). Unset it, or
+  set any other value, to resume. Runs read the variable when the job starts.
+- **A run already past preflight:** the pre-push guard rereads the live PR and
+  refuses the push if a pause label is present (or labels are unreadable). The
+  attempt stays consumed, nothing is retried, and the terminal audit records the
+  outcome. A run that already pushed is not undone; the label stops later runs.
+- **Mentions are bounded:** `@claude` skips once eight or more Claude commits
+  follow the newest human commit, the same rule as the Devin-path loop cap.
+  A human commit resets the streak. The skip is a run notice only.
+
+A pause never resets budgets, receipts or the commit cap, and never resolves
+threads. `do-not-merge` and `needs-decision` do not pause Claude.
+
 ## Mediation and implementation remain separate
 
 Devin submitted reviews and authorized human requests drive Claude. Codex

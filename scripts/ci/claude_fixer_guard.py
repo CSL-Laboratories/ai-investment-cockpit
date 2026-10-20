@@ -110,13 +110,23 @@ def validate(config):
         raise ValueError("invalid guard context")
 
 
-def current_pr(config, read=api):
+PAUSE_LABELS = frozenset({"claude:pause", "hold"})
+
+
+def current_pr(config, read=api, refuse_pause=False):
     pr = read(f"repos/{config['repo']}/pulls/{config['number']}")
     head = pr.get("head") or {}
     if (pr.get("state") != "open" or head.get("ref") != config["ref"]
             or (head.get("repo") or {}).get("full_name") != config["repo"]
             or not SHA.fullmatch(str(head.get("sha") or ""))):
         raise ValueError("PR identity changed")
+    if refuse_pause:
+        # A human pause added after preflight stops the push; audits still read.
+        labels = pr.get("labels")
+        if not isinstance(labels, list) or not all(isinstance(label, dict) for label in labels):
+            raise ValueError("PR labels unreadable")
+        if PAUSE_LABELS & {str(label.get("name") or "") for label in labels}:
+            raise ValueError("human pause label present")
     return head["sha"]
 
 
@@ -156,7 +166,7 @@ def guard(config, updates, remote, state_path, read=api, git=command, remote_url
         raise ValueError("fix does not descend from checkout")
     # The API check is deliberately last. Git's ordinary server-side rejection
     # remains authoritative if an external writer wins the race after this read.
-    if current_pr(config, read) != config["base"]:
+    if current_pr(config, read, refuse_pause=True) != config["base"]:
         raise ValueError("remote moved")
     state_path.write_text(json.dumps({"candidate": candidate}), encoding="utf-8")
     print(f"Guard checked candidate {candidate}; push is not yet confirmed. "

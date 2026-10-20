@@ -22,8 +22,9 @@ URL = "https://github.com/acme/example.git"
 CONFIG = {"repo": "acme/example", "number": "7", "base": A, "ref": "fix"}
 
 
-def pr(sha=A):
-    return {"state": "open", "head": {"sha": sha, "ref": "fix", "repo": {"full_name": "acme/example"}}}
+def pr(sha=A, labels=()):
+    return {"state": "open", "labels": [{"name": name} for name in labels],
+            "head": {"sha": sha, "ref": "fix", "repo": {"full_name": "acme/example"}}}
 
 
 class GuardTests(unittest.TestCase):
@@ -45,6 +46,24 @@ class GuardTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             self.push()
         self.assertEqual(json.loads(self.state.read_text()), {})
+
+    def test_pause_label_added_after_preflight_stops_the_push(self):
+        for live in (pr(labels=["claude:pause"]), pr(labels=["bug", "hold"]),
+                     pr() | {"labels": None}, pr() | {"labels": ["hold"]}):
+            with self.subTest(live=live):
+                self.state.unlink(missing_ok=True)
+                with self.assertRaises(ValueError):
+                    self.push(lambda _, live=live: live)
+                self.assertEqual(json.loads(self.state.read_text()), {})  # Attempt consumed, no candidate.
+                with self.assertRaises(FileExistsError):
+                    self.push()
+        self.state.unlink()
+        self.push(lambda _: pr(labels=["bug", "do-not-merge"]))
+        self.assertEqual(json.loads(self.state.read_text()), {"candidate": B})
+
+    def test_pause_never_blocks_audit_reads(self):
+        self.assertEqual(m.current_pr(CONFIG, lambda _: pr(labels=["hold"])), A)
+        self.assertEqual(m.current_pr(CONFIG, lambda _: pr() | {"labels": None}), A)
 
     def test_api_denial_stops_without_retry(self):
         def denied(_):
