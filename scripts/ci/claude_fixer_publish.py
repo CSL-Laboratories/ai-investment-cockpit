@@ -392,7 +392,7 @@ class FreshRepo:
         prefix = ["git", "-c", "core.hooksPath=" + os.devnull, "-c", "core.fsmonitor=false",
                   "-c", "credential.helper="]
         if fsck:
-            # Before Git 2.46 a bundle fetch ignores these; check_objects() runs a full fsck.
+            # Before Git 2.46 a bundle fetch ignores these, so check_objects() also runs a full fsck.
             prefix += ["-c", "fetch.fsckObjects=true", "-c", "transfer.fsckObjects=true"]
         if bare:
             prefix += ["--git-dir", str(self.dir)]
@@ -489,7 +489,11 @@ def validate_candidate(repo, config, bundle):
     heads = repo.text("bundle", "list-heads", str(bundle)).splitlines()
     if len(heads) != 1 or not re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})? HEAD", heads[0]):
         raise Refused("bundle must carry exactly one HEAD")
-    repo.run_git(["fetch", "-q", "--no-tags", str(bundle), "HEAD:refs/claude/candidate"], fsck=True)
+    try:
+        # Git 2.46+ fscks bundle objects here; older Git leaves that to check_objects().
+        repo.run_git(["fetch", "-q", "--no-tags", str(bundle), "HEAD:refs/claude/candidate"], fsck=True)
+    except Refused:
+        raise Refused("candidate objects fail git fsck at fetch") from None
     check_objects(repo)
     candidate = repo.text("rev-parse", "--verify", "refs/claude/candidate^{commit}")
     if not SHA.fullmatch(candidate) or candidate in {head, merge_base}:

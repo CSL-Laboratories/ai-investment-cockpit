@@ -268,7 +268,10 @@ class LinearValidationTests(GitCase):
 
 
 class TreeEntryTests(GitCase):
-    """Hand-built trees that `git mktree` would not write; fsck refuses them on any Git version."""
+    """Hand-built trees that `git mktree` would not write.
+
+    Git 2.46+ refuses them at the bundle fetch, older Git in check_objects(); the reason is the same.
+    """
 
     def raw_tree(self, entries):
         body = b"".join(mode + b" " + name + b"\0" + bytes.fromhex(sha) for mode, name, sha in entries)
@@ -292,6 +295,47 @@ class TreeEntryTests(GitCase):
                 self.model.git("update-ref", "HEAD", self.head)
                 self.commit_tree(entries)
                 self.refused("fail git fsck")
+
+    def test_check_objects_refuses_crafted_trees_without_a_fetch(self):
+        # Objects written straight into the validator repo, so check_objects() runs on every Git version.
+        for name in (b"..", b".", b".git", b".GIT", b"z"):
+            with self.subTest(name=name):
+                repo = p.FreshRepo(tempfile.mkdtemp(dir=self.root))
+                blob_file = self.root / "blob"
+                blob_file.write_text("x\n")
+                blob = repo.text("hash-object", "-w", str(blob_file))
+                second = (b"40000", b"z", self.raw_inner(repo, blob)) if name != b"z" else (b"100644", b"z", blob)
+                first = (b"40000", name, self.raw_inner(repo, blob)) if name != b"z" else (b"100644", b"z", blob)
+                raw = self.root / "root-tree"
+                raw.write_bytes(b"".join(m + b" " + n + b"\0" + bytes.fromhex(sha) for m, n, sha in (first, second)))
+                repo.run_git(["hash-object", "-t", "tree", "-w", "--literally", str(raw)])
+                with self.assertRaisesRegex(p.Refused, "^candidate objects fail git fsck$"):
+                    p.check_objects(repo)
+
+    def test_fsck_refusal_at_the_bundle_fetch_keeps_the_fsck_reason(self):
+        # Git 2.46+ rejects a bad tree at the fsck-enabled bundle fetch, before check_objects().
+        self.model.commit({"app/a.py": "a = 2\n"})
+        bundle = self.bundle()
+        repo = p.FreshRepo(tempfile.mkdtemp(dir=self.root))
+        repo.run_git(["fetch", "-q", str(self.src.path), self.head])
+        real = repo.run_git
+        def run_git(args, **kwargs):
+            if args[0] == "fetch" and kwargs.get("fsck"):
+                raise p.Refused("git operation failed: fetch")
+            return real(args, **kwargs)
+        repo.run_git = run_git
+        with self.assertRaisesRegex(p.Refused, "^candidate objects fail git fsck at fetch$"):
+            p.validate_candidate(repo, self.config(), bundle)
+
+    def test_check_objects_accepts_ordinary_history(self):
+        repo = p.FreshRepo(tempfile.mkdtemp(dir=self.root))
+        repo.run_git(["fetch", "-q", str(self.src.path), self.head])
+        p.check_objects(repo)
+
+    def raw_inner(self, repo, blob):
+        raw = self.root / "inner-tree"
+        raw.write_bytes(b"100644 x\0" + bytes.fromhex(blob))
+        return repo.text("hash-object", "-t", "tree", "-w", "--literally", str(raw))
 
     def test_diff_paths_with_dot_or_empty_components_are_refused(self):
         for path in (b"../x", b"./x", b"a/../x", b"a//x", b"a/.", b"a/"):
