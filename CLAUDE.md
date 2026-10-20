@@ -25,7 +25,7 @@ release decision; Lucas has final say in any founder disagreement, including a 2
 
 For issue admission, decision holds, claim release and handoff, manual ownership and shared research evidence, follow [AGENTS.md's bounded issue execution and shared evidence rules](AGENTS.md#bounded-issue-execution-and-shared-evidence). They grant no new authority, settings or spend and leave review-loop roles unchanged.
 
-Before acting on your own, apply [AGENTS.md's proceed-or-escalate test](AGENTS.md#proceed-or-escalate) (also the `proceed-or-escalate` skill).
+Before acting on your own, apply [AGENTS.md's proceed-or-escalate test](AGENTS.md#proceed-or-escalate) (the `proceed-or-escalate` skill has the same text).
 
 Current implementation:
 A solo-developer, subscription-powered, **human-gated** AI investing copilot.
