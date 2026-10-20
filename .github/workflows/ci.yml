@@ -289,13 +289,21 @@ jobs:
             [ -z "$f" ] && continue
             # Swarm tests import docs/research/swarm-tools, schemas, and hashed
             # briefs. Any Python/JSON/YAML under docs/ is executable or a fixture,
-            # not skippable documentation.
+            # not skippable documentation. CSL-397: everything under app/ (the
+            # LLM prompts are app/workflows/prompts/*.md), the docs that tests
+            # read, and .gitignore always run tests (audit CSL-392);
+            # tools/test_ci_docs_filter.py keeps this list in step with the tests.
             if printf '%s\n' "$f" | grep -Eq \
               '^docs/research/swarm-tools/|^docs/research/swarm-schemas/|^docs/research/swarm-briefs/|\.py$|\.json$|\.ya?ml$'; then
               run_tests=true
               break
             fi
-            if printf '%s\n' "$f" | grep -Eq '^docs/|\.md$|^LICENSE([.].*)?$|^\.gitignore$|^\.gitattributes$|^\.editorconfig$'; then
+            if printf '%s\n' "$f" | grep -Eq \
+              '^app/|^docs/replacement/|^docs/evidence/|^docs/setup/|^docs/PLAN\.md$|^docs/research/gate-feasibility-|^\.gitignore$'; then
+              run_tests=true
+              break
+            fi
+            if printf '%s\n' "$f" | grep -Eq '^docs/|\.md$|^LICENSE([.].*)?$|^\.gitattributes$|^\.editorconfig$'; then
               continue
             fi
             run_tests=true
@@ -430,6 +438,7 @@ jobs:
           python -X utf8 -B -m unittest tools.test_review_gate tools.test_queue_gates
           python -X utf8 -B tools/test_ci_cancel_controller.py
           python -X utf8 -B tools/test_candidate_workflows.py
+          python -X utf8 -B tools/test_ci_docs_filter.py
       # CSL-166: the required linux gate runs pytest before any wheel exists, so
       # test_book_batch.py's skipif dropped the whole file. Build the extension
       # here and run that file. This is the existing linux job, not a new
