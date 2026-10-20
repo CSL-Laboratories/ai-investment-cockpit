@@ -89,6 +89,8 @@ def _guard(command: str, **extra: str) -> subprocess.CompletedProcess:
     "gh pr view `id`",
     "python -m pytest $(cat targets)",
     "cargo test <(echo x)",
+    "python -m pytest >(id)",
+    "../.venv/bin/python -m pytest >(id)",
     "ruff check $((1+1))",
 ])
 def test_substitution_forces_a_permission_prompt(command):
@@ -104,7 +106,8 @@ def test_escaped_json_forms_also_force_a_prompt():
     if bash is None:
         pytest.skip("bash not on PATH")
     for raw in ('{"tool_input":{"command":"gh pr view \\u0060id\\u0060"}}',
-                '{"tool_input":{"command":"cargo test \\u003c(echo x)"}}'):
+                '{"tool_input":{"command":"cargo test \\u003c(echo x)"}}',
+                '{"tool_input":{"command":"cargo test \\u003e(id)"}}'):
         result = subprocess.run([bash, str(GUARD)], input=raw.encode("utf-8"),
                                 capture_output=True, timeout=30, check=False)
         assert result.returncode == 0
