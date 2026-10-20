@@ -286,6 +286,7 @@ class TreeEntryTests(GitCase):
 
     def test_dot_dotdot_and_duplicate_entries_are_refused(self):
         for entries in ([("tree", b".."), ("blob", b"z")], [("tree", b"."), ("blob", b"z")],
+                        [("tree", b".git"), ("blob", b"z")], [("tree", b".GIT"), ("blob", b"z")],
                         [("blob", b"z"), ("blob", b"z")]):
             with self.subTest(entries=entries):
                 self.model.git("update-ref", "HEAD", self.head)
@@ -935,6 +936,12 @@ PIPELINES = {
 
 
 class WorkflowWiringTests(unittest.TestCase):
+    def test_conflict_writer_devin_race_check_reads_author_and_committer(self):
+        text = (ROOT / ".github/workflows/claude-conflict-writer.yml").read_text(encoding="utf-8")
+        line = next(l for l in text.splitlines() if l.strip().startswith('head_author="$(gh api'))
+        for field in ("(.author.login", "(.commit.author.name", "(.committer.login", "(.commit.committer.name"):
+            self.assertIn(field, line)
+
     def pipelines(self):
         for name, triples in PIPELINES.items():
             all_jobs = jobs(name)
