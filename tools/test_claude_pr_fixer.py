@@ -1397,12 +1397,9 @@ class FixerLoopCapTests(unittest.TestCase):
 
     def test_commit_listing_jq_emits_author_then_committer_columns(self) -> None:
         # The fake gh above serves ready-made TSV, so run the workflow's own jq on a REST-shaped listing.
-        import re
-        import shutil
-
         if shutil.which("jq") is None:
             self.skipTest("jq not available")
-        text = Path(".github/workflows/claude.yml").read_text(encoding="utf-8")
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
         filters = re.findall(r"--jq '(\.\[\] \| \[\(\.author\.login[^']*)'", text)
         self.assertEqual(len(filters), 1, filters)
         listing = [
