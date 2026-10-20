@@ -250,7 +250,9 @@ jobs:
       - name: Install workflow-test dependency
         run: python3 -m pip install PyYAML
       - name: Codex-gate tests
-        run: python3 -X utf8 -B tools/test_codex_gate.py
+        run: |
+          python3 -X utf8 -B tools/test_codex_gate.py
+          python3 -X utf8 -B tools/test_codex_gate_identity.py
       - name: Fixer event-matrix tests
         run: python3 -X utf8 -B tools/test_claude_pr_fixer.py
       - name: Exact candidate and delivery behavior
