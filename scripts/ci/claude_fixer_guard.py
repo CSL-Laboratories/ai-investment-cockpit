@@ -111,6 +111,7 @@ def validate(config):
 
 
 PAUSE_LABELS = frozenset({"claude:pause", "hold"})
+HANDOFF_LABEL = "needs-decision"
 
 
 class PauseRefused(ValueError):
@@ -248,6 +249,10 @@ def model_api(config, args, run=command):
     if len(args) == 1 and args[0] in reads:
         paging = [] if args[0] == "read" else ["--paginate"]
         return run(["gh", "api", "--method", "GET", reads[args[0]], *paging])
+    if args == ["label"] and config.get("label") == HANDOFF_LABEL:
+        # Only the conflict job installs this: the one human-handoff label.
+        return run(["gh", "api", "--method", "POST", f"{root}/issues/{config['number']}/labels",
+                    "--input", "-"], input=json.dumps({"labels": [HANDOFF_LABEL]}))
     if len(args) == 2 and args[0] == "comment":
         endpoint, body_path = f"{root}/issues/{config['number']}/comments", args[1]
     elif len(args) == 3 and args[0] == "reply" and re.fullmatch(r"[1-9][0-9]*", args[1]):
@@ -291,6 +296,10 @@ def main():
             ("base", "HEAD_SHA"), ("ref", "HEAD_REF"))}
         validate(config)
         config["receipts"] = json.loads(os.environ.get("RECEIPT_CONTEXT") or "[]")
+        label = os.environ.get("MODEL_API_LABEL", "")
+        if label not in {"", HANDOFF_LABEL}:
+            raise ValueError("unsupported model-api label")
+        config["label"] = label
         config_path.write_text(json.dumps(config), encoding="utf-8")
         Path(__file__).chmod(0o700)
         command(["git", "config", "--local", "core.hooksPath", str(directory)])

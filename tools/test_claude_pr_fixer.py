@@ -1238,6 +1238,23 @@ class ConflictJobStructureTests(unittest.TestCase):
         self.assertNotIn("HEAD:refs/heads/*", job)
         self.assertIn("Bash(git rebase:*)", job.split("--disallowedTools", 1)[1])
         self.assertIn("Bash(git reset:*)", job.split("--disallowedTools", 1)[1])
+        # CSL-355: no raw GitHub API for the model; only the fixed same-PR helper.
+        self.assertNotIn("gh api", allow)
+        self.assertIn("Bash(gh api:*)", job.split("--disallowedTools", 1)[1].split('"', 2)[1])
+        self.assertIn("Bash(python3 ${{ runner.temp }}/claude-fixer-guard/pre-push model-api --:*)", allow)
+        prompt = job.split("prompt: |", 1)[1].split("claude_args:", 1)[0]
+        self.assertNotIn("gh api", prompt)
+        self.assertIn("model-api -- comment BODY_FILE", prompt)
+        self.assertIn("model-api -- label", prompt)
+        guard = job.split("id: push_guard", 1)[1].split("      - id: claude", 1)[0]
+        self.assertIn("MODEL_API_LABEL: needs-decision", guard)
+        self.assertIn("if: steps.prep.outputs.proceed == 'true'", guard)
+        self.assertIn('python3 "$RUNNER_TEMP/claude-fixer-guard/pre-push" install', guard)
+        self.assertIn("if: steps.prep.outputs.proceed == 'true' && steps.push_guard.outcome == 'success'",
+                      job.split("      - id: claude", 1)[1].split("uses:", 1)[0])
+        chunk = job.split("<<'CLAUDE_FIXER_GUARD'\n", 1)[1].split("          CLAUDE_FIXER_GUARD", 1)[0]
+        self.assertEqual(textwrap.dedent(chunk).rstrip(),
+                         (ROOT / "scripts/ci/claude_fixer_guard.py").read_text(encoding="utf-8").rstrip())
         self.assertIn("Report tool-permission denials", job)
         self.assertIn("UNTRUSTED DATA", job)
         self.assertIn("no heredocs, loops, or &&", job)

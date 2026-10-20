@@ -165,6 +165,37 @@ class GuardTests(unittest.TestCase):
             self.assertEqual(run.call_args.args[0], ["gh", "api", "--method", "POST", "repos/acme/example/" + endpoint, "--input", "-"])
             self.assertEqual(json.loads(run.call_args.kwargs["input"]), {"body": body.read_text()})
 
+    def test_handoff_label_is_opt_in_fixed_and_same_pr_only(self):
+        from unittest.mock import Mock
+        run = Mock(return_value="{}")
+        for config, args in ((CONFIG, ["label"]), (CONFIG | {"label": ""}, ["label"]),
+                             (CONFIG | {"label": "ci:full"}, ["label"]),
+                             (CONFIG | {"label": "needs-decision"}, ["label", "ci:full"]),
+                             (CONFIG | {"label": "needs-decision"}, ["label", "needs-decision"]),
+                             (CONFIG | {"label": "needs-decision"}, ["labels"])):
+            with self.subTest(config=config.get("label"), args=args), self.assertRaises(ValueError):
+                m.model_api(config, args, run=run)
+        run.assert_not_called()
+        m.model_api(CONFIG | {"label": "needs-decision"}, ["label"], run=run)
+        run.assert_called_once_with(["gh", "api", "--method", "POST", "repos/acme/example/issues/7/labels",
+                                     "--input", "-"], input=json.dumps({"labels": ["needs-decision"]}))
+
+    def test_install_accepts_only_the_handoff_label(self):
+        env = {"REPO": CONFIG["repo"], "PR_NUMBER": "7", "HEAD_SHA": A, "HEAD_REF": "fix"}
+        for label, ok in (("", True), ("needs-decision", True), ("ci:full", False), ("needs-decision ", False)):
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                script = Path(tmp) / "pre-push"
+                script.write_text("fixture")
+                with patch.object(m, "__file__", str(script)), patch.object(sys, "argv", ["pre-push", "install"]), \
+                        patch.object(m, "command"), patch.dict(os.environ, env | {"MODEL_API_LABEL": label}):
+                    if ok:
+                        self.assertEqual(m.main(), 0)
+                        self.assertEqual(json.loads((Path(tmp) / "context.json").read_text())["label"], label)
+                    else:
+                        with self.assertRaises(ValueError):
+                            m.main()
+                        self.assertFalse((Path(tmp) / "context.json").exists())
+
     def test_reply_refuses_foreign_missing_malformed_or_non_root_targets(self):
         from unittest.mock import Mock
         (self.path / ".claude-fixer-replies").mkdir()
