@@ -5,11 +5,13 @@
 # whose input contains $(, a backtick, <( or >( therefore gets a permission prompt.
 # A $, < or > followed by a backslash also asks: a line continuation there
 # ("$\<newline>(cmd)") still runs the substitution.
+# Bash 5.3 also runs commands in "${ cmd; }" and "${|cmd;}"; the whitespace
+# after "${" may be a space, or a tab or newline (JSON-escaped with a backslash).
 # The whole hook input is scanned, so a match in another field only adds a
 # prompt. Prints nothing otherwise and always exits 0: a failing hook is ignored.
 input=$(cat)
 case $input in
-  *'$('* | *'`'* | *'<('* | *'>('* | *'$\\'* | *'<\\'* | *'>\\'* | *'\u0060'* | *'\u003c('* | *'\u003C('* | *'\u003e('* | *'\u003E('*)
+  *'$('* | *'`'* | *'<('* | *'>('* | *'${ '* | *'${|'* | *'${\'* | *'$\\'* | *'<\\'* | *'>\\'* | *'\u0060'* | *'\u003c('* | *'\u003C('* | *'\u003e('* | *'\u003E('*)
     printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"Command or process substitution needs approval (.claude/hooks/guard-substitution.sh)."}}'
     ;;
 esac

@@ -96,6 +96,10 @@ def _guard(command: str, **extra: str) -> subprocess.CompletedProcess:
     "gh pr view 1 $" + CONTINUE + "(id)",
     "cargo test <" + CONTINUE + "(echo x)",
     "python -m pytest >" + CONTINUE + CONTINUE + "(id)",
+    "gh pr view 1 ${ id; }",  # bash 5.3 command substitution forms
+    "cargo test ${|id;}",
+    "python -m pytest ${" + chr(9) + "id; }",
+    "ruff check ${" + chr(10) + "id; }",
 ])
 def test_substitution_forces_a_permission_prompt(command):
     result = _guard(command)
