@@ -113,6 +113,10 @@ def validate(config):
 PAUSE_LABELS = frozenset({"claude:pause", "hold"})
 
 
+class PauseRefused(ValueError):
+    """A human pause (or unreadable labels) stops the push."""
+
+
 def current_pr(config, read=api, refuse_pause=False):
     pr = read(f"repos/{config['repo']}/pulls/{config['number']}")
     head = pr.get("head") or {}
@@ -124,9 +128,9 @@ def current_pr(config, read=api, refuse_pause=False):
         # A human pause added after preflight stops the push; audits still read.
         labels = pr.get("labels")
         if not isinstance(labels, list) or not all(isinstance(label, dict) for label in labels):
-            raise ValueError("PR labels unreadable")
-        if PAUSE_LABELS & {str(label.get("name") or "") for label in labels}:
-            raise ValueError("human pause label present")
+            raise PauseRefused("PR labels unreadable")
+        if PAUSE_LABELS & {str(label.get("name") or "").lower() for label in labels}:
+            raise PauseRefused("human pause label present")
     return head["sha"]
 
 
@@ -330,6 +334,10 @@ def main():
         if len(sys.argv) != 3:
             raise ValueError("invalid hook invocation")
         guard(config, sys.stdin.read(), mode, state_path, remote_url=sys.argv[2])
+    except PauseRefused:
+        print("Claude fixer push stopped: the PR is paused for humans (claude:pause or hold label). "
+              "Stop this run; do not push, retry or remove the label.", file=sys.stderr)
+        return 1
     except (OSError, ValueError, subprocess.SubprocessError):
         print("Claude fixer push stopped: stale/invalid head, unavailable read, or attempt already used. "
               "Stop this run; no fetch, rebase, merge or second push.", file=sys.stderr)

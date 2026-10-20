@@ -983,6 +983,9 @@ class ConflictScanTests(unittest.TestCase):
             "unsafe-base": conflicted_pr(base_ref="a b"),
             "unsafe-sha": conflicted_pr(head_sha="zz"),
             "labelled": conflicted_pr(labels=["needs-decision"]),
+            "paused": conflicted_pr(labels=["claude:pause"]),
+            "held": conflicted_pr(labels=["bug", "Hold"]),
+            "paused-upper": conflicted_pr(labels=["CLAUDE:PAUSE"]),
             "reader": conflicted_pr(author="reader"),
             "no-access": conflicted_pr(author="mallory"),
             "lookup-error": conflicted_pr(author="boom"),
@@ -1115,6 +1118,29 @@ class ConflictScanTests(unittest.TestCase):
         chosen, audit = self.mod.select(prs, REPO, lookup, review_bases=bases)
         self.assertEqual(chosen, [])
         self.assertIn("skip=protected-head", audit[0])
+
+    def test_human_pause_stops_the_conflict_writer(self) -> None:
+        for labels in (["claude:pause"], ["Hold"]):
+            chosen, audit = self._select([conflicted_pr(labels=labels)])
+            self.assertEqual(chosen, [])
+            self.assertIn("skip=paused", audit[0])
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {
+                "GITHUB_REPOSITORY": REPO, "CLAUDE_FIXER_PAUSE": "true", "GITHUB_OUTPUT": str(Path(d) / "out")}), \
+                patch.object(self.mod, "fixer_busy") as busy, patch.object(self.mod, "fetch_prs") as fetch:
+            self.assertEqual(self.mod.main(), 0)
+            output = (Path(d) / "out").read_text()
+        busy.assert_not_called()
+        fetch.assert_not_called()
+        self.assertIn("count=0", output)
+        text = SCAN_WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertEqual(text.count("CLAUDE_FIXER_PAUSE: ${{ vars.CLAUDE_FIXER_PAUSE }}"), 2)
+        prep = text.split("  conflict-resolve:", 1)[1].split("id: prep", 1)[1].split("      - uses:", 1)[0]
+        self.assertLess(prep.index('"${CLAUDE_FIXER_PAUSE:-}" = "true"'), prep.index("git merge"))
+        self.assertLess(prep.index('select(. == "claude:pause" or . == "hold")'), prep.index("git checkout"))
+        self.assertIn('if (.labels | type) != "array" then "unreadable"', prep)
+        self.assertIn("steps.prep.outputs.proceed == 'true'",
+                      text.split("  conflict-resolve:", 1)[1].split("      - id: claude", 1)[1].split("uses:", 1)[0])
 
     def test_embedded_scan_matches_source(self) -> None:
         text = SCAN_WORKFLOW_PATH.read_text(encoding="utf-8")
@@ -1611,6 +1637,7 @@ class FixerPreflightTests(unittest.TestCase):
     def test_human_pause_stops_both_writers_before_any_other_lookup(self) -> None:
         base = dict(pr_payload(), draft=False)
         pauses = [({"labels": [{"name": "claude:pause"}]}, None), ({"labels": [{"name": "hold"}]}, None),
+                  ({"labels": [{"name": "Claude:Pause"}]}, None), ({"labels": [{"name": "HOLD"}]}, None),
                   ({"labels": [{"name": "bug"}, {"name": "hold"}]}, None), ({}, "true"),
                   ({"labels": None}, None), ({"labels": ["hold"]}, None), ({"labels": "hold"}, None)]
         for mode in ("devin", "mention"):

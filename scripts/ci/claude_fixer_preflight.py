@@ -16,7 +16,7 @@ PROTECTED_REFS = frozenset({"master", "main", "HEAD"})
 # every PR. Checked under the shared lock before any checkout or reservation.
 PAUSE_LABELS = frozenset({"claude:pause", "hold"})
 LOOP_CAP = 8
-QUERY ="""query($owner:String!, $name:String!, $number:Int!, $cursor:String) {
+QUERY = """query($owner:String!, $name:String!, $number:Int!, $cursor:String) {
   repository(owner:$owner, name:$name) { pullRequest(number:$number) {
     reviewThreads(first:100, after:$cursor) {
       pageInfo { hasNextPage endCursor }
@@ -66,7 +66,7 @@ def pause_reason(pr: dict) -> str:
     # Unreadable labels fail closed: a hold must not be missed.
     if not isinstance(labels, list) or not all(isinstance(label, dict) for label in labels):
         return "unreadable PR labels"
-    held = sorted(PAUSE_LABELS & {str(label.get("name") or "") for label in labels})
+    held = sorted(PAUSE_LABELS & {str(label.get("name") or "").lower() for label in labels})
     return f"label {held[0]}" if held else ""
 
 

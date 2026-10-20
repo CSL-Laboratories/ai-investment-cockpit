@@ -48,11 +48,11 @@ class GuardTests(unittest.TestCase):
         self.assertEqual(json.loads(self.state.read_text()), {})
 
     def test_pause_label_added_after_preflight_stops_the_push(self):
-        for live in (pr(labels=["claude:pause"]), pr(labels=["bug", "hold"]),
+        for live in (pr(labels=["claude:pause"]), pr(labels=["bug", "hold"]), pr(labels=["HOLD"]),
                      pr() | {"labels": None}, pr() | {"labels": ["hold"]}):
             with self.subTest(live=live):
                 self.state.unlink(missing_ok=True)
-                with self.assertRaises(ValueError):
+                with self.assertRaises(m.PauseRefused):
                     self.push(lambda _, live=live: live)
                 self.assertEqual(json.loads(self.state.read_text()), {})  # Attempt consumed, no candidate.
                 with self.assertRaises(FileExistsError):
