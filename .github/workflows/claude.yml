@@ -40,6 +40,7 @@ on:
       - "scripts/ci/codex_gate.py"
       - "tools/test_claude_pr_fixer.py"
       - "tools/test_codex_gate.py"
+      - "tools/test_codex_gate_identity.py"
 
 # Job-level concurrency only. Workflow-level concurrency would admit skipped
 # comments and cancel a queued fixer run.
