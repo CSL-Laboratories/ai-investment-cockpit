@@ -39,6 +39,7 @@ ALLOW = {
     "mcp__linear__get_issue", "mcp__linear__list_issues", "mcp__linear__list_comments",
     "mcp__Linear__get_issue", "mcp__Linear__list_issues", "mcp__Linear__list_comments",
 }
+CONTINUE = chr(92) + chr(10)  # backslash-newline: bash joins the lines first
 ASK = {"Bash(gh * -R*)", "Bash(gh * --repo*)", "Bash(gh *://*)"}
 # Words that must never appear in an allowed Bash rule: publishing, spending,
 # network and install commands stay on the session's normal approval path.
@@ -92,6 +93,9 @@ def _guard(command: str, **extra: str) -> subprocess.CompletedProcess:
     "python -m pytest >(id)",
     "../.venv/bin/python -m pytest >(id)",
     "ruff check $((1+1))",
+    "gh pr view 1 $" + CONTINUE + "(id)",
+    "cargo test <" + CONTINUE + "(echo x)",
+    "python -m pytest >" + CONTINUE + CONTINUE + "(id)",
 ])
 def test_substitution_forces_a_permission_prompt(command):
     result = _guard(command)
@@ -120,6 +124,7 @@ def test_escaped_json_forms_also_force_a_prompt():
     "../.venv/bin/ruff check .",
     "cargo test --manifest-path rust/Cargo.toml",
     "echo $HOME && ls ${HOME}",
+    "python -m pytest" + CONTINUE + "-q",
 ])
 def test_plain_commands_pass_without_output(command):
     result = _guard(command, description="Run checks")
