@@ -247,8 +247,10 @@ This summarises [ci-cancellation-controller.md](ci-cancellation-controller.md).
 
 - **Founder decision B2:** identical-head pending twins are not cancelled.
 - **Code:** both exclusions above enforce this.
-- **Effect:** twins in the ordinary group are serialized by `queue: max` and each executes in
-  full.
+- **Effect:** twins in the ordinary group are serialized by `queue: max`. Each executes in full
+  only while no newer head supersedes them. Once a later `synchronize` advances the head, both
+  twins are strict ancestors and the controller may cancel either one, as in the first observed
+  example below.
 - **[O] Observed twins**, two `pull_request` runs on the same head created within 1 s:
   - ci 39490583924 and 39490583816 (`5b7c2b15b8`): the second started after the first
     finished at 20:25:30Z, re-ran settle, and started L×3 before an ancestor cancel.
@@ -364,7 +366,7 @@ At the base commit these ran locally (Python 3.13):
 | ID | Gap | Class | Suggested follow-up |
 | --- | --- | --- | --- |
 | G1 | Only `linux-gates` and `Devin Review` are required, and both rulesets allow admin PR bypass. Windows, macOS, Rust and the `queue-gates`/`rust-gates`/`review-gate` aggregates are advisory. | [O] | Already staged in ci-queue-rollout.md. Owner decision; no change here. |
-| G2 | Identical-head twins observed (section 5). B2 keeps them, so each twin re-executes settle and paid cells serially. The duplicate-event cause is unknown, and there is no explicit twin test. | [O] / PARTIAL | Add a controller fixture asserting two active live-head runs both survive. Investigate the duplicate `pull_request` deliveries (read-only). |
+| G2 | Identical-head twins observed (section 5). B2 keeps them, so each twin re-executes settle and paid cells serially unless a newer head lets the controller cancel them as ancestors. The duplicate-event cause is unknown, and there is no explicit twin test. | [O] / PARTIAL | Add a controller fixture asserting two active live-head runs both survive. Investigate the duplicate `pull_request` deliveries (read-only). |
 | G3 | Stale label dispatch (row 13), and same-key label or manual re-dispatch (cancel-in-progress true), can create a failing `linux-gates` check run on the **current** head. Whether a dispatch check run affects the required check is unverified; GitHub's doc says it does not. | [I] | Observe or test which SHA receives the check. Consider documenting the "rerun or wait for the ordinary run" recovery. |
 | G4 | The ci.yml PR filter diffs raw `base.sha..head.sha` (ci.yml:256-257, 275), while rust.yml uses the merge tree (rust.yml:216-228). On a stale base, ci over-selects tests (fails open, extra spend). The decide script for PR, push and schedule has no executing test. | [S] | Align with the rust.yml merge-tree diff in a separately admitted CI task, and add shell-execution tests. |
 | G5 | Stale workflow comments: ci.yml:306-309 (settle relies on #157 concurrency cancel), ci.yml:17-23 and 707-708 ($50 budget, superseded by ci-cost-budget.md:48-50), ci.yml:504-505 (`queue-gates` "required"). | [S] | Comment-only fix in a human-assigned workflow issue. |
