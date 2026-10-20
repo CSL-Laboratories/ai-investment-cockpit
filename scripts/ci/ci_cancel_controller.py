@@ -176,8 +176,8 @@ def closed_lifecycle(pr):
     return 'merged' if merged else 'closed'
 
 
-def pr_state(api, repo, repo_id, number, allow_closed=False):
-    """Return (identity, lifecycle); lifecycle is None unless closure is explicitly allowed."""
+def pr_state(api, repo, repo_id, number, allow_closed=False, allow_draft=False):
+    """Return (identity, lifecycle); lifecycle is None unless closure or draft is explicitly allowed."""
     pr = api.read(f'repos/{repo}/pulls/{number}')
     if not isinstance(pr, dict):
         raise Refused('Malformed live PR')
@@ -185,9 +185,12 @@ def pr_state(api, repo, repo_id, number, allow_closed=False):
     if not isinstance(head, dict) or not isinstance(base, dict):
         raise Refused('Malformed live PR head/base')
     lifecycle = closed_lifecycle(pr) if allow_closed else None
+    # Only an open PR with a literal boolean draft flag; closed drafts stay refused.
+    if allow_draft and pr.get('state') == 'open' and pr.get('draft') is True:
+        lifecycle = 'draft'
     if (pr.get('number') != number or not positive(pr.get('id'))
             or (pr.get('state') != 'open' and lifecycle is None)
-            or pr.get('draft') is not False
+            or (pr.get('draft') is not False and lifecycle != 'draft')
             or not same_repo(head.get('repo'), repo, repo_id)
             or not same_repo(base.get('repo'), repo, repo_id)
             or not SHA.fullmatch(str(head.get('sha', '')))):
@@ -351,8 +354,9 @@ def reconcile(api, repo, event_name, event):
     source = api.read(f'repos/{repo}/actions/runs/{triggered[0]}')
     if run_identity(source, repo, repo_id, workflows) != triggered:
         raise Refused('Triggering run identity changed')
-    # Closure is accepted only here, after all identity checks; final rereads stay strict.
-    live, lifecycle = pr_state(api, repo, repo_id, triggered[6], allow_closed=True)
+    # Closure and draft are accepted only here, after all identity checks; final
+    # rereads stay strict, so a draft transition mid-plan still refuses.
+    live, lifecycle = pr_state(api, repo, repo_id, triggered[6], allow_closed=True, allow_draft=True)
     if not belongs(triggered, live):
         raise Refused('Triggering PR/branch identity changed')
     if lifecycle is not None:
