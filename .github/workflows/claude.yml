@@ -815,6 +815,7 @@ jobs:
           git config user.name "claude[bot]"
           git config user.email "209825114+claude[bot]@users.noreply.github.com"
           # Keep the outbox and reply bodies out of commits.
+          mkdir -p .git/info
           printf '%s\n' .claude-fixer-out/ .claude-fixer-replies/ >> .git/info/exclude
       - uses: actions/setup-python@v5
         with:
@@ -3521,6 +3522,7 @@ jobs:
           git config user.name "claude[bot]"
           git config user.email "209825114+claude[bot]@users.noreply.github.com"
           # Keep the outbox and reply bodies out of commits.
+          mkdir -p .git/info
           printf '%s\n' .claude-fixer-out/ .claude-fixer-replies/ >> .git/info/exclude
       - uses: actions/setup-python@v5
         with:

@@ -208,6 +208,13 @@ class LinearValidationTests(GitCase):
         self.model.commit({"app/f.py": "f\n"})
         self.model.git("merge", "-q", "--no-ff", "-m", "merge", side)
         self.refused("not linear")
+        # Linear, but built on an older commit: it never descends from the head.
+        self.src.git("checkout", "-q", "-b", "older", self.head)
+        self.head = self.src.commit({"app/b.py": "b = 9\n"})
+        self.model.git("fetch", "-q", "origin", "older")
+        self.model.git("checkout", "-q", "-B", "fix", self.head + "~1")
+        self.model.commit({"app/f.py": "f\n"})
+        self.refused("descend from the recorded head")
         # A bundle without a new commit is not a candidate.
         self.model.git("reset", "-q", "--hard", self.head)
         self.model.git("commit", "-q", "--allow-empty", "-m", "noop")
