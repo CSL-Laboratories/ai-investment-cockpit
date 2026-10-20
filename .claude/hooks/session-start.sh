@@ -93,12 +93,8 @@ EOF
 
 install_deps() {
   local reqs rc=1
+  local -a extra=()
   "$py" -m pip install --quiet -U pip || return 1
-  if [ -f "$pins" ]; then
-    # Same pinned direct set as CI's run-gates (covers pyproject, pytest, ruff).
-    "$py" -m pip install --quiet -r "$pins" -r app/benchmarks/requirements.txt
-    return
-  fi
   reqs="$(mktemp)"
   if "$py" - > "$reqs" <<'EOF'
 import tomllib
@@ -107,7 +103,10 @@ with open("app/pyproject.toml", "rb") as f:
 print("\n".join(deps + ["pytest", "ruff"]))
 EOF
   then
-    "$py" -m pip install --quiet -r "$reqs" -r app/benchmarks/requirements.txt && rc=0
+    # One resolver run: CI's pins fix the versions of shared packages, and a
+    # dependency added to pyproject.toml but not yet pinned is still installed.
+    [ -f "$pins" ] && extra=(-r "$pins")
+    "$py" -m pip install --quiet -r "$reqs" -r app/benchmarks/requirements.txt "${extra[@]}" && rc=0
   fi
   rm -f "$reqs"
   return $rc
