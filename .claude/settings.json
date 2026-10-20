@@ -37,7 +37,8 @@
     ],
     "ask": [
       "Bash(gh * -R*)",
-      "Bash(gh * --repo*)"
+      "Bash(gh * --repo*)",
+      "Bash(gh *://*)"
     ]
   }
 }
