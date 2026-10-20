@@ -321,7 +321,7 @@ class EvidenceTests(unittest.TestCase):
         import re
         import textwrap
         text = (ROOT / ".github/workflows/claude.yml").read_text(encoding="utf-8")
-        self.assertEqual(text.count('name: "Fixer attempt ${{ steps.eligibility.outputs.attempt_key }}"'), 1)
+        self.assertEqual(text.count('name: "Fixer attempt ${{ needs.fixer-prepare.outputs.attempt_key }}"'), 1)
         embedded = textwrap.dedent(text.split("<<'CLAUDE_FIXER_RECEIPTS'\n")[1].split("          CLAUDE_FIXER_RECEIPTS")[0]).rstrip()
         self.assertEqual(embedded, (ROOT / "scripts/ci/claude_fixer_receipts.py").read_text().rstrip())
         # Parse the supported indentation/step schema without adding a YAML
@@ -331,14 +331,19 @@ class EvidenceTests(unittest.TestCase):
         self.assertNotRegex(header, r"(?m)^    (name|strategy|uses):")
         steps = re.split(r"(?m)^      - ", steps_text)[1:]
         action = [(i, s) for i, s in enumerate(steps) if f"        uses: {m.ACTION_USES}\n" in s]
-        context = [(i, s) for i, s in enumerate(steps) if s.startswith('name: "Fixer attempt ${{ steps.eligibility.outputs.attempt_key }}"\n')]
-        eligibility = [s for s in steps if "        id: eligibility\n" in s or s.startswith("id: eligibility\n")]
+        context = [(i, s) for i, s in enumerate(steps) if s.startswith('name: "Fixer attempt ${{ needs.fixer-prepare.outputs.attempt_key }}"\n')]
+        # CSL-377: locked eligibility moved to the trusted fixer-prepare job;
+        # the model job keeps the devin-review-fix name and context step.
+        prepare = re.split(r"\n  [A-Za-z0-9_-]+:\n", text.split("\n  fixer-prepare:\n", 1)[1])[0]
+        eligibility = [s for s in re.split(r"(?m)^      - ", prepare.split("    steps:\n", 1)[1])[1:]
+                       if "        id: eligibility\n" in s or s.startswith("id: eligibility\n")]
+        self.assertIn("attempt_key: ${{ steps.eligibility.outputs.attempt_key }}", prepare)
         self.assertEqual(len(action), 1)
         self.assertEqual(len(context), 1)
         self.assertEqual(len(eligibility), 1)
         self.assertTrue(action[0][1].startswith("id: claude\n"))
         self.assertNotRegex(action[0][1], r"(?m)^        name:")
-        self.assertIn("        id: push_guard\n", context[0][1])
+        self.assertIn("        id: outbox\n", context[0][1])
         self.assertLess(context[0][0], action[0][0])
         watcher = (ROOT / ".github/workflows/stuck-thread-watch.yml").read_text()
         self.assertIn("contents: read", watcher)

@@ -805,5 +805,170 @@ class OutboxHelperTests(unittest.TestCase):
             o.model_api(self.CONFIG, ["comment", ".claude-fixer-replies/r.txt"])
 
 
+def jobs(name):
+    return yaml.load(WORKFLOWS[name].read_text(encoding="utf-8"), Loader=yaml.BaseLoader)["jobs"]
+
+
+PIPELINES = {
+    "claude.yml": [("mention-prepare", "claude-mention", "mention-publish", "claude-${{ needs.resolve-pr.outputs.pr_number }}"),
+                   ("fixer-prepare", "devin-review-fix", "fixer-publish", "claude-${{ needs.resolve-pr.outputs.pr_number }}")],
+    "claude-conflict-writer.yml": [("prepare", "model", "publish", "claude-${{ inputs.pr_number }}")],
+}
+
+
+class WorkflowWiringTests(unittest.TestCase):
+    def pipelines(self):
+        for name, triples in PIPELINES.items():
+            all_jobs = jobs(name)
+            for prepare, model, publish, group in triples:
+                yield name, all_jobs[prepare], all_jobs[model], all_jobs[publish], group, (prepare, model, publish)
+
+    def test_model_jobs_are_read_only_without_credentials_or_push(self):
+        for name, _prep, model, _pub, _group, ids in self.pipelines():
+            with self.subTest(workflow=name, job=ids[1]):
+                self.assertEqual(model["permissions"], {"contents": "read", "pull-requests": "read", "issues": "read"})
+                checkout = [s for s in model["steps"] if s.get("uses", "").startswith("actions/checkout@")]
+                self.assertEqual(len(checkout), 1)
+                self.assertEqual(checkout[0]["with"]["persist-credentials"], "false")
+                self.assertEqual(checkout[0]["with"]["ref"], f"${{{{ needs.{ids[0]}.outputs.head_sha }}}}")
+                action = [s for s in model["steps"] if s.get("uses", "").startswith("anthropics/claude-code-action@")]
+                self.assertEqual(len(action), 1)
+                inputs = action[0]["with"]
+                self.assertEqual(inputs["github_token"], "${{ github.token }}")
+                self.assertEqual(inputs["classify_inline_comments"], "false")
+                self.assertEqual((inputs["bot_id"], inputs["bot_name"]), ("209825114", "claude[bot]"))
+                allow = inputs["claude_args"].split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0]
+                self.assertNotIn("git push", allow)
+                self.assertNotIn("Bash(gh api", allow)
+                self.assertIn("Bash(python3 ${{ runner.temp }}/claude-fixer-guard/model-api --:*)", allow)
+                for rule in ("Bash(git push:*)", "Bash(git config:*)", "Bash(gh api:*)"):
+                    self.assertIn(rule, inputs["claude_args"].split("--disallowedTools", 1)[1])
+                deny = json.loads(inputs["settings"])["permissions"]["deny"]
+                for rule in ("Edit(.git/**)", "Write(.git/**)", "Edit(/${{ runner.temp }}/claude-fixer-guard/**)",
+                             "Write(/${{ runner.temp }}/claude-fixer-guard/**)"):
+                    self.assertIn(rule, deny)
+                self.assertFalse([r for r in deny if ".claude-fixer-out" in r])  # the outbox stays writable
+                text = yaml.dump(model)
+                self.assertNotIn("id-token", text)
+                self.assertNotIn("secrets.GITHUB", text)
+                upload = [s for s in model["steps"] if s.get("uses", "").startswith("actions/upload-artifact@")]
+                self.assertEqual(len(upload), 1)
+                self.assertEqual(upload[0]["if"], "always()")
+                self.assertEqual(upload[0]["with"]["retention-days"], "1")
+                package = [s for s in model["steps"] if s.get("name") == "Package untrusted model output"][0]
+                self.assertEqual(package["if"], "always()")
+                self.assertIn('bundle create "$out/candidate.bundle" HEAD "^$HEAD_SHA"', package["run"])
+                self.assertNotIn('cp "$EXECUTION_FILE"', package["run"])  # never upload the transcript
+                self.assertEqual(model["outputs"], {"claude_outcome": "${{ steps.claude.outcome }}"})
+
+    def test_publish_jobs_mint_and_never_run_repository_code(self):
+        for name, _prep, _model, publish, _group, ids in self.pipelines():
+            with self.subTest(workflow=name, job=ids[2]):
+                self.assertEqual(publish["permissions"], {"contents": "read", "pull-requests": "write",
+                                                          "issues": "write", "id-token": "write"})
+                self.assertEqual(set(publish["needs"]) - {"resolve-pr"}, {ids[0], ids[1]})
+                condition = " ".join(publish["if"].split())
+                self.assertTrue(condition.startswith("!cancelled() &&"), condition)
+                self.assertIn(f"needs.{ids[0]}.outputs.skip == 'false'", condition)
+                self.assertIn(f"needs.{ids[0]}.outputs.run_attempt == github.run_attempt", condition)
+                self.assertNotIn(f"needs.{ids[1]}.result == 'success'", condition)
+                uses = [s.get("uses", "") for s in publish["steps"]]
+                self.assertEqual(uses, ["actions/download-artifact@v4", ""])
+                self.assertEqual(publish["steps"][0]["continue-on-error"], "true")
+                run = publish["steps"][1]["run"]
+                # Outside the embedded, parity-checked sources: no repository code.
+                outside = re.sub(r"<<'([A-Z_]+)'\n.*?\n\1(?:\n|$)", "<<heredoc\n", run, flags=re.DOTALL)
+                self.assertEqual(outside.count("<<heredoc"), 2)
+                rest = {**publish, "steps": [publish["steps"][0], {**publish["steps"][1], "run": outside}]}
+                for forbidden in ("pip install", "pytest", "python tools/", "python3 tools/", "uses: ./",
+                                  "actions/checkout", "scripts/ci/", "git clone", "-e .", "GITHUB_WORKSPACE"):
+                    self.assertNotIn(forbidden, yaml.dump(rest))
+                commands = [line.strip() for line in run.split("\n")
+                            if line.strip().startswith(("python", "cat >", "mkdir"))]
+                self.assertEqual(commands, ['mkdir -p "$RUNNER_TEMP/claude-fixer-publish"',
+                                            "cat > \"$RUNNER_TEMP/claude-fixer-publish/receipts.py\" <<'CLAUDE_FIXER_RECEIPTS'",
+                                            "cat > \"$RUNNER_TEMP/claude-fixer-publish/publish.py\" <<'CLAUDE_FIXER_PUBLISH'",
+                                            'python3 -I "$RUNNER_TEMP/claude-fixer-publish/publish.py"'])
+                env = publish["steps"][1]["env"]
+                self.assertEqual(env["GH_TOKEN"], "${{ github.token }}")
+                self.assertEqual(env["CLAUDE_FIXER_PAUSE"], "${{ vars.CLAUDE_FIXER_PAUSE }}")
+                self.assertEqual(env["HEAD_SHA"], f"${{{{ needs.{ids[0]}.outputs.head_sha }}}}")
+                self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", yaml.dump(publish))
+
+    def test_prepare_jobs_are_model_free_and_hold_no_id_token(self):
+        for name, prepare, _model, _pub, _group, ids in self.pipelines():
+            with self.subTest(workflow=name, job=ids[0]):
+                text = yaml.dump(prepare)
+                for forbidden in ("id-token", "actions/checkout", "claude-code-action", "pip install", "pytest"):
+                    self.assertNotIn(forbidden, text)
+                self.assertNotIn("contents: write", text)
+                self.assertIn("run_attempt", prepare["outputs"])
+                self.assertIn("|| 'true'", prepare["outputs"]["skip"])
+
+    def test_all_three_jobs_share_the_writer_lock(self):
+        for name, prepare, model, publish, group, ids in self.pipelines():
+            for job_id, job in zip(ids, (prepare, model, publish)):
+                with self.subTest(workflow=name, job=job_id):
+                    self.assertEqual(job["concurrency"], {"group": group, "queue": "max", "cancel-in-progress": "false"})
+        caller = jobs("conflict-scan.yml")["conflict-resolve"]
+        self.assertNotIn("concurrency", caller)  # a caller lock would deadlock its inner jobs
+        self.assertEqual(caller["uses"], "./.github/workflows/claude-conflict-writer.yml")
+        self.assertEqual(caller["strategy"]["max-parallel"], "1")
+        self.assertEqual(caller["secrets"], {"CLAUDE_CODE_OAUTH_TOKEN": "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}"})
+
+    def test_model_jobs_wait_for_a_fresh_prepare(self):
+        for name, _prep, model, _pub, _group, ids in self.pipelines():
+            condition = " ".join(model["if"].split())
+            self.assertIn(f"needs.{ids[0]}.result == 'success'", condition)
+            self.assertIn(f"needs.{ids[0]}.outputs.skip == 'false'", condition)
+            self.assertIn(f"needs.{ids[0]}.outputs.run_attempt == github.run_attempt", condition)
+
+    def test_every_embedded_script_matches_its_source(self):
+        sources = {"CLAUDE_FIXER_PUBLISH": "claude_fixer_publish.py", "CLAUDE_FIXER_OUTBOX": "claude_fixer_outbox.py",
+                   "CLAUDE_FIXER_RECEIPTS": "claude_fixer_receipts.py", "CLAUDE_FIXER_PREFLIGHT": "claude_fixer_preflight.py",
+                   "CLAUDE_DENIALS_REPORT": "claude_denials.py", "CLAUDE_PR_FIXER_GATE": "claude_pr_fixer_gate.py",
+                   "CLAUDE_CONFLICT_SCAN": "claude_conflict_scan.py"}
+        expected = {("claude.yml", "CLAUDE_FIXER_PUBLISH"): 2, ("claude.yml", "CLAUDE_FIXER_OUTBOX"): 2,
+                    ("claude.yml", "CLAUDE_FIXER_RECEIPTS"): 3, ("claude.yml", "CLAUDE_FIXER_PREFLIGHT"): 2,
+                    ("claude.yml", "CLAUDE_DENIALS_REPORT"): 2, ("claude.yml", "CLAUDE_PR_FIXER_GATE"): 1,
+                    ("claude-conflict-writer.yml", "CLAUDE_FIXER_PUBLISH"): 1,
+                    ("claude-conflict-writer.yml", "CLAUDE_FIXER_OUTBOX"): 1,
+                    ("claude-conflict-writer.yml", "CLAUDE_FIXER_RECEIPTS"): 1,
+                    ("claude-conflict-writer.yml", "CLAUDE_DENIALS_REPORT"): 1,
+                    ("conflict-scan.yml", "CLAUDE_CONFLICT_SCAN"): 1}
+        for name, path in WORKFLOWS.items():
+            text = path.read_text(encoding="utf-8")
+            for tag, source in sources.items():
+                chunks = text.split(f"<<'{tag}'\n")[1:]
+                with self.subTest(workflow=name, tag=tag):
+                    self.assertEqual(len(chunks), expected.get((name, tag), 0))
+                    want = (ROOT / "scripts/ci" / source).read_text(encoding="utf-8").rstrip()
+                    for chunk in chunks:
+                        self.assertEqual(textwrap.dedent(chunk.split(f"          {tag}\n", 1)[0]).rstrip(), want)
+            self.assertNotIn("CLAUDE_FIXER_GUARD", text)
+            self.assertNotIn("claude-fixer-guard/pre-push", text)
+            self.assertNotIn("core.hooksPath\", str(directory)", text)
+
+    def test_conflict_merge_is_bundled_against_head_and_base(self):
+        model = jobs("claude-conflict-writer.yml")["model"]
+        package = [s for s in model["steps"] if s.get("name") == "Package untrusted model output"][0]
+        self.assertIn('HEAD "^$HEAD_SHA" "^$BASE_SHA"', package["run"])
+        merge = [s for s in model["steps"] if s.get("name", "").startswith("Start merge")][0]
+        self.assertIn('git merge --no-ff --no-commit "$BASE_SHA"', merge["run"])
+        publish = jobs("claude-conflict-writer.yml")["publish"]["steps"][1]["env"]
+        self.assertEqual(publish["BASE_SHA"], "${{ needs.prepare.outputs.base_sha }}")
+        self.assertEqual(publish["WRITER_MODE"], "conflict")
+        self.assertEqual(jobs("claude.yml")["fixer-publish"]["steps"][1]["env"]["RECEIPT_CONTEXT"],
+                         "${{ needs.fixer-prepare.outputs.receipt_context }}")
+        self.assertNotIn("RECEIPT_CONTEXT", jobs("claude.yml")["mention-publish"]["steps"][1]["env"])
+
+    def test_committer_identity_is_pinned_where_the_publisher_expects_it(self):
+        for name, _prep, model, _pub, _group, ids in self.pipelines():
+            attach = [s for s in model["steps"] if s.get("name") == "Attach verified PR branch at event SHA"][0]["run"]
+            self.assertIn(f'git config user.name "{CLAUDE[0]}"', attach)
+            self.assertIn(f'git config user.email "{CLAUDE[1]}"', attach)
+            self.assertIn(".claude-fixer-out/", attach)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)
