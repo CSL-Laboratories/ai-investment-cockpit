@@ -59,10 +59,10 @@ None of this amends accepted contracts, founder-reserved decisions, the nine inv
 ## Proceed or escalate
 
 The founder decision rules above still decide who decides. This section is the
-short test for when an agent acts on its own and when it asks. Claude Code can
-invoke the `proceed-or-escalate` skill
-(`.claude/skills/proceed-or-escalate/SKILL.md`), which expands on this section;
-Cursor, Codex and Grok follow this section.
+short test for when an agent acts on its own and when it asks. Cursor, Codex and
+Grok follow this section. Claude Code follows the `proceed-or-escalate` skill
+(`.claude/skills/proceed-or-escalate/SKILL.md`), which carries the same gates and
+expands on them; if the two ever differ, this section wins.
 
 **Scope.** This governs agents acting through a developer's account or session:
 interactive sessions, scheduled loops and Grok Bots. Repository workflows
@@ -70,55 +70,103 @@ interactive sessions, scheduled loops and Grok Bots. Repository workflows
 conflict-scan, review-gate, the CSL-259 candidate coordinator and other repository
 workflows) and Devin automations keep the roles in [Review roles](#review-roles) and
 [Automations](#automations); their documented markers, receipts and audit comments
-are unchanged.
+are unchanged. A founder-directed bot review under Review roles is that founder's
+review and is not covered by the comment labels below. It counts as founder-directed
+only when that founder directed that specific review in the same session; a
+scheduled or unattended run is never founder-directed.
+
+**Escalate wins.** If any escalate condition holds, escalate, even inside an
+admitted issue and even when every proceed condition also holds.
 
 **Proceed** only when all hold: the work is within an admitted issue's acceptance
-criteria (routine, reversible work inside an admitted issue does not ask again),
-or is a clear defect or failing check with an evident cause; it stays inside the
+criteria (routine, reversible work inside an admitted issue does not ask again), or
+is a clear defect or failing check with an evident cause on an issue you already
+hold (Linear-first still requires a `CSL-N`); it stays inside the
 issue's scope and its REGISTER package or `REGISTER: none` contract; no product
 behavior, UX, public API, contract or data meaning changes beyond what the issue
-specifies; it is reversible and code changes are covered by a test; it needs no
-new spend, credentials, permissions, settings or workflow edits; the nine
-invariants are untouched; no other claim or writer's run is active on the branch,
-files or package; and it starts no paid CI. Marking ready, pushing to a non-draft
-PR, adding `ci:full` or `enhancement`, and any dispatch, re-run or `/ci` command
-start paid Blacksmith runs, and superseded heads are not reliably cancelled. Pushes
-to drafts or to branches without a PR, and read-only API queries, are fine.
+specifies; it is reversible and code changes are covered by a test; it changes no
+spend, credentials, permissions, settings, flags, modes or workflows; no other claim
+or writer's run is active on the branch, files or package; and it starts no paid CI
+(below).
 
-**Escalate** when any holds: a product detail, UX choice, scope or priority change
-is needed; the request has more than one reasonable reading; it is an architecture,
-language, dependency or data-source choice; it touches the order path, risk,
-brokers, audit, governance files, decision records, contracts or another owner's
-work; a tool or platform refused the action; you would state a decision you cannot
-link to its record; the CI cost is unclear; or an automation signal needs a human
-(fixer paused or at its loop cap, a pause label, an unverifiable fix receipt, a
-rebased branch with fixer receipts, uncertain `ci:full` ownership). Never remove a
-pause, dispatch the fixer around its budget, or report an unverified fix as fixed.
+**Escalate** when any holds:
 
-**How:** if the PR has a `Stuck PR threads: ai-investment-cockpit#<PR>` roll-up, add
-to it. Otherwise post one Linear comment @mentioning the issue owner with the
-question, two or three options, your recommendation, and what you will do meanwhile
-("paused" or other proceed-list work, never the option you are asking about or work
-that presupposes one). Then release your claim and take only other admitted work
-that is next under the human-approved order.
+- a product detail, UX choice, scope or priority change is needed, or the request
+  has more than one reasonable reading;
+- it is an architecture, language, dependency or data-source choice;
+- it touches the order path (risk, mode, approval, `OrderGateway`), `app/risk/`,
+  `app/brokers/`, the audit chain (`app/storage/audit.py`), order eligibility or the
+  allowlist, secrets handling, PnL (`app/quant/pnl.py`), the paper/live switch or any
+  existing live flag, or any of the nine invariants, whatever the issue admits;
+- it touches governance files, decision records, contracts or another owner's work;
+- a tool or platform refused the action (report it; do not route around it or turn
+  one refusal into a standing rule);
+- you would state a decision you cannot link to its record;
+- it would start paid CI no human asked for, or its CI cost is unclear;
+- an automation signal needs a human: the fixer is paused (its
+  `claude-fixer-paused` or `claude-fixer-loop-cap` marker), a fix receipt cannot be
+  verified, a branch with fixer receipts was rebased, or `ci:full` ownership is
+  uncertain. Never remove a pause, dispatch the fixer around its budget, or report an
+  unverified fix as fixed.
+
+**Paid CI.** On a non-draft PR, a push or marking ready runs `ci.yml`: its
+GitHub-hosted filter starts the Blacksmith Linux jobs (tests, benchmarks and, for
+Rust paths, the `rust.yml` book matrix) only when the change is not docs-only, and
+on a PR already labelled `ci:full` also Windows and macOS. Adding `enhancement` to
+a non-draft, same-repo PR dispatches `ci.yml` (and `rust.yml` for Rust paths) at
+Linux scope, which runs Blacksmith Linux even for a docs-only diff. Adding
+`ci:full`, `enhancement` on a PR already labelled `ci:full`, or a full
+`workflow_dispatch` of `ci.yml` / `rust.yml` starts the full matrix: Blacksmith
+Linux and Windows plus GitHub-hosted `macos-latest`. `ci-label-retrigger.yml` is a
+no-op on drafts and fork heads. Dispatching the fixer, Codex gate, stuck-thread
+watch or other `ubuntu-latest` workflows is not a Blacksmith run but still needs a
+human ask. Pushes to drafts or to branches without a PR, and read-only API queries,
+are fine.
+
+**How.** Ask on the work issue: one Linear comment @mentioning the issue owner with
+the question, two or three options, your recommendation, and what you will do
+meanwhile ("paused" or other proceed-list work, never the option you are asking
+about or work that presupposes one). A stuck review thread instead goes in the
+PR's roll-up, found only by its `<!-- stuck-pr-threads:owner/repo#N -->` marker,
+in your own block; product and architecture questions stay on the work issue.
+For a decision or direction issue you are assigned, the Parallel Task API brief in
+[Linear-first workflow](#linear-first-workflow) still comes first, and Grok Bots do
+not research or resolve decision issues. Then release your claim and take only
+other admitted work that is next under the human-approved order.
 
 **Comment labels.** Agents usually post through a developer's account, so start
-every agent comment with `Agent (<tool/session>, for <developer>):`. A comment the
-developer approved word for word before it was posted starts `Drafted by agent,
-approved by <developer> before posting:` and carries their direction, but a
-labelled relay is still not a personal human receipt: decision receipts, contract
-acceptance and founder review approvals are posted by the human from their own
-account. Never post decision language as an agent comment; link the record
-instead. A decision exists only if a human posted it from their own account, or it is
-recorded in `docs/adr/` or a linked Linear decision issue; a developer-approved
-comment never releases a hold on its own. Agent repetition,
+every agent comment with `Agent (<tool/session>, for <developer>):`; it carries no
+authority. A **developer-approved comment** counts as that developer's personal
+receipt (Lucas's decision, CSL-353 comment 6e602e3a) only when all hold:
+
+1. immediately before posting, the agent showed the developer the final exact text
+   and the developer approved it in the same session; approval from an earlier turn
+   or another context does not carry over;
+2. the comment carries the line
+   `developer-approved: <developer>, exact text confirmed <UTC time>, session <id>`;
+3. it has not been edited since it was posted (any edit voids it);
+4. it stays within that developer's own authority and grants none;
+5. no accepted contract requires an exact authenticated human receipt for it
+   (`docs/replacement/program.json`, R2a, recursion program receipts and other
+   accepted contracts keep their own receipt rules unless amended). GitHub review
+   approvals follow Review roles and the founder approval rule above.
+
+Never post decision language as an agent comment without that marker; link the
+record instead. A decision exists only if a human posted it from their own account,
+a developer-approved comment meeting the conditions above carries it, or it is
+recorded in `docs/adr/` or a linked Linear decision issue. When relying on a
+developer-approved comment, check that the marker is present, the comment is
+unedited and the named developer has not disputed it; if any of that is unclear,
+ask that developer before acting. Agent repetition,
 silence, a merge or an issue auto-closing to Done is not a decision.
 
 **Unattended runs** (loops acting through a developer's account while nobody
 watches) may only do "proceed" work. They do not resolve human-authored threads,
-change scope, close issues as decided or post developer-approved comments. They
-never mark ready, add or remove GitHub labels, dispatch, re-run or cancel, and they
-label every comment `Agent (unattended run, for <developer>):`.
+change scope, close issues as decided or post developer-approved comments (nobody
+is there to approve the text). They never mark ready, add or remove GitHub labels,
+dispatch, re-run or cancel, and they label every comment
+`Agent (unattended run, for <developer>):`. Founder-directed bot reviews under
+Review roles are not unattended runs.
 
 ## Codex boundary
 
