@@ -17,7 +17,6 @@
       "Bash(cargo clippy *)",
       "Bash(cargo fmt --check)",
       "Bash(actionlint)",
-      "Bash(actionlint *)",
       "Bash(gh pr view)",
       "Bash(gh pr view *)",
       "Bash(gh pr diff)",
@@ -31,7 +30,14 @@
       "Bash(gh run view *)",
       "mcp__linear__get_issue",
       "mcp__linear__list_issues",
-      "mcp__linear__list_comments"
+      "mcp__linear__list_comments",
+      "mcp__Linear__get_issue",
+      "mcp__Linear__list_issues",
+      "mcp__Linear__list_comments"
+    ],
+    "ask": [
+      "Bash(gh * -R*)",
+      "Bash(gh * --repo*)"
     ]
   }
 }
