@@ -8,6 +8,10 @@ last-verified: 2026-10-15
 
 Reconciled 2026-10-15 against `origin/main` `4a4308d`. Status cells that still said `claimed`, `in review`, or `unmerged` after the corresponding pull request had merged are updated below. Merge dates and `last-verified` added here are UTC calendar dates from GitHub `mergedAt` (PR #81 is 2026-09-08 UTC, which is still 2026-09-07 in US Eastern). Screen and evidence dates already in these sections keep the calendar dates they recorded. This pass records merge state only. It does not close an empirical, paper-day, witness, selection, or pre-live gate, and it does not claim PASS.
 
+## Linear and this register
+
+This register keeps package ID allocation and package claims, scope and completion contracts. Linear (`CSL-N`) holds execution assignment, status and discussion, and cites the package ID here in its title or description; it does not allocate, split, renumber or close one. Take the next unused ID by reading this board at claim time. Process work states it has no package ID. Moving or closing a Linear issue leaves rows here unchanged. Cycle length and membership remain owned by CSL-8. This section reserves nothing and changes no existing row.
+
 ## RW-37 slice A 2026-09-15 Tuesday GET-only screen intake — merged 2026-09-16
 
 | ID | Scope | Status | Owner | Completion contract |

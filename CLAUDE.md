@@ -80,20 +80,26 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 ## Session workflow
 1. Read `docs/README.md`, `PRODUCT.md` for product scope/acceptance, then
    `docs/PLAN.md` for current delivery order and `docs/REGISTER.md` for claims.
+   Linear holds execution assignment/status; REGISTER keeps package IDs, claims,
+   scope and completion contracts. See `AGENTS.md` Linear-first workflow.
    The adopted product contracts supply required behavior; subsystem/reference
    documents do not independently change delivery order or current runtime authority.
-2. Pick **ONE** work package (RW-xx refactor, or W-xx production). Confirm its
-   scope and its deterministic gate before writing code. Decision or direction
-   work: see `AGENTS.md` Linear-first (assignee Parallel Task API brief; Grok Bots
-   do not research or resolve those issues).
+2. For package work, pick **ONE** work package (RW-xx refactor, or W-xx
+   production). For process-only work, use one admitted CSL issue with
+   `REGISTER: none`; do not allocate a package solely for that work. Confirm
+   the chosen scope and its deterministic gate before writing code. Decision
+   or direction work: see `AGENTS.md` Linear-first (assignee Parallel Task API
+   brief; Grok Bots do not research or resolve those issues).
 3. Implement. Preserve the invariants. Add tests alongside.
 4. Run the gates (below). Green before you stop.
 5. **Do not re-litigate settled decisions** — the corpus is a one-way pipeline
    (research → architecture → build → security → enhancements). Recorded
    architecture and direction live in `docs/adr/` and the linked Linear
    `decision` issues.
-6. Commit only when the operator asks. Message convention:
-   `feat(RW-xx): …` / `fix(RW-xx): …` / `docs(RW-xx): …`.
+6. Commit only when the operator asks. For package work, use the package ID
+   in the message, for example `feat(RW-xx): …` / `fix(RW-xx): …` /
+   `docs(RW-xx): …`. For process-only work with `REGISTER: none`, use the
+   admitted issue ID, for example `docs(CSL-N): …` or `chore(CSL-N): …`.
 7. **CI etiquette (CSL-255):** open PRs as drafts; batch pushes; mark ready
    once after validation and only when no owner hold remains. Never merge a
    PR, rebase, or force-push. Avoid routine base merges; a normal base merge

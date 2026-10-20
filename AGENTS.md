@@ -133,7 +133,7 @@ provisioned.
 1. Read `docs/README.md` and the relevant plan before editing.
 2. Before proposing architecture or direction, read `docs/adr/` and the linked
    decision issues; do not re-argue a recorded decision without new evidence.
-3. Keep changes to one work package and add tests with the change.
+3. Keep changes to one work package, or one admitted process issue with `REGISTER: none`, and add tests with the change.
 4. Use the project virtual environment. Create it once with `python -m venv .venv`
    from the repo root — note the `py` launcher is not present on every dev box —
    then install the full runtime and validation dependency set CI installs (see
@@ -203,12 +203,13 @@ Agents trigger CI and reviews via these commands/tools or the `ci:full` label.
 
 ## Linear-first workflow
 
-Agents must stay Linear-aware and proactive. Linear is the source of truth.
+Agents must stay Linear-aware and proactive. Linear is the source of truth for execution: assignment, status and discussion. `docs/REGISTER.md` remains the package record: it allocates package IDs and holds package claims, scope and completion contracts. These are separate records, and neither replaces the other. A Linear assignment is an execution claim only; it does not allocate, replace or close a REGISTER package claim, and a runtime `claim_id` remains the existing REGISTER package ID. Process work with no package says so and does not mint an ID. Cycle decisions stay with [CSL-8](https://linear.app/csl-laboratories/issue/CSL-8); this section sets no cycle. Admission, blocker, claim-release, resume and evidence rules are in [Bounded issue execution and shared evidence](#bounded-issue-execution-and-shared-evidence). Releasing a blocked execution claim does not release the hold. After a blocker, take only a separately admitted issue that is next under an explicit human-approved order; if no such order exists or it is ambiguous, propose the next choice on Linear and wait.
 
 - **Before starting work**, find or create the Linear issue (team **CSL**, project **ai-investment-cockpit**) via the Linear MCP or the Devin Linear integration. Do not start a change without a `CSL-N`.
 - **When you are the assignee** (developer or their coding agent working in the repo) of an issue that needs a decision or sets direction, run Parallel Task API deep research before proposing or deciding, in addition to Search/Extract. Post the cited brief (options, tradeoffs, recommendation, target metrics) on the Linear issue, then decide or @mention for approval. Grok Bots do not research or resolve decision issues.
 - Branch names come from Linear's copied branch name, so the PR auto-links. PR title includes `CSL-N`. One issue per PR; keep PRs small and stackable.
-- Comment progress on the issue. Move it to **In Progress** when work starts, then **In Review** when the PR is up.
+- In the PR body, write `Related to CSL-N` by default; use a closing keyword (`Fixes CSL-N`) only when this PR completes the issue's acceptance criteria. Name the REGISTER package ID, or `none` for process work. Linear automation moving an issue to **Done**, a merge, or an AI PASS is not acceptance evidence.
+- Comment progress on the issue. Move it to **In Progress** when work starts, then **In Review** when the PR is up. A hosted agent without Linear access reports its blocker on the PR to the PR author through its existing channel; the author relays it to the current Linear owner. The hosted agent does not invent API access, and this guide changes no workflow prompts.
 - Grok Bots must read the Linear PR-sync comment (`<!-- pr-sync:<repo>#<n> -->`, written by [`.github/workflows/linear-pr-sync.yml`](.github/workflows/linear-pr-sync.yml)) on the issue before touching shared files. Three people work this repo at once; that comment is the live PR link, mergeable/conflict state, head SHA, and top files.
 - When work reveals follow-ups, bugs, or next steps, create new **Triage** issues with one Type label, the repo label `ai-investment-cockpit`, the project, and a link back to the parent issue or PR — not drive-by changes.
 - **Assignees:** the three founders are Lucas (NotSkittlz), Chaandan (CDanTheMan), and Samir (samir-shah-ahmed). All are admins, and ownership changes over time, so never hardcode owners. Check the current assignee or project lead in Linear. Assign new issues to the owner of the parent issue, or leave them in Triage unassigned when unclear.
