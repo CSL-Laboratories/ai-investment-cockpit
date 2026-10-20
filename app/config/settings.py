@@ -399,7 +399,9 @@ class Settings(BaseSettings):
             raise ValueError(f"decision_model must be one of: {allowed}")
         return key
 
-    # Pinned TypeSafe model for Jev decisions. ``jev-latest`` is rejected.
+    # Pinned TypeSafe model for Jev decisions. ``jev-1.13.0`` is the stable
+    # default. ``jev-1.14.0`` is preview and stays opt-in. ``jev-latest`` is
+    # rejected. The response model must equal this pin or the call falls back.
     # Env: COCKPIT_JEV_MODEL.
     jev_model: str = DEFAULT_JEV_MODEL
     # State + one question. The ceiling leaves 1_000 tokens under Jev's 32_000 limit.

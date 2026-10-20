@@ -1,0 +1,43 @@
+{
+  "kind": "negative_response",
+  "control": "privileged_order_bypass",
+  "baseline_request_id": "req_positions",
+  "safeguards": [
+    {
+      "name": "order_path",
+      "field": "order_path",
+      "value": "surface_private",
+      "repair": "none"
+    },
+    {
+      "name": "enforcement_route",
+      "field": "enforcement_route",
+      "value": "broker_direct",
+      "repair": "risk_pass_mode_approval_order_gateway"
+    },
+    {
+      "name": "command",
+      "field": "command",
+      "value": "operator.orders.submit",
+      "repair": "operator.positions.inspect"
+    },
+    {
+      "name": "authority_effect",
+      "field": "authority_effect",
+      "value": "direct_order",
+      "repair": "none"
+    },
+    {
+      "name": "order_submitted",
+      "field": "result.order_submitted",
+      "value": true,
+      "repair": null
+    },
+    {
+      "name": "forbidden_key",
+      "field": "bypass_gateway",
+      "value": true,
+      "repair": null
+    }
+  ]
+}

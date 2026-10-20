@@ -42,6 +42,20 @@ promotion. No person-level decision unlocks live capital or bypasses the nine in
 paper-only boundary or pre-live gates. Existing account, credential and runtime restrictions
 remain in force; this wording does not activate R2a or grant a live run.
 
+## Bounded issue execution and shared evidence
+
+The loop starts only from objectives, feature admission and direction decisions approved by a founder acting within the founder decisions section above. Within them, agents run bounded autonomous research, implementation and tests, then close out with evidence. When blocked, an agent preserves its work, records the blocker and releases its execution claim, then moves to the next eligible issue. A human-decision hold needs an explicit decision receipt; a technical or dependency blocker needs evidence that its condition cleared. In either case, recompute readiness and obtain a fresh ownership claim before resuming. Closeout records the exact tested head, commands and results, unresolved criteria, review evidence and linked follow-ups. Mark work complete only under its existing acceptance criteria; a merge or issue status is not empirical acceptance.
+
+An issue is admitted only when it states its objective, non-goals, evidence dependencies, allowed effects and files, budget and stop condition, acceptance criteria and falsifiers, and verifier and rollback. Existing authorizations persist: routine, reversible work and fixes inside an admitted issue do not ask again and do not force new paid research. Decision and direction issues still follow the Linear-first research requirement. A new consequential feature, architecture, risk, public-semantics, effect or budget question stops only the affected lane, with options and a recommendation posted on the Linear issue for founder decision under the founder decisions section above. Human decisions are never inferred from silence, elapsed time, a merge, CI results or issue status. When an agent relays a human decision, it labels the source and attribution and never invents a human receipt or an exact-digest acceptance.
+
+Ownership is currently manual. The human-designated ownership coordinator (not the CI candidate coordinator) serializes overlapping writers on Linear; a claim is replaced only after an explicit release and acknowledgement. Record scope, writer, branch/head and handoff evidence on the issue, following existing assignment conventions. This execution claim is coordination only: it does not allocate, replace or close a REGISTER package claim. Before publishing, read the remote head. Preserve uncertain in-flight work and stop on ambiguity. Each agent holds at most one execution lane; this guide sets no numeric project WIP cap; any new cap is a separate founder decision. RW-33 swarm depth and leaf limits are unaffected. Atomic compare-and-set claims, leases, fencing, a transactional cost ledger and WIP enforcement are proposed and unimplemented; do not treat them as current machine guarantees. This section changes no platform state, status or claim schema and does not rewrite REGISTER policy.
+
+Shared research lives in the private repository [CSL-Laboratories/csl-research](https://github.com/CSL-Laboratories/csl-research). Do not assume published records, a record schema or a validator exist until they are actually present there. A research record should carry sanitized prompt and result hashes; provider, model and processor; run ID or the reason no paid run was made; retrieval date; estimated, reserved and actual costs and any unknowns; a mapping from sources to claims; limitations; what it supersedes; and an artifact manifest. An exact evidence reference requires the repository, the full 40-hex commit, the record path, and the claim and its limitations. Cite the owning product's authenticated exact-digest human receipt when the consumed fragment requires acceptance; otherwise label the material candidate-only and cite its authorized research scope. A receipt identifier alone does not verify identity, digest, scope, conditions or revocation; the responsible reviewer checks those at the source. A bootstrap commit alone proves no research finding. Keep submissions, reviewed knowledge and human decision pointers separate; agents do not promote their own submissions.
+
+Never commit secrets, private account details, raw chats, signed URLs, bulk copyrighted material or large dataset dumps to Git; reference approved storage through manifests only. An access denial stops the affected transfer; do not look for alternative routes. Existing approved budgets and subscription routes remain subject to their actual authority; this section activates no API fallback, overage or new spend. New research spend follows the founder decisions section above: Lucas retains spend and new services; any founder may decide research continuation within an already approved budget.
+
+None of this amends accepted contracts, founder-reserved decisions, the nine invariants, the paper-only boundary, pre-live gates, current runtime, CI, fixer or review-loop roles. Agents still never merge.
+
 ## Codex boundary
 
 - Codex and Claude may perform schema-gated analysis jobs (briefing, triage,
@@ -136,8 +150,17 @@ provisioned.
    ambient `COCKPIT_*` vars — real operator config in the shell fails at least one
    test that asserts an unconfigured default.
 5. Keep the repository private and commit only when the operator asks.
-6. Any order-path change needs an adversarial-review round.
-7. The release-blocking local matrix is **native Windows plus Ubuntu under WSL2**, each on
+6. **CI etiquette (CSL-255):** open PRs as drafts; batch pushes (one push per
+   iteration when possible); mark ready **once**, after validation and only when
+   no owner hold remains. Never merge a PR, rebase, or force-push. Avoid routine
+   base merges; a normal base merge is allowed for a real conflict or an
+   owner-approved dependency integration even without a text conflict. Record
+   the reason and rerun the combined gates. Never edit
+   `.github/workflows/**` unless a Linear issue explicitly assigned by a human
+   asks for it; bots mark a PR ready with their own identity, never
+   `GITHUB_TOKEN`.
+7. Any order-path change needs an adversarial-review round.
+8. The release-blocking local matrix is **native Windows plus Ubuntu under WSL2**, each on
    Python 3.11 and 3.12. Run all four cells on the operator's Windows workstation. Hosted
    Linux (`linux-gates`) is a required PR diagnostic and does not replace that matrix;
    hosted Windows/macOS are not ordinary-PR checks; Hetzner is not a release gate. macOS is a
@@ -198,18 +221,21 @@ Hosted split (PR #102):
 
 - Required check: **`linux-gates`**. The aggregator is GitHub-hosted `ubuntu-latest`. The Python 3.11+3.12 matrix it wraps runs on Blacksmith. Ordinary label add/remove does not start `ci.yml`, so it cannot post a skipped or successful `linux-gates`. Drafts skip the test matrix; the aggregator still runs and fails closed until `ready_for_review`. `ci:full` / `enhancement` re-trigger via `ci-label-retrigger.yml`, which has no job named `linux-gates`.
 - Enhancement-only label reruns request Linux scope; `ci:full` or enhancement on an already-`ci:full` PR requests the full matrix. Manual/API dispatch defaults to full; explicit `scope=linux` requests Linux only.
-- Label reruns carry the PR number, expected head, and immutable merge candidate. They validate that context before testing the merge candidate and share the ordinary PR concurrency group for that head. Different PR heads are isolated so a stale label dispatch cannot cancel a newer head before validation. A stale dispatched head fails closed; manual branch dispatch without PR context remains available.
-- Windows runs on push to `main`, the `ci:full` label, and full manual dispatch (Blacksmith).
+- Label reruns carry the PR number, expected head, and immutable merge candidate. They validate that context before testing the merge candidate. Their concurrency suffix is `label-<expected-head>-<scope>`, separate from ordinary PR runs, because `gh workflow run --ref` resolves to the current head and a stale dispatch must not cancel that head's PR or label run. Scope isolation prevents a delayed Linux-only request from cancelling a full request on the same head. The label dispatcher also isolates heads. Filter still fail-closes stale dispatch context before billed matrix work; manual branch dispatch without PR context remains available in its own scope group.
+- Windows runs on push to `main`, `merge_group`, the `ci:full` label, and full manual dispatch (Blacksmith). Main-push Linux/Windows and relevant Rust coverage stays enabled until the owner separately approves removal after queue enforcement is proven.
 - macOS runs nightly at 07:17 UTC on `main` (skipped if idle 24h), on the `ci:full` label, and on full manual dispatch — not on ordinary `main` pushes (GitHub-hosted).
 - Non-test jobs (filter, `linux-gates` aggregator, pr-lint, Claude fixer/conflict-scan) use GitHub-hosted `ubuntu-latest`.
-- Superseded runs for the same PR head are cancelled. Draft synchronize uses a separate concurrency group so its fail-closed aggregator cannot cancel a `ready_for_review` matrix.
+- Ordinary PR runs share a queue with automatic cancellation disabled. The trusted default-branch companion requests cancellation only for verified strict-ancestor CI/Rust runs after checking a real current-head successor; bootstrap and uncertain evidence leave runs queued. Draft synchronize uses a separate group from `ready_for_review`. See [controller policy and limits](docs/ci-cancellation-controller.md).
+- Non-draft synchronize events wait in `settle` for 120 seconds. Paid jobs and required aggregates accept successful settle or an event's intentional skip; failure, cancellation, and unexpected skips block. The wait consumes hosted capacity and does not guarantee savings.
+- CI caches pip downloads, never virtualenvs. Each cell creates a fresh environment, installs direct pins, and runs `pip check`; one fresh no-cache retry handles install/cache failure. Direct pins are not a transitive hash lock.
+- Queue protection is staged: proposed stable checks are `linux-gates`, `queue-gates`, `rust-gates`, and `review-gate`. The latter verifies the current genuine Devin bot commit status on every exact required PR head, with bounded polling and manual same-head recovery. Existing required `linux-gates` and `Devin Review` remain unchanged. See [the rollout and owner decisions](docs/ci-queue-rollout.md); synthetic tests do not establish live queue enforcement.
 
 ## Review roles
 
 - **Devin** is the GitHub PR code reviewer (findings). It does not auto-fix.
 - **Claude Code Action** (`.github/workflows/claude.yml`) is the fixer for Devin findings and `@claude` mentions on open, same-repository PRs whose author (and, for `@claude`, the commenter) has write, maintain or admin permission on the repo (other PRs are skipped by the workflow's event gate).
 - **Codex** has two allowed GitHub review paths, neither a Devin substitute:
-  1. **CI/fixer gate** (CSL-103, `.github/workflows/codex-gate.yml`) — one `@codex review` per head SHA; that reply must end with `CODEX-GATE: READY|MEDIATE`. See Code Review Rules.
+  1. **CI/fixer gate** (CSL-103/259, `.github/workflows/codex-gate.yml`) - one nonce-bound `@codex review` per exact head/base/merge/tree candidate and fixer generation; the reply echoes that identity and ends with `CODEX-GATE: READY|MEDIATE`. See Code Review Rules.
   2. **Stuck-thread watch** (CSL-86 / PR #124, `.github/workflows/stuck-thread-watch.yml`) — one advisory `@codex review` on unresolved Devin threads Claude could not settle, and **one** Linear `needs-decision` Triage roll-up per PR titled `Stuck PR threads: <repo>#<PR>`. Shared keys with the Codex CI/fixer gate: `<!-- stuck-pr-threads:owner/repo#N -->` and `<!-- codex-gate-mediate:owner/repo:N -->`; each writer owns only its fenced block. It adopts an existing roll-up only by that `stuck-pr-threads` HTML marker, never by title, and writes Linear only when at least one thread is actionable after the per-PR cap and `CODEX_TRIGGER_PAT` checks (or to create a missing roll-up after an earlier Linear outage). It skips already-approved PRs and updates that roll-up instead of filing a new issue per thread. That reply must **not** include a `CODEX-GATE:` line, and must not push, merge, resolve the thread, or open a fix PR.
 - **Blacksmith** hosts the paid test matrix. That is the GitHub test-CI path, not a revival of the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired from research/dev swarm dispatch" still apply to research/dev swarm jobs.
 - Cursor, Codex (as a coding agent), Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs, except the stuck-thread watcher. A founder may have their own bot post reviews under their account when they direct it. The author agent may fix CI failures on its own PR.
@@ -217,7 +243,7 @@ Hosted split (PR #102):
 ## Review loop
 
 Devin reviews → Claude fixes (`claude.yml`) → the Codex gate (CSL-103) oversees
-`ci:full` / human handoff only. Devin findings
+candidate full CI / human handoff only. Devin findings
 trigger Claude directly without waiting for Codex. All Claude jobs share one
 per-PR lock with GitHub `queue: max` (one active, up to 100 pending; excess
 requests can still be dropped). The automated Devin fixer stops at eight consecutive Claude
@@ -234,8 +260,9 @@ The watcher never resolves threads, pushes, or merges.
 
 ## Code Review Rules
 
-These rules apply to the **CI/fixer gate** `@codex review` (comment marker
-`<!-- codex-gate:<sha> -->`). When the head is ready for full CI or needs a
+These rules apply to the **CI/fixer gate** `@codex review`. For READY, echo
+`CODEX-CANDIDATE` and `CODEX-REQUEST` exactly outside quotes or code fences and
+review the named head, base, merge commit and tree. When that candidate is ready for full CI or the current head needs a
 human decision, **end the review body with exactly one applicable verdict
 line**. When fixes are still pending, leave advisory findings without a verdict:
 
@@ -244,11 +271,14 @@ line**. When fixes are still pending, leave advisory findings without a verdict:
 
 - Legacy `CODEX-GATE: FIX` verdicts are ignored. Human-only findings need a human `@claude` mention.
   Devin submitted reviews trigger fixes directly; Codex never dispatches the fixer.
-- `READY` — findings are settled or none remain; apply the `ci:full` label
-  so the hosted Windows/macOS matrix runs once.
+- `READY` - findings are settled or none remain; the locked coordinator requests
+  both full matrices for the exact candidate, before human approval. Do not add
+  `ci:full`; persistent labels and legacy head-only replies are not qualification.
 - `MEDIATE` — Devin and Claude disagree or a thread needs a human. File or
   update the shared Linear `needs-decision` Triage issue per PR, titled
   `Stuck PR threads: <repo>#<PR>` (key `<!-- stuck-pr-threads:owner/repo#N -->`).
+  A genuine current-head, unquoted terminal MEDIATE does not require a mergeable
+  synthetic candidate or candidate nonce; it grants human handoff only, never CI.
   Skip if the PR is already approved. Do not wait for stuck-thread-watch (it
   only flags a needs-human phrase or a 6-hour-old Claude reply).
 
@@ -294,6 +324,8 @@ median slowdown, after sample spread, is above 10%. It does not fail
 
 Agents must **not** edit CI/runner configuration (`.github/workflows/**`, Blacksmith runner labels, caching, concurrency), Devin configuration, repo rulesets, or the MCP server list, unless a Linear issue explicitly assigned by a human asks for it.
 
+Open PRs as drafts, batch pushes, and mark ready once after validation and only when no owner hold remains. Never merge PRs, rebase, or force-push. Normal base merges are limited to real conflicts or owner-approved dependency integration (including integration without a text conflict); record the reason and rerun the combined gates. Bots convert draft → ready with their own App identity, not `GITHUB_TOKEN`.
+
 Trigger CI and reviews through the Discord bot (`/ci full|run`, `/devin review pr:<url>|run|status`, or MCP `ci_full` / `ci_run` / `devin_review` / `devin_run` / `devin_status`) or the `ci:full` label — not by editing config.
 
 Do not add paid services or raise spend limits.
@@ -322,24 +354,24 @@ pending; authentication, transport, and server errors still fail closed. The
 eight-commit count is applied only after receipt-aware selection proves pending
 work remains, so a clean PR does not receive a misleading loop-cap pause.
 
-READY is reconciled against live unresolved bug findings before and after applying
-`ci:full`, including explicit human handoffs. Verified addressed receipts count
-as handled. Historical READY audit comments never prevent a fresh reconciliation;
-MEDIATE retains trusted deduplication. Existing clean labels cause no repeated
-label writes or READY comments. `ci:full` requests CI, not merge approval.
+READY is reconciled against live unresolved bug findings and exact candidate
+identity before delivery and qualification, including explicit human handoffs.
+Verified addressed receipts count as handled. Historical READY comments and
+persistent labels never qualify a different candidate; MEDIATE retains trusted
+deduplication. Every candidate, including docs-only, needs the five Python and
+five Rust cells. See [candidate policy and deployment limits](docs/ci-candidate-readiness.md).
 
 Trusted Actions receipts bind gate-owned labels to exact label-event IDs across
-head changes. Only that event can be revoked. Human removals are observed with a trusted head-bound receipt and preserved
-on that head. A fresh verified READY on a different head may request CI again;
-The observation binds the first verified head where the gate sees the removal,
-not a reconstructed historical head. If removal on A is first seen on B, B is
-conservatively preserved; a later head may request CI. This also covers legacy
-removal history without inventing ownership.
+head changes. Only that event can be revoked. The candidate coordinator preserves
+human removals across heads until an explicit relabel; old head-bound removal
+receipts do not bypass that hold. This also covers legacy removal history without
+inventing ownership.
 Later re-adds are preserved; ambiguous ownership requires manual action. GitHub has no atomic
 compare-and-delete, so a human change between the final check and deletion is an
 unavoidable narrow race, not an atomic guarantee.
 
-Before adding a label, the gate records a trusted intent. It retries label-event visibility three times with one- and two-second waits. If ownership remains unknown or recording
+Legacy label additions have trusted intents and three bounded visibility checks.
+New candidate READY uses journaled direct dispatch without adding a label. If legacy ownership remains unknown or recording
 proof fails, the intent blocks subsequent READY processing, even after a restart.
 It never infers ownership from the PAT owner's name. Inspect the label and
 manually remove/re-add `ci:full` to reconcile; if absent, add then remove it.

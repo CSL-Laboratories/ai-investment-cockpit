@@ -23,6 +23,8 @@ regardless of ruleset enforcement. Non-author approval checks alone do not estab
 founder identity. All three founders participate in the final
 release decision; Lucas has final say in any founder disagreement, including a 2-1 split.
 
+For issue admission, decision holds, claim release and handoff, manual ownership and shared research evidence, follow [AGENTS.md's bounded issue execution and shared evidence rules](AGENTS.md#bounded-issue-execution-and-shared-evidence). They grant no new authority, settings or spend and leave review-loop roles unchanged.
+
 Current implementation:
 A solo-developer, subscription-powered, **human-gated** AI investing copilot.
 **Paper-first** — no live capital moves until the pre-live gates pass. Think of it
@@ -92,6 +94,14 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
    `decision` issues.
 6. Commit only when the operator asks. Message convention:
    `feat(RW-xx): …` / `fix(RW-xx): …` / `docs(RW-xx): …`.
+7. **CI etiquette (CSL-255):** open PRs as drafts; batch pushes; mark ready
+   once after validation and only when no owner hold remains. Never merge a
+   PR, rebase, or force-push. Avoid routine base merges; a normal base merge
+   is allowed for a real conflict or an owner-approved dependency integration,
+   even without a text conflict. Record the reason and rerun the combined gates.
+   Never edit `.github/workflows/**` unless a Linear issue
+   explicitly assigned by a human asks for it; bots mark ready with their own
+   identity, never `GITHUB_TOKEN`.
 
 ## Hard rules
 - Never put an LLM on the order or risk path.
@@ -107,10 +117,17 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 `DEC-09` defines the release-blocking matrix: run the full suite and Ruff locally on native
 Windows and Ubuntu/WSL2, each with Python 3.11 and 3.12. macOS is best-effort. Hosted Actions
 do not replace that matrix: Linux `linux-gates` is the cheap required PR check; Windows runs
-on `main`, the `ci:full` label, or `workflow_dispatch`; macOS runs nightly on `main` (07:17 UTC,
+on push to `main`, `merge_group`, the `ci:full` label, or full `workflow_dispatch`; macOS runs nightly on `main` (07:17 UTC,
 skipped if idle 24h), on `ci:full`, or on `workflow_dispatch`. Hetzner is not part of
 current package validation. This changes platform evidence only and does not waive any online,
 broker, witness, paper-day, or pre-live gate.
+
+The staged [CSL-259 candidate coordinator](docs/ci-candidate-readiness.md) requests
+all five Python and five Rust cells, including docs-only candidates, after an
+authenticated exact head/base/merge/tree independent READY and before human
+approval. It preserves human holds and manual label removal; persistent labels
+and legacy head-only review/CI are not proof. No repository protections or queue
+settings are activated by this code.
 
 ```bash
 cd app
@@ -122,6 +139,11 @@ ruff check .
 Install the full runtime set in every matrix cell, including `discord.py`. The Discord
 command-tree tests run offline with the real dependency; a separate isolated subprocess
 forces its import to fail and covers the fallback without skipping either path.
+`discord.py` 2.7.1 declares `audioop-lts; python_version >= "3.13"` in its PyPI
+`requires_dist`. On 3.11 and 3.12 the stdlib `audioop` import in `discord.player` is a
+DeprecationWarning, and pytest ignores that one warning only. That marker is why a
+`<3.13` cap is not added for this warning. A 3.13 matrix cell stays a separate support
+decision.
 
 ## Where things are
 - **Core engines (solid — change with care + adversarial review):** `app/risk/`,

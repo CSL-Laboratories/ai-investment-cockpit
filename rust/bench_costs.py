@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Time Rust costs and PnL against the Python Decimal reference.
 
-Per-call rows cross the interpreter once per fill, which is the binding the
-live paper loop uses. Batch rows hand the whole stream over in one call.
+The live paper loop marks and fills one event at a time. Those calls stay on
+Decimal: formatting strings and parsing them back measured slower, including
+``fee_for_many`` and ``pnl_replay``. The extension rows are informational.
 
     python -m maturin build --release --manifest-path rust/cockpit-py/Cargo.toml
     python -m pip install --force-reinstall rust/target/wheels/cockpit_quant-*.whl
@@ -46,7 +47,7 @@ def _python_fees(rows) -> None:
         python_fee_for(SCHEDULE, side=side, qty=qty, price=price, liquidity=liquidity)
 
 
-def _rust_fees(rows) -> None:
+def _shipped_fees(rows) -> None:
     for side, qty, price, liquidity in rows:
         SCHEDULE.fee_for(side=side, qty=qty, price=price, liquidity=liquidity)
 
@@ -91,21 +92,30 @@ def _pnl_script(n: int):
     return steps
 
 
-def _python_pnl(script) -> None:
-    tracker = PnLTracker(scale=PENNY, schedule=SCHEDULE)
-    tracker._core = None
+def _extension_pnl(script) -> None:
+    core = cockpit_quant.PnlCore(
+        format(SCHEDULE.maker_rebate_per_share, "f"),
+        format(SCHEDULE.taker_fee_per_share, "f"),
+        format(SCHEDULE.sec_fee_rate, "f"),
+        format(SCHEDULE.taf_per_share, "f"),
+        format(SCHEDULE.taf_cap, "f"),
+        format(SCHEDULE.clearing_per_share, "f"),
+        format(SCHEDULE.borrow_rate_annual, "f"),
+    )
+    last_ts = None
     for mid, ts, fill in script:
-        tracker.mark(mid, ts=ts)
-        if fill is not None:
-            tracker.on_fill(fill, mid_ticks=mid)
-
-
-def _rust_pnl(script) -> None:
-    tracker = PnLTracker(scale=PENNY, schedule=SCHEDULE)
-    for mid, ts, fill in script:
-        tracker.mark(mid, ts=ts)
-        if fill is not None:
-            tracker.on_fill(fill, mid_ticks=mid)
+        elapsed = None if last_ts is None else str((ts - last_ts) / 1_000_000_000)
+        core.mark(str(mid), "0.01", ts, elapsed)
+        last_ts = ts
+        if fill is None:
+            continue
+        elapsed = str((fill.ingest_ts - last_ts) / 1_000_000_000)
+        core.on_fill(
+            fill.side is Side.SELL, fill.qty, fill.price_ticks,
+            fill.liquidity is Liquidity.MAKER, fill.signed_qty, "0.01",
+            fill.ingest_ts, str(mid), elapsed,
+        )
+        last_ts = fill.ingest_ts
 
 
 def _rust_pnl_batch(script) -> None:
@@ -136,6 +146,14 @@ def _rust_pnl_batch(script) -> None:
     )
 
 
+def _python_pnl(script) -> None:
+    tracker = PnLTracker(scale=PENNY, schedule=SCHEDULE)
+    for mid, ts, fill in script:
+        tracker.mark(mid, ts=ts)
+        if fill is not None:
+            tracker.on_fill(fill, mid_ticks=mid)
+
+
 def _median(fn, repeats: int = 5) -> float:
     samples = []
     for _ in range(repeats):
@@ -154,17 +172,19 @@ def main() -> None:
     script = _pnl_script(PNL_N)
     # One untimed pass so construction and imports are not in the samples.
     _python_fees(fee_rows[:8])
-    _rust_fees(fee_rows[:8])
+    _shipped_fees(fee_rows[:8])
     _rust_fee_batch(fee_rows[:8])
     _python_pnl(script[:8])
-    _rust_pnl(script[:8])
+    _extension_pnl(script[:8])
     _rust_pnl_batch(script[:8])
+    if PnLTracker(scale=PENNY, schedule=SCHEDULE)._core is not None:
+        sys.exit("per-call PnL attached a native core")
 
     py_fee = _median(lambda: _python_fees(fee_rows))
-    rust_fee = _median(lambda: _rust_fees(fee_rows))
+    shipped_fee = _median(lambda: _shipped_fees(fee_rows))
     batch_fee = _median(lambda: _rust_fee_batch(fee_rows))
     py_pnl = _median(lambda: _python_pnl(script))
-    rust_pnl = _median(lambda: _rust_pnl(script))
+    ext_pnl = _median(lambda: _extension_pnl(script))
     batch_pnl = _median(lambda: _rust_pnl_batch(script))
 
     def row(name: str, python: float, rust: float) -> str:
@@ -174,10 +194,15 @@ def main() -> None:
     print(f"fees={FEE_N}  pnl steps={PNL_N}  (median of 5)")
     print("| workload | python | rust | python/rust |")
     print("|---|---:|---:|---:|")
-    print(row(f"per-call fee_for ({FEE_N})", py_fee, rust_fee))
-    print(row(f"batched fee_for ({FEE_N})", py_fee, batch_fee))
-    print(row(f"per-call PnL ({PNL_N})", py_pnl, rust_pnl))
-    print(row(f"batched PnL ({PNL_N})", py_pnl, batch_pnl))
+    print(row(f"per-call fee_for ({FEE_N})", py_fee, shipped_fee))
+    print(row(f"fee_for_many, not shipped ({FEE_N})", py_fee, batch_fee))
+    print(row(f"per-call PnL, Decimal ({PNL_N})", py_pnl, py_pnl))
+    print(row(f"per-call PnL extension, not shipped ({PNL_N})", py_pnl, ext_pnl))
+    print(row(f"pnl_replay, not shipped ({PNL_N})", py_pnl, batch_pnl))
+    # Same function measured twice can sit just under 1x. The extension path is
+    # several times slower, so a real regression still fails this check.
+    if py_fee / shipped_fee < 0.5:
+        sys.exit("per-call fee_for regressed below the Decimal path")
 
 
 if __name__ == "__main__":
