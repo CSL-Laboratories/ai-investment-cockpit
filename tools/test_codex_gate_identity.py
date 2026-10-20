@@ -38,6 +38,22 @@ class IdentityTests(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
+    def test_codex_app_id_matches_the_coordinator(self) -> None:
+        # Two copies of the App id must never drift apart. Read the coordinator's
+        # constant from source so the test does not execute that module.
+        import ast
+
+        path = Path(__file__).resolve().parents[1] / "scripts" / "ci" / "merge_candidate.py"
+        values = [
+            node.value.value
+            for node in ast.parse(path.read_text(encoding="utf-8")).body
+            if isinstance(node, ast.Assign)
+            and [getattr(t, "id", None) for t in node.targets] == ["CODEX_ID"]
+            and isinstance(node.value, ast.Constant)
+        ]
+        self.assertEqual(values, [mod.CODEX_ID])
+        self.assertEqual(GENUINE["id"], mod.CODEX_ID)
+
     def test_only_the_app_identity_is_a_codex_reviewer(self) -> None:
         self.assertTrue(mod.is_codex_reviewer(GENUINE))
         # Fixtures without REST metadata keep the unforgeable [bot] login.
