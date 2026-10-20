@@ -254,6 +254,63 @@ def test_pnl_custom_decimal_context_matches_python():
     assert core.fees == default.fees
 
 
+def _assert_same_text(accelerated: PnLTracker, reference: PnLTracker) -> None:
+    """Ledger text, not just ``Decimal`` equality. ``0`` and ``0.00`` compare equal."""
+    names = ("spread_capture", "inventory_drift", "fees", "realized_notional", "_cash")
+    for name in names:
+        got = str(getattr(accelerated, name))
+        expected = str(getattr(reference, name))
+        assert got == expected, (name, got, expected)
+
+
+def test_exact_zero_keeps_python_scale():
+    """Flat round-trip zero keeps its scale, including a negative zero.
+
+    Buy 100 at 100.00, then sell 100 at 100.00. The sell's spread edge is
+    ``0.00 * -100``, a negative zero, and both that edge and cash cancel to
+    ``0.00``. The next fill is priced at ``100.0``; the sum is ``-100.00``
+    because the cancelled cash still has exponent -2. ``cost_bps`` checks a
+    negative zero that stays negative on the way back across the bridge.
+    """
+    import cockpit_quant
+
+    negative = Decimal("-0.00")
+    two = Decimal("2")
+    got_negative = cockpit_quant.cost_bps(format(negative, "f"), format(two, "f"))
+    assert got_negative == str(python_cost_bps(negative, two)) == "-0.00"
+    positive = Decimal("0.00")
+    got_positive = cockpit_quant.cost_bps(format(positive, "f"), format(two, "f"))
+    assert got_positive == str(python_cost_bps(positive, two)) == "0.00"
+
+    accelerated, reference = _trackers(ZERO_FEES)
+    buy = _fill(Side.BUY, 100, 10_000)
+    sell = _fill(Side.SELL, 100, 10_000)
+    reference.mark(10000, ts=0)
+    reference.on_fill(buy, mid_ticks=10000)
+    reference.on_fill(sell, mid_ticks=10000)
+    accelerated._core = _make_pnl_core(accelerated.schedule)
+    assert accelerated._core is not None
+    _rust_mark(accelerated, 10000, 0)
+    _rust_on_fill(accelerated, buy, 10000)
+    _rust_on_fill(accelerated, sell, 10000)
+    _assert_same_text(accelerated, reference)
+    assert str(accelerated._cash) == "0.00"
+    assert str(accelerated.spread_capture) == "0.00"
+    assert str(accelerated.inventory_drift) == "0.00"
+    assert str(accelerated.fees) == "0.00"
+    assert str(accelerated.realized_notional) == "20000.00"
+
+    coarse = PriceScale(tick_size=Decimal("1.0"))
+    later = _fill(Side.BUY, 1, 100, ts=1)
+    reference.scale = coarse
+    accelerated.scale = coarse
+    reference.on_fill(later, mid_ticks=100)
+    _rust_on_fill(accelerated, later, 100)
+    _assert_same_text(accelerated, reference)
+    assert str(accelerated._cash) == "-100.00"
+    assert str(accelerated.realized_notional) == "20100.00"
+
+
 def _extension_bps(cost: Decimal, notional: Decimal) -> Decimal:
     import cockpit_quant
     return Decimal(cockpit_quant.cost_bps(format(cost, "f"), format(notional, "f")))
