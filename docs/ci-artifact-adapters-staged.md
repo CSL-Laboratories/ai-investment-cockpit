@@ -252,3 +252,132 @@ or with a mixed-key previous evidence container, it raises a bare `ValueError` o
 boundary (section 2) so no adapter caller sees it, but any *other* caller of the
 shared validator still does. Fixing it means editing the shared module, which this
 slice does not touch; it is recorded here for the validator's owner.
+
+
+
+## 9. Bounded injected read transport (offline mechanics only)
+
+Status 2026-10-19 UTC: **offline mechanics, not an authenticated client.** Follow-up
+slice on top of the adapters above. Files:
+[`scripts/ci/candidate_artifact_read_transport.py`](../scripts/ci/candidate_artifact_read_transport.py),
+[`tools/test_candidate_artifact_read_transport.py`](../tools/test_candidate_artifact_read_transport.py).
+No validator, adapter, existing test, fixture, workflow, policy, runtime app code or
+setting changed. This is CI-development tooling and makes no Recursion runtime language
+choice.
+
+`ReadTransport(client)` implements the five read methods of section 3 with exactly the
+signatures and reply grammar `consume` already uses. It is the bounded, fail-closed layer a
+future authenticated transport could sit behind. It is **not** that transport:
+
+| | `ReadTransport` (this slice) | Real authenticated GitHub transport (still absent) |
+| --- | --- | --- |
+| Network, URLs, redirects, HTTP library | none | required |
+| Credentials, App/token identity, environment | none read | required; owner decision (CSL-272) |
+| Who vouches for replies | nobody; the injected client is caller-supplied and unauthenticated | the authenticated identity, once decided |
+| Wiring | none; no CLI, no workflow, `disabled_entry` ignores it | owner activation only (section 6 item 4) |
+| Tested against | in-memory fake client and fake streams | not implemented, not verified |
+
+### 9.1 Injected client protocol
+
+The only call made on the client is `client.open(operation, args) -> (status, stream)`.
+`operation` is one of `READ_METHODS`; `args` is the tuple of that method's validated public
+arguments in signature order (`download_artifact` includes `max_bytes`). There is no
+keyword forwarding and no second entry point, so the module cannot ask the client for a
+write. `status` must be the plain `int` 200; `stream` must provide `read(size)` (at most
+`size` bytes, `b''` at EOF) and `close()`. A reply that is not a 2-tuple carries no stream
+under this protocol.
+
+Payloads: `get_ref` is `{"ref": "refs/heads/<branch>", "object": {"type": "commit", "sha": <40-hex>}}`;
+`get_workflow_run` is a JSON object whose integer `id` equals the requested run;
+`list_workflow_runs`/`list_artifacts` are pages with exactly `items` and boolean
+`has_next`; `download_artifact` is the raw archive. Translating real REST responses or
+`Link` headers into this shape would be the job of the absent authenticated client.
+
+### 9.2 Bounds and fail-closed rules
+
+- **Arguments before any call.** Repository and branch use the validator's grammar
+  (`REPOSITORY`, the policy default-branch rule); run, workflow and artifact IDs are plain
+  `int` in `1..2**63-1` (`bool` rejects); `page` is `1..MAX_LIST_PAGES` (8); `max_bytes`
+  is `1..MAX_ARCHIVE_CEILING`. Anything else is `invalid read arguments` and the client
+  is never invoked.
+- **Streaming reads.** Bodies are read only with `read(size)`, `size <= 64 KiB`; never
+  `read()` or iteration. At most the cap is retained, followed by one `read(1)` probe that
+  must return `b''` and is discarded. Metadata is capped at `MAX_METADATA_BYTES` (4 MiB;
+  a caller may only lower it per instance). The archive must be exactly `max_bytes` long:
+  a short body at EOF is `stream ended short of the authenticated size`, a longer one
+  `stream exceeds the byte cap`. A chunk longer than requested, a non-`bytes`/`bytearray`
+  chunk (including `str`, `None`, `memoryview` and `bytes` subclasses) or any exception
+  from `read` is unavailable. Lengths, headers or trust flags attached to a client or
+  stream are never read, so no claim can raise or replace `max_bytes`.
+- **Status.** Only `int` 200 reads a body. 403, 404, 410, 429 and every other code are
+  `http status <code>`; `bool`, strings, floats and out-of-range values are
+  `client status malformed`.
+- **Close, no retry.** Every stream in a 2-tuple reply is closed on success and on every
+  failure; a raising `close()` is unavailable. If the read or status already failed,
+  that primary reason is preserved even when closing also fails. Each method opens
+  the client at most once. Exception names outside the reason grammar use a fixed
+  fallback reason. Two-element lists and tuple-subclass replies remain malformed,
+  but their identified stream slot is also closed without reading.
+- **Metadata JSON.** Strict UTF-8; duplicate object keys, `NaN`/`Infinity`, float
+  literals that overflow to infinity and trailing data are unavailable. An iterative
+  walk bounds well-formed container nesting to `MAX_JSON_DEPTH` (64), with the root
+  container at depth 1. Interpreter recursion failures during parsing also fail closed.
+- **Pages.** Exactly `{items, has_next}`, at most `MAX_PAGE_ITEMS` (100) items, each an
+  object with a distinct positive integer `id`; an empty page with `has_next: true` is
+  rejected. Completion is only `has_next: false`; a short page or missing pagination is
+  never complete. Page-cap exhaustion, cross-page duplicates, before/after stability,
+  expiry, digest, size and source binding remain the existing consumer and validator
+  rules, unchanged and without fallback.
+
+A malicious in-process client can still allocate memory before `open` returns or inside
+`read`; the module bounds only what it is handed and claims nothing about arbitrary
+in-process code.
+
+### 9.3 What stays unresolved
+
+Supplying offline mechanics does not discharge section 6 item 2. Still open, each a
+separate owner decision or reviewed change:
+
+- CSL-272: the owner's dedicated App identity remains unevidenced; this slice does
+  not substitute a human PAT or another identity. The separately reviewed real
+  client must use the approved existing Actions-read route, with evidence that
+  artifact metadata and downloads are actually readable;
+- the real authenticated client itself, its reviewed source, and how it maps REST
+  responses and pagination onto the protocol above;
+- predecessor evidence retrieval (section 5) and bootstrap (section 6 item 3);
+- the trusted producer and its `source_closure` pin (section 6 item 1);
+- activation (section 6 item 4).
+
+The production adapter remains disabled. `DISABLED['reason']` is unchanged
+(`v1 adapters are offline preparation; no transport, upload, dispatch or activation route exists`)
+and remains accurate: there is still no authenticated transport and no route by which
+anything reaches this module, and `disabled_entry` in both modules ignores a
+`ReadTransport`, its client and every callback. This module supplies offline mechanics
+only.
+
+### 9.4 Tests
+
+```
+python -X utf8 -B tools/test_candidate_artifact_read_transport.py
+python -X utf8 -B tools/test_candidate_artifact_adapters.py
+```
+
+The new suite reuses the existing adapter suite's fixture scenario and drives the real
+`consume` through `ReadTransport` and a fake client that serves JSON bytes and the
+produced ZIP through fake streams. Covered: every public method directly and end to end;
+the happy path equal to the reference fake transport, including trickling streams;
+multi-page listings whose short pages continue; malformed, unpaginated, oversized,
+empty-continuation and duplicate pages; page-cap exhaustion for runs and artifacts; an
+endless stream stopped after the cap plus one probe byte, trailing bytes under misleading
+length claims, and caps that follow authenticated metadata in both directions; short,
+oversized-chunk, wrong-type and raising reads; unavailable HTTP statuses on every
+method without retry; malformed and other non-200 statuses through the shared open
+path (exercised on download); malformed replies and streams; strict metadata JSON; close on every
+path including a raising `close()`, preservation of primary size failures when close
+also fails, unusual exception names, malformed two-element reply cleanup and
+well-formed metadata nesting at either side of the depth bound; expired or oversized
+artifacts rejected before
+download; before/after movement rejected after one download; invalid arguments never
+reaching the client; disabled entries ignoring the transport, client and callbacks; no
+network, environment, process or CLI surface and no wiring from existing modules or
+workflows. Passing proves mechanics against fakes only, not GitHub behaviour or trust.
