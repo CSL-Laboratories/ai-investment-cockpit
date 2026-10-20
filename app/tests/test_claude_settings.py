@@ -17,28 +17,27 @@ ROOT = Path(__file__).resolve().parents[2]
 SETTINGS = ROOT / ".claude" / "settings.json"
 GUARD = ROOT / ".claude" / "hooks" / "guard-substitution.sh"
 
-ALLOW = {
-    "Bash(python -m pytest)", "Bash(python -m pytest *)",
-    "Bash(python3 -m pytest)", "Bash(python3 -m pytest *)",
-    "Bash(ruff check)", "Bash(ruff check *)",
-    "Bash(../.venv/bin/python -m pytest)", "Bash(../.venv/bin/python -m pytest *)",
-    "Bash(../.venv/bin/ruff check)", "Bash(../.venv/bin/ruff check *)",
-    "Bash(python -X utf8 -B tools/test_*.py)", "Bash(python3 -X utf8 -B tools/test_*.py)",
-    "Bash(cargo test)", "Bash(cargo test *)",
-    "Bash(cargo check)", "Bash(cargo check *)",
-    "Bash(cargo clippy)", "Bash(cargo clippy *)",
-    "Bash(cargo fmt --check)", "Bash(cargo fmt --all --check)",
-    "Bash(cargo fmt --manifest-path rust/Cargo.toml --all --check)",
-    "Bash(actionlint)",
-    "Bash(gh pr view)", "Bash(gh pr view *)",
-    "Bash(gh pr diff)", "Bash(gh pr diff *)",
-    "Bash(gh pr checks)", "Bash(gh pr checks *)",
-    "Bash(gh pr list)", "Bash(gh pr list *)",
-    "Bash(gh run list)", "Bash(gh run list *)",
-    "Bash(gh run view)", "Bash(gh run view *)",
-    "mcp__linear__get_issue", "mcp__linear__list_issues", "mcp__linear__list_comments",
-    "mcp__Linear__get_issue", "mcp__Linear__list_issues", "mcp__Linear__list_comments",
-}
+PYTHONS = ("python", "python3")
+GH_READ = ("gh pr view", "gh pr diff", "gh pr checks", "gh pr list", "gh run list", "gh run view")
+LINEAR = {f"mcp__{server}__{tool}" for server in ("linear", "Linear")
+          for tool in ("get_issue", "list_issues", "list_comments")}
+# Script tests are allowed one exact rule each; a new tools/test_*.py fails this
+# guard until its rule is added on purpose.
+TOOL_TESTS = {f"Bash({py} -X utf8 -B tools/{path.name})"
+              for path in (ROOT / "tools").glob("test_*.py") for py in PYTHONS}
+ALLOW = (
+    {f"Bash({py} -m pytest{arg})" for py in (*PYTHONS, "../.venv/bin/python") for arg in ("", " -q")}
+    | {f"Bash({py} -m pytest -q app/tests)" for py in PYTHONS}
+    | {"Bash(ruff check)", "Bash(ruff check .)", "Bash(ruff check app)",
+       "Bash(../.venv/bin/ruff check)", "Bash(../.venv/bin/ruff check .)"}
+    | TOOL_TESTS
+    | {f"Bash(cargo {cmd}{arg})" for cmd in ("test", "check", "clippy")
+       for arg in ("", " --workspace", " --manifest-path rust/Cargo.toml")}
+    | {"Bash(cargo fmt --check)", "Bash(cargo fmt --all --check)",
+       "Bash(cargo fmt --manifest-path rust/Cargo.toml --all --check)", "Bash(actionlint)"}
+    | {f"Bash({cmd}{tail})" for cmd in GH_READ for tail in ("", " *")}
+    | LINEAR
+)
 CONTINUE = chr(92) + chr(10)  # backslash-newline: bash joins the lines first
 ASK = {"Bash(gh * -R*)", "Bash(gh * --repo*)", "Bash(gh *://*)"}
 # Words that must never appear in an allowed Bash rule: publishing, spending,
@@ -63,8 +62,16 @@ def test_allow_and_ask_lists_match_the_reviewed_policy():
 
 def test_no_allowed_bash_rule_can_publish_spend_or_reach_the_network():
     for rule in _settings()["permissions"]["allow"]:
-        if rule.startswith("Bash("):
+        if rule.startswith("Bash(") and rule not in TOOL_TESTS:
             assert not any(word in rule for word in FORBIDDEN), rule
+
+
+def test_only_read_only_gh_rules_take_arguments():
+    # Code-running commands are exact: a wildcard would also admit options such
+    # as pytest --basetemp or --pastebin (CSL-350 decision 1A).
+    for rule in _settings()["permissions"]["allow"]:
+        if "*" in rule:
+            assert any(rule == f"Bash({cmd} *)" for cmd in GH_READ), rule
 
 
 def test_bash_calls_run_the_substitution_guard():
