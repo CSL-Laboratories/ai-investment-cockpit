@@ -6,6 +6,11 @@ read files the old filter skipped, including the LLM prompts under
 app/workflows/prompts/. These tests execute the checked-in `decide` script on real
 pull_request diffs and fail when a test source references a tracked file the
 filter would still skip.
+
+The guard is static: it sees path literals ('docs/x.md') and quoted components
+joined by / ("docs" / "x.md"). Paths built with os.path.join, f-strings, globs
+or variable prefixes are not detected, so new dynamic reads of documentation
+need a matching run-tests pattern by review.
 """
 from __future__ import annotations
 
@@ -21,6 +26,8 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 CI = ROOT / '.github' / 'workflows' / 'ci.yml'
+RUN_GATES = ROOT / '.github' / 'actions' / 'run-gates' / 'action.yml'
+SELF = Path(__file__).resolve().relative_to(ROOT).as_posix()
 
 # Tracked files the CSL-392 audit saw tests open while the old filter skipped them.
 AUDITED = (
@@ -53,7 +60,8 @@ STILL_SKIPPED = ('docs/example.md', 'README.md', 'docs/research/notes.md', 'LICE
 ALLOWED_REFERENCES = {
     ('app/tests/test_linear_pr_sync.py', 'AGENTS.md'): 'fixture file name in a fake PR listing',
     ('app/tests/test_stuck_thread_watch.py', 'AGENTS.md'): 'fixture review-thread path',
-    ('app/tests/feasibility/test_inspect.py', 'CLAUDE.md'): 'existence check only; content is not read',
+    ('app/tests/feasibility/test_inspect.py', 'CLAUDE.md'): 'existence check only; content is not '
+        'read (deleting or renaming CLAUDE.md would still skip tests and break this check)',
     ('tools/test_ci_dispatch_scope.py', 'README.md'): 'file created in a temporary git repo',
     ('tools/test_ci_dispatch_scope.py', 'docs/ci-queue-rollout.md'): 'path string fed to the Rust selector',
 }
@@ -72,10 +80,12 @@ def filter_patterns() -> tuple[str, ...]:
 
 
 def linux_job_test_sources(tracked: list[str]) -> list[str]:
-    # What the required linux job runs: app pytest, plus the tools suites it names.
-    ci_text = CI.read_text(encoding='utf-8')
-    tools = {f'tools/{name}.py' for name in re.findall(r'tools[/.](test_\w+)', ci_text)}
-    return [path for path in tracked if path.endswith('.py')
+    # What the required linux job runs: app pytest, plus the tools suites named in
+    # ci.yml and in the run-gates composite action. This module is excluded: its
+    # allow-list and fixtures name skipped files on purpose.
+    text = CI.read_text(encoding='utf-8') + RUN_GATES.read_text(encoding='utf-8')
+    tools = {f'tools/{name}.py' for name in re.findall(r'tools[/.](test_\w+)', text)}
+    return [path for path in tracked if path.endswith('.py') and path != SELF
             and (path.startswith('app/tests/') or path in tools)]
 
 
@@ -162,8 +172,9 @@ class TestSourceGuardTests(unittest.TestCase):
         for name in ('tools/test_ci_dispatch_scope.py', 'tools/test_ci_settle.py',
                      'tools/test_review_gate.py', 'tools/test_queue_gates.py',
                      'tools/test_ci_cancel_controller.py', 'tools/test_candidate_workflows.py',
-                     'app/tests/test_o7_operator_contract.py'):
+                     'tools/test_run_gates_action.py', 'app/tests/test_o7_operator_contract.py'):
             self.assertIn(name, sources)
+        self.assertNotIn(SELF, sources)
 
     def test_allowed_references_are_still_present(self):
         # Drop stale exceptions so the allow-list cannot grow silently.
