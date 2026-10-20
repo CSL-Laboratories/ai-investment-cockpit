@@ -2306,7 +2306,7 @@ jobs:
                   # Git 2.46+ fscks bundle objects here; older Git leaves that to check_objects().
                   repo.run_git(["fetch", "-q", "--no-tags", str(bundle), "HEAD:refs/claude/candidate"], fsck=True)
               except Refused:
-                  raise Refused("candidate objects fail git fsck at fetch") from None
+                  raise Refused("candidate bundle refused at fetch (fsck or corrupt pack)") from None
               check_objects(repo)
               candidate = repo.text("rev-parse", "--verify", "refs/claude/candidate^{commit}")
               if not SHA.fullmatch(candidate) or candidate in {head, merge_base}:
@@ -5040,7 +5040,7 @@ jobs:
                   # Git 2.46+ fscks bundle objects here; older Git leaves that to check_objects().
                   repo.run_git(["fetch", "-q", "--no-tags", str(bundle), "HEAD:refs/claude/candidate"], fsck=True)
               except Refused:
-                  raise Refused("candidate objects fail git fsck at fetch") from None
+                  raise Refused("candidate bundle refused at fetch (fsck or corrupt pack)") from None
               check_objects(repo)
               candidate = repo.text("rev-parse", "--verify", "refs/claude/candidate^{commit}")
               if not SHA.fullmatch(candidate) or candidate in {head, merge_base}:

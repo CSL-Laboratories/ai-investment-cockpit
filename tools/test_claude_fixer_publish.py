@@ -294,7 +294,8 @@ class TreeEntryTests(GitCase):
             with self.subTest(entries=entries):
                 self.model.git("update-ref", "HEAD", self.head)
                 self.commit_tree(entries)
-                self.refused("fail git fsck")
+                # Older Git refuses in check_objects(), Git 2.46+ at the fsck-enabled fetch.
+                self.refused(r"^(candidate objects fail git fsck|candidate bundle refused at fetch \(fsck or corrupt pack\))$")
 
     def test_check_objects_refuses_crafted_trees_without_a_fetch(self):
         # Objects written straight into the validator repo, so check_objects() runs on every Git version.
@@ -324,7 +325,7 @@ class TreeEntryTests(GitCase):
                 raise p.Refused("git operation failed: fetch")
             return real(args, **kwargs)
         repo.run_git = run_git
-        with self.assertRaisesRegex(p.Refused, "^candidate objects fail git fsck at fetch$"):
+        with self.assertRaisesRegex(p.Refused, r"^candidate bundle refused at fetch \(fsck or corrupt pack\)$"):
             p.validate_candidate(repo, self.config(), bundle)
 
     def test_check_objects_accepts_ordinary_history(self):
