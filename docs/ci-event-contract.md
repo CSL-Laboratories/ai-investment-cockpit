@@ -7,7 +7,8 @@ that changes a row here updates this file in the same PR. Bump the version for a
 change (v1 → v2) and the patch for a correction (v1.1). Record the new base commit. Tracked
 under CSL-255 / CSL-385.
 
-- **Base commit:** `7b0dcf27084481dc018221fa09da221ab00c103f` (`origin/main`, merge of #215).
+- **Base commit:** `be97ff3b462d3dc282844747b9080d5a93238714` (`main`, merge of #220). The rows were traced at `7b0dcf27` (#215). The only CI-file change since then is #220 (CSL-383), which adds three lines in two places in `claude.yml` and once in `conflict-scan.yml`. All `file:line` citations are for this base.
+- **Which workflow version runs:** a pull-request run uses the workflow file from the PR merge ref. `workflow_dispatch` and `push` use the file at the event's commit. A row applies only where that file matches this base.
 - **Scope:** describes current behaviour of the hosted GitHub Actions workflows at the base
   commit. It is not a policy change, grants no permission, and changes no ruleset, workflow
   or label. Where this contract and code disagree, the code at the base commit wins and the
@@ -77,7 +78,7 @@ review-gate.yml, claude.yml, conflict-scan.yml, pr-lint.yml, linear-pr-sync.yml 
 stuck-thread-watch.yml (`runs-on: ubuntu-latest`).
 
 **Correction to the task brief:** claude.yml has **no Blacksmith runner** at the base
-commit. Its jobs use `ubuntu-latest` (claude.yml:90, 504, 534, 561, 1315). [O] Across the
+commit. Its jobs use `ubuntu-latest` (claude.yml:90, 504, 534, 561, 1318). [O] Across the
 last 60 claude.yml runs, all 13 jobs that started used `ubuntu-latest`. See section 7.
 
 ## 3. Event matrix
@@ -93,7 +94,7 @@ means the `RUST_PATHS` match in rust.yml:242-263. Note that the list includes `.
 | # | Event | ci.yml jobs | rust.yml jobs | Paid runners started | `linux-gates` | Evidence |
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | `pull_request` opened, **draft** | filter, settle, linux, windows, macos and benchmarks are skipped. `linux-gates` and `queue-gates` run. | filter and rust-book skipped. rust-gates runs. | **None** | **FAIL** ("filter job did not succeed"). rust-gates also fails. | [S] ci.yml:102, 312, 467, 481-484; rust.yml:93, 442, 461-464. [O] run 39378544947 (#217): all paid jobs skipped, linux-gates log `filter=skipped linux=skipped`. |
-| 2 | opened, **non-draft** | filter decides `run-tests` (ci.yml:255-304). settle skipped. linux if run-tests. benchmarks if run-tests. windows and macos only if `ci:full` is already on the PR in the event payload. | filter diffs the merge tree (rust.yml:216-228). Cells for Linux, plus Windows and macOS with `ci:full` (rust.yml:206-207). | L×2 + L×1 (benchmarks) when run-tests. Rust L×2 when Rust-relevant. With `ci:full`: W×2, Rust W×2, M. | PASS if `linux` succeeded, or if run-tests=false and linux skipped (docs/no-change noop). Otherwise FAIL. | [S] ci.yml:312, 326-334, 586-592, 697-705, 802-810. [O] see row 7. [I] A PR created with labels also gets a `labeled` event, so row 9 can fire as well. |
+| 2 | opened, **non-draft** | filter decides `run-tests` (ci.yml:255-304). settle skipped. linux if run-tests. benchmarks if run-tests. windows and macos only if `ci:full` is already on the PR in the event payload. | filter diffs the merge tree (rust.yml:216-228). Cells for Linux, plus Windows and macOS with `ci:full` (rust.yml:206-207). | L×2 + L×1 (benchmarks) when run-tests. Rust L×2 when Rust-relevant. With `ci:full`: W×2 and M from ci.yml, plus Rust W×2 and Rust M when Rust-relevant (rust.yml:207, 290-293). | PASS if `linux` succeeded, or if run-tests=false and linux skipped (docs/no-change noop). Otherwise FAIL. | [S] ci.yml:312, 326-334, 586-592, 697-705, 802-810. [O] see row 7. [I] A PR created with labels also gets a `labeled` event, so row 9 can fire as well. |
 | 3 | synchronize, **draft** | Same as row 1. | Same as row 1. | None | **FAIL** | [S] as row 1. [O] run 39377719991 (#215 draft-era, head `8f5caa21f1`). |
 | 4 | synchronize, **non-draft** | settle runs `sleep 120` on ubuntu-latest, then the same jobs as row 2. | settle, then the same jobs as row 2. | Same as row 2, after about 2 minutes. | Same as row 2. settle must be `success`. | [S] ci.yml:310-319, 475, 485-490; rust.yml:304-311. [O] run 39493569607: settle 20:39:12-20:41:15, linux 3.11/3.12, benchmarks, linux-gates success. 15 L-min, about $0.060. Rust 39493569462. |
 | 5 | synchronize **burst** (new head while the old run is waiting in settle or running) | The new run queues in the same group (`queue: max`, no cancel-in-progress). The controller (section 5) cancels active, first-attempt, strict-ancestor runs once a current-head witness exists. The cancelled old run's `linux-gates` runs and **fails on the old SHA**. | Same as ci.yml. | Whatever the old run started before cancellation. Concurrency does not prevent new paid starts; the controller cancels them. | Old SHA: FAIL (irrelevant). New head: as row 4. | [S] ci.yml:94-97, 500-502; ci-label-retrigger.yml:15-17, 61-83; ci_cancel_controller.py:367-419. [O] run 39490583816 was cancelled during its linux cells after about 5 L-min (rounded up per job, including benchmarks), and controller run 39492190855 logged `Requested cancellation of verified ancestor run 39490583816`. Pending run 39492190159 was cancelled before any job started (controller 39493573599). Controller 39493574339 logged the HTTP 409 reread no-op. A `requested` event fires while the new run is still pending in the queue (39492190855 at 20:27:56Z; its target started 20:29:36Z). |
@@ -110,7 +111,7 @@ means the `RUST_PATHS` match in rust.yml:242-263. Note that the list includes `.
 | 16 | `merge_group` | Declared (ci.yml:39-40; rust.yml:36-37), but **unreachable**: no merge-queue rule (section 1). | Same | None | n/a | [S] + [O] ruleset read. Offline tests only. |
 | 17 | `workflow_dispatch`, manual (no PR inputs) | Group `manual-<scope>` per ref, cancel-in-progress true. `run-tests` forced true. linux×2. windows×2 + macos unless `scope=linux`. | All cells for the scope, no path filter | L×2 (+W×2 +M) (+Rust) | PASS or FAIL. [I] Bound to the tip of the dispatched ref. On a PR branch this is a `linux-gates` check run on the PR head (same app 15368), so it can satisfy or override the required check. | [S] ci.yml:46-82, 95-97, 203-206, 231-235, 588, 698. Test `test_dispatch_defaults_and_existing_events`. |
 | 18 | `workflow_dispatch`, **candidate** (CSL-259 coordinator) | Dispatched on the default branch with the full tuple and `scope=full`. Group `candidate-<id>`, `queue: max`, no cancel. The staged policy validator runs in every validating job. All five Python cells run, plus `candidate-ci-gates`. | All five Rust cells | L×2 + W×2 + M (+ Rust L×2 + W×2 + M) | Runs, but [I] binds to the policy (main) SHA, not the PR head, so it does not satisfy the PR's required check. | [S] candidate_gate.py:8-10, 533-534; ci.yml:95-97, 544-571; ci-candidate-readiness.md:68-71, 151-158, 214-220. [O] Inactive: codex-gate run 39496664994 executed `legacy` (requires `vars.CANDIDATE_COORDINATOR != 'true'`, codex-gate.yml:66-67). |
-| 19 | `schedule` (cron `17 7 * * *`, ci.yml only) | filter: `run-tests=false`. macos runs only if `main` had commits in the last 24 h. linux-gates and queue-gates are skipped. | No schedule trigger | None (macOS is free) | **Skipped**. No check is posted. | [S] ci.yml:43-45, 236-253, 467, 509, 699. [O] run 39424586371: macos success, linux-gates skipped. It was created 12:44:11Z for the 07:17 cron, which shows real schedule latency. |
+| 19 | `schedule` (cron `17 7 * * *`, ci.yml only) | filter: `run-tests=false`. macos runs only if `main` had commits in the last 24 h. linux-gates and queue-gates are skipped. | No schedule trigger | None (macOS is free) | **Skipped.** The job does not run; GitHub records a `skipped` `linux-gates` job/check on the main SHA. | [S] ci.yml:43-45, 236-253, 467, 509, 699. [O] run 39424586371: macos success, linux-gates skipped. It was created 12:44:11Z for the 07:17 cron, which shows real schedule latency. |
 | 20 | Rerun (attempt > 1) | [I] Re-executes with the original event payload. A rerun of a draft-era run still skips filter and fails linux-gates. Re-run jobs re-enter concurrency. | Same | Re-executed paid cells | [I] As the original event | [S] Controller: rerun targets are never cancelled (ci_cancel_controller.py:375), and any current-head rerun disables cleanup (305-306). [O] No attempt > 1 among the last 100 ci or rust runs. **Unobserved.** |
 | 21 | Cancellation by concurrency | Only non-PR groups cancel in progress: push, manual, label, schedule and merge_group (unreachable today) (ci.yml:96; rust.yml:87). PR and candidate groups queue instead. In a cancelled run, `linux-gates` still runs (`always()`). [O] In every observed cancellation (e.g. 39490583816) it failed through "Required Linux gate" reading a `cancelled` dependency; "Reject workflow cancellation" (`if: cancelled()`) was skipped. Both paths fail closed. [I] If cancellation lands after `linux` already succeeded, `linux-gates` can be green: the tests did run, so this is not fail-open. | Same (rust-gates) | Already-started cells are lost | FAIL on the cancelled run's SHA | [S] ci.yml:96-97, 467, 500-502; rust.yml:87-88, 442, 466-468. Test `test_cancellation_runs_and_fails_the_required_aggregate`. |
 | 22 | Cancellation by the cancel-ancestors controller | See row 5 and section 5. | Same | None started by the controller itself | Cancelled run: FAIL on an **ancestor** SHA only | [S] ci-label-retrigger.yml:61-83. [O] rows 5 and 8. |
@@ -185,7 +186,7 @@ This job runs only for candidate dispatch. It requires `scope=full`, filter `suc
 | claude.yml fixer jobs | `claude-<PR>` (job level) | false | `max` |
 
 Sources: [S] ci.yml:94-97; rust.yml:82-88; ci-label-retrigger.yml:24-28; review-gate.yml:23-25;
-claude.yml:557-560, 1311-1314. GitHub keeps at most 100 pending runs per group
+claude.yml:557-560, 1314-1317. GitHub keeps at most 100 pending runs per group
 (ci-cancellation-controller.md:15).
 
 ### Settle
@@ -293,21 +294,38 @@ At the base commit these ran locally (Python 3.13):
     pull_request_review_comment, pull_request_review, and `pull_request` limited to fixer and
     gate paths (claude.yml:3-43).
   - Jobs: `resolve-pr`, `event-paths`, `forward-conflict-scan`, `claude-mention` and
-    `devin-review-fix`. All run on `ubuntu-latest` (claude.yml:90, 504, 534, 561, 1315), so
+    `devin-review-fix`. All run on `ubuntu-latest` (claude.yml:90, 504, 534, 561, 1318), so
     there is **no Blacksmith compute**.
-  - Model usage goes through `CLAUDE_CODE_OAUTH_TOKEN` (claude.yml:1082, 2407; subscription
+  - Model usage goes through `CLAUDE_CODE_OAUTH_TOKEN` (claude.yml:1085, 2413; subscription
     route per ci-cost-budget.md:57-58). Each fixer installs the full runtime and runs
-    `ruff` and `pytest` on the free runner (claude.yml:731, 1115-1116).
-  - [I] Fixer pushes (`git push origin HEAD:refs/heads/<branch>`, claude.yml:1143) authenticate
-    through the action's app credentials rather than `GITHUB_TOKEN`. They therefore emit
-    `synchronize` and start ordinary paid CI (rows 4-5). The eight-commit guard
-    (AGENTS.md Code Review Rules) bounds how many such pushes happen.
+    `ruff` and `pytest` on the free runner (claude.yml:731, 1118-1119).
+  - [O] Fixer pushes (`git push origin HEAD:refs/heads/<branch>`, claude.yml:1146) emit
+    `synchronize` and start ordinary paid CI (rows 4-5). The `ci` runs on fixer commits
+    were started by `claude[bot]` about 12 s after each commit: 39354662754 (#212
+    `8ede5ff793`), 39353490459 (#208 `571cb1ce11`) and 39079041390 (#199 `e875f2b8c3`).
+    So the push credential is the Claude app, not the checkout `GITHUB_TOKEN`, which
+    could not trigger workflows.
+  - The eight-commit guard (`cap` step, claude.yml:1462) bounds only the automated
+    `devin-review-fix` job. `claude-mention` has no equivalent cap, so repeated authorized
+    `@claude` requests can push, and start paid `synchronize` runs, without that limit.
 - **Legacy Codex READY label (active):**
   - With `CANDIDATE_COORDINATOR` not `true`, the legacy job adds `ci:full` through
     `CODEX_TRIGGER_PAT` (codex_gate.py:7, 84, 1350-1356; codex-gate.yml:53-87).
-  - [I] PAT-authored label events trigger workflows, so this starts row 9 (full matrix). The
-    label then persists, so **every later non-draft PR event also starts W×2, M and Rust W×2**
-    until the label is removed.
+  - [I] PAT-authored label events trigger workflows, so this starts row 9 (full matrix).
+  - [S] The READY label is recorded as gate-owned (`record_ci_ownership`, codex_gate.py:1365).
+    On the next non-draft PR event, `_handle_request` runs `_clear_stale_ready`
+    (codex_gate.py:1144-1168, 1202-1211), which revokes a gate-owned `ci:full` whose receipt
+    belongs to an earlier head. So the **first push after READY** still carries the label in
+    its event payload and runs the full matrix; later events normally do not.
+  - A `ci:full` added **by a person or by Devin** is not gate-owned and is never cleared
+    automatically. It applies to every later qualifying event until someone removes it.
+    [O] Of the 13 recent `ci:full` label events (PRs #166–#193, 2026-10-17), 12 came from
+    CDanTheMan, samir-shah-ahmed or Devin. One (#166) came from NotSkittlz, which is also
+    the identity behind `CODEX_TRIGGER_PAT`, so it may be a READY label. None was removed.
+  - Even with the label, Windows and macOS start only when `run-tests == true`
+    (ci.yml:586-591, 697-704), and Rust cells only for Rust-relevant paths
+    (rust.yml:215-280). A docs-only event starts no W or M, and a non-Rust code event
+    starts no Rust cells.
   - ci-candidate-readiness.md:51-54 ("New READY decisions do not add `ci:full`") applies
     only to the coordinator path, which is currently off ([O] 39496664994).
 - **Benchmarks:** `benchmarks` (Blacksmith L×1, about 0.5-1 min) runs on every non-draft PR
@@ -329,7 +347,7 @@ At the base commit these ran locally (Python 3.13):
 | G5 | Stale workflow comments: ci.yml:306-309 (settle relies on #157 concurrency cancel), ci.yml:17-23 and 707-708 ($50 budget, superseded by ci-cost-budget.md:48-50), ci.yml:504-505 (`queue-gates` "required"). | [S] | Comment-only fix in a human-assigned workflow issue. |
 | G6 | `merge_group` paths and `queue-gates` are untested live. The merge queue is not enabled. | [O] | Covered by the ci-queue-rollout.md activation sequence. |
 | G7 | A PR created with `ci:full` or `enhancement` gets both `opened` and `labeled`, which means an ordinary run plus a label dispatch (duplicate full matrix). | [I] | Observe once (read-only) and record. |
-| G8 | The active legacy READY path persists `ci:full`, so every later push runs the full matrix (section 7). | [S]+[O] | Owner awareness. The coordinator path avoids it but is off. |
+| G8 | `ci:full` added by a founder or Devin persists, so every later qualifying push runs Windows, macOS and Rust Windows (subject to the path filters, section 7). The legacy READY label is gate-owned and is cleared on the next push, after one full-matrix run. | [S]+[O] | Owner awareness: remove a manual `ci:full` once the full run has passed. |
 | G9 | The task brief said claude.yml has Blacksmith runners. It does not at the base commit. Its paid effect is indirect, through pushes that trigger CI. | [S]+[O] | Correct the brief and the Reliability-lane notes. |
 | G10 | GitHub rerun semantics (payload reuse, concurrency re-entry) have not been observed. | [I] | Record the next real rerun. |
 | G11 | Duplicate controller cancel POSTs (4 per target observed) consume API budget. Harmless today. | [O] | None required. Note it in the controller doc if budget pressure appears. |
