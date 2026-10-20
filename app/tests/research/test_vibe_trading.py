@@ -351,6 +351,24 @@ def test_missing_collection_is_quarantined_and_an_empty_list_is_ok():
     assert project_holdings(missing, ticker="AAPL") is None
     missing["data"]["holders"] = {"manager": "nope"}
     assert project_holdings(missing, ticker="AAPL") is None
+
+
+def test_every_malformed_holder_is_quarantined():
+    payload = _load("holdings.json")
+    payload["data"]["holders"] = [
+        {"manager": "No Size"},
+        "not-a-row",
+        {"manager": "   ", "shares": 10, "value_usd": 1},
+        {"manager": "x" * 81, "shares": 10},
+        {"shares": 10, "value_usd": 1},
+    ]
+    assert project_holdings(payload, ticker="AAPL") is None
+    payload["data"]["holders"].append({
+        "manager": "Example Capital", "shares": 12, "value_usd": 34,
+    })
+    lines = project_holdings(payload, ticker="AAPL")
+    assert lines is not None and len(lines) == 1
+    assert "manager=Example Capital" in lines[0].text
     etf = _load("etf.json")
     assert project_etf(etf, etf="SPY", universe=frozenset({"AAPL"}))
     del etf["data"]["holdings"]
@@ -684,6 +702,27 @@ def test_stdio_client_rejects_a_path_command():
 def test_settings_reject_a_shell_command():
     with pytest.raises(ValueError):
         _settings(vibe_trading_command="vibe-trading-mcp && true")
+
+
+@pytest.mark.parametrize("period", [
+    "2018-2025",
+    "2024-02-29/2024-03-01",
+    "2026-03-01/2026-03-01",
+])
+def test_bench_period_accepts_a_real_range(period):
+    assert _settings(vibe_trading_bench_period=period).vibe_trading_bench_period == period
+
+
+@pytest.mark.parametrize("period", [
+    "2026-02-30/2026-03-01",
+    "2025-02-29/2025-03-01",
+    "2026-13-01/2026-13-02",
+    "2026-03-02/2026-03-01",
+    "2025-2018",
+])
+def test_bench_period_rejects_impossible_or_reversed_dates(period):
+    with pytest.raises(ValueError, match="bench period"):
+        _settings(vibe_trading_bench_period=period)
 
 
 def test_publish_without_parquet_root_does_not_persist(state):

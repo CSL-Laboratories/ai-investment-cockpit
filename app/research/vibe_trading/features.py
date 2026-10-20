@@ -426,6 +426,10 @@ def project_holdings(payload: dict, *, ticker: str) -> list[FeatureLine] | None:
             }}, payload, row),
             tool="get_institutional_holdings",
         ))
+    # An explicit empty list is a healthy zero. A non-empty list that yields
+    # no valid holder is a broken payload, not an empty book.
+    if holders and not lines:
+        return None
     return lines
 
 

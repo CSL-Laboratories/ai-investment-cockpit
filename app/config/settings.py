@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import date
 from decimal import Decimal
 from enum import Enum
 
@@ -486,8 +487,14 @@ class Settings(BaseSettings):
             raise ValueError("bench period must be YYYY-YYYY or YYYY-MM-DD/YYYY-MM-DD")
         if year is not None and int(year.group(1)) > int(year.group(2)):
             raise ValueError("bench period years are reversed")
-        if dates is not None and dates.group(1) > dates.group(2):
-            raise ValueError("bench period dates are reversed")
+        if dates is not None:
+            try:
+                start = date.fromisoformat(dates.group(1))
+                end = date.fromisoformat(dates.group(2))
+            except ValueError as exc:
+                raise ValueError("bench period dates must be real calendar dates") from exc
+            if start > end:
+                raise ValueError("bench period dates are reversed")
         return text
 
     @field_validator("vibe_trading_etfs", mode="before")
