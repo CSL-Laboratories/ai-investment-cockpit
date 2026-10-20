@@ -841,7 +841,11 @@ jobs:
                   "Edit(tools/ci_gate.py)",
                   "Write(tools/ci_gate.py)",
                   "Edit(tools/test_claude_pr_fixer.py)",
-                  "Write(tools/test_claude_pr_fixer.py)"
+                  "Write(tools/test_claude_pr_fixer.py)",
+                  "Edit(.git/**)",
+                  "Write(.git/**)",
+                  "Edit(/${{ runner.temp }}/claude-fixer-guard/**)",
+                  "Write(/${{ runner.temp }}/claude-fixer-guard/**)"
                 ]
               }
             }

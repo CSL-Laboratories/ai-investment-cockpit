@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -1709,6 +1710,30 @@ class FixerPreflightTests(unittest.TestCase):
             with self.subTest(n=len(commits)):
                 output, _paths, _graphql = self.run_mode("mention", pr, commits)
                 self.assertIn("skip=" + skip, output)
+
+
+class GuardTamperDenyTests(unittest.TestCase):
+    GUARD_DENIES = (
+        '"Edit(.git/**)"',
+        '"Write(.git/**)"',
+        '"Edit(/${{ runner.temp }}/claude-fixer-guard/**)"',
+        '"Write(/${{ runner.temp }}/claude-fixer-guard/**)"',
+    )
+
+    def test_every_guarded_writer_denies_hook_tampering(self) -> None:
+        # Without these, Edit/Write could drop core.hooksPath or rewrite the
+        # pre-push hook and push past a late pause.
+        for path, jobs in ((WORKFLOW_PATH, ("claude-mention", "devin-review-fix")),
+                           (SCAN_WORKFLOW_PATH, ("conflict-resolve",))):
+            text = path.read_text(encoding="utf-8")
+            for job in jobs:
+                body = text.split(f"\n  {job}:\n", 1)[1]
+                body = re.split(r"\n  [a-z][a-z-]*:\n", body, maxsplit=1)[0]  # up to the next job
+                with self.subTest(workflow=path.name, job=job):
+                    self.assertIn("claude-fixer-guard/pre-push", body)
+                    deny = body.split('"deny": [', 1)[1].split("]", 1)[0]
+                    for rule in self.GUARD_DENIES:
+                        self.assertIn(rule, deny)
 
 
 class FixerQueueTests(unittest.TestCase):
