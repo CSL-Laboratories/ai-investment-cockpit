@@ -1,0 +1,111 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest)",
+      "Bash(python -m pytest -q)",
+      "Bash(python3 -m pytest)",
+      "Bash(python3 -m pytest -q)",
+      "Bash(../.venv/bin/python -m pytest)",
+      "Bash(../.venv/bin/python -m pytest -q)",
+      "Bash(python -m pytest -q app/tests)",
+      "Bash(python3 -m pytest -q app/tests)",
+      "Bash(ruff check)",
+      "Bash(ruff check .)",
+      "Bash(ruff check app)",
+      "Bash(../.venv/bin/ruff check)",
+      "Bash(../.venv/bin/ruff check .)",
+      "Bash(python -X utf8 -B tools/test_candidate_gate.py)",
+      "Bash(python3 -X utf8 -B tools/test_candidate_gate.py)",
+      "Bash(python -X utf8 -B tools/test_candidate_workflows.py)",
+      "Bash(python3 -X utf8 -B tools/test_candidate_workflows.py)",
+      "Bash(python -X utf8 -B tools/test_ci_cancel_controller.py)",
+      "Bash(python3 -X utf8 -B tools/test_ci_cancel_controller.py)",
+      "Bash(python -X utf8 -B tools/test_ci_dispatch_scope.py)",
+      "Bash(python3 -X utf8 -B tools/test_ci_dispatch_scope.py)",
+      "Bash(python -X utf8 -B tools/test_ci_runner_cost.py)",
+      "Bash(python3 -X utf8 -B tools/test_ci_runner_cost.py)",
+      "Bash(python -X utf8 -B tools/test_ci_settle.py)",
+      "Bash(python3 -X utf8 -B tools/test_ci_settle.py)",
+      "Bash(python -X utf8 -B tools/test_claude_fixer_guard.py)",
+      "Bash(python3 -X utf8 -B tools/test_claude_fixer_guard.py)",
+      "Bash(python -X utf8 -B tools/test_claude_fixer_receipts.py)",
+      "Bash(python3 -X utf8 -B tools/test_claude_fixer_receipts.py)",
+      "Bash(python -X utf8 -B tools/test_claude_pr_fixer.py)",
+      "Bash(python3 -X utf8 -B tools/test_claude_pr_fixer.py)",
+      "Bash(python -X utf8 -B tools/test_codex_gate.py)",
+      "Bash(python3 -X utf8 -B tools/test_codex_gate.py)",
+      "Bash(python -X utf8 -B tools/test_codex_gate_identity.py)",
+      "Bash(python3 -X utf8 -B tools/test_codex_gate_identity.py)",
+      "Bash(python -X utf8 -B tools/test_fixer_failure_escalation.py)",
+      "Bash(python3 -X utf8 -B tools/test_fixer_failure_escalation.py)",
+      "Bash(python -X utf8 -B tools/test_fixer_failure_watcher.py)",
+      "Bash(python3 -X utf8 -B tools/test_fixer_failure_watcher.py)",
+      "Bash(python -X utf8 -B tools/test_merge_candidate.py)",
+      "Bash(python3 -X utf8 -B tools/test_merge_candidate.py)",
+      "Bash(python -X utf8 -B tools/test_queue_gates.py)",
+      "Bash(python3 -X utf8 -B tools/test_queue_gates.py)",
+      "Bash(python -X utf8 -B tools/test_replacement_program.py)",
+      "Bash(python3 -X utf8 -B tools/test_replacement_program.py)",
+      "Bash(python -X utf8 -B tools/test_review_gate.py)",
+      "Bash(python3 -X utf8 -B tools/test_review_gate.py)",
+      "Bash(python -X utf8 -B tools/test_run_gates_action.py)",
+      "Bash(python3 -X utf8 -B tools/test_run_gates_action.py)",
+      "Bash(cargo test)",
+      "Bash(cargo test --workspace)",
+      "Bash(cargo test --manifest-path rust/Cargo.toml)",
+      "Bash(cargo check)",
+      "Bash(cargo check --workspace)",
+      "Bash(cargo check --manifest-path rust/Cargo.toml)",
+      "Bash(cargo clippy)",
+      "Bash(cargo clippy --workspace)",
+      "Bash(cargo clippy --manifest-path rust/Cargo.toml)",
+      "Bash(cargo fmt --check)",
+      "Bash(cargo fmt --all --check)",
+      "Bash(cargo fmt --manifest-path rust/Cargo.toml --all --check)",
+      "Bash(actionlint)",
+      "Bash(gh pr view)",
+      "Bash(gh pr view *)",
+      "Bash(gh pr diff)",
+      "Bash(gh pr diff *)",
+      "Bash(gh pr checks)",
+      "Bash(gh pr checks *)",
+      "Bash(gh pr list)",
+      "Bash(gh pr list *)",
+      "Bash(gh run list)",
+      "Bash(gh run list *)",
+      "Bash(gh run view)",
+      "Bash(gh run view *)"
+    ],
+    "ask": [
+      "Bash(gh * -R*)",
+      "Bash(gh * --repo*)",
+      "Bash(gh *://*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-substitution.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'exec bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh\"'",
+            "timeout": 600
+          }
+        ]
+      }
+    ]
+  }
+}
