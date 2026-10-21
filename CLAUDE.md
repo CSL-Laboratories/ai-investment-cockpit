@@ -23,7 +23,7 @@ regardless of ruleset enforcement. Non-author approval checks alone do not estab
 founder identity. All three founders participate in the final
 release decision; Lucas has final say in any founder disagreement, including a 2-1 split.
 
-For issue admission, decision holds, claim release and handoff, manual ownership and shared research evidence, follow [AGENTS.md's bounded issue execution and shared evidence rules](AGENTS.md#bounded-issue-execution-and-shared-evidence). They grant no new authority, settings or spend and leave review-loop roles unchanged.
+For issue admission, decision holds, claim records, release and handoff, manual ownership and shared research evidence, follow [AGENTS.md's bounded issue execution and shared evidence rules](AGENTS.md#bounded-issue-execution-and-shared-evidence). They grant no new authority, settings or spend and leave review-loop roles unchanged.
 
 Before acting on your own, apply the `proceed-or-escalate` skill
 (`.claude/skills/proceed-or-escalate/SKILL.md`). It carries the gates of
@@ -90,8 +90,9 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 ## Session workflow
 1. Read `docs/README.md`, `PRODUCT.md` for product scope/acceptance, then
    `docs/PLAN.md` for current delivery order and `docs/REGISTER.md` for claims.
-   Linear holds execution assignment/status; REGISTER keeps package IDs, claims,
-   scope and completion contracts. See `AGENTS.md` Linear-first workflow.
+   Linear holds the human owner (assignee), agent claim records and status;
+   REGISTER keeps package IDs, claims, scope and completion contracts. See
+   `AGENTS.md` Linear-first workflow.
    The adopted product contracts supply required behavior; subsystem/reference
    documents do not independently change delivery order or current runtime authority.
 2. For package work, pick **ONE** work package (RW-xx refactor, or W-xx
