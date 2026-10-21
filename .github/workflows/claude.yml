@@ -2147,8 +2147,12 @@ jobs:
           RECORD_KEYS = {"comment": {"op", "body"}, "reply": {"op", "comment_id", "body"},
                          "label": {"op", "label"}, "receipt": {"op", "root", "status"}}
           # Exact or basename matches anywhere in the tree (casefolded, fail closed).
-          PROTECTED_FILES = frozenset({"tools/ci_gate.py", "tools/required_ci_gate.py", "tools/test_claude_pr_fixer.py"})
-          PROTECTED_NAMES = frozenset({"codeowners", "agents.md", "claude.md", ".mcp.json"})
+          # CSL-430 (Lucas's receipt, 2026-10-21): the fixer's own test suites, and credential filenames at any depth.
+          PROTECTED_FILES = frozenset({"tools/ci_gate.py", "tools/required_ci_gate.py", "tools/test_claude_pr_fixer.py",
+                                       "tools/test_claude_fixer_guard.py", "tools/test_claude_fixer_publish.py",
+                                       "tools/test_claude_fixer_receipts.py"})
+          PROTECTED_NAMES = frozenset({"codeowners", "agents.md", "claude.md", ".mcp.json",
+                                       ".netrc", "_netrc", ".npmrc", ".pypirc"})
           PROTECTED_DIRS = frozenset({".claude", ".claude-fixer-out", ".claude-fixer-replies"})
           # GitHub and Anthropic token shapes. The model job can read its own read-only job token
           # (the helper's read-token); a copy in the candidate or outbox is refused, not redacted.
@@ -5208,8 +5212,12 @@ jobs:
           RECORD_KEYS = {"comment": {"op", "body"}, "reply": {"op", "comment_id", "body"},
                          "label": {"op", "label"}, "receipt": {"op", "root", "status"}}
           # Exact or basename matches anywhere in the tree (casefolded, fail closed).
-          PROTECTED_FILES = frozenset({"tools/ci_gate.py", "tools/required_ci_gate.py", "tools/test_claude_pr_fixer.py"})
-          PROTECTED_NAMES = frozenset({"codeowners", "agents.md", "claude.md", ".mcp.json"})
+          # CSL-430 (Lucas's receipt, 2026-10-21): the fixer's own test suites, and credential filenames at any depth.
+          PROTECTED_FILES = frozenset({"tools/ci_gate.py", "tools/required_ci_gate.py", "tools/test_claude_pr_fixer.py",
+                                       "tools/test_claude_fixer_guard.py", "tools/test_claude_fixer_publish.py",
+                                       "tools/test_claude_fixer_receipts.py"})
+          PROTECTED_NAMES = frozenset({"codeowners", "agents.md", "claude.md", ".mcp.json",
+                                       ".netrc", "_netrc", ".npmrc", ".pypirc"})
           PROTECTED_DIRS = frozenset({".claude", ".claude-fixer-out", ".claude-fixer-replies"})
           # GitHub and Anthropic token shapes. The model job can read its own read-only job token
           # (the helper's read-token); a copy in the candidate or outbox is refused, not redacted.
