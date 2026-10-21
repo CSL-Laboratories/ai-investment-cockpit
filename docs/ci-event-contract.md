@@ -60,7 +60,9 @@ to date with `main` before merge. Required checks bind to the PR **head SHA**. [
 several `linux-gates` check runs exist on one SHA, GitHub evaluates the most recent one.
 [O] Head `4268c7e4b6` of #213 has check run 118452752528 `failure` (04:21Z), then
 118455279951 `success` (04:30Z), and #213 merged. That is consistent with this rule, but it
-does not prove it, because both rulesets allow admin bypass on pull requests.
+does not prove it, because the repository ruleset `required-ci` allows admin bypass on pull
+requests ([O] RepositoryRole 5, line 43), so a merge alone doesn't show the check was satisfied.
+The org ruleset's bypass actors are unverified ([I], line 42); this reasoning doesn't rely on them.
 
 ## 2. Workflows that start paid runners
 
@@ -272,7 +274,9 @@ scope cancels the earlier label run, because that `ci-ci-<PR>-label-<head>-<scop
 Every test file below runs in the required `linux` job (ci.yml:426-432); `test_review_gate` and
 `test_queue_gates` run there through `unittest`. Under `app/tests`, `benchmarks/test_perf_compare.py:225` reads `ci.yml` (benchmarks step
 shape), `test_stuck_thread_watch.py:13` reads `stuck-thread-watch.yml`, `test_linear_pr_sync.py`
-uses a workflow path as fixture data, and the Rust parity tests mention `rust.yml` in comments.
+uses a workflow path as fixture data, and three Rust parity tests mention `rust.yml` in comments
+(`quant/test_costs_rust_parity.py:32`, `quant/test_signals_rust_parity.py:31`,
+`ingest/test_admission_rust_parity.py:32`).
 The CI contract tests live in `tools/`.
 
 At the base commit these ran locally (Python 3.13):
@@ -371,7 +375,7 @@ At the base commit these ran locally (Python 3.13):
 
 | ID | Gap | Class | Suggested follow-up |
 | --- | --- | --- | --- |
-| G1 | Only `linux-gates` and `Devin Review` are required, and both rulesets allow admin PR bypass. Windows, macOS, Rust and the `queue-gates`/`rust-gates`/`review-gate` aggregates are advisory. | [O] | Already staged in ci-queue-rollout.md. Owner decision; no change here. |
+| G1 | Only `linux-gates` and `Devin Review` are required. The repository ruleset `required-ci` allows admin PR bypass ([O] RepositoryRole 5). The org ruleset `protect-main`'s bypass actors aren't readable from this session ([I] until an admin read shows them). Windows, macOS, Rust and the `queue-gates`/`rust-gates`/`review-gate` aggregates are advisory. | [O] required checks and repository bypass; [I] org bypass | Already staged in ci-queue-rollout.md. Owner decision; no change here. |
 | G2 | Identical-head twins observed (section 5). B2 keeps them, so each twin re-executes settle and paid cells serially unless a newer head lets the controller cancel them as ancestors. The duplicate-event cause is unknown, and there is no explicit twin test. | [O] / PARTIAL | Add a controller fixture asserting two active live-head runs both survive. Investigate the duplicate `pull_request` deliveries (read-only). |
 | G3 | Stale label dispatch (row 13), and same-key label or manual re-dispatch (cancel-in-progress true), can create a failing `linux-gates` check run on the **current** head. Whether a dispatch check run affects the required check is unverified; GitHub's doc says it does not. | [I] | Observe or test which SHA receives the check. Consider documenting the "rerun or wait for the ordinary run" recovery. |
 | G4 | The ci.yml PR filter diffs raw `base.sha..head.sha` (ci.yml:256-257, 275), while rust.yml uses the merge tree (rust.yml:216-228). On a stale base, ci over-selects tests (fails open, extra spend). The decide script for PR, push and schedule has no executing test. | [S] | Align with the rust.yml merge-tree diff in a separately admitted CI task, and add shell-execution tests. |
