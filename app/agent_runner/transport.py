@@ -39,8 +39,10 @@ _CMD_METACHARACTERS = frozenset('&|<>^"')
 # ~/.claude.json, ~/.codex/auth.json; see docs/setup/low-priv-agent-account.md), so neither needs
 # a credential in env. A new variable reaches the child only by being named here.
 #
-# Names are compared upper-cased: Windows environment names are case-insensitive, and POSIX
-# proxy variables are conventionally lower-case.
+# Matching follows the platform. Windows environment names are case-insensitive, so there a name
+# is compared upper-cased. POSIX names are case-sensitive, so there a name must match exactly:
+# ``home`` or ``path`` is a different variable from ``HOME`` or ``PATH`` and is dropped (Codex,
+# #240). The conventional lower-case proxy spellings are named in _POSIX_LOWERCASE_NAMES.
 _CHILD_ENV_ALLOWLIST = frozenset({
     # Process launch and executable lookup.
     "PATH", "PATHEXT", "COMSPEC", "SHELL",
@@ -68,6 +70,9 @@ _CHILD_ENV_ALLOWLIST = frozenset({
     "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS",
 })
 _PROXY_NAMES = frozenset({"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"})
+# POSIX tools conventionally read lower-case proxy names, so these exact spellings are allowed too.
+_POSIX_LOWERCASE_NAMES = frozenset({"http_proxy", "https_proxy", "all_proxy", "no_proxy"})
+_CASE_INSENSITIVE_ENV = os.name == "nt"
 
 # Belt and braces: a name that LOOKS like a secret never reaches the child, even if a future edit
 # adds it to the allowlist above. JEV_API_KEY is named explicitly as well (the original strip).
@@ -99,14 +104,18 @@ def _proxy_has_credentials(value: str) -> bool:
 def build_child_env(parent: Mapping[str, str] | None = None) -> dict[str, str]:
     """Return the environment an agent CLI child is spawned with: allowlisted names only.
 
-    ``parent`` defaults to ``os.environ``. Original key spelling is preserved, so a lower-case
-    POSIX ``https_proxy`` stays lower-case for the child.
+    ``parent`` defaults to ``os.environ``. Names match case-insensitively on Windows and exactly
+    on POSIX. Original key spelling is preserved, so a lower-case POSIX ``https_proxy`` stays
+    lower-case for the child.
     """
     source = os.environ if parent is None else parent
     env: dict[str, str] = {}
     for name, value in source.items():
         upper = name.upper()
-        if upper not in _CHILD_ENV_ALLOWLIST:
+        if _CASE_INSENSITIVE_ENV:
+            if upper not in _CHILD_ENV_ALLOWLIST:
+                continue
+        elif name not in _CHILD_ENV_ALLOWLIST and name not in _POSIX_LOWERCASE_NAMES:
             continue
         if _looks_secret(upper):
             continue

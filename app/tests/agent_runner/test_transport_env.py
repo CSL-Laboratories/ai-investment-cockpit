@@ -77,8 +77,28 @@ def test_every_allowlisted_name_passes(name):
 
 
 @pytest.mark.parametrize("name", ["Path", "SystemRoot", "https_proxy", "no_proxy", "windir"])
-def test_names_match_case_insensitively_and_keep_their_spelling(name):
+def test_windows_names_match_case_insensitively_and_keep_their_spelling(name, monkeypatch):
+    monkeypatch.setattr(transport_mod, "_CASE_INSENSITIVE_ENV", True)
     assert build_child_env({name: "value"}) == {name: "value"}
+
+
+@pytest.mark.parametrize("name", ["http_proxy", "https_proxy", "all_proxy", "no_proxy"])
+def test_posix_lowercase_proxy_names_pass(name, monkeypatch):
+    monkeypatch.setattr(transport_mod, "_CASE_INSENSITIVE_ENV", False)
+    assert build_child_env({name: "value"}) == {name: "value"}
+
+
+@pytest.mark.parametrize("name", ["home", "path", "UserProfile", "Path", "lang", "tz", "lc_all"])
+def test_posix_names_are_case_sensitive(name, monkeypatch):
+    """On POSIX ``home`` is not ``HOME``: an unrelated variable must not ride the allowlist
+    (Codex, #240)."""
+    monkeypatch.setattr(transport_mod, "_CASE_INSENSITIVE_ENV", False)
+    assert build_child_env({name: "secret-bearing custom data"}) == {}
+
+
+def test_lowercase_proxy_with_credentials_is_dropped_on_posix(monkeypatch):
+    monkeypatch.setattr(transport_mod, "_CASE_INSENSITIVE_ENV", False)
+    assert build_child_env({"https_proxy": "http://u:p@proxy.example:8080"}) == {}
 
 
 @pytest.mark.parametrize("name", [
