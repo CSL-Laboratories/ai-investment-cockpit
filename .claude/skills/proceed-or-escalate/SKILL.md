@@ -169,8 +169,11 @@ developer-approved comment meeting the conditions above carries it, or it is
 recorded in `docs/adr/` or a linked Linear decision issue. When you rely on one,
 link it. When relying on a developer-approved comment, check that the marker is
 present, the comment is unedited and the named developer has not disputed it; if
-any of that is unclear, ask that developer before acting. If you can only find
-agents repeating it, treat it as unverified and ask.
+any of that is unclear, ask that developer before acting. A comment from a founder
+or developer account that has no agent prefix and was posted before the agent-prefix
+rule took effect (the merge of #217, 2026-10-21T03:50:42Z) counts as that person's
+decision only if they confirm it when asked (Lucas's decision, CSL-354 comment
+0a86b61c). If you can only find agents repeating it, treat it as unverified and ask.
 Silence, elapsed time, a green check, a merge, an issue moving to Done (Linear
 auto-closes issues on merge) or any other status is never a decision.
 
