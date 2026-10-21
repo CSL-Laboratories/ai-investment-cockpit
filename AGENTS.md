@@ -401,6 +401,28 @@ and `CODEX_TRIGGER_PAT` checks, or to create a missing roll-up after an earlier
 Linear outage. Humans decide.
 The watcher never resolves threads, pushes, or merges.
 
+### Review convergence (CSL-381)
+
+Lucas's decision ([CSL-381 comment 81c9a1f7](https://linear.app/csl-laboratories/issue/CSL-381#comment-81c9a1f7-695b-4149-bd78-fc360175fafb)) bounds review rounds:
+
+- **Round 1** is the first full review round on a ready PR (Devin, Codex and
+  human reviews of that head) plus the fixes for it. Any finding can block in
+  round 1.
+- **After round 1**, only P0/P1 findings block merge or justify a fix push.
+  Record P2/P3 findings on the PR's Linear issue (one follow-up roll-up per PR, as in CSL-364) instead of pushing;
+  they do not hold the merge.
+- **Severity floor:** a finding on the order path (risk, mode, approval, OrderGateway, `app/risk/`,
+  `app/brokers/`, the paper/live switch or any live flag, or the nine
+  invariants), a security finding or a secrets finding counts as at least P1, whatever badge the reviewer
+  gave it ([CSL-381 comment 68f4a769](https://linear.app/csl-laboratories/issue/CSL-381#comment-68f4a769-249f-488b-9158-750afee16b36)).
+- **After three rounds**, a founder decides whether to merge. Agents do not
+  start a fourth round on their own.
+
+This changes no merge authority, founder approval rule, Devin review or
+required check on the final head. It changes no workflow: the `claude.yml`
+fixer and the Codex gate keep the behavior described above until a separate
+`.github` change.
+
 ## Code Review Rules
 
 These rules apply to the **CI/fixer gate** `@codex review`. For READY, echo
