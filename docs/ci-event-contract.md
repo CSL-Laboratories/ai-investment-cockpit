@@ -340,7 +340,7 @@ At the base commit these ran locally (Python 3.13):
     paths) runs the fixer's own `tools/test_*.py` scripts under `python3` plus actionlint.
   - [S] Pushes come only from the model-free publish jobs. Each mints a Claude App token through
     the OIDC exchange (`mint_app_token`, claude.yml:2145-2183, 5109-5147; claude-conflict-writer.yml:1516-1554;
-    `id-token: write` at claude.yml:1439, 4402)
+    `id-token: write` at claude.yml:1439, 4402; claude-conflict-writer.yml:808)
     and pushes one ordinary fast-forward, no force (claude.yml:2587-2588, 5552;
     claude-conflict-writer.yml:1959). [I] An App-token push emits `synchronize` and starts
     ordinary CI (rows 4-5) without the approval step a `GITHUB_TOKEN` push would need (GitHub
@@ -348,8 +348,9 @@ At the base commit these ran locally (Python 3.13):
     `claude[bot]` about 12 s after each commit: 39354662754 (#212 `8ede5ff793`), 39353490459
     (#208 `571cb1ce11`) and 39079041390 (#199 `e875f2b8c3`). [O] After #216, run 39546148972 (#228,
     `pull_request_review`, 2026-10-21) lists the nine jobs, all `ubuntu-latest`; `resolve-pr` and
-    `fixer-prepare` ran and the model and publish jobs were skipped. No post-#216 run has reached a
-    publish job, so the App-token push remains [I].
+    `fixer-prepare` ran and the model and publish jobs were skipped. Run 39546857350 (#227,
+    `issue_comment`, 2026-10-21) reached `mention-publish`, which succeeded after posting one queued
+    write without pushing. No post-#216 fixer push has been observed, so the App-token push remains [I].
   - Human pause (#216): a `claude:pause` or `hold` label on the PR, or the repository variable
     `CLAUDE_FIXER_PAUSE=true` for every PR, stops the writers before any checkout or reservation
     (`mention-prepare` claude.yml:603-606, 654-662, 701; `fixer-prepare` claude.yml:2971-2973, 3022-3030,
@@ -359,11 +360,13 @@ At the base commit these ran locally (Python 3.13):
   - The eight-commit guard now covers both claude.yml writers: the `cap` step in `fixer-prepare`
     for the Devin path (claude.yml:3145-3185) and the `mention-prepare` streak check for `@claude`
     (claude.yml:726-731, `LOOP_CAP = 8` at 606). v2.1 said `claude-mention` had no cap; that is no
-    longer true. **The conflict writer has no eight-commit guard.** It is bounded instead by three
-    automatic attempts per head and finding set (`MAX_ATTEMPTS = 3`, claude-conflict-writer.yml:837,
-    1330) and one validated merge commit per run (576). conflict-scan.yml starts it on every `main`
-    push and every two hours (conflict-scan.yml:10-13), so a PR that keeps conflicting as the base
-    advances can receive repeated Claude merge commits.
+    longer true. **The conflict writer has no eight-commit guard and no cross-run attempt budget.**
+    Its receipts helper defines `MAX_ATTEMPTS = 3` (claude-conflict-writer.yml:837), but only that
+    helper's `main()` checks it (1302-1330), and nothing in the workflow runs it: `prepare` reserves no
+    attempt, and `publish.py` loads the helper as a module (2150-2153). Each run is bounded only to one
+    publish attempt (2168, 2241-2250) and one validated merge commit (576). conflict-scan.yml starts it
+    on the two-hourly schedule and on manual dispatch, never on a `main` push (conflict-scan.yml:12-14,
+    355), so a PR that stays conflicted can receive a Claude merge attempt on every scheduled scan.
 - **Legacy Codex READY label (active):**
   - With `CANDIDATE_COORDINATOR` not `true`, the legacy job adds `ci:full` through
     `CODEX_TRIGGER_PAT` (codex_gate.py:7, 84, 1350-1356; codex-gate.yml:53-87).
