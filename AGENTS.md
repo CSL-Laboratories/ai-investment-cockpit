@@ -158,7 +158,22 @@ provisioned.
    the reason and rerun the combined gates. Never edit
    `.github/workflows/**` unless a Linear issue explicitly assigned by a human
    asks for it; bots mark a PR ready with their own identity, never
-   `GITHUB_TOKEN`.
+   `GITHUB_TOKEN`. A `ci:full` added by a person or Devin persists, so every
+   later qualifying push reruns Windows and macOS, plus the Rust Windows and
+   Rust macOS cells when the Rust path list matches (CSL-385 G8). Remove it once
+   its full-matrix run has passed on the current head and the PR needs no
+   further automatic READY. Removing it keeps the Linux pytest cells, including
+   order-path, `risk/` and PnL tests, on every push that is not docs-only once
+   the PR is ready for review (drafts run no test matrix); Windows, macOS and
+   the Rust Windows and macOS cells wait until the label is back or a full
+   dispatch runs. A manual removal is a human hold: the Codex gate skips READY
+   on the head where it first sees the removal, and with the candidate
+   coordinator on, READY delivery, candidate runs and `CODEX-GATE: MEDIATE`
+   human handoffs stay blocked on every later head until someone re-adds
+   `ci:full`. Re-add it before the PR needs READY, a candidate run or a MEDIATE
+   handoff. Codex READY's own label is cleared automatically on the next push,
+   after that push's CI has already read it, so one more Windows and macOS run
+   can start first.
 7. Any order-path change needs an adversarial-review round.
 8. The release-blocking local matrix is **native Windows plus Ubuntu under WSL2**, each on
    Python 3.11 and 3.12. Run all four cells on the operator's Windows workstation. Hosted
