@@ -479,6 +479,9 @@ is strictly newer than the base and remains an ancestor of the live PR head.
 Explicit `needs-human` receipts leave the thread unresolved for human mediation.
 New meaningful Devin or repository-writer replies rearm it; arbitrary prose,
 failed tests, tool/API errors, and no-push runs never prove completion.
+Since CSL-377 the model job cannot push or post: it commits locally and queues
+writes, and the trusted publish job validates the commits, pushes once and
+authors the receipts itself as `claude[bot]` (see `docs/claude-fixer-reliability.md`).
 
 Under the shared PR lock, at most three automatic attempt reservations are allowed
 for the same head and same meaningful pending-findings fingerprint. A new head or

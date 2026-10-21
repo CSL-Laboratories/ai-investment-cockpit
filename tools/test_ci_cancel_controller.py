@@ -1080,7 +1080,8 @@ class QueuePolicyTests(unittest.TestCase):
         parsed = yaml.load(config, Loader=yaml.BaseLoader)
         diagnostic = (r'^unexpected key "queue" for "concurrency" section\. expected one of '
                       r'"cancel-in-progress", "group"$')
-        allowed_paths = {'ci.yml', 'rust.yml', 'claude.yml', 'conflict-scan.yml', 'codex-gate.yml'}
+        allowed_paths = {'ci.yml', 'rust.yml', 'claude.yml', 'conflict-scan.yml', 'codex-gate.yml',
+                         'claude-conflict-writer.yml'}
         self.assertEqual(parsed['paths'], {
             f'.github/workflows/{name}': {'ignore': [diagnostic]} for name in allowed_paths})
         template = '''name: queue test
