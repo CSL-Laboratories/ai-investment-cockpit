@@ -260,8 +260,12 @@ This summarises [ci-cancellation-controller.md](ci-cancellation-controller.md).
 - The REST API does not expose the `pull_request` action, so the cause of the duplicate
   events is undetermined.
 
-Twins across groups also run concurrently and are not cancelled by anything: for example,
-a ready_for_review run and a label dispatch on the same head (rows 7 and 9).
+Twins across groups run concurrently and do not cancel each other: for example, a
+ready_for_review run and a label dispatch on the same head (rows 7 and 9). Other cancellation
+still applies. Once a newer `synchronize` advances the head, the controller can cancel the
+ordinary run as a strict ancestor (section 5). A repeated label dispatch for the same head and
+scope cancels the earlier label run, because that `label-<head>-<scope>` group has
+`cancel-in-progress: true` (ci.yml:95-96).
 
 ## 6. Test evidence
 
@@ -297,7 +301,7 @@ At the base commit these ran locally (Python 3.13):
 | 20: reruns | PARTIAL (controller only) / **GAP** (GitHub semantics) | `test_initial_old_head_manual_rerun_is_never_a_target`, `test_older_id_rerun_has_no_assumed_ordering`, `test_rerun_appearing_after_discovery_refuses_cleanup` |
 | 21: the reject step fails the aggregate when `cancelled()` is true, even after successful dependencies | PROVEN for that synthetic `cancelled() == true` path only. The timing cases (a)-(d) are PARTIAL: (a) and (b) observed, (c) and (d) [I] | test_ci_settle `test_cancellation_runs_and_fails_the_required_aggregate`; test_queue_gates `test_cancelled_workflow_cannot_pass_even_after_successful_dependencies` |
 | `linux-gates` aggregation table (section 4) | PROVEN | test_ci_settle `test_required_gate_executable_result_table` (exhaustive over settle, run-tests and linux) |
-| B2: identical-head twins never cancelled | **PARTIAL** | The code paths are covered indirectly (`test_strict_ancestry_required_not_timestamp_or_sha_inequality` mocks compare `identical`). No fixture places two active runs on the live head and asserts both survive. |
+| B2: identical-head twins never cancel each other (a newer head can still retire them as ancestors) | **PARTIAL** | The code paths are covered indirectly (`test_strict_ancestry_required_not_timestamp_or_sha_inequality` mocks compare `identical`). No fixture places two active runs on the live head and asserts both survive. |
 | Required-check names unchanged | PROVEN | test_candidate_workflows `test_existing_required_check_names_remain_exact` |
 | Devin status semantics (`review-gate`, advisory) | PROVEN | tools/test_review_gate.py (30 tests) |
 
@@ -372,7 +376,7 @@ At the base commit these ran locally (Python 3.13):
 | G5 | Stale workflow comments: ci.yml:306-309 (settle relies on #157 concurrency cancel), ci.yml:17-23 and 707-708 ($50 budget, superseded by ci-cost-budget.md:48-50), ci.yml:504-505 (`queue-gates` "required"). | [S] | Comment-only fix in a human-assigned workflow issue. |
 | G6 | `merge_group` paths and `queue-gates` are untested live. The merge queue is not enabled. | [O] | Covered by the ci-queue-rollout.md activation sequence. |
 | G7 | A PR created with `ci:full` or `enhancement` gets both `opened` and `labeled`, which means an ordinary run plus a label dispatch (duplicate full matrix). | [I] | Observe once (read-only) and record. |
-| G8 | `ci:full` added by a founder or Devin persists, so every later qualifying push runs Windows, macOS and Rust Windows (subject to the path filters, section 7). The legacy READY label is gate-owned and is cleared on the next push, after one full-matrix run. | [S]+[O] | Proposed AGENTS.md CI-etiquette rule, not yet on main: remove a manual `ci:full` once its full run passes and no further automatic READY is needed, noting that a manual removal holds READY and, with the candidate coordinator on, candidate runs and MEDIATE handoffs (cockpit CSL-393, #222, open). Recursion's equivalent merged as CSL-395 (#259). |
+| G8 | `ci:full` added by a founder or Devin persists, so every later qualifying push runs Windows, macOS and Rust Windows (subject to the path filters, section 7). The legacy READY label is gate-owned and is cleared on the next push, after one full-matrix run. | [S]+[O] | Proposed AGENTS.md CI-etiquette rule, not yet on main: remove a manual `ci:full` once its full run passes and no further automatic READY is needed, noting that a manual removal holds READY and, with the candidate coordinator on, candidate runs and MEDIATE handoffs (cockpit CSL-393, #222, open). Recursion's equivalent merged as CSL-395 (#259), and its human-hold caveat as CSL-403 (#261). |
 | G9 | The task brief said claude.yml has Blacksmith runners. It does not at the base commit. Its paid effect is indirect, through pushes that trigger CI. | [S]+[O] | Correct the brief and the Reliability-lane notes. |
 | G10 | GitHub rerun semantics (payload reuse, concurrency re-entry, and which dependents a failed-only or single-job rerun re-executes) have not been observed. | [I] | Record the next real rerun. |
 | G11 | Duplicate controller cancel POSTs (4 per target observed) consume API budget. Harmless today. | [O] | None required. Note it in the controller doc if budget pressure appears. |
