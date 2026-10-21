@@ -43,7 +43,9 @@ GIT = ("git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-
 NO_DRIVERS = ("--no-ext-diff", "--no-textconv")
 GIT_READS = {"status": ("status", "--short"), "diff": ("diff", *NO_DRIVERS), "diff-stat": ("diff", "--stat", *NO_DRIVERS),
              "log": ("log", "--oneline", "-20"), "head": ("log", "-1", "--stat")}
-CONFLICT_MARKER = re.compile(r"^(?:<{7} |\|{7}(?: |$)|={7}$|>{7} )", re.MULTILINE)
+# Git's default; a `conflict-marker-size` attribute changes it per path.
+MARKER_SIZE = 7
+MAX_MARKER_SIZE = 1000
 UNMERGED = ("diff", "--name-only", "-z", "--diff-filter=U")
 CONFLICT_GIT = {"conflicts": ("diff", "--name-only", "--diff-filter=U"), "merge-abort": ("merge", "--abort")}
 STAGE = ("add", "-A", "--", ".", ":(exclude).claude-fixer-out", ":(exclude).claude-fixer-replies")
@@ -111,6 +113,34 @@ def git(run, *args):
     return run([*GIT, *args])
 
 
+def marker_sizes(run, names):
+    """Each path's possible conflict-marker sizes: git's default plus the attribute's value.
+
+    Read from the working tree, HEAD and MERGE_HEAD, so neither side's `.gitattributes`,
+    nor a later edit of the working tree's, hides the markers git wrote.
+    """
+    sizes = {name: {MARKER_SIZE} for name in names}
+    for source in ((), ("--source=HEAD",), ("--source=MERGE_HEAD",)):
+        fields = git(run, "check-attr", "-z", *source, "conflict-marker-size", "--", *names).split("\0")
+        for path, value in zip(fields[0::3], fields[2::3]):
+            # As git's atoi(): leading digits; zero, negative or none means the default.
+            match = re.match(r"\s*([+-]?[0-9]+)", value)
+            size = int(match.group(1)) if match else 0
+            if size > MAX_MARKER_SIZE:
+                raise ValueError("unsupported conflict-marker-size")
+            if size > 0:
+                sizes[path].add(size)
+    return sizes
+
+
+def conflict_marker(sizes):
+    # `<`, `|` and `>` runs from the smallest size up (a recursive merge nests longer ones);
+    # the bare `=` separator at exactly a size the merge could have used.
+    low = f"{{{min(sizes)},}}"
+    separators = "|".join(f"={{{size}}}" for size in sorted(sizes))
+    return re.compile(rf"^(?:(?:<{low}|\|{low}|>{low})(?: |$)|(?:{separators})$)", re.MULTILINE)
+
+
 def commit(body_path, run, mode):
     # The message is validated like a comment body and passed as one argv element.
     message = read_body(body_path)
@@ -118,13 +148,15 @@ def commit(body_path, run, mode):
         # `git add` would mark a still-conflicted file resolved, markers and all.
         workspace = Path.cwd().resolve()
         # NUL-separated, so unusual names are not C-quoted.
-        for name in filter(None, git(run, *UNMERGED).split("\0")):
+        names = [name for name in git(run, *UNMERGED).split("\0") if name]
+        sizes = marker_sizes(run, names) if names else {}
+        for name in names:
             file = workspace / name
             if not file.exists() and not file.is_symlink():
                 continue  # resolved by deleting the file; `add -A` stages the removal
             if file.is_symlink() or not file.is_file():
                 raise ValueError("unmerged path is not a regular file")
-            if CONFLICT_MARKER.search(file.read_text(encoding="utf-8", errors="replace")):
+            if conflict_marker(sizes[name]).search(file.read_text(encoding="utf-8", errors="replace")):
                 raise ValueError("conflict markers remain")
     git(run, *STAGE)
     # In the conflict job this completes the in-progress merge.
@@ -188,7 +220,9 @@ def main():
         config_path.write_text(json.dumps(config), encoding="utf-8")
         token = os.environ.get("GH_TOKEN", "")
         if token:
-            # The job's read-only token; it is also in the checkout's origin URL.
+            # The job's read-only token, revoked when this job ends. The workflow keeps it
+            # out of .git/config; the publisher refuses token-shaped strings in the candidate
+            # and outbox.
             with os.fdopen(os.open(directory / READ_TOKEN, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as handle:
                 handle.write(token)
         # The install step then root-owns this directory and sets 0755 (directory,

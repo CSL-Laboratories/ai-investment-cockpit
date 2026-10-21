@@ -68,6 +68,9 @@ RECORD_KEYS = {"comment": {"op", "body"}, "reply": {"op", "comment_id", "body"},
 PROTECTED_FILES = frozenset({"tools/ci_gate.py", "tools/required_ci_gate.py", "tools/test_claude_pr_fixer.py"})
 PROTECTED_NAMES = frozenset({"codeowners", "agents.md", "claude.md", ".mcp.json"})
 PROTECTED_DIRS = frozenset({".claude", ".claude-fixer-out", ".claude-fixer-replies"})
+# GitHub and Anthropic token shapes. The model job can read its own read-only job token
+# (the helper's read-token); a copy in the candidate or outbox is refused, not redacted.
+CREDENTIAL = re.compile(r"gh[opsuvr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}|sk-ant-[A-Za-z0-9_-]{20,}")
 
 
 class Refused(Exception):
@@ -338,6 +341,8 @@ def load_outbox(raw, mode, roots):
         op = record["op"]
         if op in {"comment", "reply"} and not valid_body(record["body"]):
             raise Refused("outbox body empty, oversized or contains an HTML comment")
+        if op in {"comment", "reply"} and CREDENTIAL.search(record["body"]):
+            raise Refused("outbox body contains a credential-shaped string")
         if op == "reply" and (type(record["comment_id"]) is not int or record["comment_id"] <= 0):
             raise Refused("outbox reply target is invalid")
         if op == "label" and (mode != "conflict" or record["label"] != HANDOFF_LABEL):
@@ -426,7 +431,8 @@ def diff_entries(raw):
             raise Refused("changed path has control characters")
         if any(part in {"", ".", ".."} for part in name.split("/")):
             raise Refused("changed path has an empty, '.' or '..' component")
-        entries.append({"old_mode": parts[0], "new_mode": parts[1], "new": parts[3], "status": parts[4], "path": name})
+        entries.append({"old_mode": parts[0], "new_mode": parts[1], "old": parts[2], "new": parts[3],
+                        "status": parts[4], "path": name})
     return entries
 
 
@@ -459,6 +465,24 @@ def bounded_size(repo, entries):
         total += int(size)
     if total > MAX_DIFF_BYTES:
         raise Refused("candidate diff too large")
+
+
+def credentials(data):
+    # Latin-1 maps every byte to one character, so ASCII tokens match in any blob.
+    return set(CREDENTIAL.findall(data.decode("latin-1")))
+
+
+def check_credentials(repo, entries, commits):
+    """Refuse a commit message, or a blob of any new commit, that adds a token-shaped string."""
+    for commit in commits:
+        if credentials(repo.run_git(["cat-file", "commit", commit])):
+            raise Refused("candidate commit message contains a credential-shaped string")
+    for entry in entries:
+        if entry["status"] == "D":
+            continue
+        old = credentials(repo.run_git(["cat-file", "blob", entry["old"]])) if entry["status"] == "M" else set()
+        if credentials(repo.run_git(["cat-file", "blob", entry["new"]])) - old:
+            raise Refused("candidate adds a credential-shaped string")
 
 
 def check_objects(repo):
@@ -523,6 +547,7 @@ def validate_candidate(repo, config, bundle):
         entries = diff_entries(repo.run_git(["diff-tree", "-r", "-z", "--raw", "--no-renames", auto_tree, candidate + "^{tree}"]))
         check_entries(entries)
         bounded_size(repo, entries)
+        check_credentials(repo, entries, commits)
         return candidate
     entries = []
     for row in rows:
@@ -536,6 +561,7 @@ def validate_candidate(repo, config, bundle):
     check_committers(repo, commits)
     check_entries(entries)
     bounded_size(repo, entries)
+    check_credentials(repo, entries, commits)
     return candidate
 
 

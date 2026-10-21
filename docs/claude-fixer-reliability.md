@@ -110,14 +110,27 @@ removes the OAuth token, the Actions runtime tokens and `GH_TOKEN` from every
 command Claude runs, and bubblewrap (installed in a step that fails closed) keeps
 those commands from reading the CLI's own environment. The queue helper's fixed
 reads use the read-only job token from a file its trusted install step writes;
-that token is read-only and revoked when the job ends. Claude Code turns
+that token is read-only and revoked when the job ends. The action is given a
+non-matching `allowed_non_write_users` value (`-no-such-user-`, which no GitHub
+login can equal, so every actor still needs write access). With any value set,
+the action backs git with a credential helper instead of writing the job token
+into the origin URL in `.git/config`. Read can still open the helper's token
+file, so the publisher refuses a candidate whose commit messages or new blobs
+add a GitHub (`ghp_`/`gho_`/`ghs_`/`ghu_`/`ghr_`/`ghv_`, `github_pat_`) or
+Anthropic (`sk-ant-`) token shape, and an outbox body that contains one. An
+encoded copy would pass that scan; the job token it could carry is read-only and
+already revoked when the model job ends, before publish runs. Claude Code turns
 `Read(...)`/`Edit(...)` deny rules into sandbox denies for Bash too, so the
 model jobs deny writes only to the `.git` paths git can be made to execute or
 redirect through (hooks, config, info, commondir, modules, worktrees), never
 `.git/**` or reads of `.git/config` and the helper files, which git and the
 helper themselves need. The helper's git ignores user and system git config,
 external diff and textconv drivers and commit signing, and a conflict commit
-is refused while conflict markers remain. The scrub and
+is refused while conflict markers remain. Marker length follows each path's
+`conflict-marker-size` attribute, read from the working tree, `HEAD` and
+`MERGE_HEAD` with git's default of 7 always included. `<`, `|` and `>` runs of
+the smallest size or longer, and `=` separators of exactly one of those sizes,
+are refused. The scrub and
 sandbox can only be proven by the post-merge canary: if they break the model
 step, it does not succeed and publish publishes nothing.
 The model job runs no repository code and holds no repository write credential;

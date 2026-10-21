@@ -171,6 +171,31 @@ class LinearValidationTests(GitCase):
         self.model.commit({"AGENTS.md": "rules\n"})
         self.refused("protected path")
 
+    def test_credential_shaped_strings_are_refused_in_blobs_and_messages(self):
+        # Chaandan's review at 95de346: the model job can Read its job token; the publisher scans for it.
+        for token in (TOKEN, "github_pat_" + "A1b2" * 6, "sk-ant-oat01-" + "x9" * 12):
+            with self.subTest(token=token[:6]):
+                self.model.git("reset", "-q", "--hard", self.head)
+                self.model.commit({"app/a.py": f"a = '{token}'\n"})
+                self.refused("^candidate adds a credential-shaped string$")
+        self.model.git("reset", "-q", "--hard", self.head)
+        self.model.commit({"app/c.py": "c = 1\n"}, message="fix: c\n\n" + TOKEN)
+        self.refused("^candidate commit message contains a credential-shaped string$")
+        # Added then removed: the pushed history still carries it.
+        self.model.git("reset", "-q", "--hard", self.head)
+        self.model.commit({"app/a.py": TOKEN + "\n"})
+        self.model.commit({"app/a.py": "a = 2\n"})
+        self.refused("^candidate adds a credential-shaped string$")
+        # One already in the recorded head is not new; another one is.
+        self.src.git("checkout", "-q", "main")
+        self.head = self.src.commit({"app/a.py": f"fixture = '{TOKEN}'\na = 1\n"})
+        self.model.git("fetch", "-q", "origin", "main")
+        self.model.git("checkout", "-q", "-B", "fix", self.head)
+        last = self.model.commit({"app/a.py": f"fixture = '{TOKEN}'\na = 2\n"})
+        self.assertEqual(self.validate(), last)
+        self.model.commit({"app/a.py": f"fixture = '{TOKEN}'\nb = '{TOKEN[:-1]}Z'\n"})
+        self.refused("^candidate adds a credential-shaped string$")
+
     def test_symlink_submodule_and_mode_changes_are_refused(self):
         self.model.git("reset", "-q", "--hard", self.head)
         os.symlink("../etc/passwd", self.model.path / "app/link")
@@ -492,6 +517,16 @@ class ConflictValidationTests(GitCase):
         self.model.git("commit", "-q", "-m", "reverse")
         self.refused("one merge", "conflict")
 
+    def test_credential_in_the_merge_is_refused(self):
+        self.merge(resolution={"app/a.py": f"a = '{TOKEN}'\n"})
+        self.refused("^candidate adds a credential-shaped string$", "conflict")
+        self.model.git("reset", "-q", "--hard", self.head)
+        self.model.git("merge", "--no-ff", "--no-commit", self.base, check=False)
+        self.model.write("app/a.py", "a = 'both'\n")
+        self.model.git("add", "-A")
+        self.model.git("commit", "-q", "-m", "merge base " + TOKEN)
+        self.refused("^candidate commit message contains a credential-shaped string$", "conflict")
+
     def test_human_committed_merge_is_refused(self):
         self.model.git("merge", "--no-ff", "--no-commit", self.base, check=False)
         self.model.write("app/a.py", "a = 'both'\n")
@@ -537,6 +572,8 @@ class OutboxSchemaTests(unittest.TestCase):
             ({"op": "comment", "body": ""}, "fixer"), ({"op": "comment", "body": " \n"}, "fixer"),
             ({"op": "comment", "body": "x" * (p.MAX_BODY + 1)}, "fixer"), ({"op": "comment", "body": 5}, "fixer"),
             ({"op": "comment", "body": "nul\x00"}, "fixer"),
+            ({"op": "comment", "body": "token " + TOKEN}, "fixer"),
+            ({"op": "reply", "comment_id": 5, "body": "sk-ant-api03-" + "k" * 24}, "fixer"),
             ({"op": "label", "label": "needs-decision"}, "fixer"), ({"op": "label", "label": "needs-decision"}, "mention"),
             ({"op": "label", "label": "ci:full"}, "conflict"), ({"op": "label", "label": ["needs-decision"]}, "conflict"),
             ({"op": "receipt", "root": 12, "status": "addressed"}, "fixer"),
@@ -1174,6 +1211,56 @@ class OutboxHelperTests(unittest.TestCase):
             self.assertIn(names[0], tracked)
             self.assertNotIn("gone.txt", tracked)  # the deletion resolution was committed
 
+    def test_conflict_commit_uses_the_conflict_marker_size_attribute(self):
+        # Chaandan's review at 95de346: `.gitattributes` conflict-marker-size changes the marker length.
+        conflict = self.CONFIG | {"mode": "conflict"}
+        with patch.dict(os.environ, git_env(), clear=True):
+            o.command(["git", "init", "-q", "-b", "main"])
+            for branch in ("main", "side", "head"):
+                if branch != "main":
+                    o.command(["git", "checkout", "-q", "-b", branch, "main"])
+                if branch == "main":
+                    Path(".gitattributes").write_text("*.txt conflict-marker-size=10\nb.md conflict-marker-size=3\n")
+                for name in ("a.txt", "b.md"):
+                    Path(name).write_text(branch + "\n")
+                o.command(["git", "add", "-A"])
+                o.command(["git", "commit", "-q", "-m", branch])
+            subprocess.run(["git", "merge", "--no-ff", "--no-commit", "side"], capture_output=True, check=False)
+            conflicted = {name: Path(name).read_text() for name in ("a.txt", "b.md")}
+            self.assertTrue(conflicted["a.txt"].startswith("<" * 10 + " HEAD\n"))
+            self.assertTrue(conflicted["b.md"].startswith("<<< HEAD\n"))
+            Path(".claude-fixer-replies/msg.txt").write_text("Merge side\n")
+            # Raising the working tree's size afterwards does not hide either file's markers.
+            Path(".gitattributes").write_text("* conflict-marker-size=20\n")
+            for leftover in ("a.txt", "b.md"):
+                for name in ("a.txt", "b.md"):
+                    Path(name).write_text(conflicted[name] if name == leftover else "head\nside\n")
+                with self.subTest(leftover=leftover), self.assertRaisesRegex(ValueError, "conflict markers remain"):
+                    o.model_api(conflict, ["commit", ".claude-fixer-replies/msg.txt"])
+            Path("a.txt").write_text("head\n" + "=" * 9 + "\nside\n")  # not a size-7 or size-10 separator
+            Path("b.md").write_text("head\nside\n")
+            head = o.model_api(conflict, ["commit", ".claude-fixer-replies/msg.txt"])
+            self.assertEqual(len(o.command(["git", "rev-list", "--parents", "-n", "1", head]).split()), 3)
+
+    def test_marker_sizes_read_every_source_and_parse_like_git(self):
+        calls, values = [], iter(["12abc", "unspecified", "-3", "set", "0", " 4"])
+
+        def run(argv):
+            calls.append(argv)
+            return "".join(f"{name}\0conflict-marker-size\0{next(values)}\0" for name in ("a", "b"))
+        # Worktree a=12abc b=unspecified, HEAD a=-3 b=set, MERGE_HEAD a=0 b=" 4".
+        self.assertEqual(o.marker_sizes(run, ["a", "b"]), {"a": {7, 12}, "b": {7, 4}})
+        self.assertEqual([c[len(self.GIT):] for c in calls], [
+            ["check-attr", "-z", *source, "conflict-marker-size", "--", "a", "b"]
+            for source in ([], ["--source=HEAD"], ["--source=MERGE_HEAD"])])
+        with self.assertRaisesRegex(ValueError, "unsupported conflict-marker-size"):
+            o.marker_sizes(lambda argv: "a\x00conflict-marker-size\x001001\x00", ["a"])
+        marker = o.conflict_marker({7, 10})
+        for line in ("<" * 7 + " HEAD", "<" * 12 + " HEAD", "|" * 10, ">" * 10 + " side", "=" * 7, "=" * 10):
+            self.assertTrue(marker.search("x\n" + line + "\ny"), line)
+        for line in ("<" * 6 + " HEAD", "=" * 8, "=" * 11, "<" * 7 + "x", "a <<<<<<< b"):
+            self.assertFalse(marker.search("x\n" + line + "\ny"), line)
+
     def test_commit_completes_and_merge_abort_ends_the_conflict_merge(self):
         conflict = self.CONFIG | {"mode": "conflict"}
         with patch.dict(os.environ, git_env(), clear=True):
@@ -1354,6 +1441,13 @@ class WorkflowWiringTests(unittest.TestCase):
                 self.assertNotIn("continue-on-error", sandbox)
                 action = [s for s in model["steps"] if s.get("id") == "claude"][0]
                 self.assertEqual(action["env"], {"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1"})
+                # Chaandan's review at 95de346: any value keeps the job token out of the origin URL
+                # in .git/config; one no GitHub login can match keeps every actor's write check.
+                self.assertEqual(action["with"]["github_token"], "${{ github.token }}")
+                sentinel = action["with"]["allowed_non_write_users"]
+                self.assertEqual(sentinel, "-no-such-user-")
+                for login in sentinel.split(","):
+                    self.assertIsNone(re.fullmatch(r"[A-Za-z0-9](?:-?[A-Za-z0-9])*(?:\[bot\])?", login.strip()))
                 args = action["with"]["claude_args"]
                 self.assertIn("--setting-sources user", args)
                 self.assertIn("Bash(git diff --no-index:*)", args.split("--disallowedTools", 1)[1])

@@ -886,7 +886,9 @@ jobs:
           NO_DRIVERS = ("--no-ext-diff", "--no-textconv")
           GIT_READS = {"status": ("status", "--short"), "diff": ("diff", *NO_DRIVERS), "diff-stat": ("diff", "--stat", *NO_DRIVERS),
                        "log": ("log", "--oneline", "-20"), "head": ("log", "-1", "--stat")}
-          CONFLICT_MARKER = re.compile(r"^(?:<{7} |\|{7}(?: |$)|={7}$|>{7} )", re.MULTILINE)
+          # Git's default; a `conflict-marker-size` attribute changes it per path.
+          MARKER_SIZE = 7
+          MAX_MARKER_SIZE = 1000
           UNMERGED = ("diff", "--name-only", "-z", "--diff-filter=U")
           CONFLICT_GIT = {"conflicts": ("diff", "--name-only", "--diff-filter=U"), "merge-abort": ("merge", "--abort")}
           STAGE = ("add", "-A", "--", ".", ":(exclude).claude-fixer-out", ":(exclude).claude-fixer-replies")
@@ -954,6 +956,34 @@ jobs:
               return run([*GIT, *args])
 
 
+          def marker_sizes(run, names):
+              """Each path's possible conflict-marker sizes: git's default plus the attribute's value.
+
+              Read from the working tree, HEAD and MERGE_HEAD, so neither side's `.gitattributes`,
+              nor a later edit of the working tree's, hides the markers git wrote.
+              """
+              sizes = {name: {MARKER_SIZE} for name in names}
+              for source in ((), ("--source=HEAD",), ("--source=MERGE_HEAD",)):
+                  fields = git(run, "check-attr", "-z", *source, "conflict-marker-size", "--", *names).split("\0")
+                  for path, value in zip(fields[0::3], fields[2::3]):
+                      # As git's atoi(): leading digits; zero, negative or none means the default.
+                      match = re.match(r"\s*([+-]?[0-9]+)", value)
+                      size = int(match.group(1)) if match else 0
+                      if size > MAX_MARKER_SIZE:
+                          raise ValueError("unsupported conflict-marker-size")
+                      if size > 0:
+                          sizes[path].add(size)
+              return sizes
+
+
+          def conflict_marker(sizes):
+              # `<`, `|` and `>` runs from the smallest size up (a recursive merge nests longer ones);
+              # the bare `=` separator at exactly a size the merge could have used.
+              low = f"{{{min(sizes)},}}"
+              separators = "|".join(f"={{{size}}}" for size in sorted(sizes))
+              return re.compile(rf"^(?:(?:<{low}|\|{low}|>{low})(?: |$)|(?:{separators})$)", re.MULTILINE)
+
+
           def commit(body_path, run, mode):
               # The message is validated like a comment body and passed as one argv element.
               message = read_body(body_path)
@@ -961,13 +991,15 @@ jobs:
                   # `git add` would mark a still-conflicted file resolved, markers and all.
                   workspace = Path.cwd().resolve()
                   # NUL-separated, so unusual names are not C-quoted.
-                  for name in filter(None, git(run, *UNMERGED).split("\0")):
+                  names = [name for name in git(run, *UNMERGED).split("\0") if name]
+                  sizes = marker_sizes(run, names) if names else {}
+                  for name in names:
                       file = workspace / name
                       if not file.exists() and not file.is_symlink():
                           continue  # resolved by deleting the file; `add -A` stages the removal
                       if file.is_symlink() or not file.is_file():
                           raise ValueError("unmerged path is not a regular file")
-                      if CONFLICT_MARKER.search(file.read_text(encoding="utf-8", errors="replace")):
+                      if conflict_marker(sizes[name]).search(file.read_text(encoding="utf-8", errors="replace")):
                           raise ValueError("conflict markers remain")
               git(run, *STAGE)
               # In the conflict job this completes the in-progress merge.
@@ -1031,7 +1063,9 @@ jobs:
                   config_path.write_text(json.dumps(config), encoding="utf-8")
                   token = os.environ.get("GH_TOKEN", "")
                   if token:
-                      # The job's read-only token; it is also in the checkout's origin URL.
+                      # The job's read-only token, revoked when this job ends. The workflow keeps it
+                      # out of .git/config; the publisher refuses token-shaped strings in the candidate
+                      # and outbox.
                       with os.fdopen(os.open(directory / READ_TOKEN, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as handle:
                           handle.write(token)
                   # The install step then root-owns this directory and sets 0755 (directory,
@@ -1094,6 +1128,10 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Read-only job token: no OIDC App-token exchange in this job.
           github_token: ${{ github.token }}
+          # Any value makes the action back git with a credential helper that reads GH_TOKEN,
+          # instead of writing this token into the origin URL in .git/config, where Read
+          # could open it. No GitHub login starts with "-", so no actor skips the write check.
+          allowed_non_write_users: "-no-such-user-"
           bot_id: "209825114"
           bot_name: "claude[bot]"
           settings: |
@@ -2016,6 +2054,9 @@ jobs:
           PROTECTED_FILES = frozenset({"tools/ci_gate.py", "tools/required_ci_gate.py", "tools/test_claude_pr_fixer.py"})
           PROTECTED_NAMES = frozenset({"codeowners", "agents.md", "claude.md", ".mcp.json"})
           PROTECTED_DIRS = frozenset({".claude", ".claude-fixer-out", ".claude-fixer-replies"})
+          # GitHub and Anthropic token shapes. The model job can read its own read-only job token
+          # (the helper's read-token); a copy in the candidate or outbox is refused, not redacted.
+          CREDENTIAL = re.compile(r"gh[opsuvr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}|sk-ant-[A-Za-z0-9_-]{20,}")
 
 
           class Refused(Exception):
@@ -2286,6 +2327,8 @@ jobs:
                   op = record["op"]
                   if op in {"comment", "reply"} and not valid_body(record["body"]):
                       raise Refused("outbox body empty, oversized or contains an HTML comment")
+                  if op in {"comment", "reply"} and CREDENTIAL.search(record["body"]):
+                      raise Refused("outbox body contains a credential-shaped string")
                   if op == "reply" and (type(record["comment_id"]) is not int or record["comment_id"] <= 0):
                       raise Refused("outbox reply target is invalid")
                   if op == "label" and (mode != "conflict" or record["label"] != HANDOFF_LABEL):
@@ -2374,7 +2417,8 @@ jobs:
                       raise Refused("changed path has control characters")
                   if any(part in {"", ".", ".."} for part in name.split("/")):
                       raise Refused("changed path has an empty, '.' or '..' component")
-                  entries.append({"old_mode": parts[0], "new_mode": parts[1], "new": parts[3], "status": parts[4], "path": name})
+                  entries.append({"old_mode": parts[0], "new_mode": parts[1], "old": parts[2], "new": parts[3],
+                                  "status": parts[4], "path": name})
               return entries
 
 
@@ -2407,6 +2451,24 @@ jobs:
                   total += int(size)
               if total > MAX_DIFF_BYTES:
                   raise Refused("candidate diff too large")
+
+
+          def credentials(data):
+              # Latin-1 maps every byte to one character, so ASCII tokens match in any blob.
+              return set(CREDENTIAL.findall(data.decode("latin-1")))
+
+
+          def check_credentials(repo, entries, commits):
+              """Refuse a commit message, or a blob of any new commit, that adds a token-shaped string."""
+              for commit in commits:
+                  if credentials(repo.run_git(["cat-file", "commit", commit])):
+                      raise Refused("candidate commit message contains a credential-shaped string")
+              for entry in entries:
+                  if entry["status"] == "D":
+                      continue
+                  old = credentials(repo.run_git(["cat-file", "blob", entry["old"]])) if entry["status"] == "M" else set()
+                  if credentials(repo.run_git(["cat-file", "blob", entry["new"]])) - old:
+                      raise Refused("candidate adds a credential-shaped string")
 
 
           def check_objects(repo):
@@ -2471,6 +2533,7 @@ jobs:
                   entries = diff_entries(repo.run_git(["diff-tree", "-r", "-z", "--raw", "--no-renames", auto_tree, candidate + "^{tree}"]))
                   check_entries(entries)
                   bounded_size(repo, entries)
+                  check_credentials(repo, entries, commits)
                   return candidate
               entries = []
               for row in rows:
@@ -2484,6 +2547,7 @@ jobs:
               check_committers(repo, commits)
               check_entries(entries)
               bounded_size(repo, entries)
+              check_credentials(repo, entries, commits)
               return candidate
 
 
@@ -3761,7 +3825,9 @@ jobs:
           NO_DRIVERS = ("--no-ext-diff", "--no-textconv")
           GIT_READS = {"status": ("status", "--short"), "diff": ("diff", *NO_DRIVERS), "diff-stat": ("diff", "--stat", *NO_DRIVERS),
                        "log": ("log", "--oneline", "-20"), "head": ("log", "-1", "--stat")}
-          CONFLICT_MARKER = re.compile(r"^(?:<{7} |\|{7}(?: |$)|={7}$|>{7} )", re.MULTILINE)
+          # Git's default; a `conflict-marker-size` attribute changes it per path.
+          MARKER_SIZE = 7
+          MAX_MARKER_SIZE = 1000
           UNMERGED = ("diff", "--name-only", "-z", "--diff-filter=U")
           CONFLICT_GIT = {"conflicts": ("diff", "--name-only", "--diff-filter=U"), "merge-abort": ("merge", "--abort")}
           STAGE = ("add", "-A", "--", ".", ":(exclude).claude-fixer-out", ":(exclude).claude-fixer-replies")
@@ -3829,6 +3895,34 @@ jobs:
               return run([*GIT, *args])
 
 
+          def marker_sizes(run, names):
+              """Each path's possible conflict-marker sizes: git's default plus the attribute's value.
+
+              Read from the working tree, HEAD and MERGE_HEAD, so neither side's `.gitattributes`,
+              nor a later edit of the working tree's, hides the markers git wrote.
+              """
+              sizes = {name: {MARKER_SIZE} for name in names}
+              for source in ((), ("--source=HEAD",), ("--source=MERGE_HEAD",)):
+                  fields = git(run, "check-attr", "-z", *source, "conflict-marker-size", "--", *names).split("\0")
+                  for path, value in zip(fields[0::3], fields[2::3]):
+                      # As git's atoi(): leading digits; zero, negative or none means the default.
+                      match = re.match(r"\s*([+-]?[0-9]+)", value)
+                      size = int(match.group(1)) if match else 0
+                      if size > MAX_MARKER_SIZE:
+                          raise ValueError("unsupported conflict-marker-size")
+                      if size > 0:
+                          sizes[path].add(size)
+              return sizes
+
+
+          def conflict_marker(sizes):
+              # `<`, `|` and `>` runs from the smallest size up (a recursive merge nests longer ones);
+              # the bare `=` separator at exactly a size the merge could have used.
+              low = f"{{{min(sizes)},}}"
+              separators = "|".join(f"={{{size}}}" for size in sorted(sizes))
+              return re.compile(rf"^(?:(?:<{low}|\|{low}|>{low})(?: |$)|(?:{separators})$)", re.MULTILINE)
+
+
           def commit(body_path, run, mode):
               # The message is validated like a comment body and passed as one argv element.
               message = read_body(body_path)
@@ -3836,13 +3930,15 @@ jobs:
                   # `git add` would mark a still-conflicted file resolved, markers and all.
                   workspace = Path.cwd().resolve()
                   # NUL-separated, so unusual names are not C-quoted.
-                  for name in filter(None, git(run, *UNMERGED).split("\0")):
+                  names = [name for name in git(run, *UNMERGED).split("\0") if name]
+                  sizes = marker_sizes(run, names) if names else {}
+                  for name in names:
                       file = workspace / name
                       if not file.exists() and not file.is_symlink():
                           continue  # resolved by deleting the file; `add -A` stages the removal
                       if file.is_symlink() or not file.is_file():
                           raise ValueError("unmerged path is not a regular file")
-                      if CONFLICT_MARKER.search(file.read_text(encoding="utf-8", errors="replace")):
+                      if conflict_marker(sizes[name]).search(file.read_text(encoding="utf-8", errors="replace")):
                           raise ValueError("conflict markers remain")
               git(run, *STAGE)
               # In the conflict job this completes the in-progress merge.
@@ -3906,7 +4002,9 @@ jobs:
                   config_path.write_text(json.dumps(config), encoding="utf-8")
                   token = os.environ.get("GH_TOKEN", "")
                   if token:
-                      # The job's read-only token; it is also in the checkout's origin URL.
+                      # The job's read-only token, revoked when this job ends. The workflow keeps it
+                      # out of .git/config; the publisher refuses token-shaped strings in the candidate
+                      # and outbox.
                       with os.fdopen(os.open(directory / READ_TOKEN, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as handle:
                           handle.write(token)
                   # The install step then root-owns this directory and sets 0755 (directory,
@@ -3969,6 +4067,10 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Read-only job token: no OIDC App-token exchange in this job.
           github_token: ${{ github.token }}
+          # Any value makes the action back git with a credential helper that reads GH_TOKEN,
+          # instead of writing this token into the origin URL in .git/config, where Read
+          # could open it. No GitHub login starts with "-", so no actor skips the write check.
+          allowed_non_write_users: "-no-such-user-"
           bot_id: "209825114"
           bot_name: "claude[bot]"
           allowed_bots: devin-ai-integration
@@ -4897,6 +4999,9 @@ jobs:
           PROTECTED_FILES = frozenset({"tools/ci_gate.py", "tools/required_ci_gate.py", "tools/test_claude_pr_fixer.py"})
           PROTECTED_NAMES = frozenset({"codeowners", "agents.md", "claude.md", ".mcp.json"})
           PROTECTED_DIRS = frozenset({".claude", ".claude-fixer-out", ".claude-fixer-replies"})
+          # GitHub and Anthropic token shapes. The model job can read its own read-only job token
+          # (the helper's read-token); a copy in the candidate or outbox is refused, not redacted.
+          CREDENTIAL = re.compile(r"gh[opsuvr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}|sk-ant-[A-Za-z0-9_-]{20,}")
 
 
           class Refused(Exception):
@@ -5167,6 +5272,8 @@ jobs:
                   op = record["op"]
                   if op in {"comment", "reply"} and not valid_body(record["body"]):
                       raise Refused("outbox body empty, oversized or contains an HTML comment")
+                  if op in {"comment", "reply"} and CREDENTIAL.search(record["body"]):
+                      raise Refused("outbox body contains a credential-shaped string")
                   if op == "reply" and (type(record["comment_id"]) is not int or record["comment_id"] <= 0):
                       raise Refused("outbox reply target is invalid")
                   if op == "label" and (mode != "conflict" or record["label"] != HANDOFF_LABEL):
@@ -5255,7 +5362,8 @@ jobs:
                       raise Refused("changed path has control characters")
                   if any(part in {"", ".", ".."} for part in name.split("/")):
                       raise Refused("changed path has an empty, '.' or '..' component")
-                  entries.append({"old_mode": parts[0], "new_mode": parts[1], "new": parts[3], "status": parts[4], "path": name})
+                  entries.append({"old_mode": parts[0], "new_mode": parts[1], "old": parts[2], "new": parts[3],
+                                  "status": parts[4], "path": name})
               return entries
 
 
@@ -5288,6 +5396,24 @@ jobs:
                   total += int(size)
               if total > MAX_DIFF_BYTES:
                   raise Refused("candidate diff too large")
+
+
+          def credentials(data):
+              # Latin-1 maps every byte to one character, so ASCII tokens match in any blob.
+              return set(CREDENTIAL.findall(data.decode("latin-1")))
+
+
+          def check_credentials(repo, entries, commits):
+              """Refuse a commit message, or a blob of any new commit, that adds a token-shaped string."""
+              for commit in commits:
+                  if credentials(repo.run_git(["cat-file", "commit", commit])):
+                      raise Refused("candidate commit message contains a credential-shaped string")
+              for entry in entries:
+                  if entry["status"] == "D":
+                      continue
+                  old = credentials(repo.run_git(["cat-file", "blob", entry["old"]])) if entry["status"] == "M" else set()
+                  if credentials(repo.run_git(["cat-file", "blob", entry["new"]])) - old:
+                      raise Refused("candidate adds a credential-shaped string")
 
 
           def check_objects(repo):
@@ -5352,6 +5478,7 @@ jobs:
                   entries = diff_entries(repo.run_git(["diff-tree", "-r", "-z", "--raw", "--no-renames", auto_tree, candidate + "^{tree}"]))
                   check_entries(entries)
                   bounded_size(repo, entries)
+                  check_credentials(repo, entries, commits)
                   return candidate
               entries = []
               for row in rows:
@@ -5365,6 +5492,7 @@ jobs:
               check_committers(repo, commits)
               check_entries(entries)
               bounded_size(repo, entries)
+              check_credentials(repo, entries, commits)
               return candidate
 
 
