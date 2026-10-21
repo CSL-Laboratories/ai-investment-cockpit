@@ -502,7 +502,7 @@ def main() -> None:
     if int(count) >= 8:
         pause = f"<!-- claude-fixer-loop-cap:{head} -->"
         if not any(bot(c.get("user") or {}, "github-actions[bot]", ACTIONS_ID) and pause in str(c.get("body") or "") for c in comments):
-            post(repo, number, pause + "\nClaude PR Fixer paused: eight consecutive Claude commits and pending Devin findings. A human needs to inspect them; a human commit resets this guard. Manual retry does not bypass it.")
+            post(repo, number, pause + "\nClaude PR Fixer paused: eight or more Claude commits since the last human commit (or a PR commit listing at GitHub's 250-commit limit) and pending Devin findings. A human needs to inspect them; a human commit resets this guard, except on a PR with 250+ commits. Manual retry does not bypass it.")
         emit([], head, "loop-commit-limit")
         return
     key = attempt_key(head, items)

@@ -30,6 +30,8 @@
       "Bash(python3 -X utf8 -B tools/test_ci_settle.py)",
       "Bash(python -X utf8 -B tools/test_claude_fixer_guard.py)",
       "Bash(python3 -X utf8 -B tools/test_claude_fixer_guard.py)",
+      "Bash(python -X utf8 -B tools/test_claude_fixer_publish.py)",
+      "Bash(python3 -X utf8 -B tools/test_claude_fixer_publish.py)",
       "Bash(python -X utf8 -B tools/test_claude_fixer_receipts.py)",
       "Bash(python3 -X utf8 -B tools/test_claude_fixer_receipts.py)",
       "Bash(python -X utf8 -B tools/test_claude_pr_fixer.py)",
