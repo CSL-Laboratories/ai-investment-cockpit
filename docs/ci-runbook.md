@@ -31,8 +31,10 @@ adds `ci:full` / `enhancement` (AGENTS.md:117-118, 129-133). Escalate on the Lin
   re-runs (contract §6 row 20); GitHub's own re-run semantics are an accepted untested gap.
 - **Flaky test:** re-run once. If it fails again on the same head, treat it as real and file a Bug.
 - **`ci:full`:** add it when Windows and macOS evidence is needed; remove it once that full run has
-  passed on the current head (AGENTS.md:287-302). It persists otherwise and repeats the full matrix
-  on every push.
+  passed on the current head and the PR needs no further automatic READY (AGENTS.md:287-302). A
+  manual removal is a human hold: the Codex gate skips READY on that head, and with the candidate
+  coordinator on, READY, candidate runs and `CODEX-GATE: MEDIATE` handoffs stay blocked until someone
+  re-adds it. Otherwise it persists and repeats the full matrix on every qualifying push.
 
 ## 3. Cancellation
 
@@ -76,8 +78,8 @@ their own tests (`tools/test_codex_gate.py`, `app/tests/test_stuck_thread_watch.
 
 ## 6. Cost and capacity check
 
-- Every job must use a standard GitHub-hosted label (`ubuntu-latest`, `ubuntu-24.04`,
-  `windows-2025`, `macos-latest`). Since CSL-408 these are free **because the repository is
+- Every job must use a standard GitHub-hosted label; the cross-lane tests accept `ubuntu-latest`,
+  `ubuntu-24.04`, `ubuntu-22.04`, `windows-2025`, `windows-latest` and `macos-latest`. Since CSL-408 these are free **because the repository is
   public**. Making it private would meter minutes (Team includes 3,000 per month; GitHub docs,
   Actions billing); re-plan before that.
 - `tools/test_codex_gate.py` (`test_test_jobs_use_free_github_hosted_runners`) fails if any

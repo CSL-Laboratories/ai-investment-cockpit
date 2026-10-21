@@ -610,6 +610,8 @@ class DispatchScopeTests(unittest.TestCase):
 # eight-commit guard, the one-attempt publish guard and the pause. Retry behaviour itself is
 # exercised by tools/test_claude_fixer_*.py and tools/test_claude_pr_fixer.py.
 WRITER_FILES = ('claude.yml', 'claude-conflict-writer.yml', 'conflict-scan.yml')
+# Roles: prep, model, publish. No job has the credential-free 'verify' role yet; CSL-409 adds one,
+# and the 'verify' branches below are ready for it.
 WRITER_JOBS = {
     'claude.yml': {'mention-prepare': 'prep', 'claude-mention': 'model', 'mention-publish': 'publish',
                    'fixer-prepare': 'prep', 'devin-review-fix': 'model', 'fixer-publish': 'publish'},
@@ -779,12 +781,25 @@ class CrossLaneAdmissionTests(unittest.TestCase):
                 if role == 'publish':
                     with self.subTest(publisher=f'{name}:{job_name}'):
                         self.assertIn('publish attempt already used; nothing published', job_text(doc['jobs'][job_name]))
-        # The human pause: labels and the repository variable, in every writer path and the scan.
-        for text in (claude, writer, scan):
-            self.assertIn('PAUSE_LABELS = frozenset({"claude:pause", "hold"})', text)
-        self.assertGreaterEqual(claude.count('CLAUDE_FIXER_PAUSE: ${{ vars.CLAUDE_FIXER_PAUSE }}'), 4)
-        self.assertGreaterEqual(writer.count('CLAUDE_FIXER_PAUSE'), 2)
-        self.assertIn('CLAUDE_FIXER_PAUSE', scan)
+        # The human pause, per job: every prepare and publish job reads both labels and the repository
+        # variable, every publisher refuses on them before pushing, and the scan skips paused PRs.
+        pause_py = 'PAUSE_LABELS = frozenset({"claude:pause", "hold"})'
+        pause_jq = 'select(. == "claude:pause" or . == "hold")'
+        for name, jobs in WRITER_JOBS.items():
+            doc = workflow(name)
+            for job_name, role in jobs.items():
+                if role not in ('prep', 'publish'):
+                    continue
+                job = doc['jobs'][job_name]
+                text = job_text(job)
+                with self.subTest(pause=f'{name}:{job_name}'):
+                    self.assertTrue(pause_py in text or pause_jq in text)
+                    self.assertIn('${{ vars.CLAUDE_FIXER_PAUSE }}', str(job))
+                    if role == 'publish':
+                        self.assertIn('reason = pause_refusal(pr, env)', text)
+        scan_job = workflow('conflict-scan.yml')['jobs']['conflict-scan']
+        self.assertIn(pause_py, job_text(scan_job))
+        self.assertIn('${{ vars.CLAUDE_FIXER_PAUSE }}', str(scan_job))
 
 if __name__ == '__main__':
     unittest.main()
