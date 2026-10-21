@@ -368,6 +368,7 @@ Hosted split (PR #102):
 - Non-draft synchronize events wait in `settle` for 120 seconds. Paid jobs and required aggregates accept successful settle or an event's intentional skip; failure, cancellation, and unexpected skips block. The wait consumes hosted capacity and does not guarantee savings.
 - CI caches pip downloads, never virtualenvs. Each cell creates a fresh environment, installs direct pins, and runs `pip check`; one fresh no-cache retry handles install/cache failure. Direct pins are not a transitive hash lock.
 - Queue protection is staged: proposed stable checks are `linux-gates`, `queue-gates`, `rust-gates`, and `review-gate`. The latter verifies the current genuine Devin bot commit status on every exact required PR head, with bounded polling and manual same-head recovery. Existing required `linux-gates` and `Devin Review` remain unchanged. See [the rollout and owner decisions](docs/ci-queue-rollout.md); synthetic tests do not establish live queue enforcement.
+- The stuck-thread `watch` check does not go red when `CODEX_TRIGGER_PAT` is rate-limited. The watcher reads with `github.token` and uses the PAT only to post mediation comments and labels, so a PAT error is logged as `pr=<N> error` in a run that still passes. Only a failure to list pull requests fails it. A red `watch` here is therefore a real watcher failure worth a look, not a rate limit. The required checks (`linux-gates`, Devin Review) decide CI either way (Lucas's decision on CSL-390, comment 242120cc).
 
 ## Review roles
 
