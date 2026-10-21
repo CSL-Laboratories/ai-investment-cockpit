@@ -1,6 +1,6 @@
 # CI event-to-check contract
 
-Contract version: v2 (2026-10-21). v2 records CSL-408 (#224): every job now runs on a free GitHub-hosted runner. The test jobs moved from Blacksmith to `ubuntu-24.04` and `windows-2025`, and the Windows cells' timeout went from 30 to 50 minutes. Event rows, conditions and required checks are unchanged from v1.
+Contract version: v2.1 (2026-10-21), a correction to v2. v2 records CSL-408 (#224): every job now runs on a free GitHub-hosted runner. The test jobs moved from Blacksmith to `ubuntu-24.04` and `windows-2025`, and the Windows cells' timeout went from 30 to 50 minutes. Event rows, conditions and required checks are unchanged from v1. v2.1 re-pins the `AGENTS.md` citations after #217, cites the first post-merge runs, widens the [O] legend to dated runs, and corrects what a `GITHUB_TOKEN` push starts (section 7).
 
 **Versioning.** Any change to a workflow, `scripts/ci/**`, a required check or the rulesets
 that changes a row here updates this file in the same PR. Bump the version for a semantic
@@ -8,6 +8,7 @@ change (v1 → v2) and the patch for a correction (v1.1). Record the new base co
 count merged changes; edits made during a PR's own review are part of that version. Tracked
 under CSL-255 / CSL-385.
 
+- **Base commit (v2.1):** main `f6a9a3c56f008599a3c0b9fb766597599c0567d0` (merge of #217). #217 (CSL-354) changed `AGENTS.md` line 49 and added 123 lines after line 58, so the `AGENTS.md` citations below moved down by 123 and point at identical text; no other cited file changed.
 - **Base commit (v2):** main `b29ef6d5` (merge of #221) plus the CSL-408 runner change in #224. #224 keeps the line counts of `ci.yml`, `rust.yml`, `AGENTS.md` and `tools/ci_runner_cost.py`. The only cited lines whose text changes are the runner labels (ci.yml:352, 609, 822; rust.yml:282-283, 287-288), the benchmarks comment (ci.yml:21-23) and `AGENTS.md`:238 and 241. Every other v1 citation still holds.
 - **Base commit (v1):** `578a8ca8` (`main`, merge of #223). The rows were traced at `7b0dcf27` (#215). Since then:
   - #220 (CSL-383) added three lines in two places in `claude.yml` and once in `conflict-scan.yml`.
@@ -25,17 +26,17 @@ under CSL-255 / CSL-385.
   [candidate readiness](ci-candidate-readiness.md),
   [cost budget](ci-cost-budget.md),
   [queue rollout](ci-queue-rollout.md),
-  [AGENTS.md Hosted CI](../AGENTS.md#hosted-ci) (AGENTS.md:234-247).
+  [AGENTS.md Hosted CI](../AGENTS.md#hosted-ci) (AGENTS.md:357-370).
 
 ## Evidence classes
 
 | Tag | Meaning |
 | --- | --- |
 | **[S]** | Source-documented: `file:line` at the base commit. `ci.yml:95` means `.github/workflows/ci.yml` line 95; other workflow names are under `.github/workflows/`. `ci_cancel_controller.py`, `codex_gate.py`, `candidate_gate.py` and `claude_fixer_receipts.py` are under `scripts/ci/`; `required_ci_gate.py` is under `tools/`. |
-| **[O]** | Locally observed on 2026-10-20 through read-only REST (`gh api`): run, job or check-run IDs given. Older runs may have used older YAML. `workflow_dispatch` runs use the dispatched branch's YAML. |
+| **[O]** | Locally observed through read-only REST (`gh api`) on 2026-10-20, or in a run cited with its ID and date: run, job or check-run IDs given. Older runs may have used older YAML. `workflow_dispatch` runs use the dispatched branch's YAML. |
 | **[I]** | Inferred from GitHub platform behaviour or from reading code. Not tested and not observed here. |
 
-**Since CSL-408 (v2) runner compute is $0.** Every job runs on a standard GitHub-hosted runner, which is free on this public repository. "Paid" and the L/W/M counts in this contract now mean that a test runner was allocated. That is a cost in runner capacity and queue time, not money. The dollar figures below are **historical** Blacksmith estimates for runs before CSL-408. They use the [cost budget](ci-cost-budget.md) method: each started job rounded up to whole minutes, at $0.004/min Linux and $0.008/min Windows. Blacksmith billed each job that got a runner, per started minute (CSL-255 calibration). They are estimates, not invoices.
+**Since CSL-408 (v2) runner compute is $0.** Every job runs on a standard GitHub-hosted runner, which is free on this public repository. [O] The first post-merge runs on main `10193b91` (push, 2026-10-21), ci 39537098139 and rust 39537098248, ran every job on GitHub-hosted runners (`ubuntu-24.04`, `windows-2025`, `ubuntu-latest`). "Paid" and the L/W/M counts in this contract now mean that a test runner was allocated. That is a cost in runner capacity and queue time, not money. The dollar figures below are **historical** Blacksmith estimates for runs before CSL-408. They use the [cost budget](ci-cost-budget.md) method: each started job rounded up to whole minutes, at $0.004/min Linux and $0.008/min Windows. Blacksmith billed each job that got a runner, per started minute (CSL-255 calibration). They are estimates, not invoices.
 
 ## 1. Required checks
 
@@ -332,8 +333,8 @@ At the base commit these ran locally (Python 3.13):
     `synchronize` and start ordinary paid CI (rows 4-5). The `ci` runs on fixer commits
     were started by `claude[bot]` about 12 s after each commit: 39354662754 (#212
     `8ede5ff793`), 39353490459 (#208 `571cb1ce11`) and 39079041390 (#199 `e875f2b8c3`).
-    So the push credential is the Claude app, not the checkout `GITHUB_TOKEN`, which
-    could not trigger workflows.
+    So the push credential is the Claude app, not the checkout `GITHUB_TOKEN`: [I] its `synchronize`
+    would create approval-required runs that start only when a writer approves them (GitHub docs, triggering a workflow), and these started without approval.
   - The eight-commit guard (`cap` step, claude.yml:1462) bounds only the automated
     `devin-review-fix` job. `claude-mention` has no equivalent cap, so repeated authorized
     `@claude` requests can push, and start paid `synchronize` runs, without that limit.
@@ -389,12 +390,12 @@ At the base commit these ran locally (Python 3.13):
 | G5 | Stale workflow comments: ci.yml:316-319 (settle relies on #157 concurrency cancel), ci.yml:17 and 718-719 ($50 budget, superseded by ci-cost-budget.md:48-50; CSL-408 removed the benchmarks cost note that was at ci.yml:21-23), ci.yml:515-516 (`queue-gates` "required"). | [S] | Comment-only fix in a human-assigned workflow issue. |
 | G6 | `merge_group` paths and `queue-gates` are untested live. The merge queue is not enabled. | [O] | Covered by the ci-queue-rollout.md activation sequence. |
 | G7 | A PR created with `ci:full` or `enhancement` gets both `opened` and `labeled`, which means an ordinary run plus a label dispatch (duplicate full matrix). | [I] | Observe once (read-only) and record. |
-| G8 | `ci:full` added by a founder or Devin persists, so every later qualifying push runs Windows and macOS, plus Rust Windows and Rust macOS (subject to the path filters, section 7). The legacy READY label is gate-owned and is cleared on the next push, after one full-matrix run. | [S]+[O] | Addressed by the AGENTS.md CI-etiquette rule merged at this base (CSL-393, #222; AGENTS.md:161-176): remove a manual `ci:full` once its full run passes and no further automatic READY is needed. A manual removal holds READY and, with the candidate coordinator on, candidate runs and MEDIATE handoffs. Recursion's equivalent merged as CSL-395 (#259), and its human-hold caveat as CSL-403 (#261). |
+| G8 | `ci:full` added by a founder or Devin persists, so every later qualifying push runs Windows and macOS, plus Rust Windows and Rust macOS (subject to the path filters, section 7). The legacy READY label is gate-owned and is cleared on the next push, after one full-matrix run. | [S]+[O] | Addressed by the AGENTS.md CI-etiquette rule merged at this base (CSL-393, #222; AGENTS.md:284-299): remove a manual `ci:full` once its full run passes and no further automatic READY is needed. A manual removal holds READY and, with the candidate coordinator on, candidate runs and MEDIATE handoffs. Recursion's equivalent merged as CSL-395 (#259), and its human-hold caveat as CSL-403 (#261). |
 | G9 | The task brief said claude.yml has Blacksmith runners. It does not at the base commit. Its paid effect is indirect, through pushes that trigger CI. | [S]+[O] | Correct the brief and the Reliability-lane notes. |
 | G10 | GitHub rerun semantics (payload reuse, concurrency re-entry, and which dependents a failed-only or single-job rerun re-executes) have not been observed. | [I] | Record the next real rerun. |
 | G11 | Duplicate controller cancel POSTs (4 per target observed) consume API budget. Harmless today. | [O] | None required. Note it in the controller doc if budget pressure appears. |
 | G12 | Main-push groups cancel in progress, so a fast second merge cancels the first fallback run and the minutes already spent are lost. The old main SHA's `linux-gates` outcome depends on timing, as in row 21: no check if no job had started (a), red if a gate dependency was cancelled (b), green if `linux-gates` had already passed while only Windows was still running (c; `benchmarks` runs only on `pull_request`, ci.yml:821), and red only if the cancel lands while `linux-gates` itself is running and `cancelled()` is true for its reject step (d). | [I] | Observe. It is consistent with "keep fallback" but undocumented. |
-| G13 | The nightly schedule ran about 5.5 h late (created 12:44Z for the 07:17 cron). | [O] | Note in AGENTS.md:242 that schedule time is best-effort. |
+| G13 | The nightly schedule ran about 5.5 h late (created 12:44Z for the 07:17 cron). | [O] | Note in AGENTS.md:365 that schedule time is best-effort. |
 | G14 | Fork PRs can start test jobs in ci.yml and rust.yml (no fork guard; free since CSL-408, but they use capacity). Exposure depends on the unverified fork-approval setting. | [I] | Lucas set "Require approval for all external contributors" in both repos, 2026-10-20 (relayed; not readable from this session). |
 | G15 | Org-level ruleset listing (`gh api orgs/CSL-Laboratories/rulesets`) is blocked in this session. The org ruleset was read through the repo-scoped endpoints `rulesets/25015519` and `rules/branches/main`. | [O] | None. Repo-scoped effective rules are authoritative for `main`. |
 | G16 | **Docs-only green no-op: fixed by CSL-397 (#223, merged at this base).** The filter now runs tests for everything under `app/` (including the LLM prompts `app/workflows/prompts/*.md`), the 21 test-read files from the CSL-392 audit, and `.gitignore` (ci.yml:303-307). It diffs with `--no-renames` (ci.yml:277), so renaming a test-read file still runs tests. `tools/test_ci_docs_filter.py` runs the real decide script and fails if a test references a file the filter skips; it runs in the required `linux` job (ci.yml:443). Residual: plain docs that no test reads still skip, as intended, and the static guard can't see dynamically built paths. The pre-fix description follows, cited at the previous base `be97ff3b` because this base no longer behaves this way. The PR filter marked `docs/` and `*.md` changes (apart from the listed swarm dirs and `.py`/`.json`/`.yaml`) as no-test (`be97ff3b` ci.yml:288-300). `linux-gates` then passes with `linux` skipped (section 4, step 4). `git grep -E "\.md['\"]" -- 'app/tests/*.py' 'tools/test_*.py'` prints 69 matching lines in 17 files; many are temporary paths (`comment.md`, `brief.md`) ([O]). Concrete cases: `app/tests/test_o7_operator_contract.py:51-54` hashes four `docs/replacement/*.md` contracts, and `app/tests/system/test_rw01_market_day.py:771` reads `docs/setup/accounts-and-keys.md`. A change to only those docs gets a green required check without the tests that read them, the same class recursion fixed in CSL-376. Code cannot skip this way: any `.py` change forces `run-tests`. The risk of a Rust PnL change landing untested belongs to G1 (`rust-gates` is advisory), not to this regex. | [S]+[O] | Audited in CSL-392 (21 test-read files, including the LLM prompts). Fixed by option B, CSL-397 (#223): `app/**` and the test-read docs always run tests, plus a guard test. |
