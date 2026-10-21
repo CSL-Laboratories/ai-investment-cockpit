@@ -70,7 +70,7 @@ Scope is exactly `whole issue` or `sub-issue CSL-M`, where CSL-M is a sub-issue 
 
 **Session start or resume (CSL-379).** Before any write, check each claim you hold. If its lease plus grace has passed, release it with reason `lease expiry`; never renew it. Re-read the issue, then take a fresh claim. `heartbeat-at` is always the actual edit time from a fresh clock read, never a copied or estimated time.
 
-**Takeover and re-claim.** Another agent's claim is replaced, by takeover or re-claim, only after an explicit release and the ownership coordinator's acknowledgement, posted unprefixed as `ACK TAKEOVER <old uuid>`. Lease expiry alone never lets another agent take over; the CSL-357 automatic takeover conditions do not apply in this repository. Once a claim's lease plus grace has passed, the coordinator may release an abandoned claim by posting an unprefixed `REVOKE CLAIM <uuid>`; a new claim that replaces it still needs `ACK TAKEOVER <old uuid>`. A fresh claim on an issue with no other live claim, such as after releasing your own lapsed claim, is a normal claim and needs no acknowledgement (Lucas's decision, CSL-357 comment 1c643648). A re-claim after a decision reads the decision, the last release record, the remote head and base, and open findings first; earlier claimants get no priority.
+**Takeover and re-claim.** Another agent's claim is replaced, by takeover or re-claim, only after an explicit release and the ownership coordinator's acknowledgement, posted unprefixed as `ACK TAKEOVER <old uuid>`. Lease expiry alone never lets another agent take over; the CSL-357 automatic takeover conditions do not apply in this repository. Once a claim's lease plus grace has passed, the coordinator may release an abandoned claim by posting an unprefixed `REVOKE CLAIM <uuid>`; a new claim that replaces it still needs `ACK TAKEOVER <old uuid>`. A different agent that claims an issue after another agent's claim on it was released or revoked is taking it over and needs `ACK TAKEOVER <old uuid>`, even though no claim is live. Only two claims are normal claims that need no acknowledgement: a first claim on an issue that no other agent has claimed, and an agent re-claiming after releasing its own claim, such as its own lapsed claim (Lucas's decision, CSL-357 comment 1c643648). A re-claim after a decision reads the decision, the last release record, the remote head and base, and open findings first; earlier claimants get no priority.
 
 **Release.** Release only after your writers have stopped: nothing left to push and no job you started still running. Edit the claim to `released`, then post an agent-prefixed `release v1` comment with `claim: <uuid>`, `reason: done | decision needed (CSL-M) | handoff | lease expiry | abandoned`, and `done`, `evidence`, `open`, `next` and `files` lines. Releasing never releases a hold or closes a finding.
 
@@ -165,7 +165,7 @@ meanwhile ("paused" or other proceed-list work, never the option you are asking
 about or work that presupposes one). A stuck review thread instead goes in the
 PR's roll-up, found only by its `<!-- stuck-pr-threads:owner/repo#N -->` marker,
 in your own block; product and architecture questions stay on the work issue.
-For a decision or direction issue you are assigned, the Parallel Task API brief in
+For a decision or direction issue you are assigned or have claimed, the Parallel Task API brief in
 [Linear-first workflow](#linear-first-workflow) still comes first, and Grok Bots do
 not research or resolve decision issues. Then release your claim with a release
 record and take only other admitted work that is next under the human-approved
@@ -341,7 +341,7 @@ provisioned.
 
 Prefer the project `parallel-search` MCP server (`web_search` / `web_fetch`) for web lookups.
 It is declared in `.cursor/mcp.json` (Cursor) and `.mcp.json` (Claude Code); no API key is required.
-Search/Extract is for lookups. Assignee decision/direction work also needs the Task API — see Linear-first.
+Search/Extract is for lookups. Decision/direction work by the assignee or the claimant also needs the Task API — see Linear-first.
 
 ## Engineering stack (Oct 2026)
 
