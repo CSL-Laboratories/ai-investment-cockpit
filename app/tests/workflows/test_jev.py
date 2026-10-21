@@ -1100,7 +1100,8 @@ def test_subprocess_child_does_not_inherit_jev_api_key(monkeypatch):
     from agent_runner.transport import SubprocessTransport
 
     monkeypatch.setenv("JEV_API_KEY", _KEY)
-    monkeypatch.setenv("JEV_TEST_KEEP", "1")
+    monkeypatch.setenv("TZ", "JEV/Keep")
+    monkeypatch.setenv("JEV_TEST_UNLISTED", "1")
     seen = {}
 
     class _Proc:
@@ -1118,6 +1119,8 @@ def test_subprocess_child_does_not_inherit_jev_api_key(monkeypatch):
     # and run() resolves argv[0] via shutil.which before the mocked Popen is reached.
     SubprocessTransport().run([sys.executable], "", 1.0, None)
     assert "JEV_API_KEY" not in seen["env"]
-    # The rest of the parent env must still reach the child — an env={} bug would
-    # starve it of PATH etc. while still passing the assertion above.
-    assert seen["env"].get("JEV_TEST_KEEP") == "1"
+    # CSL-371: the child env is an allowlist, so an unlisted name does not cross either.
+    assert "JEV_TEST_UNLISTED" not in seen["env"]
+    # Allowlisted names must still reach the child — an env={} bug would starve it of
+    # PATH etc. while still passing the assertions above.
+    assert seen["env"].get("TZ") == "JEV/Keep"

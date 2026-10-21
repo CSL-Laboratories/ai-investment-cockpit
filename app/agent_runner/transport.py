@@ -12,6 +12,7 @@ import os
 import shutil
 import signal
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from agent_runner.result import mark_agent_dispatched
@@ -29,6 +30,85 @@ KILL_GRACE_SECONDS = 10.0
 # carrying one of these could break out of its argument and become a command. Python's quoting
 # does not escape them (this is the BatBadBut class of bug, CVE-2024-24576 in Rust's stdlib).
 _CMD_METACHARACTERS = frozenset('&|<>^"')
+
+# CSL-371: the agent CLI's environment is an ALLOWLIST, not the parent's environment minus a
+# denylist. ``os.environ.copy()`` handed every secret in the operator's shell (GITHUB_TOKEN,
+# OPENAI_API_KEY, a bot token, cloud creds, whatever a developer exported) to a third-party CLI,
+# where it can reach telemetry, logs or a tool the CLI was granted. Both supported runtimes
+# authenticate from their own on-disk login stores under the user profile (~/.claude,
+# ~/.claude.json, ~/.codex/auth.json; see docs/setup/low-priv-agent-account.md), so neither needs
+# a credential in env. A new variable reaches the child only by being named here.
+#
+# Names are compared upper-cased: Windows environment names are case-insensitive, and POSIX
+# proxy variables are conventionally lower-case.
+_CHILD_ENV_ALLOWLIST = frozenset({
+    # Process launch and executable lookup.
+    "PATH", "PATHEXT", "COMSPEC", "SHELL",
+    # Windows system locations. Python and Node both fail in odd ways without SYSTEMROOT.
+    "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)",
+    "PROGRAMW6432", "COMMONPROGRAMFILES", "COMMONPROGRAMFILES(X86)", "COMMONPROGRAMW6432",
+    "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "OS",
+    # Profile and per-user state. The CLIs find their login stores through these.
+    "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA",
+    "USER", "USERNAME", "LOGNAME", "USERDOMAIN",
+    "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR",
+    # Where each runtime keeps its config, when the operator relocated it.
+    "CLAUDE_CONFIG_DIR", "CODEX_HOME",
+    # Scratch space.
+    "TEMP", "TMP", "TMPDIR",
+    # Locale, time zone and terminal.
+    "LANG", "LANGUAGE", "TZ", "TERM", "NO_COLOR",
+    # Network reachability behind a proxy or a corporate CA. Values are passed only when they
+    # carry no userinfo (see _proxy_has_credentials).
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS",
+})
+# Prefix families that are locale-only and carry no credentials.
+_CHILD_ENV_ALLOWED_PREFIXES = ("LC_",)
+_PROXY_NAMES = frozenset({"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"})
+
+# Belt and braces: a name that LOOKS like a secret never reaches the child, even if a future edit
+# adds it to the allowlist above. JEV_API_KEY is named explicitly as well (the original strip).
+_SECRET_NAME_MARKERS = ("TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "API_KEY",
+                        "AUTH", "COOKIE", "SESSION")
+_SECRET_NAME_SUFFIXES = ("_KEY", "_PAT")
+_SECRET_NAME_PREFIXES = ("GH_", "GITHUB_", "JEV_", "AWS_", "AZURE_", "GOOGLE_", "GCP_")
+
+
+def _looks_secret(upper_name: str) -> bool:
+    return (
+        upper_name == "JEV_API_KEY"
+        or upper_name.endswith(_SECRET_NAME_SUFFIXES)
+        or upper_name.startswith(_SECRET_NAME_PREFIXES)
+        or any(marker in upper_name for marker in _SECRET_NAME_MARKERS)
+    )
+
+
+def _proxy_has_credentials(value: str) -> bool:
+    """``http://user:pass@proxy:8080`` carries a credential in the URL. Drop it rather than parse
+    it: a proxy that needs auth must be configured for the CLI by the operator directly."""
+    head = value.split("://", 1)[-1].split("/", 1)[0]
+    return "@" in head
+
+
+def build_child_env(parent: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Return the environment an agent CLI child is spawned with: allowlisted names only.
+
+    ``parent`` defaults to ``os.environ``. Original key spelling is preserved, so a lower-case
+    POSIX ``https_proxy`` stays lower-case for the child.
+    """
+    source = os.environ if parent is None else parent
+    env: dict[str, str] = {}
+    for name, value in source.items():
+        upper = name.upper()
+        if not (upper in _CHILD_ENV_ALLOWLIST or upper.startswith(_CHILD_ENV_ALLOWED_PREFIXES)):
+            continue
+        if _looks_secret(upper):
+            continue
+        if upper in _PROXY_NAMES and _proxy_has_credentials(value):
+            continue
+        env[name] = value
+    return env
 
 
 class ExecutableNotFound(FileNotFoundError):
@@ -135,10 +215,10 @@ def _log_failure(argv: list[str], result: ProcResult) -> None:
 class SubprocessTransport:
     def run(self, argv: list[str], input_text: str, timeout_s: float, cwd: str | None) -> ProcResult:
         argv = resolve_executable(argv)
-        # The child must not inherit a Jev bearer left in the parent environment.
-        # The credential itself lives in keyring (Inv 4), not in this env.
-        child_env = os.environ.copy()
-        child_env.pop("JEV_API_KEY", None)
+        # CSL-371: an explicit allowlist, not the parent environment minus a denylist. The child
+        # must not inherit a Jev bearer or any other secret left in the parent environment; the
+        # cockpit's own credentials live in keyring (Inv 4), not in this env.
+        child_env = build_child_env()
         popen_kwargs = {
             "stdin": subprocess.PIPE,
             "stdout": subprocess.PIPE,
