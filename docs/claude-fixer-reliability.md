@@ -19,8 +19,8 @@ Each Claude writer is a pipeline of three jobs that share the per-PR
   read-only job token (`github_token: ${{ github.token }}`), so it performs no
   OIDC App-token exchange, and `classify_inline_comments: "false"`. There is no
   `git push` tool rule. The model commits locally as `claude[bot]`
-  (`bot_id` 209825114) and queues GitHub writes with the
-  `model-api` helper: `comment`, `reply`, `label` (conflict job only) and
+  (`bot_id` 209825114) through the `model-api` helper's fixed `commit` and
+  queues GitHub writes with it: `comment`, `reply`, `label` (conflict job only) and
   `receipt ROOT addressed|needs-human` (fixer only) append to
   `.claude-fixer-out/outbox.jsonl`; reads still call fixed same-PR endpoints.
   A final `always()` step uploads a Git bundle of new commits, the outbox and
@@ -84,12 +84,28 @@ writes), and Git's ordinary non-fast-forward rejection remains the final race
 protection. App-token pushes are expected to trigger workflows; the post-merge
 canary has to confirm it.
 
-Model-job credentials (Chaandan's review at `5f904c3`): the model jobs run no
-repository code. Their only gate command is `ruff check app`; pytest, `tools/`
-tests and `gh pr` commands are not allowed, and the required `linux-gates` job
-tests the pushed commit. Claude Code runs with `--setting-sources user`, so
+Model-job credentials (Chaandan's review at `5f904c3`; Samir's at `acecb2b`):
+the model jobs run no repository code and no gates. Model-authored Bash is
+confined to one rule, `Bash(python3 ${{ runner.temp }}/claude-fixer-guard/model-api --:*)`,
+next to Edit, Write, Read, Glob and Grep. A Claude Code `prefix:*` rule accepts
+any trailing options, so the earlier `git log:*`, `git diff:*`, `git add:*`,
+`git commit:*` and `ruff check app` rules could write or print arbitrary files
+(`git log --output=`, `git diff --no-index`, `--pathspec-from-file=`, a
+PR-controlled ruff `extend`). The helper instead runs git through fixed argv
+lists with no model-supplied options, no shell, hooks, fsmonitor or pager:
+`status` (`git status --short`), `diff`, `diff-stat`, `log` (`--oneline -20`),
+`head` (`log -1 --stat`), and in the conflict job `conflicts`
+(`diff --name-only --diff-filter=U`) and `merge-abort`. `commit MSGFILE` reads
+the message from `.claude-fixer-replies/NAME.txt` with the comment-body checks,
+stages every change except `.claude-fixer-out` and `.claude-fixer-replies`,
+runs `git commit --no-verify -q -m <message>` (completing the merge in the
+conflict job) and prints the full new `HEAD`. Its install step makes the helper
+directory root-owned, with the directory and helper `0755` and its context and
+token `0644`, and checks the owner, so Claude's commands (as the runner user) can
+run and read it but cannot replace it. Lint and tests run in the required
+`linux-gates` job after the push. Claude Code runs with `--setting-sources user`, so
 `.claude/` settings and hooks from the PR checkout are ignored, and edits to
-`.claude/**` and `~/.claude/**` are denied. `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`
+`.claude/**` and `~/.claude/**` and reads of `~/.claude/**` are denied. `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`
 removes the OAuth token, the Actions runtime tokens and `GH_TOKEN` from every
 command Claude runs, and bubblewrap (installed in a step that fails closed) keeps
 those commands from reading the CLI's own environment. The queue helper's fixed

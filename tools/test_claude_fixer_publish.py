@@ -1015,6 +1015,106 @@ class OutboxHelperTests(unittest.TestCase):
         self.assertTrue(all(c[:2] == ["gh", "api"] for c in calls))
         self.assertNotIn("POST", json.dumps(calls))
 
+    GIT = ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.pager=cat"]
+
+    def test_git_operations_use_fixed_argv(self):
+        # Samir's review at acecb2b: no model-supplied git options, ever.
+        expected = {"status": ["status", "--short"], "diff": ["diff"], "diff-stat": ["diff", "--stat"],
+                    "log": ["log", "--oneline", "-20"], "head": ["log", "-1", "--stat"]}
+        conflict_only = {"conflicts": ["diff", "--name-only", "--diff-filter=U"], "merge-abort": ["merge", "--abort"]}
+        for mode in ("mention", "fixer", "conflict"):
+            config = self.CONFIG | {"mode": mode}
+            ops = expected | (conflict_only if mode == "conflict" else {})
+            for op, argv in ops.items():
+                calls = []
+                with self.subTest(mode=mode, op=op):
+                    self.assertEqual(o.model_api(config, [op], run=lambda a, calls=calls: calls.append(a) or "out"), "out")
+                    self.assertEqual(calls, [self.GIT + argv])
+            for op in conflict_only if mode != "conflict" else ():
+                with self.subTest(mode=mode, op=op), self.assertRaises(ValueError):
+                    o.model_api(config, [op], run=lambda a: self.fail("conflict-only op ran"))
+
+    def test_commit_stages_all_but_the_helper_dirs_and_returns_the_new_head(self):
+        Path(".claude-fixer-replies/msg.txt").write_text("-fix: a message\nwith a second line\n")
+        for mode in ("mention", "fixer", "conflict"):
+            calls = []
+            run = lambda a, calls=calls: calls.append(a) or ("f" * 40 if a[-2:] == ["rev-parse", "HEAD"] else "")
+            with self.subTest(mode=mode):
+                out = o.model_api(self.CONFIG | {"mode": mode}, ["commit", ".claude-fixer-replies/msg.txt"], run=run)
+                self.assertEqual(out, "f" * 40)
+                self.assertEqual(calls, [
+                    self.GIT + ["add", "-A", "--", ".", ":(exclude).claude-fixer-out", ":(exclude).claude-fixer-replies"],
+                    self.GIT + ["commit", "--no-verify", "-q", "-m", "-fix: a message\nwith a second line\n"],
+                    self.GIT + ["rev-parse", "HEAD"]])
+        for body in ("", "<!-- claude-fixer-result:{} -->"):
+            Path(".claude-fixer-replies/bad.txt").write_text(body)
+            with self.subTest(body=body), self.assertRaises(ValueError):
+                o.model_api(self.CONFIG, ["commit", ".claude-fixer-replies/bad.txt"], run=lambda a: self.fail("git ran"))
+
+    def test_git_operations_refuse_any_extra_or_unknown_argument(self):
+        run = lambda a: self.fail(f"git ran: {a}")
+        conflict = self.CONFIG | {"mode": "conflict"}
+        for args in (["status", "--porcelain"], ["diff", "--output=/tmp/x"], ["diff", "--no-index", "/dev/null", "/etc/hostname"],
+                     ["diff", "/dev/null", "/etc/hostname"], ["diff-stat", "--output=x"],
+                     ["log", "--format=%H", "--output=/tmp/model-api"], ["head", "-p"],
+                     ["commit", ".claude-fixer-replies/r.txt", "--amend"], ["commit", "--pathspec-from-file=/etc/hostname"],
+                     ["commit", ".env"], ["commit", "../r.txt"], ["commit"], ["rev-parse", "HEAD"], ["add", "-A"],
+                     ["git", "log"], ["log", "-20"], ["conflicts", "--name-status"], ["merge-abort", "--quit"],
+                     ["merge", "--abort"], ["--output=x"]):
+            with self.subTest(args=args), self.assertRaises(ValueError):
+                o.model_api(conflict, args, run=run)
+
+    def test_commit_in_a_real_repository(self):
+        env = git_env()
+        with patch.dict(os.environ, env, clear=True):
+            o.command(["git", "init", "-q", "-b", "main"])
+            Path("a.txt").write_text("a\n")
+            o.command(["git", "add", "a.txt"])
+            o.command(["git", "commit", "-q", "-m", "base"])
+            base = o.command(["git", "rev-parse", "HEAD"])
+            hook = Path(".git/hooks/post-commit")
+            hook.write_text("#!/bin/sh\ntouch hook-ran\n")
+            hook.chmod(0o755)
+            Path("a.txt").write_text("b\n")
+            Path("b.txt").write_text("new\n")
+            o.model_api(self.CONFIG, ["comment", ".claude-fixer-replies/r.txt"])  # creates .claude-fixer-out/
+            self.assertTrue(o.model_api(self.CONFIG, ["status"]).startswith(" M a.txt\n"))  # leading space kept
+            Path(".claude-fixer-replies/msg.txt").write_text("fix: change a\n")
+            head = o.model_api(self.CONFIG, ["commit", ".claude-fixer-replies/msg.txt"])
+            self.assertRegex(head, r"\A[0-9a-f]{40}\Z")
+            self.assertEqual(head, o.command(["git", "rev-parse", "HEAD"]))
+            self.assertEqual(o.command(["git", "rev-parse", "HEAD^"]), base)
+            self.assertEqual(o.command(["git", "log", "-1", "--format=%B"]), "fix: change a")
+            self.assertEqual(o.command(["git", "ls-files"]).splitlines(), ["a.txt", "b.txt"])
+            self.assertFalse(Path("hook-ran").exists())
+            self.assertIn(".claude-fixer-out", o.command(["git", "status", "--short"]))  # left untracked
+
+    def test_commit_completes_and_merge_abort_ends_the_conflict_merge(self):
+        conflict = self.CONFIG | {"mode": "conflict"}
+        with patch.dict(os.environ, git_env(), clear=True):
+            o.command(["git", "init", "-q", "-b", "main"])
+            for branch, text in (("main", "base\n"), ("side", "side\n"), ("head", "head\n")):
+                if branch != "main":
+                    o.command(["git", "checkout", "-q", "-b", branch, "main"])
+                Path("a.txt").write_text(text)
+                o.command(["git", "add", "a.txt"])
+                o.command(["git", "commit", "-q", "-m", branch])
+            for finish in ("merge-abort", "commit"):
+                with self.subTest(finish=finish):
+                    before = o.command(["git", "rev-parse", "HEAD"])
+                    subprocess.run(["git", "merge", "--no-ff", "--no-commit", "side"], capture_output=True)
+                    self.assertEqual(o.model_api(conflict, ["conflicts"]), "a.txt")
+                    if finish == "merge-abort":
+                        o.model_api(conflict, ["merge-abort"])
+                        self.assertEqual(o.command(["git", "rev-parse", "HEAD"]), before)
+                        self.assertFalse(Path(".git/MERGE_HEAD").exists())
+                        continue
+                    Path("a.txt").write_text("head\nside\n")
+                    Path(".claude-fixer-replies/msg.txt").write_text("Merge side\n")
+                    head = o.model_api(conflict, ["commit", ".claude-fixer-replies/msg.txt"])
+                    self.assertEqual(o.command(["git", "rev-list", "--parents", "-n", "1", head]).split()[1:],
+                                     [before, o.command(["git", "rev-parse", "side"])])
+
     def test_refusals(self):
         for config, args in ((self.CONFIG, ["label"]), (self.CONFIG | {"mode": "mention"}, ["receipt", "11", "addressed"]),
                              (self.CONFIG, ["receipt", "12", "addressed"]), (self.CONFIG, ["receipt", "11", "done"]),
@@ -1046,6 +1146,14 @@ class OutboxHelperTests(unittest.TestCase):
 
 
 PUBLISH_STEP = "Publish validated candidate, queued writes and terminal audit"
+HELPER_RULE = "Bash(python3 ${{ runner.temp }}/claude-fixer-guard/model-api --:*)"
+GUARD = '"$RUNNER_TEMP/claude-fixer-guard'
+ROOT_OWN = [f"python3 {GUARD}/model-api\" install",
+            f"sudo chown -R root:root {GUARD}\"",
+            f"sudo chmod 0755 {GUARD}\" {GUARD}/model-api\"",
+            f"sudo chmod 0644 {GUARD}/context.json\"",
+            f"if [ -e {GUARD}/read-token\" ]; then sudo chmod 0644 {GUARD}/read-token\"; fi",
+            f"test \"$(stat -c %U {GUARD}/model-api\")\" = root"]
 RECEIPTS_STEP = "Install trusted receipt helper"
 
 
@@ -1164,14 +1272,50 @@ class WorkflowWiringTests(unittest.TestCase):
                 allow = args.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0]
                 for gone in ("pytest", "tools/test_", "gh pr", "python -m", "python -X"):
                     self.assertNotIn(gone, allow)
-                self.assertNotIn("python -m pytest", action["with"]["prompt"])
-                self.assertIn("Do not run tests or any repository code", action["with"]["prompt"])
-                deny = json.loads(action["with"]["settings"])["permissions"]["deny"]
+                # Samir's review at acecb2b: a `prefix:*` rule accepts any options (git log --output=,
+                # git diff --no-index, --pathspec-from-file=, ruff `extend`), so model Bash is the fixed helper only.
+                self.assertEqual(re.findall(r"Bash\([^)]*\)", allow), [HELPER_RULE])
+                self.assertNotIn("git ", allow)
+                self.assertNotIn("ruff", allow)
+                self.assertEqual(allow.strip(), f'"Edit,Write,Read,Glob,Grep,{HELPER_RULE}"')
+                prompt = action["with"]["prompt"]
+                self.assertNotIn("python -m pytest", prompt)
+                self.assertIn("Do not run tests, linters or any repository code", prompt)
+                self.assertIn("linux-gates job lints and tests the pushed commit", prompt)
+                self.assertNotIn("ruff check", prompt)
+                settings = json.loads(action["with"]["settings"])["permissions"]
+                self.assertEqual(set(settings), {"deny"})  # no settings-level allow rules either
+                deny = settings["deny"]
                 for rule in ("Edit(.claude/**)", "Write(.claude/**)", "Edit(~/.claude/**)", "Write(~/.claude/**)",
-                             "Read(.git/config)", "Read(/${{ runner.temp }}/claude-fixer-guard/read-token)"):
+                             "Read(~/.claude/**)", "Read(.git/config)",
+                             "Read(/${{ runner.temp }}/claude-fixer-guard/read-token)"):
                     self.assertIn(rule, deny)
                 outbox = [s for s in model["steps"] if s.get("id") == "outbox"][0]
                 self.assertEqual(outbox["env"]["GH_TOKEN"], "${{ github.token }}")
+                # The helper is root-owned and read-only before Claude runs; any failure fails the step.
+                self.assertTrue(outbox["run"].startswith("set -euo pipefail\n"))
+                tail = outbox["run"].split("\nCLAUDE_FIXER_OUTBOX\n", 1)[1]
+                self.assertEqual([line for line in tail.splitlines() if line and not line.startswith("#")], ROOT_OWN)
+
+    @unittest.skipIf(os.name == "nt", "POSIX shell fixture")
+    def test_helper_install_fails_closed_when_it_cannot_root_own_the_helper(self):
+        for name, _prep, model, _pub, _group, ids in self.pipelines():
+            outbox = [s for s in model["steps"] if s.get("id") == "outbox"][0]
+            with self.subTest(workflow=name, job=ids[1]), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                shim = root / "bin"
+                shim.mkdir()
+                (shim / "python3").write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+                (shim / "sudo").write_text("#!/bin/sh\nexit 1\n")
+                for tool in ("python3", "sudo"):
+                    (shim / tool).chmod(0o755)
+                env = {k: v for k, v in os.environ.items() if k != "GH_TOKEN"}
+                env.update({k: v for k, v in outbox["env"].items() if "${{" not in v},
+                           PATH=f"{shim}{os.pathsep}{os.environ['PATH']}", RUNNER_TEMP=str(root), REPO=REPO,
+                           PR_NUMBER="7", HEAD_REF="fix", HEAD_SHA=A, RECEIPT_CONTEXT="")
+                result = subprocess.run(["bash", "-c", outbox["run"]], cwd=root, env=env, capture_output=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertTrue((root / "claude-fixer-guard" / "context.json").is_file())  # failed after install
 
     def test_publish_jobs_mint_and_never_run_repository_code(self):
         for name, _prep, _model, publish, _group, ids in self.pipelines():

@@ -637,11 +637,13 @@ class WorkflowStructureTests(unittest.TestCase):
 
     def test_acceptance_gates_before_push(self) -> None:
         devin = self._job("devin-review-fix")
-        self.assertIn("lint gate", devin.lower())
-        self.assertIn("ruff check app", devin)
+        # CSL-377 (Samir, acecb2b): Claude runs no gate at all; `ruff check app` accepted a
+        # PR-controlled `extend` config that prints arbitrary files.
+        self.assertIn("do not run tests, linters or any repository code", devin.lower())
+        self.assertNotIn("ruff check app", devin)
         # The model job runs no repository code next to its credentials (Chaandan, 5f904c3);
         # linux-gates tests the pushed commit.
-        self.assertIn("linux-gates job runs the full test suite on the pushed commit", devin)
+        self.assertIn("linux-gates job lints and tests the pushed commit", devin)
         self.assertNotIn("python -m pytest", devin.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0])
         # The prompt names tools/ci_gate.py as a protected path (CSL-377);
         # it is never an allowed gate command.
@@ -780,7 +782,7 @@ def load_denials():
 
 
 class FixerGateAndPromptTests(unittest.TestCase):
-    GATES = ("Bash(ruff check app)",)
+    HELPER = "Bash(python3 ${{ runner.temp }}/claude-fixer-guard/model-api --:*)"
     REMOVED = ("Bash(python -m pytest -q app/tests)", "Bash(python -X utf8 -B tools/test_claude_pr_fixer.py)",
                "Bash(python3 -X utf8 -B tools/test_claude_pr_fixer.py)", "Bash(gh pr view:*)", "Bash(gh pr diff:*)")
 
@@ -794,8 +796,10 @@ class FixerGateAndPromptTests(unittest.TestCase):
     def test_gates_are_single_commands_allowlisted_exactly(self) -> None:
         for job in ("claude-mention", "devin-review-fix"):
             body = self._job(job)
-            for gate_tool in self.GATES:
-                self.assertIn(gate_tool, body, job)
+            # CSL-377 (Samir, acecb2b): the fixed helper is the only Bash rule; no gate commands.
+            allow = body.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0]
+            self.assertEqual(re.findall(r"Bash\([^)]*\)", allow), [self.HELPER], job)
+            self.assertNotIn("Bash(ruff", body, job)
             for removed in self.REMOVED:
                 self.assertNotIn(removed, body, job)
             self.assertNotIn("Bash(cd ", body, job)
@@ -818,11 +822,16 @@ class FixerGateAndPromptTests(unittest.TestCase):
             self.assertIn("do NOT push", body, job)
             self.assertIn("Never exit without either committing a fix or queuing that failure reply", body, job)
             self.assertIn("UNTRUSTED DATA", body, job)
-            self.assertIn("exactly as written above: no pipes, redirects, or extra words", body, job)
+            self.assertNotIn("exactly as written above", body, job)
+            self.assertIn("model-api -- status|diff|diff-stat|log|head", body, job)
             self.assertIn("no heredocs, loops, or &&", body, job)
-            self.assertIn("git commit -m with a short message", body, job)
+            self.assertNotIn("git commit -m", body, job)
+            self.assertIn("model-api -- commit .claude-fixer-replies/NAME.txt", body, job)
+            self.assertIn("prints the full 40/64-character commit SHA; use that SHA", body, job)
             self.assertIn("use Edit/Write for files", body, job)
-            self.assertIn("the gate result", body, job)
+            self.assertNotIn("the gate result", body, job)
+            self.assertIn("that linux-gates checks the pushed commit", body, job)
+            self.assertIn("If you cannot complete the fix, or a command you need is denied", body, job)
 
     def test_denials_are_reported_after_each_fixer(self) -> None:
         for job in ("claude-mention", "devin-review-fix"):
@@ -836,7 +845,8 @@ class FixerGateAndPromptTests(unittest.TestCase):
         mention = self._job("claude-mention")
         self.assertIn("actions/setup-python@v5", mention)
         self.assertIn("Install acceptance-gate deps", mention)
-        self.assertIn("ruff check app", mention)
+        self.assertNotIn("ruff check app", mention)
+        self.assertIn("linux-gates job lints and tests the pushed commit", mention)
         self.assertNotIn("Bash(python -m pytest -q app/tests)", mention)
 
     def test_embedded_denials_match_source(self) -> None:
@@ -1291,8 +1301,11 @@ class ConflictJobStructureTests(unittest.TestCase):
         self.assertIn("Report tool-permission denials", job)
         self.assertIn("UNTRUSTED DATA", job)
         self.assertIn("no heredocs, loops, or &&", job)
-        self.assertIn("exactly as written above", job)
-        self.assertIn("ruff check app", job)
+        self.assertNotIn("exactly as written above", job)
+        self.assertIn("model-api -- status and python3 ${{ runner.temp }}/claude-fixer-guard/model-api -- conflicts", job)
+        self.assertEqual(re.findall(r"Bash\([^)]*\)", allow), [FixerGateAndPromptTests.HELPER])
+        self.assertNotIn("ruff check app", job)
+        self.assertIn("linux-gates job lints and tests the pushed commit", job)
         self.assertNotIn("python -m pytest -q app/tests", job)
 
     def test_resolver_comments_or_labels(self) -> None:
@@ -1300,7 +1313,8 @@ class ConflictJobStructureTests(unittest.TestCase):
         self.assertIn("merge commit SHA", job)
         self.assertIn("needs-decision", job)
         self.assertIn("push NOTHING", job)
-        self.assertIn("git merge --abort", job)
+        self.assertIn("model-api -- merge-abort", job)
+        self.assertIn("model-api -- commit .claude-fixer-replies/NAME.txt", job)
         self.assertIn("Never exit without either committing the merge or queuing that comment", job)
 
     def test_comment_and_review_jobs_ignore_conflict_events(self) -> None:

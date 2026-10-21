@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
-"""Model-side GitHub helper for the untrusted Claude model job (CSL-377).
+"""Model-side helper for the untrusted Claude model job (CSL-377).
 
-Installed outside the PR tree from the workflow's embedded, tested source.
-Reads call fixed same-PR endpoints with the job's read-only token. Claude Code's
-subprocess scrub removes GH_TOKEN from the commands Claude runs, so the trusted
-install step also stores that read-only token next to this helper. Writes are
-never sent from this job: `comment`, `reply`, `label` and `receipt` append a
-validated record to `.claude-fixer-out/outbox.jsonl`, which the trusted publish
-job revalidates and posts only after it has checked the live PR (and, for
-receipts, its own verified push). Nothing here is a security boundary: the
-model job runs PR code, so the publisher treats the outbox as untrusted.
+Installed outside the PR tree from the workflow's embedded, tested source, then
+made root-owned and read-only by the install step, and the only Bash command the
+model may run. Git operations are fixed argv lists with no model-supplied
+options: `status`, `diff`, `diff-stat`, `log`, `head`, `commit MSGFILE` (stages
+every change except the helper directories, commits the validated message
+without hooks and prints the full new HEAD) and, in the conflict job only,
+`conflicts` and `merge-abort`. Git runs without a shell, hooks, fsmonitor or
+pager. GitHub reads call fixed same-PR endpoints with the job's read-only token.
+Claude Code's subprocess scrub removes GH_TOKEN from the commands Claude runs, so
+the trusted install step also stores that read-only token next to this helper.
+Writes are never sent from this job: `comment`, `reply`, `label` and `receipt`
+append a validated record to `.claude-fixer-out/outbox.jsonl`, which the trusted
+publish job revalidates and posts only after it has checked the live PR (and,
+for receipts, its own verified push). Nothing here is a security boundary for
+publishing: the publisher treats the bundle and outbox as untrusted.
 """
 from __future__ import annotations
 
@@ -29,11 +35,18 @@ MAX_RECORDS = 50
 MAX_BODY = 65000
 OUTBOX = Path(".claude-fixer-out") / "outbox.jsonl"
 READ_TOKEN = "read-token"
+# Every git call: no shell, hooks, fsmonitor or pager, and no model-supplied options.
+GIT = ("git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.pager=cat")
+GIT_READS = {"status": ("status", "--short"), "diff": ("diff",), "diff-stat": ("diff", "--stat"),
+             "log": ("log", "--oneline", "-20"), "head": ("log", "-1", "--stat")}
+CONFLICT_GIT = {"conflicts": ("diff", "--name-only", "--diff-filter=U"), "merge-abort": ("merge", "--abort")}
+STAGE = ("add", "-A", "--", ".", ":(exclude).claude-fixer-out", ":(exclude).claude-fixer-replies")
 
 
 def command(args, **kwargs):
     kwargs.setdefault("timeout", 30)
-    return subprocess.check_output(args, text=True, stderr=subprocess.PIPE, **kwargs).strip()
+    # rstrip only: leading spaces are meaningful in `git status --short`.
+    return subprocess.check_output(args, text=True, stderr=subprocess.PIPE, **kwargs).rstrip()
 
 
 def validate(config):
@@ -85,9 +98,28 @@ def append(record):
     return "Queued for the workflow publisher; it posts only after its own live-PR checks."
 
 
+def git(run, *args):
+    return run([*GIT, *args])
+
+
+def commit(body_path, run):
+    # The message is validated like a comment body and passed as one argv element.
+    message = read_body(body_path)
+    git(run, *STAGE)
+    # In the conflict job this completes the in-progress merge.
+    git(run, "commit", "--no-verify", "-q", "-m", message)
+    return git(run, "rev-parse", "HEAD")
+
+
 def model_api(config, args, run=command):
-    """Fixed same-PR reads and queued writes. No model-supplied endpoint, method or flags."""
+    """Fixed git operations, same-PR reads and queued writes. No model-supplied endpoint, method or flags."""
     validate(config)
+    if len(args) == 1 and args[0] in GIT_READS:
+        return git(run, *GIT_READS[args[0]])
+    if len(args) == 1 and args[0] in CONFLICT_GIT and config["mode"] == "conflict":
+        return git(run, *CONFLICT_GIT[args[0]])
+    if len(args) == 2 and args[0] == "commit":
+        return commit(args[1], run)
     root = f"repos/{config['repo']}"
     pull = f"{root}/pulls/{config['number']}"
     reads = {"read": pull, "comments": f"{root}/issues/{config['number']}/comments",
@@ -117,7 +149,7 @@ def model_api(config, args, run=command):
         return append({"op": "comment", "body": read_body(args[1])})
     if len(args) == 3 and args[0] == "reply" and re.fullmatch(r"[1-9][0-9]{0,19}", args[1]):
         return append({"op": "reply", "comment_id": int(args[1]), "body": read_body(args[2])})
-    raise ValueError("unsupported PR API operation")
+    raise ValueError("unsupported helper operation")
 
 
 def main():
@@ -138,6 +170,9 @@ def main():
             # The job's read-only token; it is also in the checkout's origin URL.
             with os.fdopen(os.open(directory / READ_TOKEN, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as handle:
                 handle.write(token)
+        # The install step then root-owns this directory and sets 0755 (directory,
+        # helper) and 0644 (context, token): the runner user can run and read them
+        # but cannot change them.
         Path(__file__).chmod(0o700)
         return 0
     try:
@@ -148,7 +183,7 @@ def main():
             os.environ["GH_TOKEN"] = (directory / READ_TOKEN).read_text(encoding="utf-8").strip()
         print(model_api(config, sys.argv[2:]))
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
-        print("PR API operation failed or is not permitted.", file=sys.stderr)
+        print("Helper operation failed or is not permitted.", file=sys.stderr)
         return 1
     return 0
 
