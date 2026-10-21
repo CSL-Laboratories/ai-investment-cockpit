@@ -1393,6 +1393,18 @@ PIPELINES = {
 }
 
 
+# Samir's review of #231 at 7f06a3b: each alternative of the package step's credential grep has a
+# case that it alone matches, so removing any one alternative fails the test.
+ISOLATED_CREDENTIALS = {
+    "userinfo": ("remote.origin.url", "https://someone:notatoken@github.com/acme/example.git"),
+    "access-token-user": ("credential.https://github.com.username", "x-access-token"),
+    # The actions/checkout layout, with a value that is not token-shaped.
+    "extraheader": ("http.https://github.com/.extraheader", "AUTHORIZATION: basic bm90YXRva2Vu"),
+    "pat": ("credential.https://github.com.password", "github_pat_NotARealToken"),
+    "token-shape": ("credential.https://github.com.password", TOKEN),
+}
+
+
 class WorkflowWiringTests(unittest.TestCase):
     def test_conflict_writer_devin_race_check_reads_author_and_committer(self):
         text = (ROOT / ".github/workflows/claude-conflict-writer.yml").read_text(encoding="utf-8")
@@ -1455,7 +1467,8 @@ class WorkflowWiringTests(unittest.TestCase):
         # Runs each model job's real package script against a repo, with a git wrapper that can fail `bundle`.
         for name, _prep, model, _pub, _group, ids in self.pipelines():
             script = [s for s in model["steps"] if s.get("name") == "Package untrusted model output"][0]["run"]
-            for case in ("unchanged", "bundled", "failed", "credential", "helper", "big", "unreadable"):
+            for case in ("unchanged", "bundled", "failed", "credential", "helper", "big", "unreadable",
+                         *ISOLATED_CREDENTIALS):
                 with self.subTest(workflow=name, job=ids[1], case=case), tempfile.TemporaryDirectory() as tmp:
                     root = Path(tmp)
                     work = Work(root / "repo")
@@ -1467,6 +1480,8 @@ class WorkflowWiringTests(unittest.TestCase):
                     work.git("remote", "add", "origin", url)
                     if case == "helper":
                         work.git("config", "credential.helper", str(root / ".git-credential-gh-token"))
+                    if case in ISOLATED_CREDENTIALS:
+                        work.git("config", *ISOLATED_CREDENTIALS[case])
                     if case == "big":  # Fable review of 7d56eb8: a hit before >64 KiB of config still fails
                         work.git("config", "remote.origin.url", "https://x-access-token:" + TOKEN + "@github.com/a/b.git")
                         for index in range(1500):
@@ -1486,8 +1501,9 @@ class WorkflowWiringTests(unittest.TestCase):
                     env = dict(git_env(), PATH=f"{shim}{os.pathsep}{os.environ['PATH']}", RUNNER_TEMP=str(root),
                                GITHUB_OUTPUT=str(output), HEAD_SHA=head, BASE_SHA=head, EXECUTION_FILE="")
                     subprocess.run(["bash", "-c", script], cwd=work.path, env=env, check=True, capture_output=True)
-                    expected = {"credential": "failed", "helper": "bundled", "big": "failed",
-                                "unreadable": "failed"}.get(case, case)
+                    expected = ("failed" if case in ISOLATED_CREDENTIALS else
+                                {"credential": "failed", "helper": "bundled", "big": "failed",
+                                 "unreadable": "failed"}.get(case, case))
                     self.assertEqual(output.read_text(), f"package_status={expected}\n")
                     bundle = root / "claude-writer-out" / "candidate.bundle"
                     self.assertEqual(bundle.exists(), expected == "bundled")
