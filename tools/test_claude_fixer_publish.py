@@ -148,6 +148,19 @@ class ProtectedPathTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertFalse(p.is_protected(path))
 
+    def test_fixer_test_suites_and_credential_filenames_are_protected(self):
+        # CSL-430 (Lucas's receipt): the fixer's own tests, and credential filenames at any depth.
+        for path in ("tools/test_claude_fixer_guard.py", "tools/test_claude_fixer_publish.py",
+                     "tools/test_claude_fixer_receipts.py", "TOOLS/Test_Claude_Fixer_Publish.py",
+                     ".netrc", "_netrc", "home/.netrc", ".npmrc", "web/.npmrc", ".NPMRC", ".pypirc", "pkg/.pypirc"):
+            with self.subTest(path=path):
+                self.assertTrue(p.is_protected(path))
+        for path in ("docs/tools/test_claude_fixer_publish.py", "tools/test_claude_fixer_publish.py.bak",
+                     "tools/test_fixer_failure_escalation.py", "tools/test_codex_gate.py", "netrc", "docs/npmrc.md",
+                     "pypirc.example", ".aws/config", ".pgpass"):
+            with self.subTest(path=path):
+                self.assertFalse(p.is_protected(path))
+
 
 class LinearValidationTests(GitCase):
     def test_valid_linear_commits_pass(self):
