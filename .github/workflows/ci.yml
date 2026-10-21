@@ -7,7 +7,7 @@ run-name: ${{ inputs.candidate_id && format('candidate:{0}:ci:{1}', inputs.candi
 # broker, witness, paper-day, or pre-live gates. macOS remains best-effort; Hetzner
 # is outside the current package.
 #
-# Hosted split (cost: keep ordinary PR spend on Blacksmith Linux 2 vCPU):
+# Hosted split (CSL-408: every job runs on a free GitHub-hosted runner):
 #   linux-gates  — required PR check; Linux 3.11+3.12, ruff + pytest
 #                  (PR, merge_group, dispatch, and retained main push fallback)
 #   windows      — merge_group, workflow_dispatch, or PR label `ci:full`
@@ -18,17 +18,17 @@ run-name: ${{ inputs.candidate_id && format('candidate:{0}:ci:{1}', inputs.candi
 #   benchmarks   — pull_request only, and only when filter runs the code gates.
 #                  Same-runner median comparison against the PR base SHA. Warns
 #                  above 10% after sample spread; does not fail linux-gates.
-#                  One 2 vCPU job, aimed at well under a minute. Blacksmith
-#                  Ubuntu x64 2 vCPU is $0.004/min, so a billed minute is a
-#                  rounding error next to the $50 budget.
+#                  One ubuntu-24.04 job, aimed at well under a minute. It is a
+#                  free GitHub-hosted runner on this public repository
+#                  (CSL-408).
 #
 # Ordinary labeled/unlabeled events do not start this workflow, so they cannot
 # post a skipped or successful linux-gates over a real result. `ci:full` and
 # `enhancement` re-trigger via ci-label-retrigger.yml (workflow_dispatch); that
 # companion has no job named linux-gates. Draft PRs skip the test matrix; the
 # linux-gates aggregator still runs and fails closed until ready_for_review.
-# Non-test jobs (filter, linux-gates) use ubuntu-latest; the public repo does
-# not pay for those minutes. The Python linux/windows matrix stays on Blacksmith.
+# Non-test jobs (filter, linux-gates) use ubuntu-latest; the Python linux/windows
+# matrix uses ubuntu-24.04 and windows-2025 (CSL-408). None is billed here.
 #
 # This workflow supersedes the Blacksmith Migration Wizard PR that only swapped
 # runner labels (open PR #100, branch blacksmith-migration-33156c9).
@@ -349,7 +349,7 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12"]
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     # Main requires the release extension build and batch parity in this cell.
     timeout-minutes: 30
     steps:
@@ -606,8 +606,8 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12"]
-    runs-on: blacksmith-2vcpu-windows-2025
-    timeout-minutes: 30
+    runs-on: windows-2025
+    timeout-minutes: 50
     steps:
       # Trusted policy commit first (github.sha on the default-branch dispatch),
       # validator staged outside the workspace, then the exact candidate merge.
@@ -819,7 +819,7 @@ jobs:
           (github.event_name != 'pull_request' || github.event.action != 'synchronize' || github.event.pull_request.draft == true))
       ) &&
       github.event_name == 'pull_request' && needs.filter.outputs.run-tests == 'true'
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
