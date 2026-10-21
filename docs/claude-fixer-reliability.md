@@ -102,14 +102,18 @@ lists with no model-supplied options, no shell, hooks, fsmonitor or pager:
 `head` (`log -1 --stat`), and in the conflict job `conflicts`
 (`diff --name-only --diff-filter=U`) and `merge-abort`. `commit MSGFILE` reads
 the message from `.claude-fixer-replies/NAME.txt` with the comment-body checks,
-stages every change except `.claude-fixer-out`, `.claude-fixer-replies` and
-the sandbox's masks: Claude Code binds `/dev/null` over protected paths that do
-not exist, such as `.bashrc`, `.idea` or `.mcp.json`, and `git add` refuses
-those devices. An untracked path that is not a regular file or symlink, or an
-empty top-level leftover of one of those names, is skipped; a tracked path that
-became a device was deleted, so the commit is refused rather than dropping it,
-runs `git commit --no-verify -q -m <message>` (completing the merge in the
-conflict job) and prints the full new `HEAD`. Its install step makes the helper
+stages every change except the sandbox's masks, then unstages
+`.claude-fixer-out` and `.claude-fixer-replies` with `git reset`. Claude Code
+binds `/dev/null` over protected paths that do not exist, such as `.bashrc`,
+`.idea` or `.mcp.json`, and `git add` refuses those devices. An untracked path
+that is not a regular file or symlink, or an empty top-level leftover of one of
+those names, is skipped. A tracked path that became a device was deleted, so
+the commit is refused before anything is staged, rather than dropping it. The
+helper directories are not `:(exclude)` pathspecs: the model job lists them in
+`.git/info/exclude`, and `git add` exits 1 when a pathspec names an ignored
+path, which failed every commit in the second canary run (39569528483). Then
+`commit` runs `git commit --no-verify -q -m <message>` (completing the merge in
+the conflict job) and prints the full new `HEAD`. Its install step makes the helper
 directory root-owned, with the directory and helper `0755` and its context and
 token `0644`, and checks the owner, so Claude's commands (as the runner user) can
 run and read it but cannot replace it. Lint and tests run in the required

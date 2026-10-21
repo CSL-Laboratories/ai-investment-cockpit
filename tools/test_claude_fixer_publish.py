@@ -1153,9 +1153,9 @@ class OutboxHelperTests(unittest.TestCase):
         Path("sub/.zshrc").write_text("")  # only top-level names are masked
         Path(".zshrc").write_text("")  # an empty leftover mount point
         o.model_api(self.CONFIG, ["commit", ".claude-fixer-replies/msg.txt"], run=run)
-        self.assertEqual(calls[2], self.GIT + ["add", "-A", "--", ".", ":(exclude).claude-fixer-out",
-                                               ":(exclude).claude-fixer-replies", ":(exclude,literal)mask",
+        self.assertEqual(calls[2], self.GIT + ["add", "-A", "--", ".", ":(exclude,literal)mask",
                                                ":(exclude,literal).zshrc"])
+        self.assertEqual(calls[3], self.GIT + list(o.UNSTAGE))
 
     @unittest.skipUnless(hasattr(os, "mkfifo"), "POSIX special files")
     def test_masked_paths_stay_out_of_a_real_commit(self):
@@ -1216,8 +1216,13 @@ class OutboxHelperTests(unittest.TestCase):
         install = dict(env, REPO=REPO, PR_NUMBER="7", HEAD_SHA=head, HEAD_REF="fix", WRITER_MODE="mention")
         subprocess.run([sys.executable, "-I", str(script), "install"], env=install, check=True)
         (repo / "a.txt").write_text("b\n")
+        (repo / ".git/info").mkdir(exist_ok=True)
+        with open(repo / ".git/info/exclude", "a", encoding="utf-8") as handle:
+            handle.write(".claude-fixer-out/\n.claude-fixer-replies/\n")  # the model job's layout
         (repo / ".claude-fixer-replies").mkdir()
         (repo / ".claude-fixer-replies" / "m.txt").write_text("fix: a\n")
+        (repo / ".claude-fixer-out").mkdir()
+        (repo / ".claude-fixer-out" / "outbox.jsonl").write_text("")
         sandbox = ["bwrap", "--dev-bind", "/", "/", "--ro-bind", "/dev/null", str(repo / ".zshrc"),
                    "--ro-bind", "/dev/null", str(repo / ".idea"), "--chdir", str(repo)]
         # Control: plain `git add -A` fails on the masks.
@@ -1308,7 +1313,8 @@ class OutboxHelperTests(unittest.TestCase):
                 self.assertEqual(calls, [
                     self.GIT + ["ls-files", "-z", "--modified"],
                     self.GIT + ["ls-files", "-z", "--others", "--exclude-standard"],
-                    self.GIT + ["add", "-A", "--", ".", ":(exclude).claude-fixer-out", ":(exclude).claude-fixer-replies"],
+                    self.GIT + ["add", "-A", "--", "."],
+                    self.GIT + ["reset", "-q", "--", ".claude-fixer-out", ".claude-fixer-replies"],
                     self.GIT + ["commit", "--no-verify", "-q", "-m", "-fix: a message\nwith a second line\n"],
                     self.GIT + ["rev-parse", "HEAD"]])
         for body in ("", "<!-- claude-fixer-result:{} -->"):
@@ -1353,6 +1359,47 @@ class OutboxHelperTests(unittest.TestCase):
             self.assertEqual(o.command(["git", "ls-files"]).splitlines(), ["a.txt", "b.txt"])
             self.assertFalse(Path("hook-ran").exists())
             self.assertIn(".claude-fixer-out", o.command(["git", "status", "--short"]))  # left untracked
+
+    def test_commit_with_the_model_jobs_ignored_helper_dirs(self):
+        # CSL-377 canary run 39569528483: the model job lists both helper dirs in .git/info/exclude, and
+        # `git add` exits 1 when a pathspec, even an exclude, names an ignored path ("git add exited 1").
+        with patch.dict(os.environ, git_env(), clear=True):
+            o.command(["git", "init", "-q", "-b", "main"])
+            Path("a.txt").write_text("a\n")
+            o.command(["git", "add", "a.txt"])
+            o.command(["git", "commit", "-q", "-m", "base"])
+            base = o.command(["git", "rev-parse", "HEAD"])
+            Path(".git/info").mkdir(exist_ok=True)
+            with open(".git/info/exclude", "a", encoding="utf-8") as handle:
+                handle.write(".claude-fixer-out/\n.claude-fixer-replies/\n")  # as the model job's install step does
+            o.model_api(self.CONFIG, ["comment", ".claude-fixer-replies/r.txt"])  # creates .claude-fixer-out/
+            Path("a.txt").write_text("b\n")
+            Path(".claude-fixer-replies/msg.txt").write_text("fix: change a\n")
+            # Control: the old exclude pathspecs fail on this layout after staging the change.
+            control = subprocess.run(["git", "add", "-A", "--", ".", ":(exclude).claude-fixer-out",
+                                      ":(exclude).claude-fixer-replies"], capture_output=True, text=True, check=False)
+            self.assertEqual(control.returncode, 1, control.stderr)
+            self.assertIn("ignored", control.stderr)
+            o.command(["git", "reset", "-q"])
+            head = o.model_api(self.CONFIG, ["commit", ".claude-fixer-replies/msg.txt"])
+            self.assertEqual(o.command(["git", "rev-parse", "HEAD^"]), base)
+            self.assertEqual(o.command(["git", "show", "--name-only", "--format=", head]).split(), ["a.txt"])
+
+    def test_commit_keeps_tracked_helper_dir_changes_out(self):
+        # The unstage covers tracked paths too, as the exclude pathspecs did.
+        with patch.dict(os.environ, git_env(), clear=True):
+            o.command(["git", "init", "-q", "-b", "main"])
+            Path("a.txt").write_text("a\n")
+            Path(".claude-fixer-out").mkdir()
+            Path(".claude-fixer-out/tracked.txt").write_text("old\n")
+            o.command(["git", "add", "-A"])
+            o.command(["git", "commit", "-q", "-m", "base"])
+            Path("a.txt").write_text("b\n")
+            Path(".claude-fixer-out/tracked.txt").write_text("new\n")
+            Path(".claude-fixer-replies/msg.txt").write_text("fix: change a\n")
+            head = o.model_api(self.CONFIG, ["commit", ".claude-fixer-replies/msg.txt"])
+            self.assertEqual(o.command(["git", "show", "--name-only", "--format=", head]).split(), ["a.txt"])
+            self.assertEqual(o.command(["git", "show", f"{head}:.claude-fixer-out/tracked.txt"]), "old")
 
     def test_user_level_git_config_cannot_run_drivers_filters_or_signing(self):
         # Fable review of 7fbe079: only GIT_CONFIG_GLOBAL/NOSYSTEM stop these, as in the publisher.

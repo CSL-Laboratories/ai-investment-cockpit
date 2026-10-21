@@ -48,7 +48,10 @@ MARKER_SIZE = 7
 MAX_MARKER_SIZE = 1000
 UNMERGED = ("diff", "--name-only", "-z", "--diff-filter=U")
 CONFLICT_GIT = {"conflicts": ("diff", "--name-only", "--diff-filter=U"), "merge-abort": ("merge", "--abort")}
-STAGE = ("add", "-A", "--", ".", ":(exclude).claude-fixer-out", ":(exclude).claude-fixer-replies")
+STAGE = ("add", "-A", "--", ".")
+# Not `:(exclude)` pathspecs: the model job lists these in .git/info/exclude, and `git add`
+# exits 1 when a pathspec names an ignored path (CSL-377 canary, run 39569528483).
+UNSTAGE = ("reset", "-q", "--", ".claude-fixer-out", ".claude-fixer-replies")
 UNTRACKED = ("ls-files", "-z", "--others", "--exclude-standard")
 MODIFIED = ("ls-files", "-z", "--modified")
 # The protected names Claude Code's sandbox masks when they do not exist (Claude Code 2.1.30x).
@@ -215,6 +218,8 @@ def commit(body_path, run, mode):
             if conflict_marker(sizes[name]).search((workspace / name).read_text(encoding="utf-8", errors="replace")):
                 raise ValueError("conflict markers remain")
     git(run, *STAGE, *sandbox_masks(run))
+    # The helper's own files stay out of the commit whether or not they are ignored.
+    git(run, *UNSTAGE)
     # In the conflict job this completes the in-progress merge.
     git(run, "commit", "--no-verify", "-q", "-m", message)
     return git(run, "rev-parse", "HEAD")
