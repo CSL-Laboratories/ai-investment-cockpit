@@ -117,7 +117,7 @@ their own tests (`tools/test_codex_gate.py`, `app/tests/test_stuck_thread_watch.
   (conflict-scan.yml: the read-only `conflict-scan` job and the `conflict-resolve` caller). Retry behaviour itself is tested in
   `tools/test_claude_fixer_*.py` and `tools/test_claude_pr_fixer.py`.
 - **The conflict writer has no eight-commit guard and no cross-run attempt budget.** Each run
-  publishes at most once (claude-conflict-writer.yml:2245, 2321-2330); the scan starts it every two
+  publishes at most once (claude-conflict-writer.yml:2262, 2338-2347); the scan starts it every two
   hours and on manual dispatch, never on a `main` push (conflict-scan.yml:12-14, 355). A PR that stays
   conflicted can get a Claude merge attempt on every scheduled scan; pause it if that is unwanted.
 
