@@ -70,10 +70,8 @@ interactive sessions, scheduled loops and Grok Bots. Repository workflows
 conflict-scan, review-gate, the CSL-259 candidate coordinator and other repository
 workflows) and Devin automations keep the roles in [Review roles](#review-roles) and
 [Automations](#automations); their documented markers, receipts and audit comments
-are unchanged. A founder-directed bot review under Review roles is that founder's
-review and is not covered by the comment labels below. It counts as founder-directed
-only when that founder directed that specific review in the same session; a
-scheduled or unattended run is never founder-directed.
+are unchanged. Founder-directed bot reviews under Review roles are that founder's
+reviews and are not covered here; Review roles alone says what counts as one.
 
 **Escalate wins.** If any escalate condition holds, escalate, even inside an
 admitted issue and even when every proceed condition also holds.
@@ -166,7 +164,7 @@ change scope, close issues as decided or post developer-approved comments (nobod
 is there to approve the text). They never mark ready, add or remove GitHub labels,
 dispatch, re-run or cancel, and they label every comment
 `Agent (unattended run, for <developer>):`. Founder-directed bot reviews under
-Review roles are not unattended runs.
+Review roles are not covered here.
 
 ## Codex boundary
 
