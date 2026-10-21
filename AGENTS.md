@@ -85,8 +85,8 @@ issue's scope and its REGISTER package or `REGISTER: none` contract; no product
 behavior, UX, public API, contract or data meaning changes beyond what the issue
 specifies; it is reversible and code changes are covered by a test; it changes no
 spend, credentials, permissions, settings, flags, modes or workflows; no other claim
-or writer's run is active on the branch, files or package; and it starts no paid CI
-(below).
+or writer's run is active on the branch, files or package; and it starts no CI
+beyond what a push to its own PR branch starts (below).
 
 **Escalate** when any holds:
 
@@ -114,29 +114,24 @@ or writer's run is active on the branch, files or package; and it starts no paid
 - a tool or platform refused the action (report it; do not route around it or turn
   one refusal into a standing rule);
 - you would state a decision you cannot link to its record;
-- it would start paid CI no human asked for, or its CI cost is unclear;
+- it would dispatch, re-run or cancel a workflow, or add `ci:full` or `enhancement`,
+  without a human asking for that run;
 - an automation signal needs a human: the fixer is paused (its
   `claude-fixer-paused` or `claude-fixer-loop-cap` marker), a fix receipt cannot be
   verified, a branch with fixer receipts was rebased, or `ci:full` ownership is
   uncertain. Never remove a pause, dispatch the fixer around its budget, or report an
   unverified fix as fixed.
 
-**Paid CI.** On a non-draft PR, a push or marking ready runs `ci.yml`: its
-GitHub-hosted filter starts the Blacksmith Linux jobs (tests, benchmarks and, for
-Rust paths, the `rust.yml` book matrix) only when the change is not docs-only, and
-on a PR already labelled `ci:full` also Windows and macOS. Adding `enhancement` to
-a non-draft, same-repo PR dispatches `ci.yml` (and `rust.yml` for Rust paths) at
-Linux scope, which runs Blacksmith Linux even for a docs-only diff. Adding
-`ci:full`, `enhancement` on a PR already labelled `ci:full`, or a full
-`workflow_dispatch` of `ci.yml` / `rust.yml` starts the full matrix: Blacksmith
-Linux and Windows plus GitHub-hosted `macos-latest`. `ci-label-retrigger.yml` is a
-no-op on drafts and fork heads. Dispatching the fixer, Codex gate, stuck-thread
-watch or other `ubuntu-latest` workflows is not a Blacksmith run but still needs a
-human ask. A push to `main` runs `ci.yml` and `rust.yml`. Their path filters differ
-(`ci.yml` runs tests for anything under `app/`, `docs/PLAN.md` and other paths its
-filter names, and `rust.yml` treats any `.github/` change as Rust-relevant), so treat
-every push to `main` as starting paid CI. Pushes to drafts or to
-branches other than `main` without a PR, and read-only API queries, are fine.
+**CI an agent starts on its own.** Since CSL-408, every CI job runs on free
+GitHub-hosted runners, so none of it is billed. The gate stays because every run
+uses the shared hosted-runner queue. A push to your own PR branch, draft or not, is
+fine: on a non-draft PR it runs `ci.yml` and `rust.yml` under their path filters
+(plus Windows and macOS when the PR already has `ci:full`), so batch pushes. Mark a
+PR ready once, after validation, with no owner hold. Dispatching, re-running or
+cancelling any workflow (CI, the fixer, the Codex gate, the stuck-thread watch), or
+adding `ci:full` or `enhancement` (which dispatch `ci.yml` and `rust.yml` through
+`ci-label-retrigger.yml`), needs a human ask. Agents never push to `main`.
+Read-only API queries are fine.
 
 **How.** Ask on the work issue: one Linear comment @mentioning the issue owner with
 the question, two or three options, your recommendation, and what you will do

@@ -45,12 +45,8 @@ admitted issue and even when everything on the proceed list also holds.
   workflows.
 - Nobody else holds a claim on the branch, files or package, and no other writer's
   run (such as the fixer's `claude-<PR>` lock) is in flight.
-- It starts no paid CI (see below). Pushing to a draft PR or a branch other than
-  `main` with no PR, and read-only Actions/API queries, are fine. A push to `main`
-  runs `ci.yml` and `rust.yml`. Their path filters differ (`ci.yml` runs tests for
-  anything under `app/`, `docs/PLAN.md` and other paths its filter names, and
-  `rust.yml` treats any `.github/` change as Rust-relevant), so treat every push to
-  `main` as starting paid CI.
+- It starts no CI beyond what a push to your own PR branch starts (see below).
+  Read-only Actions/API queries are fine.
 
 ## Raise it to a human when ANY of these hold
 
@@ -79,8 +75,8 @@ admitted issue and even when everything on the proceed list also holds.
   do not turn one refusal into a standing rule.
 - You are about to write "X decided Y" or "Y is the rule" and cannot link to
   where that decision is recorded (see Decisions).
-- It would start paid CI without a human asking for that run, or its CI cost is
-  unclear.
+- It would dispatch, re-run or cancel a workflow, or add `ci:full` or
+  `enhancement`, without a human asking for that run.
 - An automation signal says a human must act: the fixer is paused (its
   `claude-fixer-paused` or `claude-fixer-loop-cap` marker); a fix receipt cannot be
   verified (short SHA, commit not reachable from the PR head, fingerprint
@@ -91,21 +87,20 @@ admitted issue and even when everything on the proceed list also holds.
 
 When unsure, escalate, in the short form below.
 
-## Actions that start paid CI
+## CI an agent starts on its own
 
-- On a non-draft PR, a push or marking it ready runs `ci.yml`. Its GitHub-hosted
-  filter starts the Blacksmith Linux jobs (tests, benchmarks and, for Rust paths,
-  the `rust.yml` book matrix) only when the change is not docs-only, and on a PR
-  already labelled `ci:full` also Windows and macOS. Batch pushes.
-- Adding `enhancement` to a non-draft, same-repo PR dispatches `ci.yml` (and
-  `rust.yml` for Rust paths) at Linux scope: Blacksmith Linux, even for a docs-only
-  diff.
-- Adding `ci:full`, `enhancement` on a PR already labelled `ci:full`, or a full
-  `workflow_dispatch` of `ci.yml` or `rust.yml`, starts the full matrix: Blacksmith
-  Linux and Windows plus GitHub-hosted `macos-latest`. `ci-label-retrigger.yml` is
-  a no-op on drafts and fork heads.
-- Dispatching the fixer, Codex gate, stuck-thread watch or other `ubuntu-latest`
-  workflows is not a Blacksmith run, but it still needs a human ask.
+Since CSL-408, every CI job runs on free GitHub-hosted runners, so none of it is
+billed. The gate stays because every run uses the shared hosted-runner queue.
+
+- A push to your own PR branch, draft or not, is fine. On a non-draft PR it runs
+  `ci.yml` and `rust.yml` under their path filters (plus Windows and macOS when the
+  PR already has `ci:full`), so batch pushes. Mark a PR ready once, after
+  validation, with no owner hold.
+- Dispatching, re-running or cancelling any workflow (CI, the fixer, the Codex
+  gate, the stuck-thread watch), or adding `ci:full` or `enhancement` (which
+  dispatch `ci.yml` and `rust.yml` through `ci-label-retrigger.yml`), needs a
+  human ask.
+- Agents never push to `main`.
 
 Cancelling or not cancelling someone else's runs, and changing concurrency,
 triggers, runner labels, rulesets or required checks, also need a human-assigned
