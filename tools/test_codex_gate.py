@@ -8,6 +8,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import os
+import re
 import subprocess
 import sys
 import unittest
@@ -1574,13 +1575,24 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("job:", self.claude)
         self.assertIn("devin-review-fix", self.claude)
 
-    def test_windows_runner_is_2vcpu(self) -> None:
-        self.assertIn("blacksmith-2vcpu-windows-2025", self.ci)
-        self.assertNotIn("blacksmith-4vcpu-windows-2025", self.ci)
-        self.assertIn("blacksmith-2vcpu-windows-2025", self.rust)
-        self.assertNotIn("blacksmith-4vcpu-windows-2025", self.rust)
-        self.assertIn("blacksmith-2vcpu-windows-2025", self.actionlint)
-        self.assertNotIn("blacksmith-4vcpu-windows-2025", self.actionlint)
+    def test_test_jobs_use_free_github_hosted_runners(self) -> None:
+        # CSL-408: no job may run on a billed Blacksmith runner or use a Blacksmith
+        # action. Comments are stripped (they name the superseded migration branch),
+        # and the blacksmith-sh[bot] login in bot allow-lists is not a runner.
+        configs = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
+        configs += [ROOT / ".github" / "actions" / "run-gates" / "action.yml",
+                    ROOT / ".github" / "actionlint.yaml"]
+        self.assertGreater(len(configs), 5)
+        for path in configs:
+            code = "\n".join(line for line in path.read_text(encoding="utf-8").splitlines()
+                             if not line.lstrip().startswith("#"))
+            hits = re.findall(r"(?i)blacksmith-(?!sh\[bot\])\S*|useblacksmith/\S*", code)
+            with self.subTest(path=path.name):
+                self.assertEqual(hits, [])
+        self.assertIn("runs-on: windows-2025", self.ci)
+        self.assertIn('"runner": "windows-2025"', self.rust)
+        self.assertIn('"runner": "ubuntu-24.04"', self.rust)
+        self.assertNotIn("self-hosted-runner", self.actionlint)
 
     def test_rust_cache_and_label_skip(self) -> None:
         self.assertIn("Swatinem/rust-cache@v2", self.rust)
@@ -1629,7 +1641,7 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("&& 'draft'", self.rust)
         self.assertIn("format('label-{0}-{1}', inputs.pr_head_sha", self.rust)
         linux = self.ci.split("\n  linux:\n", 1)[1].split("\n  linux-gates:\n", 1)[0]
-        self.assertIn("blacksmith-2vcpu-ubuntu-2404", linux)
+        self.assertIn("runs-on: ubuntu-24.04", linux)
         claude_runners = [
             line.strip()
             for line in self.claude.splitlines()
@@ -1681,7 +1693,7 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("needs-decision", self.agents)
         self.assertIn("do **not** add a `CODEX-GATE:` line", self.agents)
         self.assertIn("aggregator is GitHub-hosted", self.agents)
-        self.assertIn("Python 3.11+3.12 matrix it wraps runs on Blacksmith", self.agents)
+        self.assertIn("Python 3.11+3.12 matrix it wraps runs on GitHub-hosted `ubuntu-24.04`", self.agents)
         self.assertIn("fails closed until `ready_for_review`", self.agents)
         self.assertIn("ci-label-retrigger.yml", self.agents)
         claude = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
