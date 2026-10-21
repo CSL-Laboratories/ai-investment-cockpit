@@ -1580,6 +1580,45 @@ class OutboxHelperTests(unittest.TestCase):
                                capture_output=True, text=True, check=False)
         self.assertEqual((other.returncode, other.stderr.strip()), (1, "Helper operation failed or is not permitted."))
 
+    def test_oversized_trigger_notice_is_published_as_a_pr_comment(self):
+        # Devin 4341582246: exercise the prompt's failure command through the real outbox/publisher.
+        action = next(s for s in jobs("claude.yml")["claude-mention"]["steps"]
+                      if s.get("uses", "").startswith("anthropics/claude-code-action@"))
+        failure = action["with"]["prompt"].split("If trigger fails", 1)[1].split("2. Make", 1)[0]
+        operation = re.search(r"model-api -- (\w+) BODY_FILE", failure)
+        self.assertIsNotNone(operation, "trigger failure must specify a publishable notification command")
+        self.assertEqual(operation[1], "comment")
+        for event, parent in (("issue_comment", None), ("pull_request_review_comment", None),
+                              ("pull_request_review_comment", 4)):
+            with self.subTest(event=event, parent=parent):
+                config = self.trigger_config(event)
+                with self.assertRaises(o.TriggerTooLong) as refused:
+                    o.model_api(config, ["trigger"], run=lambda args: self.comment(body="Z" * 24001))
+                notice = f"{refused.exception}. Please post a shorter request."
+                body_file = ".claude-fixer-replies/shorter.txt"
+                Path(body_file).write_text(notice, encoding="utf-8")
+                o.OUTBOX.unlink(missing_ok=True)
+                o.model_api(config, [operation[1], body_file], run=lambda args: self.fail("unexpected API call"))
+                h = Harness(self, mode="mention")
+                targets = {} if event == "issue_comment" else {
+                    5: {"id": 5, "in_reply_to_id": parent,
+                        "pull_request_url": f"https://api.github.com/repos/{REPO}/pulls/7"}}
+                h.targets = targets
+                (h.artifact / "outbox.jsonl").write_bytes(o.OUTBOX.read_bytes())
+                self.assertEqual(h.run(), 0)
+                self.assertEqual(h.writes, [("POST", f"{p.GITHUB_API}/repos/{REPO}/issues/7/comments",
+                                             TOKEN, {"body": notice})])
+                self.assertEqual(h.pushed, [])
+                self.assertIn("1 queued write(s) posted, 0 refused", h.audits[0])
+                self.assertNotIn("ZZZ", json.dumps(h.writes))
+                if event == "issue_comment" or parent is not None:
+                    # Negative control: the old reply instruction loses this same notice.
+                    old = Harness(self, mode="mention", records=[{"op": "reply", "comment_id": 5, "body": notice}])
+                    old.targets = targets
+                    self.assertEqual(old.run(), 0)
+                    self.assertEqual(old.writes, [])
+                    self.assertIn("0 queued write(s) posted, 1 refused", old.audits[0])
+
     def test_pr_event_commit_leaves_the_actions_base_branch_restores_out(self):
         # Fable rehearsal of a5fd6b7: for PR events claude-code-action's restoreConfigFromBase leaves the
         # base branch's .claude/, CLAUDE.md, .ripgreprc, ... unstaged in the worktree. Staging them would
@@ -1867,6 +1906,18 @@ ISOLATED_CREDENTIALS = {
 
 
 class WorkflowWiringTests(unittest.TestCase):
+    def test_mention_trigger_responses_use_comments_and_finding_replies_use_roots(self):
+        action = next(s for s in jobs("claude.yml")["claude-mention"]["steps"]
+                      if s.get("uses", "").startswith("anthropics/claude-code-action@"))
+        prompt = action["with"]["prompt"]
+        self.assertIn("For every response to the triggering comment, including failures and no-change results, "
+                      "use comment BODY_FILE.", prompt)
+        self.assertIn("Respond to the triggering comment with a top-level PR comment", prompt)
+        self.assertIn("If there is nothing to change, queue a top-level PR comment", prompt)
+        self.assertNotIn("queue a reply to the triggering comment", prompt)
+        self.assertIn("-- reply ROOT_COMMENT_ID BODY_FILE", prompt)
+        self.assertIn("A reply accepts only a root review-comment ID on this PR", prompt)
+
     def test_conflict_writer_devin_race_check_reads_author_and_committer(self):
         text = (ROOT / ".github/workflows/claude-conflict-writer.yml").read_text(encoding="utf-8")
         line = next(l for l in text.splitlines() if l.strip().startswith('head_author="$(gh api'))
