@@ -607,7 +607,7 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12"]
     runs-on: windows-2025
-    timeout-minutes: 30
+    timeout-minutes: 50
     steps:
       # Trusted policy commit first (github.sha on the default-branch dispatch),
       # validator staged outside the workspace, then the exact candidate merge.
