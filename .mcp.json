@@ -8,6 +8,13 @@
       "type": "http",
       "url": "https://mcp.context7.com/mcp"
     },
+    "exa": {
+      "type": "http",
+      "url": "https://mcp.exa.ai/mcp",
+      "headers": {
+        "x-api-key": "${EXA_API_KEY:-}"
+      }
+    },
     "linear": {
       "type": "http",
       "url": "https://mcp.linear.app/mcp"
