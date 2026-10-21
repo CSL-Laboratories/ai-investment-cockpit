@@ -22,6 +22,8 @@
       "Bash(python3 -X utf8 -B tools/test_ci_cancel_controller.py)",
       "Bash(python -X utf8 -B tools/test_ci_dispatch_scope.py)",
       "Bash(python3 -X utf8 -B tools/test_ci_dispatch_scope.py)",
+      "Bash(python -X utf8 -B tools/test_ci_docs_filter.py)",
+      "Bash(python3 -X utf8 -B tools/test_ci_docs_filter.py)",
       "Bash(python -X utf8 -B tools/test_ci_runner_cost.py)",
       "Bash(python3 -X utf8 -B tools/test_ci_runner_cost.py)",
       "Bash(python -X utf8 -B tools/test_ci_settle.py)",
