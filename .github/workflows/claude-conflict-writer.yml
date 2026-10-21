@@ -536,7 +536,8 @@ jobs:
           fi
       - id: claude
         timeout-minutes: 20
-        uses: anthropics/claude-code-action@v1
+        # v1.0.256 (CSL-412): pinned; bumps recheck the allowed_non_write_users and git-auth behaviour.
+        uses: anthropics/claude-code-action@a5a423f75c251dcbff8a74e99f83b2cb03c72bfa
         env:
           # Scrub credentials from the commands Claude runs (sandboxed by bubblewrap above).
           CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
@@ -817,6 +818,19 @@ jobs:
             else
               rm -f "$out/candidate.bundle"
             fi
+          fi
+          # CSL-412: allowed_non_write_users keeps the job token out of git config, where Read
+          # could open it. A credential in any config scope fails the package; publish then refuses.
+          # No pipe: under pipefail a `grep -q` hit could SIGPIPE git and read as clean.
+          if ! config="$(git config --list --includes 2>/dev/null)"; then
+            echo "::error::The checkout's git config could not be read; nothing from this run is published."
+            status=failed
+            rm -f "$out/candidate.bundle"
+          elif grep -Ei 'x-access-token|://[^/[:space:]@]+@|gh[opsuvr]_[a-z0-9]{36}|github_pat_|authorization:' \
+              >/dev/null <<< "$config"; then
+            echo "::error::A credential is in the checkout's git config; nothing from this run is published."
+            status=failed
+            rm -f "$out/candidate.bundle"
           fi
           echo "package_status=$status" >> "$GITHUB_OUTPUT"
           if [ -f .claude-fixer-out/outbox.jsonl ] && [ ! -L .claude-fixer-out/outbox.jsonl ]; then
