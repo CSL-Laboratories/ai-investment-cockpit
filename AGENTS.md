@@ -98,7 +98,8 @@ or writer's run is active on the branch, files or package; and it starts no paid
   allowlist, secrets handling, PnL (`app/quant/pnl.py`), halt, kill switch and gate
   (`app/orchestrator/halt.py`, `killswitch.py`, `gate.py`), approval and veto
   (`app/bridge/approval.py`, `veto.py`), their tests (`app/tests/risk/`,
-  `app/tests/brokers/`, `app/tests/quant/test_pnl.py`, `app/tests/storage/`), the
+  `app/tests/brokers/`, `app/tests/quant/test_pnl.py`, `app/tests/storage/`,
+  `app/tests/bridge/`, `app/tests/orchestrator/`), the
   paper/live switch or any existing live flag, or any of the nine invariants,
   whatever the issue admits. A failing test there is not a "clear defect" you may
   fix alone;
@@ -124,7 +125,9 @@ Linux scope, which runs Blacksmith Linux even for a docs-only diff. Adding
 Linux and Windows plus GitHub-hosted `macos-latest`. `ci-label-retrigger.yml` is a
 no-op on drafts and fork heads. Dispatching the fixer, Codex gate, stuck-thread
 watch or other `ubuntu-latest` workflows is not a Blacksmith run but still needs a
-human ask. A push to `main` runs `ci.yml` and starts paid CI. Pushes to drafts or to
+human ask. A push to `main` runs `ci.yml`; its filter skips the paid jobs only when
+every changed file is ordinary Markdown documentation (it runs them if the diff cannot
+be read), so any other push to `main` starts paid CI. Pushes to drafts or to
 branches other than `main` without a PR, and read-only API queries, are fine.
 
 **How.** Ask on the work issue: one Linear comment @mentioning the issue owner with
