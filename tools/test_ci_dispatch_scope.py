@@ -700,10 +700,20 @@ class CrossLaneAdmissionTests(unittest.TestCase):
                 job = doc['jobs'][job_name]
                 perms = job.get('permissions') or {}
                 with self.subTest(workflow=name, job=job_name):
-                    self.assertEqual(perms.get('contents'), 'read')
-                    self.assertNotIn('id-token', perms)
-                    self.assertTrue(set(perms) <= {'contents', 'pull-requests', 'actions'})
+                    if job_name == 'forward-conflict-scan':
+                        # The one dispatch (of conflict-scan.yml, checked above) needs exactly this.
+                        self.assertEqual(perms, {'actions': 'write', 'contents': 'read'})
+                    else:
+                        self.assertEqual(perms.get('contents'), 'read')
+                        self.assertTrue(set(perms.values()) <= {'read', 'none'})
                     self.assertFalse(PUSH.search(job_text(job)))
+        # Jobs without their own `permissions:` inherit the workflow default, which must be read-only.
+        for name in WRITER_FILES:
+            with self.subTest(workflow=name, check='default token'):
+                default = workflow(name).get('permissions')
+                self.assertIsInstance(default, dict)
+                self.assertTrue(default)
+                self.assertTrue(set(default.values()) <= {'read', 'none'})
         scan = workflow('conflict-scan.yml')['jobs']['conflict-scan']
         self.assertEqual(scan['permissions'], {'actions': 'read', 'contents': 'read', 'pull-requests': 'read'})
         self.assertFalse(PUSH.search(job_text(scan)))
