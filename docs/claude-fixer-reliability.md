@@ -97,8 +97,10 @@ reads use the read-only job token from a file its trusted install step writes;
 the model's Read tool is denied that file and `.git/config`. The scrub and
 sandbox can only be proven by the post-merge canary: if they break the model
 step, it does not succeed and publish publishes nothing.
-The model job still runs PR code with the model's OAuth token in its process
-environment; it no longer holds any repository write credential.
+The model job runs no repository code and holds no repository write credential;
+the OAuth token stays in the Claude Code process, scrubbed from its commands.
+With `--setting-sources user`, the repository's CLAUDE.md and `.claude/` rules are
+not preloaded either; the prompt tells the model to Read them when it needs them.
 
 ## Terminal audit (CSL-201)
 

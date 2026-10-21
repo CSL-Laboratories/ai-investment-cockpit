@@ -1325,6 +1325,7 @@ class ActionlintTests(unittest.TestCase):
             check=False,
             capture_output=True,
             text=True,
+            timeout=120,  # actionlint 1.7.7 hangs on a run script of 64 KiB or more
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 

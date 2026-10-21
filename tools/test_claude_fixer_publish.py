@@ -1159,6 +1159,8 @@ class WorkflowWiringTests(unittest.TestCase):
                 self.assertEqual(action["env"], {"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1"})
                 args = action["with"]["claude_args"]
                 self.assertIn("--setting-sources user", args)
+                self.assertIn("Bash(git diff --no-index:*)", args.split("--disallowedTools", 1)[1])
+                self.assertIn("they are not preloaded, so Read them", action["with"]["prompt"])
                 allow = args.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0]
                 for gone in ("pytest", "tools/test_", "gh pr", "python -m", "python -X"):
                     self.assertNotIn(gone, allow)
