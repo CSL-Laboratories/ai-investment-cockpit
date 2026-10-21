@@ -70,8 +70,9 @@ interactive sessions, scheduled loops and Grok Bots. Repository workflows
 conflict-scan, review-gate, the CSL-259 candidate coordinator and other repository
 workflows) and Devin automations keep the roles in [Review roles](#review-roles) and
 [Automations](#automations); their documented markers, receipts and audit comments
-are unchanged. Founder-directed bot reviews under Review roles are that founder's
-reviews and are not covered here; Review roles alone says what counts as one.
+are unchanged. A bot review the founder directed in the same session under Review roles is that
+founder's review and is not covered here; scheduled or unattended reviews are not,
+and Review roles alone says what counts as one.
 
 **Escalate wins.** If any escalate condition holds, escalate, even inside an
 admitted issue and even when every proceed condition also holds.
@@ -163,8 +164,9 @@ watches) may only do "proceed" work. They do not resolve human-authored threads,
 change scope, close issues as decided or post developer-approved comments (nobody
 is there to approve the text). They never mark ready, add or remove GitHub labels,
 dispatch, re-run or cancel, and they label every comment
-`Agent (unattended run, for <developer>):`. Founder-directed bot reviews under
-Review roles are not covered here.
+`Agent (unattended run, for <developer>):`. Only a review the founder directed in
+the same session under Review roles is not covered here; a scheduled or standing
+review is an unattended run.
 
 ## Codex boundary
 
@@ -349,7 +351,7 @@ Hosted split (PR #102):
   1. **CI/fixer gate** (CSL-103/259, `.github/workflows/codex-gate.yml`) - one nonce-bound `@codex review` per exact head/base/merge/tree candidate and fixer generation; the reply echoes that identity and ends with `CODEX-GATE: READY|MEDIATE`. See Code Review Rules.
   2. **Stuck-thread watch** (CSL-86 / PR #124, `.github/workflows/stuck-thread-watch.yml`) — one advisory `@codex review` on unresolved Devin threads Claude could not settle, and **one** Linear `needs-decision` Triage roll-up per PR titled `Stuck PR threads: <repo>#<PR>`. Shared keys with the Codex CI/fixer gate: `<!-- stuck-pr-threads:owner/repo#N -->` and `<!-- codex-gate-mediate:owner/repo:N -->`; each writer owns only its fenced block. It adopts an existing roll-up only by that `stuck-pr-threads` HTML marker, never by title, and writes Linear only when at least one thread is actionable after the per-PR cap and `CODEX_TRIGGER_PAT` checks (or to create a missing roll-up after an earlier Linear outage). It skips already-approved PRs and updates that roll-up instead of filing a new issue per thread. That reply must **not** include a `CODEX-GATE:` line, and must not push, merge, resolve the thread, or open a fix PR.
 - **Blacksmith** hosts the paid test matrix. That is the GitHub test-CI path, not a revival of the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired from research/dev swarm dispatch" still apply to research/dev swarm jobs.
-- Cursor, Codex (as a coding agent), Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs, except the stuck-thread watcher. A founder may have their own bot post reviews under their account when they direct it. The author agent may fix CI failures on its own PR.
+- Cursor, Codex (as a coding agent), Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs, except the stuck-thread watcher. A founder may have their own bot post reviews under their account when they direct that specific review in the same session; scheduled, standing or otherwise unattended runs do not qualify and stay under the unattended-run label rule. The author agent may fix CI failures on its own PR.
 
 ## Review loop
 
