@@ -1135,6 +1135,109 @@ class OutboxHelperTests(unittest.TestCase):
             p.load_outbox(raw, "fixer", {11})
         self.assertEqual(len(p.load_outbox(raw.rsplit(b"\n", 2)[0] + b"\n", "fixer", {11})), 3)
 
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "POSIX special files")
+    def test_commit_leaves_non_regular_paths_unstaged(self):
+        # CSL-377 canary on #227: the sandbox's /dev/null masks made `git add -A` refuse the commit.
+        os.mkfifo("mask")
+        Path("real.txt").write_text("x\n")
+        Path(".claude-fixer-replies/msg.txt").write_text("fix: x\n")
+        calls = []
+
+        def run(argv):
+            calls.append(argv)
+            if argv[len(self.GIT):] == list(o.UNTRACKED):
+                return "mask\0real.txt\0gone.txt\0*glob\0sub/.zshrc\0.zshrc\0"
+            return "f" * 40 if argv[-2:] == ["rev-parse", "HEAD"] else ""
+        Path("*glob").write_text("x\n")
+        Path("sub").mkdir()
+        Path("sub/.zshrc").write_text("")  # only top-level names are masked
+        Path(".zshrc").write_text("")  # an empty leftover mount point
+        o.model_api(self.CONFIG, ["commit", ".claude-fixer-replies/msg.txt"], run=run)
+        self.assertEqual(calls[2], self.GIT + ["add", "-A", "--", ".", ":(exclude).claude-fixer-out",
+                                               ":(exclude).claude-fixer-replies", ":(exclude,literal)mask",
+                                               ":(exclude,literal).zshrc"])
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "POSIX special files")
+    def test_masked_paths_stay_out_of_a_real_commit(self):
+        # Runs without bubblewrap (CI) with real git for every call but the untracked listing: a
+        # plain checkout never lists a device or FIFO as untracked the way bwrap's mount points are.
+        with patch.dict(os.environ, git_env(), clear=True):
+            o.command(["git", "init", "-q", "-b", "fix"])
+            for name in ("a.txt", ".mcp.json", "b.txt"):
+                Path(name).write_text(name + "\n")
+            o.command(["git", "add", "-A"])
+            o.command(["git", "commit", "-q", "-m", "base"])
+            Path("a.txt").write_text("b\n")
+            Path(".mcp.json").write_text("")  # a tracked file emptied by the model is a real change
+            os.mkfifo("*mask")
+            Path(".zshrc").write_text("")  # a leftover empty mount point
+            Path("docs").mkdir()
+            Path("docs/.profile").write_text("")  # not a mount point: staged
+            Path(".claude-fixer-replies/msg.txt").write_text("fix: a\n")
+
+            def run(argv):
+                if argv[len(self.GIT):] == list(o.UNTRACKED):
+                    return "*mask\0.zshrc\0docs/.profile\0"
+                return o.command(argv)
+            head = o.model_api(self.CONFIG, ["commit", ".claude-fixer-replies/msg.txt"], run=run)
+            files = o.command(["git", "show", "--name-only", "--format=", head]).split("\n")
+            self.assertEqual(sorted(files), [".mcp.json", "a.txt", "docs/.profile"])
+            # A tracked path the sandbox later masked (a deletion) refuses the commit, unstubbed.
+            Path("b.txt").unlink()
+            os.mkfifo("b.txt")
+            with self.assertRaisesRegex(o.MaskedPath, "tracked path is masked"):
+                o.model_api(self.CONFIG, ["commit", ".claude-fixer-replies/msg.txt"])
+            self.assertEqual(o.command(["git", "rev-parse", "HEAD"]), head)
+            # A tracked file replaced by a directory is a real change, not a mask.
+            Path("b.txt").unlink()
+            Path("b.txt").mkdir()
+            Path("b.txt/c.txt").write_text("c\n")
+            head = o.model_api(self.CONFIG, ["commit", ".claude-fixer-replies/msg.txt"])
+            self.assertEqual(sorted(o.command(["git", "show", "--name-status", "--format=", head]).split("\n")),
+                             ["A\tb.txt/c.txt", "D\tb.txt"])
+
+    @unittest.skipUnless(shutil.which("bwrap") and subprocess.run(
+        ["bwrap", "--dev-bind", "/", "/", "true"], capture_output=True, check=False).returncode == 0,
+        "needs a working bubblewrap")
+    def test_commit_works_under_bubblewrap_device_masks(self):
+        # The real failure: bwrap's mount points list as untracked files but stat as /dev/null.
+        helper = Path("helper").resolve()
+        helper.mkdir()
+        script = helper / "model-api"
+        script.write_text((ROOT / "scripts/ci/claude_fixer_outbox.py").read_text(encoding="utf-8"))
+        repo = Path("repo").resolve()
+        env = git_env()
+        subprocess.run(["git", "init", "-q", "-b", "fix", str(repo)], env=env, check=True)
+        (repo / "a.txt").write_text("a\n")
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], env=env, check=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "base"], env=env, check=True)
+        head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], env=env, capture_output=True,
+                              text=True, check=True).stdout.strip()
+        install = dict(env, REPO=REPO, PR_NUMBER="7", HEAD_SHA=head, HEAD_REF="fix", WRITER_MODE="mention")
+        subprocess.run([sys.executable, "-I", str(script), "install"], env=install, check=True)
+        (repo / "a.txt").write_text("b\n")
+        (repo / ".claude-fixer-replies").mkdir()
+        (repo / ".claude-fixer-replies" / "m.txt").write_text("fix: a\n")
+        sandbox = ["bwrap", "--dev-bind", "/", "/", "--ro-bind", "/dev/null", str(repo / ".zshrc"),
+                   "--ro-bind", "/dev/null", str(repo / ".idea"), "--chdir", str(repo)]
+        # Control: plain `git add -A` fails on the masks.
+        control = subprocess.run([*sandbox, "git", "add", "-A"], env=env, capture_output=True, text=True, check=False)
+        self.assertNotEqual(control.returncode, 0, control.stderr)
+        self.assertIn("can only add regular files", control.stderr)
+        result = subprocess.run([*sandbox, sys.executable, "-I", str(script), "--", "commit", ".claude-fixer-replies/m.txt"],
+                                env=env, capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        new = result.stdout.strip()
+        self.assertRegex(new, r"\A[0-9a-f]{40}\Z")
+        files = subprocess.run(["git", "-C", str(repo), "show", "--name-only", "--format=", new], env=env,
+                               capture_output=True, text=True, check=True).stdout.split()
+        self.assertEqual(files, ["a.txt"])
+        # Nothing left to commit: the helper names the failed step, not its output.
+        again = subprocess.run([*sandbox, sys.executable, "-I", str(script), "--", "commit", ".claude-fixer-replies/m.txt"],
+                               env=env, capture_output=True, text=True, check=False)
+        self.assertEqual(again.returncode, 1)
+        self.assertEqual(again.stderr.strip(), "Helper operation failed: git commit exited 1.")
+
     def test_install_stores_the_read_token_for_scrubbed_reads(self):
         # Claude Code's subprocess scrub removes GH_TOKEN, so reads fall back to the installed file.
         helper = Path("helper")
@@ -1203,6 +1306,8 @@ class OutboxHelperTests(unittest.TestCase):
                 if mode == "conflict":  # unmerged paths are checked for leftover markers first
                     self.assertEqual(calls.pop(0), self.GIT + ["diff", "--name-only", "-z", "--diff-filter=U"])
                 self.assertEqual(calls, [
+                    self.GIT + ["ls-files", "-z", "--modified"],
+                    self.GIT + ["ls-files", "-z", "--others", "--exclude-standard"],
                     self.GIT + ["add", "-A", "--", ".", ":(exclude).claude-fixer-out", ":(exclude).claude-fixer-replies"],
                     self.GIT + ["commit", "--no-verify", "-q", "-m", "-fix: a message\nwith a second line\n"],
                     self.GIT + ["rev-parse", "HEAD"]])
