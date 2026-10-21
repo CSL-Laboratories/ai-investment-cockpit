@@ -41,7 +41,7 @@ adds `ci:full` / `enhancement` (AGENTS.md:117-118, 129-133). Escalate on the Lin
   Identical-head twins are never cancelled (B2 = no).
 - Never cancel an in-progress run on the PR's current head; that leaves `linux-gates` red or missing.
 - A run you cancelled on an old head posts a red `linux-gates` on that old head only, or none if no
-  job had started (contract §3 row 22). The current head decides.
+  job had started; a check that had already completed stays as it was (contract §3 row 22). The current head decides.
 
 ## 4. A required check is stuck or missing
 
@@ -62,12 +62,17 @@ adds `ci:full` / `enhancement` (AGENTS.md:117-118, 129-133). Escalate on the Lin
 
 | Lever | Effect | Who |
 |---|---|---|
-| Label `claude:pause` or `hold` on a PR | Claude writers (`@claude`, Devin fixer, conflict writer) stop before checkout or reservation, and the publishers recheck (claude.yml:603-606, 2971-2973, 2040, 5004; claude-conflict-writer.yml:72-84, 1411); the scan never selects a paused PR (conflict-scan.yml:78-79) | Any writer; agents must never remove a pause |
-| Repository variable `CLAUDE_FIXER_PAUSE=true` | Same, for every PR (claude.yml:654-656, 3022-3024; conflict-scan.yml:333-334) | Admin |
+| Label `claude:pause` or `hold` on a PR (any case) | The writers (`@claude`, Devin fixer, conflict writer) stop before checkout or reservation (`pause_reason` in `mention-prepare` and `fixer-prepare`; the conflict writer's `prepare`), and the publishers recheck it before pushing (`pause_refusal`). A pause during a model run makes the publisher refuse; it posts only the workflow's terminal audit. The scan never selects a paused PR. Unreadable labels count as paused | Anyone who can label PRs; agents must never remove a pause |
+| Repository variable `CLAUDE_FIXER_PAUSE` set to exactly `true` | Same for every PR, also rechecked by the publishers (`pause_refusal`) and by the scan | Admin |
 | Remove `ci:full` | Stops repeat Windows/macOS on later pushes | Human |
-| (automatic) A fixer pause while a gate-owned `ci:full` is on the PR | The writers revoke only the label event the gate itself recorded; a human-added `ci:full` is never removed (`revoke_owned_ci`, claude.yml:1853-1857, 3599-3603, 4816-4820; claude-conflict-writer.yml:1222-1226) | Automatic |
-| Actions → workflow → **Disable workflow** | Stops new runs of that workflow | Admin; record it on Linear |
-| Revert the PR that changed a workflow | Restores the previous behaviour; the controller has no state to migrate | Founder merge |
+| (automatic) A fixer pause while a gate-owned `ci:full` is on the PR | The writers revoke only the label event the gate itself recorded; a human-added `ci:full` is never removed (`revoke_owned_ci` in the claude.yml publishers and prepare, and in claude-conflict-writer.yml) | Automatic |
+| Actions → workflow → **Disable workflow** | Stops new runs of that workflow; runs already in progress continue (cancel them separately) | Admin; record it on Linear |
+| Revert the PR that changed a workflow | Restores the previous code in a normal PR that a founder merges; never force-push. Writer state kept in PR comments (attempt reservations, receipts, loop-cap and `ci:full` ownership markers) is not reverted, so set `CLAUDE_FIXER_PAUSE=true` first and check those markers after the revert | Founder merge |
+
+Writers outside this guard: `codex-gate.yml` (adds the gate-owned `ci:full` on READY) and
+`stuck-thread-watch.yml` (resolves review threads with `CODEX_TRIGGER_PAT`). They are covered by
+their own tests (`tools/test_codex_gate.py`, `app/tests/test_stuck_thread_watch.py`) and by contract §7, not by
+`CrossLaneAdmissionTests`.
 
 ## 6. Cost and capacity check
 
@@ -77,7 +82,7 @@ adds `ci:full` / `enhancement` (AGENTS.md:117-118, 129-133). Escalate on the Lin
   Actions billing); re-plan before that.
 - `tools/test_codex_gate.py` (`test_test_jobs_use_free_github_hosted_runners`) fails if any
   workflow names a Blacksmith runner. claude.yml runs it only when fixer or gate paths change
-  (claude.yml:22-46, 521); codex-gate.yml runs it on every same-repository `pull_request` event
+  (claude.yml:22-46, 521); codex-gate.yml runs it on every listed same-repository `pull_request` event type
   (codex-gate.yml:11-12, 240-254). The cross-lane tests in `tools/test_ci_dispatch_scope.py`, which
   `ci.yml` runs on every test-running PR (ci.yml:438), fail if a writer workflow leaves GitHub-hosted
   runners.
