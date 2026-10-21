@@ -410,11 +410,8 @@ Lucas's decision ([CSL-381 comment 81c9a1f7](https://linear.app/csl-laboratories
   round 1.
 - **After round 1**, only P0/P1 findings block merge or justify a fix push.
   Record P2/P3 findings on the PR's Linear issue (one follow-up roll-up per PR, as in CSL-364) instead of pushing;
-  they do not hold the merge.
-- **Severity floor:** a finding on the order path (risk, mode, approval, OrderGateway, `app/risk/`,
-  `app/brokers/`, the paper/live switch or any live flag, or the nine
-  invariants), a security finding or a secrets finding counts as at least P1, whatever badge the reviewer
-  gave it ([CSL-381 comment 68f4a769](https://linear.app/csl-laboratories/issue/CSL-381#comment-68f4a769-249f-488b-9158-750afee16b36)).
+  they do not hold the merge. This is the exception to the new-Triage-issue rule in
+  [Linear-first workflow](#linear-first-workflow), which still covers follow-ups found outside a PR's review.
 - **After three rounds**, a founder decides whether to merge. Agents do not
   start a fourth round on their own.
 
