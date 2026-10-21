@@ -125,7 +125,7 @@ which you find only by its `<!-- stuck-pr-threads:owner/repo#N -->` marker (neve
 title), writing inside your own block. Product and architecture questions stay on
 the work issue.
 
-If you are the assignee of a decision or direction issue, the Parallel Task API
+If you are the assignee or the claimant of a decision or direction issue, the Parallel Task API
 brief in AGENTS.md "Linear-first workflow" still comes first. Grok Bots do not
 research or resolve decision issues.
 
