@@ -240,7 +240,8 @@ jobs:
           NO_DRIVERS = ("--no-ext-diff", "--no-textconv")
           GIT_READS = {"status": ("status", "--short"), "diff": ("diff", *NO_DRIVERS), "diff-stat": ("diff", "--stat", *NO_DRIVERS),
                        "log": ("log", "--oneline", "-20"), "head": ("log", "-1", "--stat")}
-          CONFLICT_MARKER = re.compile(r"^(?:<{7} |={7}$|>{7} )", re.MULTILINE)
+          CONFLICT_MARKER = re.compile(r"^(?:<{7} |\|{7}(?: |$)|={7}$|>{7} )", re.MULTILINE)
+          UNMERGED = ("diff", "--name-only", "-z", "--diff-filter=U")
           CONFLICT_GIT = {"conflicts": ("diff", "--name-only", "--diff-filter=U"), "merge-abort": ("merge", "--abort")}
           STAGE = ("add", "-A", "--", ".", ":(exclude).claude-fixer-out", ":(exclude).claude-fixer-replies")
 
@@ -313,8 +314,11 @@ jobs:
               if mode == "conflict":
                   # `git add` would mark a still-conflicted file resolved, markers and all.
                   workspace = Path.cwd().resolve()
-                  for name in filter(None, git(run, *CONFLICT_GIT["conflicts"]).splitlines()):
+                  # NUL-separated, so unusual names are not C-quoted.
+                  for name in filter(None, git(run, *UNMERGED).split("\0")):
                       file = workspace / name
+                      if not file.exists() and not file.is_symlink():
+                          continue  # resolved by deleting the file; `add -A` stages the removal
                       if file.is_symlink() or not file.is_file():
                           raise ValueError("unmerged path is not a regular file")
                       if CONFLICT_MARKER.search(file.read_text(encoding="utf-8", errors="replace")):

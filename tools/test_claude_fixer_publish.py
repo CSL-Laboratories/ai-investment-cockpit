@@ -1045,7 +1045,7 @@ class OutboxHelperTests(unittest.TestCase):
                 out = o.model_api(self.CONFIG | {"mode": mode}, ["commit", ".claude-fixer-replies/msg.txt"], run=run)
                 self.assertEqual(out, "f" * 40)
                 if mode == "conflict":  # unmerged paths are checked for leftover markers first
-                    self.assertEqual(calls.pop(0), self.GIT + ["diff", "--name-only", "--diff-filter=U"])
+                    self.assertEqual(calls.pop(0), self.GIT + ["diff", "--name-only", "-z", "--diff-filter=U"])
                 self.assertEqual(calls, [
                     self.GIT + ["add", "-A", "--", ".", ":(exclude).claude-fixer-out", ":(exclude).claude-fixer-replies"],
                     self.GIT + ["commit", "--no-verify", "-q", "-m", "-fix: a message\nwith a second line\n"],
@@ -1099,7 +1099,7 @@ class OutboxHelperTests(unittest.TestCase):
         home.mkdir()
         (home / ".gitconfig").write_text(
             f'[diff "ev"]\n\tcommand = touch {home}/diff-ran\n'
-            f'[filter "ev"]\n\tclean = sh -c "touch {home}/filter-ran; cat"\n'
+            f'[filter "ev"]\n\tclean = touch {home}/filter-ran\n'
             f'[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = {home}/fake-gpg\n')
         (home / "fake-gpg").write_text(f"#!/bin/sh\ntouch {home}/gpg-ran\nexit 1\n")
         (home / "fake-gpg").chmod(0o755)
@@ -1112,10 +1112,15 @@ class OutboxHelperTests(unittest.TestCase):
             subprocess.run(["git", "add", "-A"], env={**env, "GIT_CONFIG_GLOBAL": os.devnull}, check=True)
             subprocess.run(["git", "commit", "-q", "-m", "base"], env={**env, "GIT_CONFIG_GLOBAL": os.devnull}, check=True)
             Path("a.txt").write_text("b\n")
-            # Control: plain git with this HOME does run the user-level driver.
+            # Controls: plain git with this HOME does run the user-level driver, filter and signer.
             subprocess.run(["git", "diff"], env=env, capture_output=True)
-            self.assertTrue((home / "diff-ran").exists())
-            (home / "diff-ran").unlink()
+            subprocess.run(["git", "add", "-A"], env=env, capture_output=True)
+            subprocess.run(["git", "commit", "-q", "-m", "control"], env=env, capture_output=True)
+            for marker in ("diff-ran", "filter-ran", "gpg-ran"):
+                self.assertTrue((home / marker).exists(), marker)
+                (home / marker).unlink()
+            subprocess.run(["git", "reset", "-q"], env={**env, "GIT_CONFIG_GLOBAL": os.devnull}, check=True)
+            Path("a.txt").write_text("c\n")
             o.model_api(self.CONFIG, ["diff"])
             Path(".claude-fixer-replies/msg.txt").write_text("fix: b\n")
             head = o.model_api(self.CONFIG, ["commit", ".claude-fixer-replies/msg.txt"])
@@ -1140,6 +1145,34 @@ class OutboxHelperTests(unittest.TestCase):
                 o.model_api(conflict, ["commit", ".claude-fixer-replies/msg.txt"])
             self.assertEqual(o.command(["git", "rev-parse", "HEAD"]), before)  # nothing staged or committed
             self.assertEqual(o.model_api(conflict, ["conflicts"]), "a.txt")
+
+    def test_conflict_commit_handles_unusual_names_deletions_and_diff3_markers(self):
+        conflict = self.CONFIG | {"mode": "conflict"}
+        with patch.dict(os.environ, git_env(), clear=True):
+            o.command(["git", "init", "-q", "-b", "main"])
+            names = ("caf\u00e9 \"x\".txt", "gone.txt")
+            for branch in ("main", "side", "head"):
+                if branch != "main":
+                    o.command(["git", "checkout", "-q", "-b", branch, "main"])
+                for name in names:
+                    if branch == "side" and name == "gone.txt":
+                        Path(name).unlink()  # modify/delete conflict
+                    else:
+                        Path(name).write_text(branch + "\n")
+                o.command(["git", "add", "-A"])
+                o.command(["git", "commit", "-q", "-m", branch])
+            subprocess.run(["git", "merge", "--no-ff", "--no-commit", "side"], capture_output=True)
+            Path(names[0]).write_text("head\n||||||| base\nside\n")
+            Path("gone.txt").unlink()
+            Path(".claude-fixer-replies/msg.txt").write_text("Merge side\n")
+            with self.assertRaisesRegex(ValueError, "conflict markers remain"):  # diff3 base marker
+                o.model_api(conflict, ["commit", ".claude-fixer-replies/msg.txt"])
+            Path(names[0]).write_text("head\nside\n")
+            head = o.model_api(conflict, ["commit", ".claude-fixer-replies/msg.txt"])
+            self.assertEqual(len(o.command(["git", "rev-list", "--parents", "-n", "1", head]).split()), 3)
+            tracked = o.command(["git", "ls-files", "-z"]).split("\0")
+            self.assertIn(names[0], tracked)
+            self.assertNotIn("gone.txt", tracked)  # the deletion resolution was committed
 
     def test_commit_completes_and_merge_abort_ends_the_conflict_merge(self):
         conflict = self.CONFIG | {"mode": "conflict"}
