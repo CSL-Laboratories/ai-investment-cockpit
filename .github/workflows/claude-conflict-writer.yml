@@ -249,6 +249,11 @@ jobs:
           # Not `:(exclude)` pathspecs: the model job lists these in .git/info/exclude, and `git add`
           # exits 1 when a pathspec names an ignored path (CSL-377 canary, run 39569528483).
           UNSTAGE = ("reset", "-q", "--", ".claude-fixer-out", ".claude-fixer-replies")
+          # claude-code-action's restoreConfigFromBase (SENSITIVE_PATHS) replaces these with the base branch's
+          # versions for PR events and leaves them unstaged; "callers that stage files must exclude these".
+          # The conflict job is not a PR event, and there a base-side change to them is part of the merge.
+          ACTION_RESTORED = (".claude", ".mcp.json", ".claude.json", ".gitmodules", ".ripgreprc", "CLAUDE.md",
+                             "CLAUDE.local.md", ".husky")
           UNTRACKED = ("ls-files", "-z", "--others", "--exclude-standard")
           MODIFIED = ("ls-files", "-z", "--modified")
           # The protected names Claude Code's sandbox masks when they do not exist (Claude Code 2.1.30x).
@@ -415,8 +420,9 @@ jobs:
                       if conflict_marker(sizes[name]).search((workspace / name).read_text(encoding="utf-8", errors="replace")):
                           raise ValueError("conflict markers remain")
               git(run, *STAGE, *sandbox_masks(run))
-              # The helper's own files stay out of the commit whether or not they are ignored.
-              git(run, *UNSTAGE)
+              # The helper's own files stay out of the commit whether or not they are ignored, and so do
+              # the action's base-branch restores in the PR-event jobs.
+              git(run, *UNSTAGE, *(ACTION_RESTORED if mode != "conflict" else ()))
               # In the conflict job this completes the in-progress merge.
               git(run, "commit", "--no-verify", "-q", "-m", message)
               return git(run, "rev-parse", "HEAD")

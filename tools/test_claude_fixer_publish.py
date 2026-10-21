@@ -1155,7 +1155,7 @@ class OutboxHelperTests(unittest.TestCase):
         o.model_api(self.CONFIG, ["commit", ".claude-fixer-replies/msg.txt"], run=run)
         self.assertEqual(calls[2], self.GIT + ["add", "-A", "--", ".", ":(exclude,literal)mask",
                                                ":(exclude,literal).zshrc"])
-        self.assertEqual(calls[3], self.GIT + list(o.UNSTAGE))
+        self.assertEqual(calls[3], self.GIT + list(o.UNSTAGE) + list(o.ACTION_RESTORED))
 
     @unittest.skipUnless(hasattr(os, "mkfifo"), "POSIX special files")
     def test_masked_paths_stay_out_of_a_real_commit(self):
@@ -1163,12 +1163,12 @@ class OutboxHelperTests(unittest.TestCase):
         # plain checkout never lists a device or FIFO as untracked the way bwrap's mount points are.
         with patch.dict(os.environ, git_env(), clear=True):
             o.command(["git", "init", "-q", "-b", "fix"])
-            for name in ("a.txt", ".mcp.json", "b.txt"):
+            for name in ("a.txt", ".bashrc", "b.txt"):
                 Path(name).write_text(name + "\n")
             o.command(["git", "add", "-A"])
             o.command(["git", "commit", "-q", "-m", "base"])
             Path("a.txt").write_text("b\n")
-            Path(".mcp.json").write_text("")  # a tracked file emptied by the model is a real change
+            Path(".bashrc").write_text("")  # a tracked file emptied by the model is a real change
             os.mkfifo("*mask")
             Path(".zshrc").write_text("")  # a leftover empty mount point
             Path("docs").mkdir()
@@ -1181,7 +1181,7 @@ class OutboxHelperTests(unittest.TestCase):
                 return o.command(argv)
             head = o.model_api(self.CONFIG, ["commit", ".claude-fixer-replies/msg.txt"], run=run)
             files = o.command(["git", "show", "--name-only", "--format=", head]).split("\n")
-            self.assertEqual(sorted(files), [".mcp.json", "a.txt", "docs/.profile"])
+            self.assertEqual(sorted(files), [".bashrc", "a.txt", "docs/.profile"])
             # A tracked path the sandbox later masked (a deletion) refuses the commit, unstubbed.
             Path("b.txt").unlink()
             os.mkfifo("b.txt")
@@ -1314,7 +1314,8 @@ class OutboxHelperTests(unittest.TestCase):
                     self.GIT + ["ls-files", "-z", "--modified"],
                     self.GIT + ["ls-files", "-z", "--others", "--exclude-standard"],
                     self.GIT + ["add", "-A", "--", "."],
-                    self.GIT + ["reset", "-q", "--", ".claude-fixer-out", ".claude-fixer-replies"],
+                    self.GIT + ["reset", "-q", "--", ".claude-fixer-out", ".claude-fixer-replies"]
+                    + ([] if mode == "conflict" else list(o.ACTION_RESTORED)),
                     self.GIT + ["commit", "--no-verify", "-q", "-m", "-fix: a message\nwith a second line\n"],
                     self.GIT + ["rev-parse", "HEAD"]])
         for body in ("", "<!-- claude-fixer-result:{} -->"):
@@ -1400,6 +1401,35 @@ class OutboxHelperTests(unittest.TestCase):
             head = o.model_api(self.CONFIG, ["commit", ".claude-fixer-replies/msg.txt"])
             self.assertEqual(o.command(["git", "show", "--name-only", "--format=", head]).split(), ["a.txt"])
             self.assertEqual(o.command(["git", "show", f"{head}:.claude-fixer-out/tracked.txt"]), "old")
+
+    def test_pr_event_commit_leaves_the_actions_base_branch_restores_out(self):
+        # Fable rehearsal of a5fd6b7: for PR events claude-code-action's restoreConfigFromBase leaves the
+        # base branch's .claude/, CLAUDE.md, .ripgreprc, ... unstaged in the worktree. Staging them would
+        # revert the PR's versions (and the publisher refuses protected paths, dropping the whole run).
+        self.assertEqual(o.ACTION_RESTORED, (".claude", ".mcp.json", ".claude.json", ".gitmodules", ".ripgreprc",
+                                             "CLAUDE.md", "CLAUDE.local.md", ".husky"))
+        for mode in ("mention", "fixer"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp, \
+                    patch.dict(os.environ, git_env(), clear=True):
+                os.chdir(tmp)
+                o.command(["git", "init", "-q", "-b", "main"])
+                for name, text in (("a.txt", "a\n"), ("CLAUDE.md", "pr\n"), (".claude/settings.json", "{}\n"),
+                                   (".husky/pre-commit", "pr\n")):
+                    Path(name).parent.mkdir(exist_ok=True)
+                    Path(name).write_text(text)
+                o.command(["git", "add", "-A"])
+                o.command(["git", "commit", "-q", "-m", "base"])
+                # What the restore leaves behind: base-branch content, unstaged, plus base-only files.
+                Path("CLAUDE.md").write_text("main\n")
+                Path(".claude/settings.json").write_text('{"main": 1}\n')
+                Path(".husky/pre-commit").unlink()
+                Path(".ripgreprc").write_text("--hidden\n")
+                Path("a.txt").write_text("b\n")
+                Path(".claude-fixer-replies").mkdir()
+                Path(".claude-fixer-replies/msg.txt").write_text("fix: change a\n")
+                head = o.model_api(self.CONFIG | {"mode": mode}, ["commit", ".claude-fixer-replies/msg.txt"])
+                self.assertEqual(o.command(["git", "show", "--name-only", "--format=", head]).split(), ["a.txt"])
+                os.chdir(self.tmp.name)
 
     def test_user_level_git_config_cannot_run_drivers_filters_or_signing(self):
         # Fable review of 7fbe079: only GIT_CONFIG_GLOBAL/NOSYSTEM stop these, as in the publisher.

@@ -111,7 +111,14 @@ those names, is skipped. A tracked path that became a device was deleted, so
 the commit is refused before anything is staged, rather than dropping it. The
 helper directories are not `:(exclude)` pathspecs: the model job lists them in
 `.git/info/exclude`, and `git add` exits 1 when a pathspec names an ignored
-path, which failed every commit in the second canary run (39569528483). Then
+path, which failed every commit in the second canary run (39569528483). In the
+mention and fixer jobs it also unstages the paths claude-code-action restores
+from the base branch for PR events (`.claude`, `.mcp.json`, `.claude.json`,
+`.gitmodules`, `.ripgreprc`, `CLAUDE.md`, `CLAUDE.local.md`, `.husky`): the
+worktree holds the base's versions there, so staging them would revert the PR's
+files, and the publisher would refuse the protected ones and drop the run. A
+model edit to those paths is therefore not committed. The conflict job is not a
+PR event, so a base-side change to them stays part of the merge. Then
 `commit` runs `git commit --no-verify -q -m <message>` (completing the merge in
 the conflict job) and prints the full new `HEAD`. Its install step makes the helper
 directory root-owned, with the directory and helper `0755` and its context and
