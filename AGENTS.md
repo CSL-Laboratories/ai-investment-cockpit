@@ -46,7 +46,7 @@ remain in force; this wording does not activate R2a or grant a live run.
 
 The loop starts only from objectives, feature admission and direction decisions approved by a founder acting within the founder decisions section above. Within them, agents run bounded autonomous research, implementation and tests, then close out with evidence. When blocked, an agent preserves its work, records the blocker and releases its execution claim, then moves to the next eligible issue. A human-decision hold needs an explicit decision receipt; a technical or dependency blocker needs evidence that its condition cleared. In either case, recompute readiness and obtain a fresh ownership claim before resuming. Closeout records the exact tested head, commands and results, unresolved criteria, review evidence and linked follow-ups. Mark work complete only under its existing acceptance criteria; a merge or issue status is not empirical acceptance.
 
-An issue is admitted only when it states its objective, non-goals, evidence dependencies, allowed effects and files, budget and stop condition, acceptance criteria and falsifiers, and verifier and rollback. Existing authorizations persist: routine, reversible work and fixes inside an admitted issue do not ask again and do not force new paid research. Decision and direction issues still follow the Linear-first research requirement. A new consequential feature, architecture, risk, public-semantics, effect or budget question stops only the affected lane, with options and a recommendation posted on the Linear issue for founder decision under the founder decisions section above. Human decisions are never inferred from silence, elapsed time, a merge, CI results or issue status. When an agent relays a human decision, it labels the source and attribution and never invents a human receipt or an exact-digest acceptance.
+An issue is admitted only when it states its objective, non-goals, evidence dependencies, allowed effects and files, budget and stop condition, acceptance criteria and falsifiers, and verifier and rollback. Existing authorizations persist: routine, reversible work and fixes inside an admitted issue do not ask again, unless they touch the escalate list in [Proceed or escalate](#proceed-or-escalate), and do not force new paid research. Decision and direction issues still follow the Linear-first research requirement. A new consequential feature, architecture, risk, public-semantics, effect or budget question stops only the affected lane, with options and a recommendation posted on the Linear issue for founder decision under the founder decisions section above. Human decisions are never inferred from silence, elapsed time, a merge, CI results or issue status. When an agent relays a human decision, it labels the source and attribution and never invents a human receipt or an exact-digest acceptance.
 
 Ownership is currently manual. The human-designated ownership coordinator (not the CI candidate coordinator) serializes overlapping writers on Linear; a claim is replaced only after an explicit release and acknowledgement. Record scope, writer, branch/head and handoff evidence on the issue, following existing assignment conventions. This execution claim is coordination only: it does not allocate, replace or close a REGISTER package claim. Before publishing, read the remote head. Preserve uncertain in-flight work and stop on ambiguity. Each agent holds at most one execution lane; this guide sets no numeric project WIP cap; any new cap is a separate founder decision. RW-33 swarm depth and leaf limits are unaffected. Atomic compare-and-set claims, leases, fencing, a transactional cost ledger and WIP enforcement are proposed and unimplemented; do not treat them as current machine guarantees. This section changes no platform state, status or claim schema and does not rewrite REGISTER policy.
 
@@ -55,6 +55,129 @@ Shared research lives in the private repository [CSL-Laboratories/csl-research](
 Never commit secrets, private account details, raw chats, signed URLs, bulk copyrighted material or large dataset dumps to Git; reference approved storage through manifests only. An access denial stops the affected transfer; do not look for alternative routes. Existing approved budgets and subscription routes remain subject to their actual authority; this section activates no API fallback, overage or new spend. New research spend follows the founder decisions section above: Lucas retains spend and new services; any founder may decide research continuation within an already approved budget.
 
 None of this amends accepted contracts, founder-reserved decisions, the nine invariants, the paper-only boundary, pre-live gates, current runtime, CI, fixer or review-loop roles. Agents still never merge.
+
+## Proceed or escalate
+
+The founder decision rules above still decide who decides. This section is the
+short test for when an agent acts on its own and when it asks. Cursor, Codex and
+Grok follow this section. Claude Code follows the `proceed-or-escalate` skill
+(`.claude/skills/proceed-or-escalate/SKILL.md`), which carries the same gates and
+expands on them; if the two ever differ, this section wins.
+
+**Scope.** This governs agents acting through a developer's account or session:
+interactive sessions, scheduled loops and Grok Bots. Repository workflows
+(`claude.yml` fixer, Codex CI/fixer gate, stuck-thread-watch, linear-pr-sync,
+conflict-scan, review-gate, the CSL-259 candidate coordinator and other repository
+workflows) and Devin automations keep the roles in [Review roles](#review-roles) and
+[Automations](#automations); their documented markers, receipts and audit comments
+are unchanged. Founder-directed bot reviews under Review roles are that founder's
+reviews and are not covered here; Review roles alone says what counts as one.
+
+**Escalate wins.** If any escalate condition holds, escalate, even inside an
+admitted issue and even when every proceed condition also holds.
+
+**Proceed** only when all hold: the work is within an admitted issue's acceptance
+criteria (routine, reversible work inside an admitted issue does not ask again,
+unless it touches the escalate list below), or
+is a clear defect or failing check with an evident cause on an issue you already
+hold (Linear-first still requires a `CSL-N`); it stays inside the
+issue's scope and its REGISTER package or `REGISTER: none` contract; no product
+behavior, UX, public API, contract or data meaning changes beyond what the issue
+specifies; it is reversible and code changes are covered by a test; it changes no
+spend, credentials, permissions, settings, flags, modes or workflows; no other claim
+or writer's run is active on the branch, files or package; and it starts no CI
+beyond what a push to its own PR branch starts (below).
+
+**Escalate** when any holds:
+
+- a product detail, UX choice, scope or priority change is needed, or the request
+  has more than one reasonable reading;
+- it is an architecture, language, dependency or data-source choice;
+- it touches the order path (risk, mode, approval, `OrderGateway`), `app/risk/`,
+  `app/brokers/`, the audit chain (`app/storage/audit.py`), order eligibility or the
+  allowlist, secrets handling, PnL (`app/quant/pnl.py`), costs
+  (`app/quant/costs.py`), the auto loop (`app/quant/execution/autoloop.py`), halt,
+  kill switch and gate (`app/orchestrator/halt.py`, `killswitch.py`, `gate.py`),
+  mode arming (`app/orchestrator/mode_ladder.py`, `arm_auto_mode`), breakers
+  (`app/orchestrator/breakers.py`, `check_order_path`), limits
+  (`app/orchestrator/limits.py`, `max_notional`, `daily_loss_limit`), the loopback
+  routes in `app/orchestrator/app.py` that decide proposals or orders or change
+  mode, limits or the kill switch, approval and veto (`app/bridge/approval.py`,
+  `veto.py`), any test that exercises these (including `app/tests/risk/`,
+  `app/tests/brokers/`, `app/tests/bridge/`, `app/tests/orchestrator/`,
+  `app/tests/storage/`, `app/tests/quant/test_pnl.py` and
+  `app/tests/test_invariants.py`), the paper/live switch or any existing live flag,
+  or any of the nine invariants, whatever the issue admits. These lists are
+  examples, not a boundary. A failing test there is not a "clear defect" you may fix
+  alone;
+- it touches governance files, decision records, contracts or another owner's work;
+- a tool or platform refused the action (report it; do not route around it or turn
+  one refusal into a standing rule);
+- you would state a decision you cannot link to its record;
+- it would dispatch, re-run or cancel a workflow, or add `ci:full` or `enhancement`,
+  without a human asking for that run;
+- an automation signal needs a human: the fixer is paused (its
+  `claude-fixer-paused` or `claude-fixer-loop-cap` marker), a fix receipt cannot be
+  verified, a branch with fixer receipts was rebased, or `ci:full` ownership is
+  uncertain. Never remove a pause, dispatch the fixer around its budget, or report an
+  unverified fix as fixed.
+
+**CI an agent starts on its own.** Since CSL-408, every CI job runs on free
+GitHub-hosted runners, so none of it is billed. The gate stays because every run
+uses the shared hosted-runner queue. A push to your own PR branch, draft or not, is
+fine: on a non-draft PR it runs `ci.yml` and `rust.yml` under their path filters
+(plus Windows and macOS when the PR already has `ci:full`), so batch pushes. Mark a
+PR ready once, after validation, with no owner hold. Dispatching, re-running or
+cancelling any workflow (CI, the fixer, the Codex gate, the stuck-thread watch), or
+adding `ci:full` or `enhancement` (which dispatch `ci.yml` and `rust.yml` through
+`ci-label-retrigger.yml`), needs a human ask. Agents never push to `main`.
+Read-only API queries are fine.
+
+**How.** Ask on the work issue: one Linear comment @mentioning the issue owner with
+the question, two or three options, your recommendation, and what you will do
+meanwhile ("paused" or other proceed-list work, never the option you are asking
+about or work that presupposes one). A stuck review thread instead goes in the
+PR's roll-up, found only by its `<!-- stuck-pr-threads:owner/repo#N -->` marker,
+in your own block; product and architecture questions stay on the work issue.
+For a decision or direction issue you are assigned, the Parallel Task API brief in
+[Linear-first workflow](#linear-first-workflow) still comes first, and Grok Bots do
+not research or resolve decision issues. Then release your claim and take only
+other admitted work that is next under the human-approved order.
+
+**Comment labels.** Agents usually post through a developer's account, so start
+every agent comment with `Agent (<tool/session>, for <developer>):`; it carries no
+authority. A **developer-approved comment** counts as that developer's personal
+receipt (Lucas's decision, CSL-353 comment 6e602e3a; in force in this repository from
+the merge of this section, CSL-354 comment f5bcb490) only when all hold:
+
+1. immediately before posting, the agent showed the developer the final exact text
+   and the developer approved it in the same session; approval from an earlier turn
+   or another context does not carry over;
+2. the comment carries the line
+   `developer-approved: <developer>, exact text confirmed <UTC time>, session <id>`;
+3. it has not been edited since it was posted (any edit voids it);
+4. it stays within that developer's own authority and grants none;
+5. no accepted contract requires an exact authenticated human receipt for it
+   (`docs/replacement/program.json`, R2a, recursion program receipts and other
+   accepted contracts keep their own receipt rules unless amended). GitHub review
+   approvals follow Review roles and the founder approval rule above.
+
+Never post decision language as an agent comment without that marker; link the
+record instead. A decision exists only if a human posted it from their own account,
+a developer-approved comment meeting the conditions above carries it, or it is
+recorded in `docs/adr/` or a linked Linear decision issue. When relying on a
+developer-approved comment, check that the marker is present, the comment is
+unedited and the named developer has not disputed it; if any of that is unclear,
+ask that developer before acting. Agent repetition,
+silence, a merge or an issue auto-closing to Done is not a decision.
+
+**Unattended runs** (loops acting through a developer's account while nobody
+watches) may only do "proceed" work. They do not resolve human-authored threads,
+change scope, close issues as decided or post developer-approved comments (nobody
+is there to approve the text). They never mark ready, add or remove GitHub labels,
+dispatch, re-run or cancel, and they label every comment
+`Agent (unattended run, for <developer>):`. Founder-directed bot reviews under
+Review roles are not covered here.
 
 ## Codex boundary
 
