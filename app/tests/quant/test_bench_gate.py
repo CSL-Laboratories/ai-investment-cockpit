@@ -1,4 +1,7 @@
-"""CSL-404: the Rust benchmark gate keeps "not slower than Python" without flaking on noise.
+"""CSL-404: the Rust benchmark gate, with a split guarantee that does not flake on noise.
+
+Batched paths keep "not slower than Python" (1.00x floor). Per-call paths, which run
+near parity by design, gate at 0.95x instead (CSL-439).
 
 ``rust/bench_gate.py`` is plain Python, so these run without the extension. A
 scripted clock stands in for the runner: each ``fn()`` call advances it by the
@@ -72,6 +75,65 @@ def test_a_noise_burst_on_one_block_no_longer_fails_the_gate():
     ratio = ScriptedRunner(ref, cand).ratio()
     assert ratio >= bench_gate.PER_CALL_FLOOR
     assert bench_gate.gate_failure("per-call EWMA", ratio, bench_gate.PER_CALL_FLOOR) is None
+
+
+class BurstRunner:
+    """Time-local noise: a call that STARTS inside ``[burst_start, burst_end)`` runs
+    ``factor`` times slower, whichever side it is. This is what a noisy neighbour does,
+    unlike ``ScriptedRunner``, which slows a side by call number."""
+
+    def __init__(self, reference: float, candidate: float,
+                 burst_start: float, burst_end: float, factor: float):
+        self.now = 0.0
+        self.base = {"ref": reference, "cand": candidate}
+        self.burst = (burst_start, burst_end, factor)
+        self.slowed: list[tuple[int, str]] = []
+        self.calls = 0
+
+    def clock(self) -> float:
+        return self.now
+
+    def side(self, name: str):
+        def run():
+            start, end, factor = self.burst
+            duration = self.base[name]
+            if start <= self.now < end:
+                duration *= factor
+                self.slowed.append((self.calls // 2, name))
+            self.calls += 1
+            self.now += duration
+        return run
+
+    def ratio(self, pairs: int = bench_gate.PAIRS) -> float:
+        return bench_gate.paired_ratio(self.side("ref"), self.side("cand"),
+                                       pairs=pairs, clock=self.clock)
+
+
+def test_a_burst_over_both_sides_of_adjacent_pairs_leaves_the_ratio_exact():
+    """Devin on #241: one burst hits the reference AND the candidate call of pair 2 and
+    of pair 3. Interleaving exists so such a burst scales both sides of a pair alike.
+
+    Reference 3.0, candidate 2.0 (a true 1.5x). Each pair takes 5.0, so pair 2 starts
+    at 10.0; slowed 2x it takes 10.0, so pair 3 runs 20.0-30.0. The burst covers exactly
+    that span, and every per-pair ratio, and so the median, stays at 1.5x.
+    """
+    runner = BurstRunner(3.0, 2.0, burst_start=10.0, burst_end=30.0, factor=2.0)
+    ratio = runner.ratio()
+    assert sorted(runner.slowed) == [(2, "cand"), (2, "ref"), (3, "cand"), (3, "ref")]
+    assert ratio == pytest.approx(1.5)
+    assert bench_gate.gate_failure("batched", ratio, bench_gate.BATCH_FLOOR) is None
+
+
+def test_a_burst_straddling_a_pair_boundary_stays_a_minority():
+    """The same burst, shifted to start mid-pair, slows one side of a boundary pair. Those
+    pairs are skewed, but they are a minority, so the median is still the true speedup."""
+    runner = BurstRunner(3.0, 2.0, burst_start=13.0, burst_end=33.0, factor=2.0)
+    ratio = runner.ratio()
+    skewed = {pair for pair, _ in runner.slowed
+              if sum(1 for p, _ in runner.slowed if p == pair) == 1}
+    assert skewed, "precondition: the burst splits at least one pair"
+    assert len(skewed) < bench_gate.PAIRS // 2
+    assert ratio == pytest.approx(1.5)
 
 
 def test_a_real_per_call_regression_still_fails():

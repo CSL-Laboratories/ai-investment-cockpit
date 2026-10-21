@@ -1,8 +1,14 @@
 """Noise-tolerant speed gate shared by the Rust benchmarks (CSL-404).
 
-The guarantee is unchanged: the shipped Rust path must not be slower than the
-Python reference. What changed is how a runner's noise is kept out of the
-answer.
+The guarantee is split by path (Samir's decision on CSL-439 / #241):
+
+* Batched paths keep the strict guarantee: the shipped Rust path must not be
+  slower than the Python reference (1.00x floor).
+* Per-call paths get a 0.95x floor instead. It replaces "never slower than
+  Python" for those paths only: a per-call path may measure up to 5% slower
+  and still pass, and a consistent slowdown beyond that fails.
+
+What also changed is how a runner's noise is kept out of the answer.
 
 The old gates timed five Python runs, then five Rust runs, and compared the two
 medians against a hard 1.00x floor. A noisy-neighbour burst that lands on one
