@@ -1015,11 +1015,13 @@ class OutboxHelperTests(unittest.TestCase):
         self.assertTrue(all(c[:2] == ["gh", "api"] for c in calls))
         self.assertNotIn("POST", json.dumps(calls))
 
-    GIT = ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.pager=cat"]
+    GIT = ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.pager=cat",
+           "-c", "commit.gpgsign=false"]
 
     def test_git_operations_use_fixed_argv(self):
         # Samir's review at acecb2b: no model-supplied git options, ever.
-        expected = {"status": ["status", "--short"], "diff": ["diff"], "diff-stat": ["diff", "--stat"],
+        expected = {"status": ["status", "--short"], "diff": ["diff", "--no-ext-diff", "--no-textconv"],
+                    "diff-stat": ["diff", "--stat", "--no-ext-diff", "--no-textconv"],
                     "log": ["log", "--oneline", "-20"], "head": ["log", "-1", "--stat"]}
         conflict_only = {"conflicts": ["diff", "--name-only", "--diff-filter=U"], "merge-abort": ["merge", "--abort"]}
         for mode in ("mention", "fixer", "conflict"):
@@ -1042,6 +1044,8 @@ class OutboxHelperTests(unittest.TestCase):
             with self.subTest(mode=mode):
                 out = o.model_api(self.CONFIG | {"mode": mode}, ["commit", ".claude-fixer-replies/msg.txt"], run=run)
                 self.assertEqual(out, "f" * 40)
+                if mode == "conflict":  # unmerged paths are checked for leftover markers first
+                    self.assertEqual(calls.pop(0), self.GIT + ["diff", "--name-only", "--diff-filter=U"])
                 self.assertEqual(calls, [
                     self.GIT + ["add", "-A", "--", ".", ":(exclude).claude-fixer-out", ":(exclude).claude-fixer-replies"],
                     self.GIT + ["commit", "--no-verify", "-q", "-m", "-fix: a message\nwith a second line\n"],
@@ -1088,6 +1092,54 @@ class OutboxHelperTests(unittest.TestCase):
             self.assertEqual(o.command(["git", "ls-files"]).splitlines(), ["a.txt", "b.txt"])
             self.assertFalse(Path("hook-ran").exists())
             self.assertIn(".claude-fixer-out", o.command(["git", "status", "--short"]))  # left untracked
+
+    def test_user_level_git_config_cannot_run_drivers_filters_or_signing(self):
+        # Fable review of 7fbe079: only GIT_CONFIG_GLOBAL/NOSYSTEM stop these, as in the publisher.
+        home = Path("home").resolve()
+        home.mkdir()
+        (home / ".gitconfig").write_text(
+            f'[diff "ev"]\n\tcommand = touch {home}/diff-ran\n'
+            f'[filter "ev"]\n\tclean = sh -c "touch {home}/filter-ran; cat"\n'
+            f'[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = {home}/fake-gpg\n')
+        (home / "fake-gpg").write_text(f"#!/bin/sh\ntouch {home}/gpg-ran\nexit 1\n")
+        (home / "fake-gpg").chmod(0o755)
+        env = {k: v for k, v in git_env().items() if k not in {"GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"}}
+        env["HOME"] = str(home)
+        with patch.dict(os.environ, env, clear=True):
+            o.command(["git", "init", "-q", "-b", "main"])
+            Path(".gitattributes").write_text("a.txt diff=ev filter=ev\n")
+            Path("a.txt").write_text("a\n")
+            subprocess.run(["git", "add", "-A"], env={**env, "GIT_CONFIG_GLOBAL": os.devnull}, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "base"], env={**env, "GIT_CONFIG_GLOBAL": os.devnull}, check=True)
+            Path("a.txt").write_text("b\n")
+            # Control: plain git with this HOME does run the user-level driver.
+            subprocess.run(["git", "diff"], env=env, capture_output=True)
+            self.assertTrue((home / "diff-ran").exists())
+            (home / "diff-ran").unlink()
+            o.model_api(self.CONFIG, ["diff"])
+            Path(".claude-fixer-replies/msg.txt").write_text("fix: b\n")
+            head = o.model_api(self.CONFIG, ["commit", ".claude-fixer-replies/msg.txt"])
+            self.assertRegex(head, r"\A[0-9a-f]{40}\Z")
+            for marker in ("diff-ran", "filter-ran", "gpg-ran"):
+                self.assertFalse((home / marker).exists(), marker)
+
+    def test_conflict_commit_refuses_leftover_markers(self):
+        conflict = self.CONFIG | {"mode": "conflict"}
+        with patch.dict(os.environ, git_env(), clear=True):
+            o.command(["git", "init", "-q", "-b", "main"])
+            for branch, text in (("main", "base\n"), ("side", "side\n"), ("head", "head\n")):
+                if branch != "main":
+                    o.command(["git", "checkout", "-q", "-b", branch, "main"])
+                Path("a.txt").write_text(text)
+                o.command(["git", "add", "a.txt"])
+                o.command(["git", "commit", "-q", "-m", branch])
+            before = o.command(["git", "rev-parse", "HEAD"])
+            subprocess.run(["git", "merge", "--no-ff", "--no-commit", "side"], capture_output=True)
+            Path(".claude-fixer-replies/msg.txt").write_text("Merge side\n")
+            with self.assertRaisesRegex(ValueError, "conflict markers remain"):
+                o.model_api(conflict, ["commit", ".claude-fixer-replies/msg.txt"])
+            self.assertEqual(o.command(["git", "rev-parse", "HEAD"]), before)  # nothing staged or committed
+            self.assertEqual(o.model_api(conflict, ["conflicts"]), "a.txt")
 
     def test_commit_completes_and_merge_abort_ends_the_conflict_merge(self):
         conflict = self.CONFIG | {"mode": "conflict"}
@@ -1206,9 +1258,13 @@ class WorkflowWiringTests(unittest.TestCase):
                 for rule in ("Bash(git push:*)", "Bash(git config:*)", "Bash(gh api:*)"):
                     self.assertIn(rule, inputs["claude_args"].split("--disallowedTools", 1)[1])
                 deny = json.loads(inputs["settings"])["permissions"]["deny"]
-                for rule in ("Edit(.git/**)", "Write(.git/**)", "Edit(/${{ runner.temp }}/claude-fixer-guard/**)",
+                for rule in ("Edit(.git/hooks/**)", "Write(.git/config)", "Edit(/${{ runner.temp }}/claude-fixer-guard/**)",
                              "Write(/${{ runner.temp }}/claude-fixer-guard/**)"):
                     self.assertIn(rule, deny)
+                # Deny rules become sandbox denies for Bash too: git must still write .git and read its
+                # config, and the helper must still read its own files.
+                self.assertFalse([r for r in deny if r in {"Edit(.git/**)", "Write(.git/**)", "Read(.git/config)"}
+                                  or (r.startswith("Read(") and "claude-fixer-guard" in r)], deny)
                 self.assertFalse([r for r in deny if ".claude-fixer-out" in r])  # the outbox stays writable
                 text = yaml.dump(model)
                 self.assertNotIn("id-token", text)
@@ -1287,8 +1343,8 @@ class WorkflowWiringTests(unittest.TestCase):
                 self.assertEqual(set(settings), {"deny"})  # no settings-level allow rules either
                 deny = settings["deny"]
                 for rule in ("Edit(.claude/**)", "Write(.claude/**)", "Edit(~/.claude/**)", "Write(~/.claude/**)",
-                             "Read(~/.claude/**)", "Read(.git/config)",
-                             "Read(/${{ runner.temp }}/claude-fixer-guard/read-token)"):
+                             "Read(~/.claude/**)", "Edit(~/.gitconfig)", "Write(~/.gitconfig)",
+                             "Edit(~/.config/git/**)", "Write(~/.config/git/**)"):
                     self.assertIn(rule, deny)
                 outbox = [s for s in model["steps"] if s.get("id") == "outbox"][0]
                 self.assertEqual(outbox["env"]["GH_TOKEN"], "${{ github.token }}")

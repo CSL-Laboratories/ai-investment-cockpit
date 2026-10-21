@@ -35,16 +35,24 @@ MAX_RECORDS = 50
 MAX_BODY = 65000
 OUTBOX = Path(".claude-fixer-out") / "outbox.jsonl"
 READ_TOKEN = "read-token"
-# Every git call: no shell, hooks, fsmonitor or pager, and no model-supplied options.
-GIT = ("git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.pager=cat")
-GIT_READS = {"status": ("status", "--short"), "diff": ("diff",), "diff-stat": ("diff", "--stat"),
+# Every git call: no shell, hooks, fsmonitor, pager or signing program, no user or
+# system config (command() sets GIT_CONFIG_GLOBAL/NOSYSTEM, as the publisher does),
+# and no model-supplied options.
+GIT = ("git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.pager=cat",
+       "-c", "commit.gpgsign=false")
+NO_DRIVERS = ("--no-ext-diff", "--no-textconv")
+GIT_READS = {"status": ("status", "--short"), "diff": ("diff", *NO_DRIVERS), "diff-stat": ("diff", "--stat", *NO_DRIVERS),
              "log": ("log", "--oneline", "-20"), "head": ("log", "-1", "--stat")}
+CONFLICT_MARKER = re.compile(r"^(?:<{7} |={7}$|>{7} )", re.MULTILINE)
 CONFLICT_GIT = {"conflicts": ("diff", "--name-only", "--diff-filter=U"), "merge-abort": ("merge", "--abort")}
 STAGE = ("add", "-A", "--", ".", ":(exclude).claude-fixer-out", ":(exclude).claude-fixer-replies")
 
 
 def command(args, **kwargs):
     kwargs.setdefault("timeout", 30)
+    if args[0] == "git":
+        # A user-level config could name diff drivers, clean filters or gpg.program.
+        kwargs.setdefault("env", {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
     # rstrip only: leading spaces are meaningful in `git status --short`.
     return subprocess.check_output(args, text=True, stderr=subprocess.PIPE, **kwargs).rstrip()
 
@@ -102,9 +110,18 @@ def git(run, *args):
     return run([*GIT, *args])
 
 
-def commit(body_path, run):
+def commit(body_path, run, mode):
     # The message is validated like a comment body and passed as one argv element.
     message = read_body(body_path)
+    if mode == "conflict":
+        # `git add` would mark a still-conflicted file resolved, markers and all.
+        workspace = Path.cwd().resolve()
+        for name in filter(None, git(run, *CONFLICT_GIT["conflicts"]).splitlines()):
+            file = workspace / name
+            if file.is_symlink() or not file.is_file():
+                raise ValueError("unmerged path is not a regular file")
+            if CONFLICT_MARKER.search(file.read_text(encoding="utf-8", errors="replace")):
+                raise ValueError("conflict markers remain")
     git(run, *STAGE)
     # In the conflict job this completes the in-progress merge.
     git(run, "commit", "--no-verify", "-q", "-m", message)
@@ -119,7 +136,7 @@ def model_api(config, args, run=command):
     if len(args) == 1 and args[0] in CONFLICT_GIT and config["mode"] == "conflict":
         return git(run, *CONFLICT_GIT[args[0]])
     if len(args) == 2 and args[0] == "commit":
-        return commit(args[1], run)
+        return commit(args[1], run, config["mode"])
     root = f"repos/{config['repo']}"
     pull = f"{root}/pulls/{config['number']}"
     reads = {"read": pull, "comments": f"{root}/issues/{config['number']}/comments",

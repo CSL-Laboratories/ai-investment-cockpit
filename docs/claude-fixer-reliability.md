@@ -110,7 +110,14 @@ removes the OAuth token, the Actions runtime tokens and `GH_TOKEN` from every
 command Claude runs, and bubblewrap (installed in a step that fails closed) keeps
 those commands from reading the CLI's own environment. The queue helper's fixed
 reads use the read-only job token from a file its trusted install step writes;
-the model's Read tool is denied that file and `.git/config`. The scrub and
+that token is read-only and revoked when the job ends. Claude Code turns
+`Read(...)`/`Edit(...)` deny rules into sandbox denies for Bash too, so the
+model jobs deny writes only to the `.git` paths git can be made to execute or
+redirect through (hooks, config, info, commondir, modules, worktrees), never
+`.git/**` or reads of `.git/config` and the helper files, which git and the
+helper themselves need. The helper's git ignores user and system git config,
+external diff and textconv drivers and commit signing, and a conflict commit
+is refused while conflict markers remain. The scrub and
 sandbox can only be proven by the post-merge canary: if they break the model
 step, it does not succeed and publish publishes nothing.
 The model job runs no repository code and holds no repository write credential;

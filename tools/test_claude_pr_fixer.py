@@ -1820,9 +1820,12 @@ class FixerPreflightTests(unittest.TestCase):
 
 
 class GuardTamperDenyTests(unittest.TestCase):
-    GUARD_DENIES = (
-        '"Edit(.git/**)"',
-        '"Write(.git/**)"',
+    # Edit/Write deny rules also become sandbox write denies for Bash (CLAUDE_CODE_SUBPROCESS_ENV_SCRUB),
+    # so a blanket .git/** deny would stop the helper's git from writing its index. Deny what git can
+    # be made to execute or redirect through, the same set Claude Code's scrub profile protects.
+    GUARD_DENIES = tuple(f'"{tool}(.git/{path})"' for path in ("hooks/**", "config", "config.worktree", "info/**",
+                                                                "commondir", "modules/**", "worktrees/**")
+                         for tool in ("Edit", "Write")) + (
         '"Edit(/${{ runner.temp }}/claude-fixer-guard/**)"',
         '"Write(/${{ runner.temp }}/claude-fixer-guard/**)"',
     )
@@ -1842,6 +1845,8 @@ class GuardTamperDenyTests(unittest.TestCase):
                     deny = body.split('"deny": [', 1)[1].split("]", 1)[0]
                     for rule in self.GUARD_DENIES:
                         self.assertIn(rule, deny)
+                    self.assertNotIn('"Edit(.git/**)"', deny)
+                    self.assertNotIn('"Write(.git/**)"', deny)
 
 
 class FixerQueueTests(unittest.TestCase):
