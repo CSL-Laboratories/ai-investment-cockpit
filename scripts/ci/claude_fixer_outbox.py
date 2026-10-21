@@ -53,10 +53,12 @@ STAGE = ("add", "-A", "--", ".")
 # exits 1 when a pathspec names an ignored path (CSL-377 canary, run 39569528483).
 UNSTAGE = ("reset", "-q", "--", ".claude-fixer-out", ".claude-fixer-replies")
 # claude-code-action's restoreConfigFromBase (SENSITIVE_PATHS) replaces these with the base branch's
-# versions for PR events and leaves them unstaged; "callers that stage files must exclude these".
-# The conflict job is not a PR event, and there a base-side change to them is part of the merge.
+# versions and leaves them unstaged; "callers that stage files must exclude these". It runs only for a
+# PR entity event (run.ts: isEntityContext && isPR), never for workflow/repository dispatch or the
+# conflict job, where an edit or a base-side change to them is real. Recheck both on every re-pin.
 ACTION_RESTORED = (".claude", ".mcp.json", ".claude.json", ".gitmodules", ".ripgreprc", "CLAUDE.md",
                    "CLAUDE.local.md", ".husky")
+RESTORE_EVENTS = frozenset({"issue_comment", "pull_request", "pull_request_review", "pull_request_review_comment"})
 UNTRACKED = ("ls-files", "-z", "--others", "--exclude-standard")
 MODIFIED = ("ls-files", "-z", "--modified")
 # The protected names Claude Code's sandbox masks when they do not exist (Claude Code 2.1.30x).
@@ -79,7 +81,9 @@ def validate(config):
             or not SHA.fullmatch(config["base"])
             or not REF.fullmatch(config["ref"])
             or config["ref"] in {"main", "master", "HEAD"}
-            or config.get("mode") not in MODES):
+            or config.get("mode") not in MODES
+            or type(config.get("restored", False)) is not bool
+            or (config.get("restored") is True and config["mode"] == "conflict")):
         raise ValueError("invalid helper context")
 
 
@@ -202,7 +206,7 @@ def sandbox_masks(run):
     return masks
 
 
-def commit(body_path, run, mode):
+def commit(body_path, run, mode, restored=False):
     # The message is validated like a comment body and passed as one argv element.
     message = read_body(body_path)
     if mode == "conflict":
@@ -224,8 +228,8 @@ def commit(body_path, run, mode):
                 raise ValueError("conflict markers remain")
     git(run, *STAGE, *sandbox_masks(run))
     # The helper's own files stay out of the commit whether or not they are ignored, and so do
-    # the action's base-branch restores in the PR-event jobs.
-    git(run, *UNSTAGE, *(ACTION_RESTORED if mode != "conflict" else ()))
+    # the action's base-branch restores when this run's event made the action restore them.
+    git(run, *UNSTAGE, *(ACTION_RESTORED if restored else ()))
     # In the conflict job this completes the in-progress merge.
     git(run, "commit", "--no-verify", "-q", "-m", message)
     return git(run, "rev-parse", "HEAD")
@@ -239,7 +243,7 @@ def model_api(config, args, run=command):
     if len(args) == 1 and args[0] in CONFLICT_GIT and config["mode"] == "conflict":
         return git(run, *CONFLICT_GIT[args[0]])
     if len(args) == 2 and args[0] == "commit":
-        return commit(args[1], run, config["mode"])
+        return commit(args[1], run, config["mode"], config.get("restored") is True)
     root = f"repos/{config['repo']}"
     pull = f"{root}/pulls/{config['number']}"
     reads = {"read": pull, "comments": f"{root}/issues/{config['number']}/comments",
@@ -279,6 +283,8 @@ def main():
         config = {key: os.environ[env] for key, env in (
             ("repo", "REPO"), ("number", "PR_NUMBER"), ("base", "HEAD_SHA"),
             ("ref", "HEAD_REF"), ("mode", "WRITER_MODE"))}
+        # Fixed by the trusted install step from the job's event, before Claude runs.
+        config["restored"] = config["mode"] != "conflict" and os.environ.get("GITHUB_EVENT_NAME") in RESTORE_EVENTS
         validate(config)
         receipts = json.loads(os.environ.get("RECEIPT_CONTEXT") or "[]")
         if not isinstance(receipts, list) or (receipts and config["mode"] != "fixer"):

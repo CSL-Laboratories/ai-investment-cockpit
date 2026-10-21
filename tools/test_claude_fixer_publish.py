@@ -1155,7 +1155,7 @@ class OutboxHelperTests(unittest.TestCase):
         o.model_api(self.CONFIG, ["commit", ".claude-fixer-replies/msg.txt"], run=run)
         self.assertEqual(calls[2], self.GIT + ["add", "-A", "--", ".", ":(exclude,literal)mask",
                                                ":(exclude,literal).zshrc"])
-        self.assertEqual(calls[3], self.GIT + list(o.UNSTAGE) + list(o.ACTION_RESTORED))
+        self.assertEqual(calls[3], self.GIT + list(o.UNSTAGE))  # a dispatch run: nothing was restored
 
     @unittest.skipUnless(hasattr(os, "mkfifo"), "POSIX special files")
     def test_masked_paths_stay_out_of_a_real_commit(self):
@@ -1306,7 +1306,8 @@ class OutboxHelperTests(unittest.TestCase):
             calls = []
             run = lambda a, calls=calls: calls.append(a) or ("f" * 40 if a[-2:] == ["rev-parse", "HEAD"] else "")
             with self.subTest(mode=mode):
-                out = o.model_api(self.CONFIG | {"mode": mode}, ["commit", ".claude-fixer-replies/msg.txt"], run=run)
+                out = o.model_api(self.CONFIG | {"mode": mode, "restored": mode != "conflict"},
+                                  ["commit", ".claude-fixer-replies/msg.txt"], run=run)
                 self.assertEqual(out, "f" * 40)
                 if mode == "conflict":  # unmerged paths are checked for leftover markers first
                     self.assertEqual(calls.pop(0), self.GIT + ["diff", "--name-only", "-z", "--diff-filter=U"])
@@ -1402,14 +1403,40 @@ class OutboxHelperTests(unittest.TestCase):
             self.assertEqual(o.command(["git", "show", "--name-only", "--format=", head]).split(), ["a.txt"])
             self.assertEqual(o.command(["git", "show", f"{head}:.claude-fixer-out/tracked.txt"]), "old")
 
+    def test_install_records_whether_the_action_restored_config(self):
+        # Codex 4335300680 / Chaandan at cac2a13: the action restores only for a PR entity event
+        # (run.ts: isEntityContext && isPR), never for workflow/repository dispatch or the conflict job.
+        helper = Path("helper")
+        helper.mkdir()
+        script = helper / "model-api"
+        script.write_text((ROOT / "scripts/ci/claude_fixer_outbox.py").read_text(encoding="utf-8"))
+        env = {k: v for k, v in os.environ.items() if k not in {"GH_TOKEN", "GITHUB_EVENT_NAME"}}
+        cases = [("mention", "issue_comment", True), ("fixer", "pull_request_review", True),
+                 ("fixer", "pull_request_review_comment", True), ("fixer", "workflow_dispatch", False),
+                 ("fixer", "repository_dispatch", False), ("fixer", None, False), ("mention", "issues", False),
+                 ("conflict", "issue_comment", False), ("conflict", "schedule", False)]
+        for mode, event, expected in cases:
+            with self.subTest(mode=mode, event=event):
+                for leftover in helper.glob("context.json"):
+                    leftover.unlink()
+                install = dict(env, REPO=REPO, PR_NUMBER="7", HEAD_SHA=A, HEAD_REF="fix", WRITER_MODE=mode)
+                if event:
+                    install["GITHUB_EVENT_NAME"] = event
+                subprocess.run([sys.executable, "-I", str(script), "install"], env=install, check=True)
+                self.assertIs(json.loads((helper / "context.json").read_text())["restored"], expected)
+        for bad in ({"restored": 1}, {"restored": "true"}, {"restored": True, "mode": "conflict"}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                o.validate(self.CONFIG | bad)
+
     def test_pr_event_commit_leaves_the_actions_base_branch_restores_out(self):
         # Fable rehearsal of a5fd6b7: for PR events claude-code-action's restoreConfigFromBase leaves the
         # base branch's .claude/, CLAUDE.md, .ripgreprc, ... unstaged in the worktree. Staging them would
         # revert the PR's versions (and the publisher refuses protected paths, dropping the whole run).
+        # A dispatch run gets no restore, so its edits to those paths are real and are committed.
         self.assertEqual(o.ACTION_RESTORED, (".claude", ".mcp.json", ".claude.json", ".gitmodules", ".ripgreprc",
                                              "CLAUDE.md", "CLAUDE.local.md", ".husky"))
-        for mode in ("mention", "fixer"):
-            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp, \
+        for mode, restored in (("mention", True), ("fixer", True), ("fixer", False)):
+            with self.subTest(mode=mode, restored=restored), tempfile.TemporaryDirectory() as tmp, \
                     patch.dict(os.environ, git_env(), clear=True):
                 os.chdir(tmp)
                 o.command(["git", "init", "-q", "-b", "main"])
@@ -1427,8 +1454,11 @@ class OutboxHelperTests(unittest.TestCase):
                 Path("a.txt").write_text("b\n")
                 Path(".claude-fixer-replies").mkdir()
                 Path(".claude-fixer-replies/msg.txt").write_text("fix: change a\n")
-                head = o.model_api(self.CONFIG | {"mode": mode}, ["commit", ".claude-fixer-replies/msg.txt"])
-                self.assertEqual(o.command(["git", "show", "--name-only", "--format=", head]).split(), ["a.txt"])
+                head = o.model_api(self.CONFIG | {"mode": mode, "restored": restored},
+                                   ["commit", ".claude-fixer-replies/msg.txt"])
+                files = o.command(["git", "show", "--name-only", "--format=", head]).split()
+                self.assertEqual(sorted(files), ["a.txt"] if restored else
+                                 [".claude/settings.json", ".husky/pre-commit", ".ripgreprc", "CLAUDE.md", "a.txt"])
                 os.chdir(self.tmp.name)
 
     def test_user_level_git_config_cannot_run_drivers_filters_or_signing(self):
