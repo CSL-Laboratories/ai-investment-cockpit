@@ -619,7 +619,8 @@ NON_WRITER_JOBS = {'claude.yml': {'resolve-pr', 'event-paths', 'forward-conflict
                    'claude-conflict-writer.yml': set()}
 HOSTED = {'ubuntu-latest', 'ubuntu-24.04', 'ubuntu-22.04', 'windows-2025', 'windows-latest', 'macos-latest'}
 MODEL_BASH = 'Bash(python3 ${{ runner.temp }}/claude-fixer-guard/model-api --:*)'
-PUSH = re.compile(r'run_git\(\[\s*"push"|\bgit push\b|/git/refs/')
+PUSH = re.compile(r'run_git\(\[\s*\\?["\']push|\bgit(\s+-[Cc]\s+\S+)*\s+push\b'
+                  r'|\\?["\']git\\?["\'],\s*\\?["\']push\\?["\']|/git/refs/')
 
 
 def job_text(job):
