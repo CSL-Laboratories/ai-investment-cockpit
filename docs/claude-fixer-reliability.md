@@ -31,8 +31,11 @@ Each Claude writer is a pipeline of three jobs that share the per-PR
   receipt consumer to `RUNNER_TEMP` and runs them with `python3 -I`. The
   publisher mints the Claude App token like claude-code-action (OIDC audience
   `claude-code-github-action`, Anthropic token exchange), masks it, never
-  prints it and revokes it in a `finally` block. A workflow-validation refusal
-  is a fail-closed skip with a notice.
+  prints it and revokes it in a `finally` block. It mints only after the bundle
+  has been fetched, checked and validated and the live head rechecked (or, with
+  no bundle, just before posting queued writes), so no App token exists while
+  untrusted objects are parsed (CSL-405). A workflow-validation refusal is a
+  fail-closed skip with a notice.
 
 The publisher refuses everything when the live PR is closed, on another
 branch or repository, has moved from the recorded head, carries `claude:pause`
@@ -46,8 +49,10 @@ queued write unless that status matches the artifact, so a failed
 `git bundle create` cannot look like a run without commits. It fetches the recorded head into a fresh bare
 repository (no system/global config, hooks or fsmonitor; the credential travels
 in environment-scoped config, never argv or disk), verifies and fetches the
-bundle, runs `git fsck` on every object (`.`, `..` and `.git` tree entries are
-errors), and accepts at most 20 new commits that:
+bundle (no submodule recursion on any fetch; the bundle fetch allows only the
+local `file` transport), runs `git fsck` on every object (`.`, `..` and `.git`
+tree entries, slash-containing or empty names, bad modes and null object IDs
+are errors), and accepts at most 20 new commits that:
 
 - descend linearly from the recorded head (conflict job: exactly one merge
   commit whose parents are the recorded head and recorded base, and the base
@@ -120,7 +125,15 @@ add a GitHub (`ghp_`/`gho_`/`ghs_`/`ghu_`/`ghr_`/`ghv_`, `github_pat_`) or
 Anthropic (`sk-ant-`) token shape, or an added or modified path containing one, and an
 outbox body that contains one. An encoded or split copy (base64, or a string
 broken across lines) would pass that scan; the job token it could carry is read-only and
-already revoked when the model job ends, before publish runs. Claude Code turns
+already revoked when the model job ends, before publish runs. The action's
+credential helper and its exact-match permission bypass are its own behaviour,
+so every `anthropics/claude-code-action` use is pinned to a full commit SHA
+(v1.0.256, CSL-412). The fixer-failure escalation binds to that same reference,
+and a bump must recheck both behaviours. Each model job's package step also fails the
+package (`package_status=failed`, so publish refuses everything) when any git
+config scope it can list holds a credential: a token or userinfo in a URL, an
+`x-access-token`, a GitHub token shape or an authorization header. Every run
+therefore checks that the action left the job token out of `.git/config`. Claude Code turns
 `Read(...)`/`Edit(...)` deny rules into sandbox denies for Bash too, so the
 model jobs deny writes only to the `.git` paths git can be made to execute or
 redirect through (hooks, config, info, commondir, modules, worktrees), never

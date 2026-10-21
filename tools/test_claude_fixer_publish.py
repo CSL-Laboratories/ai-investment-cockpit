@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -387,6 +388,64 @@ class TreeEntryTests(GitCase):
         raw.write_bytes(b"100644 x\0" + bytes.fromhex(blob))
         return repo.text("hash-object", "-t", "tree", "-w", "--literally", str(raw))
 
+    def test_check_objects_refuses_slash_or_empty_names_and_null_ids(self):
+        # CSL-405: these are fsck warnings by default; the publisher makes them errors.
+        repo = p.FreshRepo(tempfile.mkdtemp(dir=self.root))
+        blob_file = self.root / "blob"
+        blob_file.write_text("x\n")
+        blob = repo.text("hash-object", "-w", str(blob_file))
+        # (An empty name already fails plain fsck as an unparseable tree.)
+        for entry in ((b"100644", b"a/b", blob), (b"100644", b"n", "0" * 40), (b"100777", b"m", blob)):
+            with self.subTest(entry=entry[1:]):
+                repo = p.FreshRepo(tempfile.mkdtemp(dir=self.root))
+                repo.text("hash-object", "-w", str(blob_file))
+                raw = self.root / "root-tree"
+                raw.write_bytes(entry[0] + b" " + entry[1] + b"\0" + bytes.fromhex(entry[2]))
+                repo.run_git(["hash-object", "-t", "tree", "-w", "--literally", str(raw)])
+                # Control: plain fsck accepts this tree (a warning at most).
+                plain = subprocess.run(["git", "--git-dir", str(repo.dir), "fsck", "--no-dangling", "--no-progress"],
+                                       env=git_env(), capture_output=True, check=False)
+                self.assertEqual(plain.returncode, 0, plain.stderr)
+                with self.assertRaisesRegex(p.Refused, "^candidate objects fail git fsck$"):
+                    p.check_objects(repo)
+
+    def test_the_bundle_fetch_allows_no_network_transport(self):
+        repo = p.FreshRepo(tempfile.mkdtemp(dir=self.root))
+        marker = self.root / "ext-ran"
+        for url in ("https://example.invalid/x.git", f"ext::sh -c touch% {marker}", "ssh://example.invalid/x"):
+            with self.subTest(url=url[:8]):
+                started = time.monotonic()
+                with self.assertRaises(p.Refused):
+                    repo.run_git(["fetch", "-q", "--no-tags", url, "HEAD:refs/x"], local=True, timeout=20)
+                self.assertLess(time.monotonic() - started, 10)  # refused locally, no connection attempt
+        self.assertFalse(marker.exists())
+        repo = p.FreshRepo(tempfile.mkdtemp(dir=self.root))
+        repo.run_git(["fetch", "-q", str(self.src.path), self.head])
+        # git itself names the refused transport; the publisher's own Refused hides stderr.
+        argv = []
+        results = []
+
+        def runner(cmd, **kwargs):
+            argv.append(cmd)
+            result = subprocess.run(cmd, check=False, **kwargs)
+            results.append(result)
+            return result
+        probe = p.FreshRepo(tempfile.mkdtemp(dir=self.root), runner=runner)
+        with self.assertRaises(p.Refused):
+            probe.run_git(["fetch", "-q", "https://example.invalid/x.git", "HEAD:refs/x"], local=True)
+        self.assertIn(b"transport 'https' not allowed", results[-1].stderr)
+        self.assertEqual(argv[-1][argv[-1].index("protocol.allow=never") - 1:][:4],
+                         ["-c", "protocol.allow=never", "-c", "protocol.file.allow=always"])
+        calls = []
+        real = repo.run_git
+        repo.run_git = lambda args, **kwargs: calls.append((args, kwargs)) or real(args, **kwargs)
+        self.model.commit({"app/a.py": "a = 2\n"})
+        with contextlib.suppress(p.Refused):
+            p.validate_candidate(repo, self.config(), self.bundle())
+        fetch = next(c for c in calls if c[0][0] == "fetch")
+        self.assertEqual((fetch[1].get("fsck"), fetch[1].get("local")), (True, True))
+        self.assertIn("--recurse-submodules=no", fetch[0])
+
     def test_diff_paths_with_dot_or_empty_components_are_refused(self):
         for path in (b"../x", b"./x", b"a/../x", b"a//x", b"a/.", b"a/"):
             with self.subTest(path=path):
@@ -421,6 +480,19 @@ class RecordedFetchAndPushTests(GitCase):
         repo = p.FreshRepo(tempfile.mkdtemp(dir=self.root))
         p.fetch_recorded(repo, config, TOKEN)
         return repo, p.validate_candidate(repo, config, self.bundle())
+
+    def test_recorded_fetches_never_recurse_into_submodules(self):
+        self.base = self.head
+        config = self.config("conflict")
+        repo = p.FreshRepo(tempfile.mkdtemp(dir=self.root))
+        calls = []
+        real = repo.run_git
+        repo.run_git = lambda args, **kwargs: calls.append(args) or real(args, **kwargs)
+        p.fetch_recorded(repo, config, TOKEN)
+        fetches = [c for c in calls if c[0] == "fetch"]
+        self.assertEqual(len(fetches), 2)
+        for fetch in fetches:
+            self.assertIn("--recurse-submodules=no", fetch)
 
     def test_happy_path_pushes_exactly_the_candidate_without_leaving_the_token_on_disk(self):
         commit = self.model.commit({"app/a.py": "a = 2\n"})
@@ -660,6 +732,8 @@ class Harness:
         self.mint_error = None
         self.candidate = B
         self.validate_error = None
+        self.push_error = None
+        self.minted_at_validation = None
 
     def read(self, path):
         if "/pulls/comments/" in path:
@@ -694,11 +768,15 @@ class Harness:
                 "consumer": receipts, "post": lambda config, body: self.audits.append(body)}
 
         def validate(repo, config, bundle):
+            if self.minted_at_validation is not None:
+                self.minted_at_validation.append(self.minted)
             if self.validate_error:
                 raise self.validate_error
             return self.candidate
 
         def push(repo, config, candidate, token):
+            if self.push_error:
+                raise self.push_error
             self.pushed.append((candidate, token))
             self.heads = [self.candidate]
 
@@ -774,13 +852,14 @@ class PublishFlowTests(unittest.TestCase):
                 self.assertEqual((h.minted, h.pushed, h.writes), (0, [], []))
                 self.assertIn("nothing published", h.audits[0])
 
-    def test_head_moving_after_mint_blocks_push_and_revokes(self):
+    def test_head_moving_before_push_blocks_it_without_minting(self):
         h = Harness(self, bundle=True, records=[{"op": "comment", "body": "x"}])
         h.heads = [A, C, C]  # first check passes, the pre-push recheck sees a moved head
         h.run()
         self.assertEqual(h.pushed, [])
         self.assertEqual(h.writes, [])
-        self.assertEqual(h.revoked, [TOKEN])
+        # CSL-405: the token is minted after the recheck, so none exists to revoke.
+        self.assertEqual((h.minted, h.revoked), (0, []))
         self.assertIn("queued writes dropped", h.audits[0])
 
     def test_pause_between_records_stops_the_rest(self):
@@ -817,7 +896,7 @@ class PublishFlowTests(unittest.TestCase):
         h = Harness(self, bundle=True, records=[{"op": "comment", "body": "pushed!"}])
         h.validate_error = p.Refused("candidate changes a protected path")
         h.run()
-        self.assertEqual((h.pushed, h.writes, h.revoked), ([], [], [TOKEN]))
+        self.assertEqual((h.pushed, h.writes, h.minted, h.revoked), ([], [], 0, []))
         self.assertIn("refused: candidate changes a protected path; queued writes dropped", h.audits[0])
 
     def test_label_only_in_conflict_job(self):
@@ -838,13 +917,31 @@ class PublishFlowTests(unittest.TestCase):
         self.assertEqual((h.minted, h.writes), (0, []))
         self.assertIn("run attempt differs", h.audits[0])
 
-    def test_unexpected_error_still_revokes_and_audits(self):
+    def test_unexpected_error_audits_and_revokes_any_minted_token(self):
         h = Harness(self, bundle=True, records=[{"op": "comment", "body": "x"}])
         h.validate_error = RuntimeError(TOKEN)  # Even a token-bearing message is never echoed.
         self.assertEqual(h.run(), 1)
-        self.assertEqual(h.revoked, [TOKEN])
+        self.assertEqual((h.minted, h.revoked), (0, []))  # CSL-405: failed before any mint
         self.assertIn("publisher error (RuntimeError)", h.audits[0])
         self.assertNotIn(TOKEN, "\n".join(h.audits + h.lines))
+        h = Harness(self, bundle=True, records=[{"op": "comment", "body": "x"}])
+        h.push_error = RuntimeError(TOKEN)
+        self.assertEqual(h.run(), 1)
+        self.assertEqual((h.minted, h.revoked), (1, [TOKEN]))
+        self.assertIn("publisher error (RuntimeError)", h.audits[0])
+        self.assertNotIn(TOKEN, "\n".join(h.audits + h.lines))
+
+    def test_the_app_token_is_minted_only_after_validation(self):
+        # CSL-405: no token exists while the untrusted bundle is fetched, fsck'd and parsed.
+        h = Harness(self, bundle=True, records=[{"op": "comment", "body": "x"}])
+        h.minted_at_validation = []
+        h.run()
+        self.assertEqual(h.minted_at_validation, [0])
+        self.assertEqual((h.minted, h.pushed, h.revoked), (1, [(B, TOKEN)], [TOKEN]))
+        # Queued writes alone still mint once, then revoke.
+        h = Harness(self, records=[{"op": "comment", "body": "x"}])
+        h.run()
+        self.assertEqual((h.minted, len(h.writes), h.revoked), (1, 1, [TOKEN]))
 
     def test_workflow_validation_skip_publishes_nothing_but_audits(self):
         h = Harness(self, bundle=True, records=[{"op": "comment", "body": "x"}])
@@ -1393,6 +1490,18 @@ PIPELINES = {
 }
 
 
+# Samir's review of #231 at 7f06a3b: each alternative of the package step's credential grep has a
+# case that it alone matches, so removing any one alternative fails the test.
+ISOLATED_CREDENTIALS = {
+    "userinfo": ("remote.origin.url", "https://someone:notatoken@github.com/acme/example.git"),
+    "access-token-user": ("credential.https://github.com.username", "x-access-token"),
+    # The actions/checkout layout, with a value that is not token-shaped.
+    "extraheader": ("http.https://github.com/.extraheader", "AUTHORIZATION: basic bm90YXRva2Vu"),
+    "pat": ("credential.https://github.com.password", "github_pat_NotARealToken"),
+    "token-shape": ("credential.https://github.com.password", TOKEN),
+}
+
+
 class WorkflowWiringTests(unittest.TestCase):
     def test_conflict_writer_devin_race_check_reads_author_and_committer(self):
         text = (ROOT / ".github/workflows/claude-conflict-writer.yml").read_text(encoding="utf-8")
@@ -1455,12 +1564,25 @@ class WorkflowWiringTests(unittest.TestCase):
         # Runs each model job's real package script against a repo, with a git wrapper that can fail `bundle`.
         for name, _prep, model, _pub, _group, ids in self.pipelines():
             script = [s for s in model["steps"] if s.get("name") == "Package untrusted model output"][0]["run"]
-            for case in ("unchanged", "bundled", "failed"):
+            for case in ("unchanged", "bundled", "failed", "credential", "helper", "big", "unreadable",
+                         *ISOLATED_CREDENTIALS):
                 with self.subTest(workflow=name, job=ids[1], case=case), tempfile.TemporaryDirectory() as tmp:
                     root = Path(tmp)
                     work = Work(root / "repo")
                     subprocess.run(["git", "init", "-q", "-b", "main", str(work.path)], env=git_env(), check=True)
                     head = work.commit({"a.txt": "a\n"}, message="head")
+                    # CSL-412: the action's credential-helper layout is clean; a token in the URL is not.
+                    url = ("https://x-access-token:" + TOKEN + "@github.com/acme/example.git" if case == "credential"
+                           else "https://github.com/acme/example.git")
+                    work.git("remote", "add", "origin", url)
+                    if case == "helper":
+                        work.git("config", "credential.helper", str(root / ".git-credential-gh-token"))
+                    if case in ISOLATED_CREDENTIALS:
+                        work.git("config", *ISOLATED_CREDENTIALS[case])
+                    if case == "big":  # Fable review of 7d56eb8: a hit before >64 KiB of config still fails
+                        work.git("config", "remote.origin.url", "https://x-access-token:" + TOKEN + "@github.com/a/b.git")
+                        for index in range(1500):
+                            work.git("config", "--add", "filler.value", f"{index:04d}" + "x" * 60)
                     if case != "unchanged":
                         work.commit({"a.txt": "b\n"}, message="model fix")
                     shim = root / "bin"
@@ -1468,15 +1590,20 @@ class WorkflowWiringTests(unittest.TestCase):
                     real_git = shutil.which("git")
                     (shim / "git").write_text("#!/bin/sh\n"
                                               + ('for a in "$@"; do [ "$a" = bundle ] && exit 1; done\n' if case == "failed" else "")
+                                              # git config fails (only the listing): fail closed, not clean
+                                              + ('[ "$1" = config ] && exit 1\n' if case == "unreadable" else "")
                                               + f'exec "{real_git}" "$@"\n')
                     (shim / "git").chmod(0o755)
                     output = root / "output"
                     env = dict(git_env(), PATH=f"{shim}{os.pathsep}{os.environ['PATH']}", RUNNER_TEMP=str(root),
                                GITHUB_OUTPUT=str(output), HEAD_SHA=head, BASE_SHA=head, EXECUTION_FILE="")
                     subprocess.run(["bash", "-c", script], cwd=work.path, env=env, check=True, capture_output=True)
-                    self.assertEqual(output.read_text(), f"package_status={case}\n")
+                    expected = ("failed" if case in ISOLATED_CREDENTIALS else
+                                {"credential": "failed", "helper": "bundled", "big": "failed",
+                                 "unreadable": "failed"}.get(case, case))
+                    self.assertEqual(output.read_text(), f"package_status={expected}\n")
                     bundle = root / "claude-writer-out" / "candidate.bundle"
-                    self.assertEqual(bundle.exists(), case == "bundled")
+                    self.assertEqual(bundle.exists(), expected == "bundled")
 
     def test_model_jobs_scrub_credentials_and_run_no_repository_code(self):
         # Chaandan's review at 5f904c3: PR code must not run next to the OAuth token.
