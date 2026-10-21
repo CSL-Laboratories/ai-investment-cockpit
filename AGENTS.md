@@ -168,7 +168,10 @@ a developer-approved comment meeting the conditions above carries it, or it is
 recorded in `docs/adr/` or a linked Linear decision issue. When relying on a
 developer-approved comment, check that the marker is present, the comment is
 unedited and the named developer has not disputed it; if any of that is unclear,
-ask that developer before acting. Agent repetition,
+ask that developer before acting. A comment from a founder or developer account
+that has no agent prefix and was posted before this rule took effect (the merge of
+#217, 2026-10-21T03:50:42Z) counts as that person's decision only if they confirm
+it when asked (Lucas's decision, CSL-354 comment 0a86b61c). Agent repetition,
 silence, a merge or an issue auto-closing to Done is not a decision.
 
 **Unattended runs** (loops acting through a developer's account while nobody
