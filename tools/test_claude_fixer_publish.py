@@ -1455,7 +1455,7 @@ class WorkflowWiringTests(unittest.TestCase):
         # Runs each model job's real package script against a repo, with a git wrapper that can fail `bundle`.
         for name, _prep, model, _pub, _group, ids in self.pipelines():
             script = [s for s in model["steps"] if s.get("name") == "Package untrusted model output"][0]["run"]
-            for case in ("unchanged", "bundled", "failed", "credential", "helper"):
+            for case in ("unchanged", "bundled", "failed", "credential", "helper", "big", "unreadable"):
                 with self.subTest(workflow=name, job=ids[1], case=case), tempfile.TemporaryDirectory() as tmp:
                     root = Path(tmp)
                     work = Work(root / "repo")
@@ -1467,6 +1467,10 @@ class WorkflowWiringTests(unittest.TestCase):
                     work.git("remote", "add", "origin", url)
                     if case == "helper":
                         work.git("config", "credential.helper", str(root / ".git-credential-gh-token"))
+                    if case == "big":  # Fable review of 7d56eb8: a hit before >64 KiB of config still fails
+                        work.git("config", "remote.origin.url", "https://x-access-token:" + TOKEN + "@github.com/a/b.git")
+                        for index in range(1500):
+                            work.git("config", "--add", "filler.value", f"{index:04d}" + "x" * 60)
                     if case != "unchanged":
                         work.commit({"a.txt": "b\n"}, message="model fix")
                     shim = root / "bin"
@@ -1474,13 +1478,16 @@ class WorkflowWiringTests(unittest.TestCase):
                     real_git = shutil.which("git")
                     (shim / "git").write_text("#!/bin/sh\n"
                                               + ('for a in "$@"; do [ "$a" = bundle ] && exit 1; done\n' if case == "failed" else "")
+                                              # git config fails (only the listing): fail closed, not clean
+                                              + ('[ "$1" = config ] && exit 1\n' if case == "unreadable" else "")
                                               + f'exec "{real_git}" "$@"\n')
                     (shim / "git").chmod(0o755)
                     output = root / "output"
                     env = dict(git_env(), PATH=f"{shim}{os.pathsep}{os.environ['PATH']}", RUNNER_TEMP=str(root),
                                GITHUB_OUTPUT=str(output), HEAD_SHA=head, BASE_SHA=head, EXECUTION_FILE="")
                     subprocess.run(["bash", "-c", script], cwd=work.path, env=env, check=True, capture_output=True)
-                    expected = {"credential": "failed", "helper": "bundled"}.get(case, case)
+                    expected = {"credential": "failed", "helper": "bundled", "big": "failed",
+                                "unreadable": "failed"}.get(case, case)
                     self.assertEqual(output.read_text(), f"package_status={expected}\n")
                     bundle = root / "claude-writer-out" / "candidate.bundle"
                     self.assertEqual(bundle.exists(), expected == "bundled")

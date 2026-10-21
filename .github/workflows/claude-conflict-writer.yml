@@ -765,8 +765,13 @@ jobs:
           fi
           # CSL-412: allowed_non_write_users keeps the job token out of git config, where Read
           # could open it. A credential in any config scope fails the package; publish then refuses.
-          if git config --list --includes 2>/dev/null \
-              | grep -Eiq 'x-access-token|://[^/[:space:]@]+@|gh[opsuvr]_[a-z0-9]{36}|github_pat_|authorization:'; then
+          # No pipe: under pipefail a `grep -q` hit could SIGPIPE git and read as clean.
+          if ! config="$(git config --list --includes 2>/dev/null)"; then
+            echo "::error::The checkout's git config could not be read; nothing from this run is published."
+            status=failed
+            rm -f "$out/candidate.bundle"
+          elif grep -Ei 'x-access-token|://[^/[:space:]@]+@|gh[opsuvr]_[a-z0-9]{36}|github_pat_|authorization:' \
+              >/dev/null <<< "$config"; then
             echo "::error::A credential is in the checkout's git config; nothing from this run is published."
             status=failed
             rm -f "$out/candidate.bundle"
