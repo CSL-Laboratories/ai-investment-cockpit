@@ -637,9 +637,12 @@ class WorkflowStructureTests(unittest.TestCase):
 
     def test_acceptance_gates_before_push(self) -> None:
         devin = self._job("devin-review-fix")
-        self.assertIn("acceptance gate", devin.lower())
+        self.assertIn("lint gate", devin.lower())
         self.assertIn("ruff check app", devin)
-        self.assertIn("python -m pytest -q app/tests", devin)
+        # The model job runs no repository code next to its credentials (Chaandan, 5f904c3);
+        # linux-gates tests the pushed commit.
+        self.assertIn("linux-gates job runs the full test suite on the pushed commit", devin)
+        self.assertNotIn("python -m pytest", devin.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0])
         # The prompt names tools/ci_gate.py as a protected path (CSL-377);
         # it is never an allowed gate command.
         self.assertNotIn("tools/ci_gate.py", devin.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0])
@@ -777,7 +780,9 @@ def load_denials():
 
 
 class FixerGateAndPromptTests(unittest.TestCase):
-    GATES = ("Bash(ruff check app)", "Bash(python -m pytest -q app/tests)")
+    GATES = ("Bash(ruff check app)",)
+    REMOVED = ("Bash(python -m pytest -q app/tests)", "Bash(python -X utf8 -B tools/test_claude_pr_fixer.py)",
+               "Bash(python3 -X utf8 -B tools/test_claude_pr_fixer.py)", "Bash(gh pr view:*)", "Bash(gh pr diff:*)")
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -791,6 +796,8 @@ class FixerGateAndPromptTests(unittest.TestCase):
             body = self._job(job)
             for gate_tool in self.GATES:
                 self.assertIn(gate_tool, body, job)
+            for removed in self.REMOVED:
+                self.assertNotIn(removed, body, job)
             self.assertNotIn("Bash(cd ", body, job)
             self.assertNotIn("cd app &&", body, job)
             self.assertNotIn("ci_gate.py:*", body, job)
@@ -830,7 +837,7 @@ class FixerGateAndPromptTests(unittest.TestCase):
         self.assertIn("actions/setup-python@v5", mention)
         self.assertIn("Install acceptance-gate deps", mention)
         self.assertIn("ruff check app", mention)
-        self.assertIn("python -m pytest -q app/tests", mention)
+        self.assertNotIn("Bash(python -m pytest -q app/tests)", mention)
 
     def test_embedded_denials_match_source(self) -> None:
         start = f"python3 - \"$EXECUTION_FILE\" <<'{DENIALS_HEREDOC}'\n"
@@ -1255,8 +1262,10 @@ class ConflictJobStructureTests(unittest.TestCase):
         for path in (".github/**", "AGENTS.md", "CLAUDE.md", "CODEOWNERS", "scripts/ci/**", "tools/ci_gate.py"):
             self.assertIn(f'"Edit({path})"', job)
             self.assertIn(f'"Write({path})"', job)
-        self.assertIn("tools/test_claude_pr_fixer.py.", job.split("--allowedTools", 1)[0])
+        self.assertIn("tools/test_claude_pr_fixer.py, CODEOWNERS", job.split("--allowedTools", 1)[0])  # protected
         allow = job.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0]
+        self.assertNotIn("pytest", allow)
+        self.assertNotIn("tools/test_claude_pr_fixer.py", allow)
         self.assertNotIn("comments/*/replies", allow)
         self.assertNotIn("resolveReviewThread", allow)
         # CSL-377: no push from the model job; the publish job pushes.
@@ -1283,7 +1292,8 @@ class ConflictJobStructureTests(unittest.TestCase):
         self.assertIn("UNTRUSTED DATA", job)
         self.assertIn("no heredocs, loops, or &&", job)
         self.assertIn("exactly as written above", job)
-        self.assertIn("python -m pytest -q app/tests", job)
+        self.assertIn("ruff check app", job)
+        self.assertNotIn("python -m pytest -q app/tests", job)
 
     def test_resolver_comments_or_labels(self) -> None:
         job = WRITER_WORKFLOW_PATH.read_text(encoding="utf-8").split("\n  model:\n", 1)[1]

@@ -84,7 +84,19 @@ writes), and Git's ordinary non-fast-forward rejection remains the final race
 protection. App-token pushes are expected to trigger workflows; the post-merge
 canary has to confirm it.
 
-Not in this cut (phase 2): sandboxing the model job (for example bubblewrap).
+Model-job credentials (Chaandan's review at `5f904c3`): the model jobs run no
+repository code. Their only gate command is `ruff check app`; pytest, `tools/`
+tests and `gh pr` commands are not allowed, and the required `linux-gates` job
+tests the pushed commit. Claude Code runs with `--setting-sources user`, so
+`.claude/` settings and hooks from the PR checkout are ignored, and edits to
+`.claude/**` and `~/.claude/**` are denied. `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`
+removes the OAuth token, the Actions runtime tokens and `GH_TOKEN` from every
+command Claude runs, and bubblewrap (installed in a step that fails closed) keeps
+those commands from reading the CLI's own environment. The queue helper's fixed
+reads use the read-only job token from a file its trusted install step writes;
+the model's Read tool is denied that file and `.git/config`. The scrub and
+sandbox can only be proven by the post-merge canary: if they break the model
+step, it does not succeed and publish publishes nothing.
 The model job still runs PR code with the model's OAuth token in its process
 environment; it no longer holds any repository write credential.
 

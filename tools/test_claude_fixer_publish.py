@@ -16,6 +16,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
@@ -978,6 +979,33 @@ class OutboxHelperTests(unittest.TestCase):
             p.load_outbox(raw, "fixer", {11})
         self.assertEqual(len(p.load_outbox(raw.rsplit(b"\n", 2)[0] + b"\n", "fixer", {11})), 3)
 
+    def test_install_stores_the_read_token_for_scrubbed_reads(self):
+        # Claude Code's subprocess scrub removes GH_TOKEN, so reads fall back to the installed file.
+        helper = Path("helper")
+        helper.mkdir()
+        script = helper / "model-api"
+        script.write_text((ROOT / "scripts/ci/claude_fixer_outbox.py").read_text(encoding="utf-8"))
+        env = {k: v for k, v in os.environ.items() if k != "GH_TOKEN"}
+        install = dict(env, REPO=REPO, PR_NUMBER="7", HEAD_SHA=A, HEAD_REF="fix", WRITER_MODE="mention",
+                       GH_TOKEN="ghs_readonly")
+        subprocess.run([sys.executable, "-I", str(script), "install"], env=install, check=True)
+        token = helper / "read-token"
+        self.assertEqual(token.read_text(), "ghs_readonly")
+        self.assertEqual(token.stat().st_mode & 0o777, 0o600)
+        bin_dir = Path("bin")
+        bin_dir.mkdir()
+        (bin_dir / "gh").write_text('#!/bin/sh\nprintf "%s" "$GH_TOKEN"\n')
+        (bin_dir / "gh").chmod(0o755)
+        scrubbed = dict(env, PATH=f"{bin_dir.resolve()}{os.pathsep}{env['PATH']}")
+        out = subprocess.run([sys.executable, "-I", str(script), "--", "read"], env=scrubbed,
+                             capture_output=True, text=True, check=True).stdout
+        self.assertEqual(out.strip(), "ghs_readonly")
+        # An explicit GH_TOKEN still wins, and a second install refuses to overwrite the file.
+        out = subprocess.run([sys.executable, "-I", str(script), "--", "read"], env=dict(scrubbed, GH_TOKEN="ghs_env"),
+                             capture_output=True, text=True, check=True).stdout
+        self.assertEqual(out.strip(), "ghs_env")
+        self.assertNotEqual(subprocess.run([sys.executable, "-I", str(script), "install"], env=install).returncode, 0)
+
     def test_reads_use_fixed_endpoints(self):
         calls = []
         run = lambda args: calls.append(args) or "{}"
@@ -1015,6 +1043,14 @@ class OutboxHelperTests(unittest.TestCase):
         os.symlink("/tmp/elsewhere", ".claude-fixer-out/outbox.jsonl")
         with self.assertRaises(OSError):
             o.model_api(self.CONFIG, ["comment", ".claude-fixer-replies/r.txt"])
+
+
+PUBLISH_STEP = "Publish validated candidate, queued writes and terminal audit"
+RECEIPTS_STEP = "Install trusted receipt helper"
+
+
+def step(job, name):
+    return [s for s in job["steps"] if s.get("name") == name][0]
 
 
 def jobs(name):
@@ -1109,6 +1145,32 @@ class WorkflowWiringTests(unittest.TestCase):
                     bundle = root / "claude-writer-out" / "candidate.bundle"
                     self.assertEqual(bundle.exists(), case == "bundled")
 
+    def test_model_jobs_scrub_credentials_and_run_no_repository_code(self):
+        # Chaandan's review at 5f904c3: PR code must not run next to the OAuth token.
+        for name, _prep, model, _pub, _group, ids in self.pipelines():
+            with self.subTest(workflow=name, job=ids[1]):
+                names = [s.get("name") or s.get("id") for s in model["steps"]]
+                sandbox = step(model, "Install the subprocess sandbox for Claude's commands")
+                self.assertEqual(names.index("claude") - 1, names.index(sandbox["name"]))
+                self.assertIn("apt-get install -y --no-install-recommends bubblewrap socat", sandbox["run"])
+                self.assertIn("\ncommand -v bwrap\n", sandbox["run"])
+                self.assertNotIn("continue-on-error", sandbox)
+                action = [s for s in model["steps"] if s.get("id") == "claude"][0]
+                self.assertEqual(action["env"], {"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1"})
+                args = action["with"]["claude_args"]
+                self.assertIn("--setting-sources user", args)
+                allow = args.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0]
+                for gone in ("pytest", "tools/test_", "gh pr", "python -m", "python -X"):
+                    self.assertNotIn(gone, allow)
+                self.assertNotIn("python -m pytest", action["with"]["prompt"])
+                self.assertIn("Do not run tests or any repository code", action["with"]["prompt"])
+                deny = json.loads(action["with"]["settings"])["permissions"]["deny"]
+                for rule in ("Edit(.claude/**)", "Write(.claude/**)", "Edit(~/.claude/**)", "Write(~/.claude/**)",
+                             "Read(.git/config)", "Read(/${{ runner.temp }}/claude-fixer-guard/read-token)"):
+                    self.assertIn(rule, deny)
+                outbox = [s for s in model["steps"] if s.get("id") == "outbox"][0]
+                self.assertEqual(outbox["env"]["GH_TOKEN"], "${{ github.token }}")
+
     def test_publish_jobs_mint_and_never_run_repository_code(self):
         for name, _prep, _model, publish, _group, ids in self.pipelines():
             with self.subTest(workflow=name, job=ids[2]):
@@ -1121,13 +1183,15 @@ class WorkflowWiringTests(unittest.TestCase):
                 self.assertIn(f"needs.{ids[0]}.outputs.run_attempt == github.run_attempt", condition)
                 self.assertNotIn(f"needs.{ids[1]}.result == 'success'", condition)
                 uses = [s.get("uses", "") for s in publish["steps"]]
-                self.assertEqual(uses, ["actions/download-artifact@v4", ""])
+                self.assertEqual(uses, ["actions/download-artifact@v4", "", ""])
                 self.assertEqual(publish["steps"][0]["continue-on-error"], "true")
-                run = publish["steps"][1]["run"]
+                self.assertEqual([s.get("name") for s in publish["steps"][1:]], [RECEIPTS_STEP, PUBLISH_STEP])
+                self.assertEqual(set(step(publish, RECEIPTS_STEP)) - {"name", "run"}, set())  # no env, no token
+                run = step(publish, RECEIPTS_STEP)["run"] + step(publish, PUBLISH_STEP)["run"]
                 # Outside the embedded, parity-checked sources: no repository code.
                 outside = re.sub(r"<<'([A-Z_]+)'\n.*?\n\1(?:\n|$)", "<<heredoc\n", run, flags=re.DOTALL)
                 self.assertEqual(outside.count("<<heredoc"), 2)
-                rest = {**publish, "steps": [publish["steps"][0], {**publish["steps"][1], "run": outside}]}
+                rest = {**publish, "steps": [publish["steps"][0], {"name": "runs", "run": outside}]}
                 for forbidden in ("pip install", "pytest", "python tools/", "python3 tools/", "uses: ./",
                                   "actions/checkout", "scripts/ci/", "git clone", "-e .", "GITHUB_WORKSPACE"):
                     self.assertNotIn(forbidden, yaml.dump(rest))
@@ -1137,7 +1201,7 @@ class WorkflowWiringTests(unittest.TestCase):
                                             "cat > \"$RUNNER_TEMP/claude-fixer-publish/receipts.py\" <<'CLAUDE_FIXER_RECEIPTS'",
                                             "cat > \"$RUNNER_TEMP/claude-fixer-publish/publish.py\" <<'CLAUDE_FIXER_PUBLISH'",
                                             'python3 -I "$RUNNER_TEMP/claude-fixer-publish/publish.py"'])
-                env = publish["steps"][1]["env"]
+                env = step(publish, PUBLISH_STEP)["env"]
                 self.assertEqual(env["GH_TOKEN"], "${{ github.token }}")
                 self.assertEqual(env["CLAUDE_FIXER_PAUSE"], "${{ vars.CLAUDE_FIXER_PAUSE }}")
                 self.assertEqual(env["HEAD_SHA"], f"${{{{ needs.{ids[0]}.outputs.head_sha }}}}")
@@ -1206,12 +1270,20 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertIn('HEAD "^$HEAD_SHA" "^$BASE_SHA"', package["run"])
         merge = [s for s in model["steps"] if s.get("name", "").startswith("Start merge")][0]
         self.assertIn('git merge --no-ff --no-commit "$BASE_SHA"', merge["run"])
-        publish = jobs("claude-conflict-writer.yml")["publish"]["steps"][1]["env"]
+        publish = step(jobs("claude-conflict-writer.yml")["publish"], PUBLISH_STEP)["env"]
         self.assertEqual(publish["BASE_SHA"], "${{ needs.prepare.outputs.base_sha }}")
         self.assertEqual(publish["WRITER_MODE"], "conflict")
-        self.assertEqual(jobs("claude.yml")["fixer-publish"]["steps"][1]["env"]["RECEIPT_CONTEXT"],
+        self.assertEqual(step(jobs("claude.yml")["fixer-publish"], PUBLISH_STEP)["env"]["RECEIPT_CONTEXT"],
                          "${{ needs.fixer-prepare.outputs.receipt_context }}")
-        self.assertNotIn("RECEIPT_CONTEXT", jobs("claude.yml")["mention-publish"]["steps"][1]["env"])
+        self.assertNotIn("RECEIPT_CONTEXT", step(jobs("claude.yml")["mention-publish"], PUBLISH_STEP)["env"])
+
+    def test_every_run_script_stays_below_actionlints_pipe_limit(self):
+        # actionlint 1.7.7 hangs (and event-paths times out) on a run script of 64 KiB or more.
+        for path in sorted((ROOT / ".github" / "workflows").glob("*.y*ml")):
+            for job_name, job in (yaml.safe_load(path.read_text(encoding="utf-8")).get("jobs") or {}).items():
+                for index, item in enumerate(job.get("steps") or []):
+                    with self.subTest(workflow=path.name, job=job_name, step=index):
+                        self.assertLess(len(item.get("run", "").encode("utf-8")), 60_000)
 
     def test_committer_identity_is_pinned_where_the_publisher_expects_it(self):
         for name, _prep, model, _pub, _group, ids in self.pipelines():
