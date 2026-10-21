@@ -1441,6 +1441,145 @@ class OutboxHelperTests(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 o.validate(self.CONFIG | bad)
 
+    def install_trigger(self, mode, event, payload):
+        # The install step's trigger recording, run as the real helper with a runner-style event file.
+        helper = Path("helper")
+        helper.mkdir(exist_ok=True)
+        script = helper / "model-api"
+        script.write_text((ROOT / "scripts/ci/claude_fixer_outbox.py").read_text(encoding="utf-8"))
+        for leftover in helper.glob("context.json"):
+            leftover.unlink()
+        env = {k: v for k, v in os.environ.items()
+               if k not in {"GH_TOKEN", "GITHUB_EVENT_NAME", "GITHUB_EVENT_PATH"}}
+        install = dict(env, REPO=REPO, PR_NUMBER="7", HEAD_SHA=A, HEAD_REF="fix", WRITER_MODE=mode)
+        if event:
+            install["GITHUB_EVENT_NAME"] = event
+        if payload is not None:
+            Path("event.json").write_text(json.dumps(payload))
+            install["GITHUB_EVENT_PATH"] = str(Path("event.json").resolve())
+        subprocess.run([sys.executable, "-I", str(script), "install"], env=install, check=True)
+        return json.loads((helper / "context.json").read_text())
+
+    def test_install_records_the_mention_trigger_from_the_event_file(self):
+        # CSL-377 canary run 39649522054: the mention reads its own comment by the event's ID, never the model's.
+        for event in ("issue_comment", "pull_request_review_comment"):
+            with self.subTest(event=event):
+                self.assertEqual(self.install_trigger("mention", event, {"comment": {"id": 123}})["trigger"],
+                                 {"event": event, "id": 123})
+        refused = [("fixer", "issue_comment", {"comment": {"id": 123}}),
+                   ("conflict", "issue_comment", {"comment": {"id": 123}}),
+                   ("mention", "pull_request_review", {"comment": {"id": 123}}),
+                   ("mention", "workflow_dispatch", {"comment": {"id": 123}}),
+                   ("mention", "issues", {"comment": {"id": 123}}),
+                   ("mention", "issue_comment", None), ("mention", None, {"comment": {"id": 123}}),
+                   ("mention", "issue_comment", {"comment": {"id": 0}}),
+                   ("mention", "issue_comment", {"comment": {"id": -1}}),
+                   ("mention", "issue_comment", {"comment": {"id": "123"}}),
+                   ("mention", "issue_comment", {"comment": {"id": True}}),
+                   ("mention", "issue_comment", {"comment": None}), ("mention", "issue_comment", [])]
+        for mode, event, payload in refused:
+            with self.subTest(mode=mode, event=event, payload=payload):
+                self.assertNotIn("trigger", self.install_trigger(mode, event, payload))
+
+    def test_validate_refuses_a_malformed_or_misplaced_trigger(self):
+        mention = self.CONFIG | {"mode": "mention", "roots": []}
+        o.validate(mention | {"trigger": {"event": "issue_comment", "id": 5}})
+        for config in (self.CONFIG | {"trigger": {"event": "issue_comment", "id": 5}},
+                       self.CONFIG | {"mode": "conflict", "trigger": {"event": "issue_comment", "id": 5}},
+                       mention | {"trigger": {"event": "pull_request_review", "id": 5}},
+                       mention | {"trigger": {"event": "issue_comment", "id": 5, "path": "x"}},
+                       mention | {"trigger": {"event": "issue_comment", "id": "5"}},
+                       mention | {"trigger": {"event": "issue_comment", "id": 0}},
+                       mention | {"trigger": {"event": "issue_comment", "id": -1}},
+                       mention | {"trigger": {"event": "issue_comment", "id": True}},
+                       mention | {"trigger": ["issue_comment", 5]}):
+            with self.subTest(config=config), self.assertRaises(ValueError):
+                o.validate(config)
+
+    def trigger_config(self, event="issue_comment", cid=5):
+        return self.CONFIG | {"mode": "mention", "roots": [], "trigger": {"event": event, "id": cid}}
+
+    @staticmethod
+    def comment(cid=5, body="please fix the typo", login="NotSkittlz"):
+        return json.dumps({"id": cid, "body": body, "user": {"login": login}})
+
+    def test_trigger_reads_only_the_triggering_comment_at_a_fixed_endpoint(self):
+        for event, path in (("issue_comment", f"repos/{REPO}/issues/comments/5"),
+                            ("pull_request_review_comment", f"repos/{REPO}/pulls/comments/5")):
+            calls = []
+            run = lambda args, calls=calls: calls.append(args) or self.comment()
+            with self.subTest(event=event):
+                out = o.model_api(self.trigger_config(event), ["trigger"], run=run)
+                self.assertEqual(calls, [["gh", "api", "--method", "GET", path]])
+                self.assertEqual(out, "Triggering comment 5 by NotSkittlz (untrusted data):\nplease fix the typo")
+        # No model-chosen ID, endpoint or option, and only the mention job has a trigger to read.
+        never = lambda args: self.fail(f"gh ran: {args}")
+        for config, args in ((self.trigger_config(), ["trigger", "6"]), (self.trigger_config(), ["trigger", "--paginate"]),
+                             (self.trigger_config(), ["trigger", "repos/x/y"]),
+                             (self.CONFIG | {"mode": "mention", "roots": []}, ["trigger"]),
+                             (self.CONFIG, ["trigger"]), (self.CONFIG | {"mode": "conflict"}, ["trigger"])):
+            with self.subTest(config=config, args=args), self.assertRaises(ValueError):
+                o.model_api(config, args, run=never)
+
+    def test_read_trigger_rechecks_the_mode_itself(self):
+        # Defence in depth behind validate(): a trigger in another mode's context is never read.
+        never = lambda args: self.fail(f"gh ran: {args}")
+        for mode in ("fixer", "conflict"):
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                o.read_trigger(self.trigger_config() | {"mode": mode}, never)
+
+    def test_trigger_refuses_an_unexpected_response(self):
+        for response in (self.comment(cid=6), json.dumps({"id": 5, "body": None}), json.dumps({"id": 5}),
+                         json.dumps([{"id": 5, "body": "x"}]), json.dumps("x")):
+            with self.subTest(response=response), self.assertRaises(ValueError):
+                o.model_api(self.trigger_config(), ["trigger"], run=lambda args, r=response: r)
+        # True == 1 in Python: the response must have an integer ID as well as match the trusted ID.
+        with self.assertRaises(ValueError):
+            o.model_api(self.trigger_config(cid=1), ["trigger"], run=lambda args: self.comment(cid=True))
+        # A missing or odd author is labelled, not trusted.
+        out = o.model_api(self.trigger_config(), ["trigger"], run=lambda args: json.dumps({"id": 5, "body": "b"}))
+        self.assertEqual(out, "Triggering comment 5 by unknown (untrusted data):\nb")
+
+    def test_trigger_output_is_bounded_in_utf16_units_and_fails_closed(self):
+        # Claude Code shows at most 30000 characters inline; one long comment can exceed that by itself.
+        self.assertEqual(o.MAX_TRIGGER_UNITS, 24000)
+        for body, ok in (("a" * 24000, True), ("a" * 24001, False),
+                         ("\U0001F600" * 12000, True), ("\U0001F600" * 12000 + "a", False),
+                         ("\U0001F600" * 12001, False)):
+            with self.subTest(units=len(body.encode("utf-16-le")) // 2):
+                run = lambda args, b=body: self.comment(body=b)
+                if ok:
+                    self.assertEqual(o.model_api(self.trigger_config(), ["trigger"], run=run),
+                                     "Triggering comment 5 by NotSkittlz (untrusted data):\n" + body)
+                else:
+                    with self.assertRaises(o.TriggerTooLong):
+                        o.model_api(self.trigger_config(), ["trigger"], run=run)
+
+    @unittest.skipIf(os.name == "nt", "POSIX shell fixture")
+    def test_oversized_trigger_names_its_own_failure_and_prints_no_body(self):
+        context = self.install_trigger("mention", "issue_comment", {"comment": {"id": 5}})
+        self.assertEqual(context["trigger"], {"event": "issue_comment", "id": 5})
+        bin_dir = Path("bin")
+        bin_dir.mkdir()
+        body = "Z" * 24001
+        (bin_dir / "gh").write_text("#!/bin/sh\ncat \"$GH_FIXTURE\"\n")
+        (bin_dir / "gh").chmod(0o755)
+        Path("fixture.json").write_text(self.comment(body=body))
+        env = {k: v for k, v in os.environ.items() if k != "GH_TOKEN"}
+        env.update(PATH=f"{bin_dir.resolve()}{os.pathsep}{env['PATH']}", GH_FIXTURE=str(Path("fixture.json").resolve()))
+        result = subprocess.run([sys.executable, "-I", "helper/model-api", "--", "trigger"], env=env,
+                                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr.strip(), "Helper operation failed: the triggering comment is longer than "
+                                                "24000 characters; ask for a shorter request.")
+        self.assertNotIn("ZZZ", result.stderr)
+        # Any other failure keeps the generic message, so the two cases stay distinguishable.
+        Path("fixture.json").write_text(self.comment(cid=6))
+        other = subprocess.run([sys.executable, "-I", "helper/model-api", "--", "trigger"], env=env,
+                               capture_output=True, text=True, check=False)
+        self.assertEqual((other.returncode, other.stderr.strip()), (1, "Helper operation failed or is not permitted."))
+
     def test_pr_event_commit_leaves_the_actions_base_branch_restores_out(self):
         # Fable rehearsal of a5fd6b7: for PR events claude-code-action's restoreConfigFromBase leaves the
         # base branch's .claude/, CLAUDE.md, .ripgreprc, ... unstaged in the worktree. Staging them would
