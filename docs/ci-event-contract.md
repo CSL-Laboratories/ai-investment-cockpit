@@ -8,8 +8,8 @@ change (v1 → v2) and the patch for a correction (v1.1). Record the new base co
 count merged changes; edits made during a PR's own review are part of that version. Tracked
 under CSL-255 / CSL-385.
 
-- **Base commit (v2.1):** main `f6a9a3c56f008599a3c0b9fb766597599c0567d0` (merge of #217). #217 (CSL-354) changed `AGENTS.md` line 49 and added 123 lines after line 58, so the `AGENTS.md` citations below moved down by 123 and point at identical text; no other cited file changed.
-- **Base commit (v2):** main `b29ef6d5` (merge of #221) plus the CSL-408 runner change in #224. #224 keeps the line counts of `ci.yml`, `rust.yml`, `AGENTS.md` and `tools/ci_runner_cost.py`. The only cited lines whose text changes are the runner labels (ci.yml:352, 609, 822; rust.yml:282-283, 287-288), the benchmarks comment (ci.yml:21-23) and `AGENTS.md`:238 and 241. Every other v1 citation still holds.
+- **Base commit (v2.1):** main `f6a9a3c56f008599a3c0b9fb766597599c0567d0` (merge of #217). #217 (CSL-354) changed `AGENTS.md` line 49 and added 123 lines after line 58, so the `AGENTS.md` citations below moved down by 123 and point at identical text; no other cited file changed (#217 also changed `CLAUDE.md` and added `.claude/skills/proceed-or-escalate/SKILL.md`; neither is cited here).
+- **Base commit (v2):** main `b29ef6d5` (merge of #221) plus the CSL-408 runner change in #224. #224 keeps the line counts of `ci.yml`, `rust.yml`, `AGENTS.md` and `tools/ci_runner_cost.py`. The only cited lines whose text changes are the runner labels (ci.yml:352, 609, 822; rust.yml:282-283, 287-288), the benchmarks comment (ci.yml:21-23) and `AGENTS.md`:238 and 241 (now 361 and 364 after #217). Every other v1 citation still holds.
 - **Base commit (v1):** `578a8ca8` (`main`, merge of #223). The rows were traced at `7b0dcf27` (#215). Since then:
   - #220 (CSL-383) added three lines in two places in `claude.yml` and once in `conflict-scan.yml`.
   - #222 (CSL-393) added 15 lines to `AGENTS.md` item 6.
@@ -36,7 +36,7 @@ under CSL-255 / CSL-385.
 | **[O]** | Locally observed through read-only REST (`gh api`) on 2026-10-20, or in a run cited with its ID and date: run, job or check-run IDs given. Older runs may have used older YAML. `workflow_dispatch` runs use the dispatched branch's YAML. |
 | **[I]** | Inferred from GitHub platform behaviour or from reading code. Not tested and not observed here. |
 
-**Since CSL-408 (v2) runner compute is $0.** Every job runs on a standard GitHub-hosted runner, which is free on this public repository. [O] The first post-merge runs on main `10193b91` (push, 2026-10-21), ci 39537098139 and rust 39537098248, ran every job on GitHub-hosted runners (`ubuntu-24.04`, `windows-2025`, `ubuntu-latest`). "Paid" and the L/W/M counts in this contract now mean that a test runner was allocated. That is a cost in runner capacity and queue time, not money. The dollar figures below are **historical** Blacksmith estimates for runs before CSL-408. They use the [cost budget](ci-cost-budget.md) method: each started job rounded up to whole minutes, at $0.004/min Linux and $0.008/min Windows. Blacksmith billed each job that got a runner, per started minute (CSL-255 calibration). They are estimates, not invoices.
+**Since CSL-408 (v2) runner compute is $0.** Every job runs on a standard GitHub-hosted runner, which is free on this public repository. [O] The first post-merge runs on main `10193b91` (push, 2026-10-21), ci 39537098139 and rust 39537098248, ran every job that started on GitHub-hosted runners (`ubuntu-24.04` test cells, `windows-2025` test cells, `ubuntu-latest` filter and gates; `settle`, `benchmarks`, `macos` and `candidate-ci-gates` were skipped). "Paid" and the L/W/M counts in this contract now mean that a test runner was allocated. That is a cost in runner capacity and queue time, not money. The dollar figures below are **historical** Blacksmith estimates for runs before CSL-408. They use the [cost budget](ci-cost-budget.md) method: each started job rounded up to whole minutes, at $0.004/min Linux and $0.008/min Windows. Blacksmith billed each job that got a runner, per started minute (CSL-255 calibration). They are estimates, not invoices.
 
 ## 1. Required checks
 
@@ -333,8 +333,8 @@ At the base commit these ran locally (Python 3.13):
     `synchronize` and start ordinary paid CI (rows 4-5). The `ci` runs on fixer commits
     were started by `claude[bot]` about 12 s after each commit: 39354662754 (#212
     `8ede5ff793`), 39353490459 (#208 `571cb1ce11`) and 39079041390 (#199 `e875f2b8c3`).
-    So the push credential is the Claude app, not the checkout `GITHUB_TOKEN`: [I] its `synchronize`
-    would create approval-required runs that start only when a writer approves them (GitHub docs, triggering a workflow), and these started without approval.
+    [I] So the push credential is the Claude app, not the checkout `GITHUB_TOKEN`: its `synchronize`
+    would create approval-required runs that start only when a writer approves them (GitHub docs, triggering a workflow), and these started about 12 s after the commit with no approval observed.
   - The eight-commit guard (`cap` step, claude.yml:1462) bounds only the automated
     `devin-review-fix` job. `claude-mention` has no equivalent cap, so repeated authorized
     `@claude` requests can push, and start paid `synchronize` runs, without that limit.
