@@ -154,15 +154,18 @@ def commit(body_path, run, mode):
         # `git add` would mark a still-conflicted file resolved, markers and all.
         workspace = Path.cwd().resolve()
         # NUL-separated, so unusual names are not C-quoted.
-        names = [name for name in git(run, *UNMERGED).split("\0") if name]
-        sizes = marker_sizes(run, names) if names else {}
-        for name in names:
+        present = []
+        for name in filter(None, git(run, *UNMERGED).split("\0")):
             file = workspace / name
             if not file.exists() and not file.is_symlink():
                 continue  # resolved by deleting the file; `add -A` stages the removal
             if file.is_symlink() or not file.is_file():
                 raise ValueError("unmerged path is not a regular file")
-            if conflict_marker(sizes[name]).search(file.read_text(encoding="utf-8", errors="replace")):
+            present.append(name)
+        # Attributes only for files that remain: a deletion has no markers to read.
+        sizes = marker_sizes(run, present) if present else {}
+        for name in present:
+            if conflict_marker(sizes[name]).search((workspace / name).read_text(encoding="utf-8", errors="replace")):
                 raise ValueError("conflict markers remain")
     git(run, *STAGE)
     # In the conflict job this completes the in-progress merge.

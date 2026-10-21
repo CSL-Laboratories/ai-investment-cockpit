@@ -202,14 +202,20 @@ class LinearValidationTests(GitCase):
         self.refused("^candidate adds a credential-shaped string$")
 
     def test_the_old_blob_read_for_the_credential_scan_is_bounded(self):
+        # Devin's review at 03ecbd6: a small fix to a large existing file still publishes.
         self.src.git("checkout", "-q", "main")
-        self.head = self.src.commit({"app/a.py": "a = 1\n" * 20})
+        self.head = self.src.commit({"app/a.py": f"fixture = '{TOKEN}'\n" + "a = 1\n" * 20})
         self.model.git("fetch", "-q", "origin", "main")
         self.model.git("checkout", "-q", "-B", "fix", self.head)
         last = self.model.commit({"app/a.py": "a = 2\n"})
         with patch.object(p, "MAX_DIFF_BYTES", 100):
-            self.refused("^candidate diff too large$")
-        with patch.object(p, "MAX_DIFF_BYTES", 200):
+            self.assertEqual(self.validate(), last)
+        # Above the bound the old blob is not read, so a kept token shape loses its exemption.
+        self.model.git("reset", "-q", "--hard", self.head)
+        last = self.model.commit({"app/a.py": f"fixture = '{TOKEN}'\n"})
+        with patch.object(p, "MAX_DIFF_BYTES", 100):
+            self.refused("^candidate adds a credential-shaped string$")
+        with patch.object(p, "MAX_DIFF_BYTES", 1000):
             self.assertEqual(self.validate(), last)
 
     def test_symlink_submodule_and_mode_changes_are_refused(self):
@@ -1276,6 +1282,11 @@ class OutboxHelperTests(unittest.TestCase):
             Path(".claude-fixer-replies/msg.txt").write_text("Merge side\n")
             with self.assertRaisesRegex(ValueError, "working-tree-encoding"):
                 o.model_api(conflict, ["commit", ".claude-fixer-replies/msg.txt"])
+            # Devin's review at 03ecbd6: resolving it by deleting the file still commits.
+            Path("u16.txt").unlink()
+            head = o.model_api(conflict, ["commit", ".claude-fixer-replies/msg.txt"])
+            self.assertEqual(len(o.command(["git", "rev-list", "--parents", "-n", "1", head]).split()), 3)
+            self.assertNotIn("u16.txt", o.command(["git", "ls-files"]).split("\n"))
 
     def test_marker_sizes_read_every_source_and_parse_like_git(self):
         calls, values = [], iter(["12abc", "unspecified", "-3", "set", "0", " 4"])

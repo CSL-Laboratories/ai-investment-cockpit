@@ -485,9 +485,12 @@ def check_credentials(repo, entries, commits):
         old = set()
         if entry["status"] == "M":
             size = repo.text("cat-file", "-s", entry["old"])
-            if not size.isdigit() or int(size) > MAX_DIFF_BYTES:
-                raise Refused("candidate diff too large")
-            old = credentials(repo.run_git(["cat-file", "blob", entry["old"]]))
+            if not size.isdigit():
+                raise Refused("unexpected object size")
+            # The new blob is always scanned in full. An old blob above the bound is not read,
+            # so its token shapes are not exempt: that can only refuse more, never less.
+            if int(size) <= MAX_DIFF_BYTES:
+                old = credentials(repo.run_git(["cat-file", "blob", entry["old"]]))
         if credentials(repo.run_git(["cat-file", "blob", entry["new"]])) - old:
             raise Refused("candidate adds a credential-shaped string")
 
