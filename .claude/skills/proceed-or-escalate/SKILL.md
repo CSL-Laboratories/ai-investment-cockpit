@@ -47,7 +47,10 @@ admitted issue and even when everything on the proceed list also holds.
   run (such as the fixer's `claude-<PR>` lock) is in flight.
 - It starts no paid CI (see below). Pushing to a draft PR or a branch other than
   `main` with no PR, and read-only Actions/API queries, are fine. A push to `main`
-  runs `ci.yml` and starts paid CI.
+  runs `ci.yml` and `rust.yml`. Their path filters differ (`ci.yml` runs tests for
+  anything under `app/`, `docs/PLAN.md` and other paths its filter names, and
+  `rust.yml` treats any `.github/` change as Rust-relevant), so treat every push to
+  `main` as starting paid CI.
 
 ## Raise it to a human when ANY of these hold
 
@@ -56,13 +59,21 @@ admitted issue and even when everything on the proceed list also holds.
 - It is an architecture, language, dependency or data-source choice.
 - It touches the order path (risk, mode, approval, `OrderGateway`), `app/risk/`,
   `app/brokers/`, the audit chain (`app/storage/audit.py`), order eligibility or
-  the allowlist, secrets handling, PnL (`app/quant/pnl.py`), halt, kill switch and
-  gate (`app/orchestrator/halt.py`, `killswitch.py`, `gate.py`), approval and veto
-  (`app/bridge/approval.py`, `veto.py`), their tests (`app/tests/risk/`,
-  `app/tests/brokers/`, `app/tests/quant/test_pnl.py`, `app/tests/storage/`), the
-  paper/live switch or any existing live flag, or any of the nine invariants,
-  whatever the issue admits. A failing test there is not a "clear defect" you may
-  fix alone.
+  the allowlist, secrets handling, PnL (`app/quant/pnl.py`), costs
+  (`app/quant/costs.py`), the auto loop (`app/quant/execution/autoloop.py`), halt,
+  kill switch and gate (`app/orchestrator/halt.py`, `killswitch.py`, `gate.py`),
+  mode arming (`app/orchestrator/mode_ladder.py`, `arm_auto_mode`), breakers
+  (`app/orchestrator/breakers.py`, `check_order_path`), limits
+  (`app/orchestrator/limits.py`, `max_notional`, `daily_loss_limit`), the loopback
+  routes in `app/orchestrator/app.py` that decide proposals or orders or change
+  mode, limits or the kill switch, approval and veto (`app/bridge/approval.py`,
+  `veto.py`), any test that exercises these (including `app/tests/risk/`,
+  `app/tests/brokers/`, `app/tests/bridge/`, `app/tests/orchestrator/`,
+  `app/tests/storage/`, `app/tests/quant/test_pnl.py` and
+  `app/tests/test_invariants.py`), the paper/live switch or any existing live flag,
+  or any of the nine invariants, whatever the issue admits. These lists are
+  examples, not a boundary. A failing test there is not a "clear defect" you may fix
+  alone.
 - It touches governance files, decision records, contracts, or another owner's work.
 - A tool or platform refused the action. Report it; do not route around it, and
   do not turn one refusal into a standing rule.

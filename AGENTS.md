@@ -95,14 +95,21 @@ or writer's run is active on the branch, files or package; and it starts no paid
 - it is an architecture, language, dependency or data-source choice;
 - it touches the order path (risk, mode, approval, `OrderGateway`), `app/risk/`,
   `app/brokers/`, the audit chain (`app/storage/audit.py`), order eligibility or the
-  allowlist, secrets handling, PnL (`app/quant/pnl.py`), halt, kill switch and gate
-  (`app/orchestrator/halt.py`, `killswitch.py`, `gate.py`), approval and veto
-  (`app/bridge/approval.py`, `veto.py`), their tests (`app/tests/risk/`,
-  `app/tests/brokers/`, `app/tests/quant/test_pnl.py`, `app/tests/storage/`,
-  `app/tests/bridge/`, `app/tests/orchestrator/`), the
-  paper/live switch or any existing live flag, or any of the nine invariants,
-  whatever the issue admits. A failing test there is not a "clear defect" you may
-  fix alone;
+  allowlist, secrets handling, PnL (`app/quant/pnl.py`), costs
+  (`app/quant/costs.py`), the auto loop (`app/quant/execution/autoloop.py`), halt,
+  kill switch and gate (`app/orchestrator/halt.py`, `killswitch.py`, `gate.py`),
+  mode arming (`app/orchestrator/mode_ladder.py`, `arm_auto_mode`), breakers
+  (`app/orchestrator/breakers.py`, `check_order_path`), limits
+  (`app/orchestrator/limits.py`, `max_notional`, `daily_loss_limit`), the loopback
+  routes in `app/orchestrator/app.py` that decide proposals or orders or change
+  mode, limits or the kill switch, approval and veto (`app/bridge/approval.py`,
+  `veto.py`), any test that exercises these (including `app/tests/risk/`,
+  `app/tests/brokers/`, `app/tests/bridge/`, `app/tests/orchestrator/`,
+  `app/tests/storage/`, `app/tests/quant/test_pnl.py` and
+  `app/tests/test_invariants.py`), the paper/live switch or any existing live flag,
+  or any of the nine invariants, whatever the issue admits. These lists are
+  examples, not a boundary. A failing test there is not a "clear defect" you may fix
+  alone;
 - it touches governance files, decision records, contracts or another owner's work;
 - a tool or platform refused the action (report it; do not route around it or turn
   one refusal into a standing rule);
@@ -125,9 +132,10 @@ Linux scope, which runs Blacksmith Linux even for a docs-only diff. Adding
 Linux and Windows plus GitHub-hosted `macos-latest`. `ci-label-retrigger.yml` is a
 no-op on drafts and fork heads. Dispatching the fixer, Codex gate, stuck-thread
 watch or other `ubuntu-latest` workflows is not a Blacksmith run but still needs a
-human ask. A push to `main` runs `ci.yml`; its filter skips the paid jobs only when
-every changed file is ordinary Markdown documentation (it runs them if the diff cannot
-be read), so any other push to `main` starts paid CI. Pushes to drafts or to
+human ask. A push to `main` runs `ci.yml` and `rust.yml`. Their path filters differ
+(`ci.yml` runs tests for anything under `app/`, `docs/PLAN.md` and other paths its
+filter names, and `rust.yml` treats any `.github/` change as Rust-relevant), so treat
+every push to `main` as starting paid CI. Pushes to drafts or to
 branches other than `main` without a PR, and read-only API queries, are fine.
 
 **How.** Ask on the work issue: one Linear comment @mentioning the issue owner with

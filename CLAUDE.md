@@ -29,9 +29,11 @@ Before acting on your own, apply the `proceed-or-escalate` skill
 (`.claude/skills/proceed-or-escalate/SKILL.md`). It carries the gates of
 [AGENTS.md's proceed-or-escalate section](AGENTS.md#proceed-or-escalate) and expands
 on them; if they differ, AGENTS.md wins. Escalate wins over proceed, including for
-the order path, risk, brokers, audit, PnL, halt, kill switch, gate, approval, veto,
-their tests and the paper/live switch; a failing test there is not a clear defect to
-fix alone.
+the order path, risk, brokers, audit, PnL, costs, the auto loop, halt, kill switch,
+gate, mode arming, breakers, limits, the order and mode loopback routes, approval,
+veto, any test that exercises them (including `app/tests/test_invariants.py`) and
+the paper/live switch. The lists in AGENTS.md are examples, not a boundary; a
+failing test there is not a clear defect to fix alone.
 
 Current implementation:
 A solo-developer, subscription-powered, **human-gated** AI investing copilot.
