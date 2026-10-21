@@ -178,6 +178,11 @@ class LinearValidationTests(GitCase):
                 self.model.git("reset", "-q", "--hard", self.head)
                 self.model.commit({"app/a.py": f"a = '{token}'\n"})
                 self.refused("^candidate adds a credential-shaped string$")
+        for name in (f"app/{TOKEN}.py", f"app/{TOKEN}/x.py"):  # Fable review of a8699a8: paths too
+            with self.subTest(path=name[:10]):
+                self.model.git("reset", "-q", "--hard", self.head)
+                self.model.commit({name: "x\n"})
+                self.refused("^candidate adds a credential-shaped string$")
         self.model.git("reset", "-q", "--hard", self.head)
         self.model.commit({"app/c.py": "c = 1\n"}, message="fix: c\n\n" + TOKEN)
         self.refused("^candidate commit message contains a credential-shaped string$")
@@ -195,6 +200,17 @@ class LinearValidationTests(GitCase):
         self.assertEqual(self.validate(), last)
         self.model.commit({"app/a.py": f"fixture = '{TOKEN}'\nb = '{TOKEN[:-1]}Z'\n"})
         self.refused("^candidate adds a credential-shaped string$")
+
+    def test_the_old_blob_read_for_the_credential_scan_is_bounded(self):
+        self.src.git("checkout", "-q", "main")
+        self.head = self.src.commit({"app/a.py": "a = 1\n" * 20})
+        self.model.git("fetch", "-q", "origin", "main")
+        self.model.git("checkout", "-q", "-B", "fix", self.head)
+        last = self.model.commit({"app/a.py": "a = 2\n"})
+        with patch.object(p, "MAX_DIFF_BYTES", 100):
+            self.refused("^candidate diff too large$")
+        with patch.object(p, "MAX_DIFF_BYTES", 200):
+            self.assertEqual(self.validate(), last)
 
     def test_symlink_submodule_and_mode_changes_are_refused(self):
         self.model.git("reset", "-q", "--hard", self.head)
@@ -1242,19 +1258,41 @@ class OutboxHelperTests(unittest.TestCase):
             head = o.model_api(conflict, ["commit", ".claude-fixer-replies/msg.txt"])
             self.assertEqual(len(o.command(["git", "rev-list", "--parents", "-n", "1", head]).split()), 3)
 
+    def test_conflict_commit_refuses_a_re_encoded_unmerged_path(self):
+        # Fable review of a8699a8: UTF-16 markers are not UTF-8 text the marker check can read.
+        conflict = self.CONFIG | {"mode": "conflict"}
+        with patch.dict(os.environ, git_env(), clear=True):
+            o.command(["git", "init", "-q", "-b", "main"])
+            for branch in ("main", "side", "head"):
+                if branch != "main":
+                    o.command(["git", "checkout", "-q", "-b", branch, "main"])
+                else:
+                    Path(".gitattributes").write_text("u16.txt working-tree-encoding=UTF-16\n")
+                Path("u16.txt").write_text(branch + "\n", encoding="utf-16")
+                o.command(["git", "add", "-A"])
+                o.command(["git", "commit", "-q", "-m", branch])
+            subprocess.run(["git", "merge", "--no-ff", "--no-commit", "side"], capture_output=True, check=False)
+            self.assertIn("<<<<<<<".encode("utf-16-le"), Path("u16.txt").read_bytes())
+            Path(".claude-fixer-replies/msg.txt").write_text("Merge side\n")
+            with self.assertRaisesRegex(ValueError, "working-tree-encoding"):
+                o.model_api(conflict, ["commit", ".claude-fixer-replies/msg.txt"])
+
     def test_marker_sizes_read_every_source_and_parse_like_git(self):
         calls, values = [], iter(["12abc", "unspecified", "-3", "set", "0", " 4"])
 
         def run(argv):
             calls.append(argv)
-            return "".join(f"{name}\0conflict-marker-size\0{next(values)}\0" for name in ("a", "b"))
+            return "".join(f"{name}\0conflict-marker-size\0{next(values)}\0{name}\0working-tree-encoding\0unset\0"
+                           for name in ("a", "b"))
         # Worktree a=12abc b=unspecified, HEAD a=-3 b=set, MERGE_HEAD a=0 b=" 4".
         self.assertEqual(o.marker_sizes(run, ["a", "b"]), {"a": {7, 12}, "b": {7, 4}})
         self.assertEqual([c[len(self.GIT):] for c in calls], [
-            ["check-attr", "-z", *source, "conflict-marker-size", "--", "a", "b"]
+            ["check-attr", "-z", *source, "conflict-marker-size", "working-tree-encoding", "--", "a", "b"]
             for source in ([], ["--source=HEAD"], ["--source=MERGE_HEAD"])])
         with self.assertRaisesRegex(ValueError, "unsupported conflict-marker-size"):
             o.marker_sizes(lambda argv: "a\x00conflict-marker-size\x001001\x00", ["a"])
+        with self.assertRaisesRegex(ValueError, "working-tree-encoding"):
+            o.marker_sizes(lambda argv: "a\x00working-tree-encoding\x00UTF-16\x00", ["a"])
         marker = o.conflict_marker({7, 10})
         for line in ("<" * 7 + " HEAD", "<" * 12 + " HEAD", "|" * 10, ">" * 10 + " side", "=" * 7, "=" * 10):
             self.assertTrue(marker.search("x\n" + line + "\ny"), line)

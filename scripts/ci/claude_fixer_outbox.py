@@ -121,8 +121,14 @@ def marker_sizes(run, names):
     """
     sizes = {name: {MARKER_SIZE} for name in names}
     for source in ((), ("--source=HEAD",), ("--source=MERGE_HEAD",)):
-        fields = git(run, "check-attr", "-z", *source, "conflict-marker-size", "--", *names).split("\0")
-        for path, value in zip(fields[0::3], fields[2::3]):
+        fields = git(run, "check-attr", "-z", *source, "conflict-marker-size", "working-tree-encoding",
+                     "--", *names).split("\0")
+        for path, attr, value in zip(fields[0::3], fields[1::3], fields[2::3]):
+            if attr == "working-tree-encoding":
+                # Markers in a re-encoded file (UTF-16, say) are not UTF-8 text this check can read.
+                if value not in {"unspecified", "unset"}:
+                    raise ValueError("unmerged path has a working-tree-encoding")
+                continue
             # As git's atoi(): leading digits; zero, negative or none means the default.
             match = re.match(r"\s*([+-]?[0-9]+)", value)
             size = int(match.group(1)) if match else 0

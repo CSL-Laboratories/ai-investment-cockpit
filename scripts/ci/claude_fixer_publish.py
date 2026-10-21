@@ -473,14 +473,21 @@ def credentials(data):
 
 
 def check_credentials(repo, entries, commits):
-    """Refuse a commit message, or a blob of any new commit, that adds a token-shaped string."""
+    """Refuse a commit message, path or blob of any new commit that adds a token-shaped string."""
     for commit in commits:
         if credentials(repo.run_git(["cat-file", "commit", commit])):
             raise Refused("candidate commit message contains a credential-shaped string")
     for entry in entries:
         if entry["status"] == "D":
             continue
-        old = credentials(repo.run_git(["cat-file", "blob", entry["old"]])) if entry["status"] == "M" else set()
+        if CREDENTIAL.search(entry["path"]):
+            raise Refused("candidate adds a credential-shaped string")
+        old = set()
+        if entry["status"] == "M":
+            size = repo.text("cat-file", "-s", entry["old"])
+            if not size.isdigit() or int(size) > MAX_DIFF_BYTES:
+                raise Refused("candidate diff too large")
+            old = credentials(repo.run_git(["cat-file", "blob", entry["old"]]))
         if credentials(repo.run_git(["cat-file", "blob", entry["new"]])) - old:
             raise Refused("candidate adds a credential-shaped string")
 

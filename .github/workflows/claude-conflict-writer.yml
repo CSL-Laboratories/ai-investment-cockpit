@@ -318,8 +318,14 @@ jobs:
               """
               sizes = {name: {MARKER_SIZE} for name in names}
               for source in ((), ("--source=HEAD",), ("--source=MERGE_HEAD",)):
-                  fields = git(run, "check-attr", "-z", *source, "conflict-marker-size", "--", *names).split("\0")
-                  for path, value in zip(fields[0::3], fields[2::3]):
+                  fields = git(run, "check-attr", "-z", *source, "conflict-marker-size", "working-tree-encoding",
+                               "--", *names).split("\0")
+                  for path, attr, value in zip(fields[0::3], fields[1::3], fields[2::3]):
+                      if attr == "working-tree-encoding":
+                          # Markers in a re-encoded file (UTF-16, say) are not UTF-8 text this check can read.
+                          if value not in {"unspecified", "unset"}:
+                              raise ValueError("unmerged path has a working-tree-encoding")
+                          continue
                       # As git's atoi(): leading digits; zero, negative or none means the default.
                       match = re.match(r"\s*([+-]?[0-9]+)", value)
                       size = int(match.group(1)) if match else 0
@@ -1830,14 +1836,21 @@ jobs:
 
 
           def check_credentials(repo, entries, commits):
-              """Refuse a commit message, or a blob of any new commit, that adds a token-shaped string."""
+              """Refuse a commit message, path or blob of any new commit that adds a token-shaped string."""
               for commit in commits:
                   if credentials(repo.run_git(["cat-file", "commit", commit])):
                       raise Refused("candidate commit message contains a credential-shaped string")
               for entry in entries:
                   if entry["status"] == "D":
                       continue
-                  old = credentials(repo.run_git(["cat-file", "blob", entry["old"]])) if entry["status"] == "M" else set()
+                  if CREDENTIAL.search(entry["path"]):
+                      raise Refused("candidate adds a credential-shaped string")
+                  old = set()
+                  if entry["status"] == "M":
+                      size = repo.text("cat-file", "-s", entry["old"])
+                      if not size.isdigit() or int(size) > MAX_DIFF_BYTES:
+                          raise Refused("candidate diff too large")
+                      old = credentials(repo.run_git(["cat-file", "blob", entry["old"]]))
                   if credentials(repo.run_git(["cat-file", "blob", entry["new"]])) - old:
                       raise Refused("candidate adds a credential-shaped string")
 

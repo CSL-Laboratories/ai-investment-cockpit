@@ -117,8 +117,9 @@ the action backs git with a credential helper instead of writing the job token
 into the origin URL in `.git/config`. Read can still open the helper's token
 file, so the publisher refuses a candidate whose commit messages or new blobs
 add a GitHub (`ghp_`/`gho_`/`ghs_`/`ghu_`/`ghr_`/`ghv_`, `github_pat_`) or
-Anthropic (`sk-ant-`) token shape, and an outbox body that contains one. An
-encoded copy would pass that scan; the job token it could carry is read-only and
+Anthropic (`sk-ant-`) token shape, or an added or modified path containing one, and an
+outbox body that contains one. An encoded or split copy (base64, or a string
+broken across lines) would pass that scan; the job token it could carry is read-only and
 already revoked when the model job ends, before publish runs. Claude Code turns
 `Read(...)`/`Edit(...)` deny rules into sandbox denies for Bash too, so the
 model jobs deny writes only to the `.git` paths git can be made to execute or
@@ -130,7 +131,8 @@ is refused while conflict markers remain. Marker length follows each path's
 `conflict-marker-size` attribute, read from the working tree, `HEAD` and
 `MERGE_HEAD` with git's default of 7 always included. `<`, `|` and `>` runs of
 the smallest size or longer, and `=` separators of exactly one of those sizes,
-are refused. The scrub and
+are refused, and so is an unmerged path with a `working-tree-encoding`
+attribute, whose markers are not UTF-8 text. The scrub and
 sandbox can only be proven by the post-merge canary: if they break the model
 step, it does not succeed and publish publishes nothing.
 The model job runs no repository code and holds no repository write credential;
