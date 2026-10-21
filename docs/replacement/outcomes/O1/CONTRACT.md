@@ -24,6 +24,19 @@ Exit 0 means the accepted registry still matches its receipts and integrity base
 
 `digest-candidate.json` is the byte identity of this packet, excluding itself. A later human receipt on CSL-213 can bind that file. This author run is not the independent non-implementer rerun.
 
+How the digest is computed:
+
+1. Each `files[].sha256` is the SHA-256 of that file's raw bytes. Paths are relative to `docs/replacement/outcomes/O1`.
+2. `files_bundle_sha256` is the SHA-256 of the UTF-8 bytes of the `files` array, serialized as JSON with sorted keys inside each entry, no whitespace, and the array kept in its listed order: Python `json.dumps(files, sort_keys=True, separators=(",", ":"), ensure_ascii=False)`.
+
+To reproduce both from the repo root (it prints the bundle hash, then `ok` if every file hash matches):
+
+```
+python3 -c "import json,hashlib,pathlib;b=pathlib.Path('docs/replacement/outcomes/O1');d=json.loads((b/'digest-candidate.json').read_text('utf-8'));print(hashlib.sha256(json.dumps(d['files'],sort_keys=True,separators=(',',':'),ensure_ascii=False).encode('utf-8')).hexdigest());print('ok' if all(hashlib.sha256((b/f['path']).read_bytes()).hexdigest()==f['sha256'] for f in d['files']) else 'MISMATCH')"
+```
+
+The first line must equal `files_bundle_sha256`.
+
 ## What this candidate consumes
 
 O1 has no outcome dependencies. It consumes the accepted CSL-212 documents at the digests in `program.json`:
@@ -186,4 +199,4 @@ No new Deep Research. The next human steps are Lucas on D4, D10, and D11; a foun
 | `unknowns.json` | Unknown ledger. |
 | `unresolved-decisions.json` | D0–D13, `D2-index`, and `D2b`, with source labels. |
 | `gates.json` | Packet-level non-claims. |
-| `digest-candidate.json` | SHA-256 of the files above, excluding itself. |
+| `digest-candidate.json` | SHA-256 of the files above, excluding itself, plus the bundle hash (recipe under the registry command above). |

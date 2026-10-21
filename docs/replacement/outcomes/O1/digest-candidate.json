@@ -5,14 +5,14 @@
   "maturity": "researched",
   "qualification_claimed": false,
   "live_authority_granted": false,
-  "algorithm": "sha256 of each listed file's bytes, paths relative to docs/replacement/outcomes/O1",
+  "algorithm": "files[].sha256 is sha256 of each listed file's bytes, paths relative to docs/replacement/outcomes/O1; files_bundle_sha256 is sha256 of the UTF-8 bytes of json.dumps(files, sort_keys=True, separators=(\",\", \":\"), ensure_ascii=False), files in listed order",
   "excludes_self": true,
   "binds_human_receipt": false,
-  "files_bundle_sha256": "5892529d3ff7f5d0437ccb7faedb86129f241c8735364e6be8cce437e3a71fbc",
+  "files_bundle_sha256": "271d97d72f78f2fb2e1f0d4374e10e7a2c13dd6729e59870f3f3514b46d72c4c",
   "files": [
     {
       "path": "CONTRACT.md",
-      "sha256": "0532b2066d02b6e417361df3861ab7fb6053040f1494e2b813aedd72648becef",
+      "sha256": "9f37e0af5df7508fbc6c6d884204431d3a1495fa99c4d6c58aa5661a96de1f3b",
       "role": "pinned"
     },
     {
