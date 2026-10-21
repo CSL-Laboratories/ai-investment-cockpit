@@ -52,7 +52,8 @@ def _old_block_median(reference: list[float], candidate: list[float]) -> float:
 def test_floors_are_the_decided_guarantee():
     assert bench_gate.PER_CALL_FLOOR == 0.95
     assert bench_gate.BATCH_FLOOR == 1.00
-    assert bench_gate.PAIRS >= 11
+    assert bench_gate.PAIRS >= 12
+    assert bench_gate.PAIRS % 2 == 0, "both timing orders must contribute equally"
 
 
 def test_pairs_alternate_which_side_runs_first():
@@ -67,8 +68,8 @@ def test_a_noise_burst_on_one_block_no_longer_fails_the_gate():
     In block order the burst covers three of the five Rust samples and the old
     gate reads ~0.97x. Interleaved, the same burst covers a minority of pairs.
     """
-    ref = [3.4] * 15
-    cand = [2.4] * 15
+    ref = [3.4] * bench_gate.PAIRS
+    cand = [2.4] * bench_gate.PAIRS
     for i in (1, 2, 3):          # three consecutive slow candidate samples
         cand[i] = 3.5
     assert _old_block_median(ref, cand) < 1.0, "precondition: old gate fails on this noise"
@@ -138,7 +139,7 @@ def test_a_burst_straddling_a_pair_boundary_stays_a_minority():
 
 def test_a_real_per_call_regression_still_fails():
     """NEGATIVE CONTROL: Rust consistently 10% slower is a regression, margin or not."""
-    ratio = ScriptedRunner([3.4] * 15, [3.4 / 0.90] * 15).ratio()
+    ratio = ScriptedRunner([3.4] * bench_gate.PAIRS, [3.4 / 0.90] * bench_gate.PAIRS).ratio()
     assert ratio == pytest.approx(0.90)
     msg = bench_gate.gate_failure("per-call EWMA", ratio, bench_gate.PER_CALL_FLOOR)
     assert msg is not None and "per-call EWMA" in msg and "0.95x" in msg
@@ -146,15 +147,16 @@ def test_a_real_per_call_regression_still_fails():
 
 def test_near_parity_passes_per_call_but_fails_batched():
     """0.97x is inside the per-call noise margin; a batched path has no such excuse."""
-    ratio = ScriptedRunner([3.4] * 15, [3.4 / 0.97] * 15).ratio()
+    ratio = ScriptedRunner([3.4] * bench_gate.PAIRS, [3.4 / 0.97] * bench_gate.PAIRS).ratio()
     assert bench_gate.gate_failure("per-call", ratio, bench_gate.PER_CALL_FLOOR) is None
     assert bench_gate.gate_failure("batched", ratio, bench_gate.BATCH_FLOOR) is not None
 
 
 def test_majority_of_slow_pairs_fails():
     """NEGATIVE CONTROL: noise that hits most pairs is not filtered away."""
-    cand = [2.4] * 7 + [4.0] * 8
-    ratio = ScriptedRunner([3.4] * 15, cand).ratio()
+    slow = bench_gate.PAIRS // 2 + 1
+    cand = [2.4] * (bench_gate.PAIRS - slow) + [4.0] * slow
+    ratio = ScriptedRunner([3.4] * bench_gate.PAIRS, cand).ratio()
     assert ratio < bench_gate.PER_CALL_FLOOR
 
 
@@ -163,6 +165,45 @@ def test_gate_line_reports_verdict():
     assert bench_gate.gate_line("x", 0.9, 0.95).endswith("FAIL")
 
 
-def test_pairs_must_be_positive():
+class SecondCallFasterRunner:
+    """A consistent order effect: whichever side runs second in a pair takes ``factor``
+    of its time (a warm shared input, say). It moves every ratio in one orientation up
+    and every ratio in the other down."""
+
+    def __init__(self, reference: float, candidate: float, factor: float):
+        self.now = 0.0
+        self.base = {"ref": reference, "cand": candidate}
+        self.factor = factor
+        self.calls = 0
+
+    def clock(self) -> float:
+        return self.now
+
+    def side(self, name: str):
+        def run():
+            duration = self.base[name] * (self.factor if self.calls % 2 else 1.0)
+            self.calls += 1
+            self.now += duration
+        return run
+
+    def ratio(self, pairs: int = bench_gate.PAIRS) -> float:
+        return bench_gate.paired_ratio(self.side("ref"), self.side("cand"),
+                                       pairs=pairs, clock=self.clock)
+
+
+def test_an_order_effect_cancels_instead_of_deciding_the_median():
+    """Codex on #241: with 15 pairs, eight ran reference-first, so a consistent order
+    effect let that orientation set the median. With equal counts the median sits
+    between the two orientations. Reference 3.0, candidate 2.0 (1.5x), second call
+    0.9x: reference-first pairs read 1.67x and candidate-first pairs read 1.35x."""
+    ref_first, cand_first = 3.0 / (2.0 * 0.9), (3.0 * 0.9) / 2.0
+    ratio = SecondCallFasterRunner(3.0, 2.0, factor=0.9).ratio()
+    assert cand_first < ratio < ref_first
+    assert ratio == pytest.approx((ref_first + cand_first) / 2)
+    assert ratio == pytest.approx(1.5, rel=0.01)
+
+
+@pytest.mark.parametrize("pairs", [0, -2, 1, 15])
+def test_pairs_must_be_positive_and_even(pairs):
     with pytest.raises(ValueError):
-        bench_gate.paired_ratio(lambda: None, lambda: None, pairs=0)
+        bench_gate.paired_ratio(lambda: None, lambda: None, pairs=pairs)

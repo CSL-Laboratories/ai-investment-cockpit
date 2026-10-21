@@ -29,7 +29,7 @@ import statistics
 import time
 from collections.abc import Callable
 
-PAIRS = 15
+PAIRS = 16
 PER_CALL_FLOOR = 0.95
 BATCH_FLOOR = 1.00
 
@@ -46,10 +46,12 @@ def paired_ratio(reference: Callable[[], object], candidate: Callable[[], object
 
     Above 1.0 means the candidate is faster. Even pairs time the reference first
     and odd pairs time the candidate first, so warm-up or drift inside a pair
-    does not favour one side.
+    does not favour one side. ``pairs`` must be even so both orders contribute the
+    same number of ratios; with an odd count the larger orientation would decide
+    the median whenever the order itself moves the ratio (Codex on #241).
     """
-    if pairs < 1:
-        raise ValueError("pairs must be at least 1")
+    if pairs < 2 or pairs % 2:
+        raise ValueError("pairs must be a positive even number")
     ratios = []
     for i in range(pairs):
         if i % 2:
