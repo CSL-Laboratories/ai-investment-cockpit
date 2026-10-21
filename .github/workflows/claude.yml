@@ -1126,7 +1126,8 @@ jobs:
           fi
       - id: claude
         timeout-minutes: 20
-        uses: anthropics/claude-code-action@v1
+        # v1.0.256 (CSL-412): pinned; bumps recheck the allowed_non_write_users and git-auth behaviour.
+        uses: anthropics/claude-code-action@a5a423f75c251dcbff8a74e99f83b2cb03c72bfa
         env:
           # Scrub credentials from the commands Claude runs (sandboxed by bubblewrap above).
           CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
@@ -4084,7 +4085,8 @@ jobs:
           fi
       - id: claude
         timeout-minutes: 20
-        uses: anthropics/claude-code-action@v1
+        # v1.0.256 (CSL-412): pinned; bumps recheck the allowed_non_write_users and git-auth behaviour.
+        uses: anthropics/claude-code-action@a5a423f75c251dcbff8a74e99f83b2cb03c72bfa
         env:
           # Scrub credentials from the commands Claude runs (sandboxed by bubblewrap above).
           CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"

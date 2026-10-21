@@ -120,7 +120,11 @@ add a GitHub (`ghp_`/`gho_`/`ghs_`/`ghu_`/`ghr_`/`ghv_`, `github_pat_`) or
 Anthropic (`sk-ant-`) token shape, or an added or modified path containing one, and an
 outbox body that contains one. An encoded or split copy (base64, or a string
 broken across lines) would pass that scan; the job token it could carry is read-only and
-already revoked when the model job ends, before publish runs. Claude Code turns
+already revoked when the model job ends, before publish runs. The action's
+credential helper and its exact-match permission bypass are its own behaviour,
+so every `anthropics/claude-code-action` use is pinned to a full commit SHA
+(v1.0.256, CSL-412). The fixer-failure escalation binds to that same reference,
+and a bump must recheck both behaviours. Claude Code turns
 `Read(...)`/`Edit(...)` deny rules into sandbox denies for Bash too, so the
 model jobs deny writes only to the `.git` paths git can be made to execute or
 redirect through (hooks, config, info, commondir, modules, worktrees), never
