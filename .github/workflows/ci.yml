@@ -7,9 +7,7 @@ run-name: ${{ inputs.candidate_id && format('candidate:{0}:ci:{1}', inputs.candi
 # broker, witness, paper-day, or pre-live gates. macOS remains best-effort; Hetzner
 # is outside the current package.
 #
-# Hosted split. Since CSL-408 every job runs on a standard GitHub-hosted runner,
-# which is free on this public repository (ubuntu-24.04, windows-2025,
-# macos-latest, ubuntu-latest). Blacksmith is no longer used:
+# Hosted split (CSL-408: every job runs on a free GitHub-hosted runner):
 #   linux-gates  — required PR check; Linux 3.11+3.12, ruff + pytest
 #                  (PR, merge_group, dispatch, and retained main push fallback)
 #   windows      — merge_group, workflow_dispatch, or PR label `ci:full`
@@ -20,16 +18,17 @@ run-name: ${{ inputs.candidate_id && format('candidate:{0}:ci:{1}', inputs.candi
 #   benchmarks   — pull_request only, and only when filter runs the code gates.
 #                  Same-runner median comparison against the PR base SHA. Warns
 #                  above 10% after sample spread; does not fail linux-gates.
-#                  One ubuntu-24.04 job, aimed at well under a minute.
+#                  One ubuntu-24.04 job, aimed at well under a minute. It is a
+#                  free GitHub-hosted runner on this public repository
+#                  (CSL-408).
 #
 # Ordinary labeled/unlabeled events do not start this workflow, so they cannot
 # post a skipped or successful linux-gates over a real result. `ci:full` and
 # `enhancement` re-trigger via ci-label-retrigger.yml (workflow_dispatch); that
 # companion has no job named linux-gates. Draft PRs skip the test matrix; the
 # linux-gates aggregator still runs and fails closed until ready_for_review.
-# Non-test jobs (filter, linux-gates) use ubuntu-latest. The Python linux/windows
-# matrix uses ubuntu-24.04 and windows-2025 (CSL-408); none of these is billed
-# for this public repository.
+# Non-test jobs (filter, linux-gates) use ubuntu-latest; the Python linux/windows
+# matrix uses ubuntu-24.04 and windows-2025 (CSL-408). None is billed here.
 #
 # This workflow supersedes the Blacksmith Migration Wizard PR that only swapped
 # runner labels (open PR #100, branch blacksmith-migration-33156c9).

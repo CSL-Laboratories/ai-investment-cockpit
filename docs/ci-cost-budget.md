@@ -84,7 +84,9 @@ three runs only. This is historical diagnostic evidence, not current-candidate
 qualification. These examples exclude ordinary pushes, post-merge fallback,
 storage and #174; do not multiply them by final PR count and call that total cost.
 
-For a prospective month use:
+For a prospective month use the formula below. It applies only to Blacksmith runs before
+CSL-408. Runs after CSL-408 use standard GitHub-hosted runners, so their runner compute is
+$0 for these public repositories, and the forecast for them is $0 plus any other paid workload.
 
 `core = 0.152 * Cockpit full pairs + 0.024 * Recursion full runs + other paid starts`
 
