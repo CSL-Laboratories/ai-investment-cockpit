@@ -1574,13 +1574,14 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("job:", self.claude)
         self.assertIn("devin-review-fix", self.claude)
 
-    def test_windows_runner_is_2vcpu(self) -> None:
-        self.assertIn("blacksmith-2vcpu-windows-2025", self.ci)
-        self.assertNotIn("blacksmith-4vcpu-windows-2025", self.ci)
-        self.assertIn("blacksmith-2vcpu-windows-2025", self.rust)
-        self.assertNotIn("blacksmith-4vcpu-windows-2025", self.rust)
-        self.assertIn("blacksmith-2vcpu-windows-2025", self.actionlint)
-        self.assertNotIn("blacksmith-4vcpu-windows-2025", self.actionlint)
+    def test_test_jobs_use_free_github_hosted_runners(self) -> None:
+        # CSL-408: no job may run on a billed Blacksmith runner.
+        for text in (self.ci, self.rust, self.actionlint):
+            self.assertNotRegex(text, r"blacksmith-\d+vcpu")
+        self.assertIn("runs-on: windows-2025", self.ci)
+        self.assertIn('"runner": "windows-2025"', self.rust)
+        self.assertIn('"runner": "ubuntu-24.04"', self.rust)
+        self.assertNotIn("self-hosted-runner", self.actionlint)
 
     def test_rust_cache_and_label_skip(self) -> None:
         self.assertIn("Swatinem/rust-cache@v2", self.rust)
@@ -1629,7 +1630,7 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("&& 'draft'", self.rust)
         self.assertIn("format('label-{0}-{1}', inputs.pr_head_sha", self.rust)
         linux = self.ci.split("\n  linux:\n", 1)[1].split("\n  linux-gates:\n", 1)[0]
-        self.assertIn("blacksmith-2vcpu-ubuntu-2404", linux)
+        self.assertIn("runs-on: ubuntu-24.04", linux)
         claude_runners = [
             line.strip()
             for line in self.claude.splitlines()
@@ -1681,7 +1682,7 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("needs-decision", self.agents)
         self.assertIn("do **not** add a `CODEX-GATE:` line", self.agents)
         self.assertIn("aggregator is GitHub-hosted", self.agents)
-        self.assertIn("Python 3.11+3.12 matrix it wraps runs on Blacksmith", self.agents)
+        self.assertIn("Python 3.11+3.12 matrix it wraps runs on GitHub-hosted `ubuntu-24.04`", self.agents)
         self.assertIn("fails closed until `ready_for_review`", self.agents)
         self.assertIn("ci-label-retrigger.yml", self.agents)
         claude = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")

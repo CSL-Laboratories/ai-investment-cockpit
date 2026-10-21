@@ -63,6 +63,14 @@ class RunnerCostTests(unittest.TestCase):
         for labels in ([], ["self-hosted", "macos-latest"], ["ubuntu-8core"]):
             self.assertEqual(estimate([job(labels=labels)])["unknown_jobs"], 1)
 
+    def test_github_hosted_test_runners_are_free(self):
+        # CSL-408 moved the test jobs to these standard GitHub-hosted labels.
+        rows = [job(job_id=1, labels=["ubuntu-24.04"]),
+                job(job_id=2, labels=["windows-2025"])]
+        result = estimate(rows)
+        self.assertEqual(result["supplied_jobs_total_usd"], "0.000")
+        self.assertEqual(result["unknown_jobs"], 0)
+
     def test_windows_and_other_repo(self):
         result = estimate([job(repository="CSL-Laboratories/recursion",
                                labels=["blacksmith-2vcpu-windows-2025"])])

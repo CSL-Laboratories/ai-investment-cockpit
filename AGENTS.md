@@ -184,7 +184,7 @@ Search/Extract is for lookups. Assignee decision/direction work also needs the T
 - **GitHub** — org **CSL-Laboratories**.
 - **Devin** — the only PR reviewer, review only (on PR open; on-demand via `/devin review`).
 - **Claude Code Action** — PR fixer for Devin findings and `@claude` mentions on open, same-repository PRs whose author (and, for `@claude`, the commenter) has write, maintain or admin permission on the repo (other PRs are skipped by the workflow's event gate) (`.github/workflows/claude.yml`).
-- **Blacksmith** — paid test-matrix CI (Python linux/windows, rust-book). Non-test jobs use GitHub-hosted `ubuntu-latest` (this repo is public).
+- **GitHub-hosted runners** — all CI, free because this repo is public. The test matrix (Python linux/windows, rust-book) uses `ubuntu-24.04` and `windows-2025`; non-test jobs use `ubuntu-latest`; macOS uses `macos-latest`. CSL-408 moved the test matrix off Blacksmith.
 - **Google Workspace** (`csl-laboratories.com`) — meetings and notes.
 - **Discord bot** (`csl-bot-operations`) — slash commands and MCP below.
 
@@ -220,10 +220,10 @@ Agents must stay Linear-aware and proactive. Linear is the source of truth for e
 
 Hosted split (PR #102):
 
-- Required check: **`linux-gates`**. The aggregator is GitHub-hosted `ubuntu-latest`. The Python 3.11+3.12 matrix it wraps runs on Blacksmith. Ordinary label add/remove does not start `ci.yml`, so it cannot post a skipped or successful `linux-gates`. Drafts skip the test matrix; the aggregator still runs and fails closed until `ready_for_review`. `ci:full` / `enhancement` re-trigger via `ci-label-retrigger.yml`, which has no job named `linux-gates`.
+- Required check: **`linux-gates`**. The aggregator is GitHub-hosted `ubuntu-latest`. The Python 3.11+3.12 matrix it wraps runs on GitHub-hosted `ubuntu-24.04`. Ordinary label add/remove does not start `ci.yml`, so it cannot post a skipped or successful `linux-gates`. Drafts skip the test matrix; the aggregator still runs and fails closed until `ready_for_review`. `ci:full` / `enhancement` re-trigger via `ci-label-retrigger.yml`, which has no job named `linux-gates`.
 - Enhancement-only label reruns request Linux scope; `ci:full` or enhancement on an already-`ci:full` PR requests the full matrix. Manual/API dispatch defaults to full; explicit `scope=linux` requests Linux only.
 - Label reruns carry the PR number, expected head, and immutable merge candidate. They validate that context before testing the merge candidate. Their concurrency suffix is `label-<expected-head>-<scope>`, separate from ordinary PR runs, because `gh workflow run --ref` resolves to the current head and a stale dispatch must not cancel that head's PR or label run. Scope isolation prevents a delayed Linux-only request from cancelling a full request on the same head. The label dispatcher also isolates heads. Filter still fail-closes stale dispatch context before billed matrix work; manual branch dispatch without PR context remains available in its own scope group.
-- Windows runs on push to `main`, `merge_group`, the `ci:full` label, and full manual dispatch (Blacksmith). Main-push Linux/Windows and relevant Rust coverage stays enabled until the owner separately approves removal after queue enforcement is proven.
+- Windows runs on push to `main`, `merge_group`, the `ci:full` label, and full manual dispatch (GitHub-hosted `windows-2025`). Main-push Linux/Windows and relevant Rust coverage stays enabled until the owner separately approves removal after queue enforcement is proven.
 - macOS runs nightly at 07:17 UTC on `main` (skipped if idle 24h), on the `ci:full` label, and on full manual dispatch — not on ordinary `main` pushes (GitHub-hosted).
 - Non-test jobs (filter, `linux-gates` aggregator, pr-lint, Claude fixer/conflict-scan) use GitHub-hosted `ubuntu-latest`.
 - Ordinary PR runs share a queue with automatic cancellation disabled. The trusted default-branch companion requests cancellation only for verified strict-ancestor CI/Rust runs after checking a real current-head successor; bootstrap and uncertain evidence leave runs queued. Draft synchronize uses a separate group from `ready_for_review`. See [controller policy and limits](docs/ci-cancellation-controller.md).
@@ -238,7 +238,7 @@ Hosted split (PR #102):
 - **Codex** has two allowed GitHub review paths, neither a Devin substitute:
   1. **CI/fixer gate** (CSL-103/259, `.github/workflows/codex-gate.yml`) - one nonce-bound `@codex review` per exact head/base/merge/tree candidate and fixer generation; the reply echoes that identity and ends with `CODEX-GATE: READY|MEDIATE`. See Code Review Rules.
   2. **Stuck-thread watch** (CSL-86 / PR #124, `.github/workflows/stuck-thread-watch.yml`) — one advisory `@codex review` on unresolved Devin threads Claude could not settle, and **one** Linear `needs-decision` Triage roll-up per PR titled `Stuck PR threads: <repo>#<PR>`. Shared keys with the Codex CI/fixer gate: `<!-- stuck-pr-threads:owner/repo#N -->` and `<!-- codex-gate-mediate:owner/repo:N -->`; each writer owns only its fenced block. It adopts an existing roll-up only by that `stuck-pr-threads` HTML marker, never by title, and writes Linear only when at least one thread is actionable after the per-PR cap and `CODEX_TRIGGER_PAT` checks (or to create a missing roll-up after an earlier Linear outage). It skips already-approved PRs and updates that roll-up instead of filing a new issue per thread. That reply must **not** include a `CODEX-GATE:` line, and must not push, merge, resolve the thread, or open a fix PR.
-- **Blacksmith** hosts the paid test matrix. That is the GitHub test-CI path, not a revival of the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired from research/dev swarm dispatch" still apply to research/dev swarm jobs.
+- **GitHub-hosted runners** host the test matrix. That is the GitHub test-CI path, not a revival of the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired from research/dev swarm dispatch" still apply to research/dev swarm jobs.
 - Cursor, Codex (as a coding agent), Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs, except the stuck-thread watcher. A founder may have their own bot post reviews under their account when they direct it. The author agent may fix CI failures on its own PR.
 
 ## Review loop
@@ -323,7 +323,7 @@ median slowdown, after sample spread, is above 10%. It does not fail
 
 ## Guardrails (MUST)
 
-Agents must **not** edit CI/runner configuration (`.github/workflows/**`, Blacksmith runner labels, caching, concurrency), Devin configuration, repo rulesets, or the MCP server list, unless a Linear issue explicitly assigned by a human asks for it.
+Agents must **not** edit CI/runner configuration (`.github/workflows/**`, runner labels, caching, concurrency), Devin configuration, repo rulesets, or the MCP server list, unless a Linear issue explicitly assigned by a human asks for it.
 
 Open PRs as drafts, batch pushes, and mark ready once after validation and only when no owner hold remains. Never merge PRs, rebase, or force-push. Normal base merges are limited to real conflicts or owner-approved dependency integration (including integration without a text conflict); record the reason and rerun the combined gates. Bots convert draft → ready with their own App identity, not `GITHUB_TOKEN`.
 

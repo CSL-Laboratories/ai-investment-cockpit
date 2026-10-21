@@ -6,6 +6,15 @@ planning target, not an enforced organization cap or permission for paid overage
 Account usage, invoice totals and credit allocation have not been verified.
 [Implementation/approval attribution](https://linear.app/csl-laboratories/issue/CSL-255#comment-874d81e7-42fd-4658-9c82-76bc43c76c25).
 
+## Runner change, 2026-10-21 (CSL-408)
+
+Lucas decided to move every test job off Blacksmith. The Python and Rust
+Linux cells and `benchmarks` now run on `ubuntu-24.04`, and the Windows cells on
+`windows-2025`. Both are standard GitHub-hosted runners, so runner compute is $0
+for this public repository. The Blacksmith rates below stay for accounting of runs
+before the change. Billing calibration for that period: Blacksmith charged per
+started minute for each job that got a runner (CSL-255).
+
 ## Keep development cheap without weakening qualification
 
 - Use local focused tests and existing inexpensive development checks while a
@@ -38,7 +47,7 @@ snapshots, not statements that the PRs have landed or that controls are active.
 | --- | ---: |
 | `blacksmith-2vcpu-ubuntu-2404` | 0.004 |
 | `blacksmith-2vcpu-windows-2025` | 0.008 |
-| Standard GitHub `ubuntu-latest` / `macos-latest`, these public repos | 0 runner compute |
+| Standard GitHub `ubuntu-latest` / `ubuntu-24.04` / `windows-2025` / `macos-latest`, these public repos | 0 runner compute |
 | Other/larger/custom runners, including #174 paid macOS | Unpriced in core ledger |
 
 [Blacksmith pricing](https://www.blacksmith.sh/pricing) checked 2026-10-17 lists

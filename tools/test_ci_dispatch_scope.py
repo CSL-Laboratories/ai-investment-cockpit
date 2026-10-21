@@ -200,7 +200,7 @@ class DispatchScopeTests(unittest.TestCase):
             self.assertEqual(json.loads(output.read_text().splitlines()[1])['include'], [])
             self.assertIn('has-cells=false', output.read_text())
 
-    def test_settle_debounce_gates_blacksmith_only_on_pr_synchronize(self):
+    def test_settle_debounce_gates_test_cells_only_on_pr_synchronize(self):
         for doc, billed in ((self.ci, ('linux', 'windows', 'benchmarks')),
                             (self.rust, ('rust-book',))):
             settle = doc['jobs']['settle']
