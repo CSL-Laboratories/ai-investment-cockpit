@@ -724,14 +724,14 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         scan = (WORKFLOWS / 'conflict-scan.yml').read_text()
         # Eight-commit guard: one constant per claude.yml prepare job, compared in the @claude path,
         # and the Devin path's `cap` step; no other cap value anywhere.
-        self.assertEqual(re.findall(r'^\s*LOOP_CAP = (\d+)$', claude, re.M), ['8', '8'])
+        self.assertEqual(re.findall(r'^\s*LOOP_CAP = (\d+)$', claude, re.MULTILINE), ['8', '8'])
         self.assertNotRegex(writer + scan, r'LOOP_CAP = ')
         self.assertIn('if streak >= LOOP_CAP:', job_text(workflow('claude.yml')['jobs']['mention-prepare']))
         cap = job_text(workflow('claude.yml')['jobs']['fixer-prepare'])
         self.assertRegex(cap, r'if \[ "\$total" -ge 250 \] && \[ "\$count" -lt 8 \]')
         self.assertIn('echo "loop_commit_count=$count"', cap)
         # The Devin path reserves bounded attempts; every publisher allows one publish per prepared run.
-        self.assertEqual(re.findall(r'^\s*MAX_ATTEMPTS = (\d+)$', claude, re.M), ['3', '3', '3'])
+        self.assertEqual(re.findall(r'^\s*MAX_ATTEMPTS = (\d+)$', claude, re.MULTILINE), ['3', '3', '3'])
         self.assertIn('Select pending findings and reserve bounded attempt', claude)
         for name, jobs in WRITER_JOBS.items():
             doc = workflow(name)
