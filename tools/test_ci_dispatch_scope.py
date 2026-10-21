@@ -619,10 +619,37 @@ WRITER_JOBS = {
 }
 NON_WRITER_JOBS = {'claude.yml': {'resolve-pr', 'event-paths', 'forward-conflict-scan'},
                    'claude-conflict-writer.yml': set()}
+# conflict-scan.yml's complete job inventory: the read-only scan, and the reusable-workflow caller of
+# claude-conflict-writer.yml (its permissions are checked exactly below). A new job there must be added.
+SCAN_JOBS = {'conflict-scan': 'scan', 'conflict-resolve': 'caller'}
+# Every way to hand a job a model: the two credentials and the action. Prep and publish jobs hold none.
+MODEL_ACCESS = re.compile(r'ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN|anthropics/claude-code-action', re.IGNORECASE)
 HOSTED = {'ubuntu-latest', 'ubuntu-24.04', 'ubuntu-22.04', 'windows-2025', 'windows-latest', 'macos-latest'}
 MODEL_BASH = 'Bash(python3 ${{ runner.temp }}/claude-fixer-guard/model-api --:*)'
-PUSH = re.compile(r'run_git\(\[\s*\\?["\']push|\bgit(\s+-[Cc]\s+\S+)*\s+push\b'
-                  r'|\\?["\']git\\?["\'],\s*\\?["\']push\\?["\']|/git/refs/')
+# A push, in shell or argv form. Shell: `git`, then global options (`-C dir`, `-c k=v`, `--no-pager`),
+# then `push`, across backslash continuations. Argv: a quoted `"push"` element that opens a list or
+# tuple (`["push"`, `prefix + ["push"`) or follows only option tokens and bare expressions after the
+# opening bracket or a quoted `"git"` (`[*prefix, "push"`, `run_git(["-C", repo, "push"`,
+# `["git", "-C", repo, "push"`). Quotes may be backslash-escaped. A quoted non-option word before
+# `"push"` (a prompt word list such as `"git", "log", "origin", "pr", "push"`) is not a push.
+_Q = r'\\?["\']'
+_STR = r'[rbfuRBFU]{0,2}' + _Q + r'[^"\'\n]*' + _Q
+_OPT = r'[rbfuRBFU]{0,2}' + _Q + r'-[^"\'\n]*' + _Q
+_EXPR = r'\*?[A-Za-z_][\w.]*(?:\([^()\n]*\)|\[[^\[\]\n]*\])*'
+_SEP = r'\s*,\s*'
+_TOKEN = rf'(?:{_OPT}(?:{_SEP}(?:{_STR}|{_EXPR}))?|{_EXPR})'
+_GAP = r'(?:\s|\\\n)+'
+PUSH = re.compile(rf'(?:[\[(]\s*|{_Q}git{_Q}{_SEP})(?:{_TOKEN}{_SEP}){{0,12}}{_Q}push{_Q}'
+                  rf'|\bgit(?:{_GAP}(?:-[Cc]{_GAP}\S+|--?[A-Za-z][\w-]*(?:=\S+)?))*{_GAP}push\b|/git/refs/')
+# Inside a whole push command: force, lease, mirror or delete options (also in short-option clusters
+# such as `-fq`), and a refspec that starts with `+` (forced) or `:` (delete).
+FORCED_PUSH = re.compile(r'--force|--mirror|--delete|(?<![\w-])-[A-Za-z]*[fd][A-Za-z]*(?![\w-])'
+                         r'|(?:^|[\s,(\[])[rbfuRBFU]{0,2}\\?["\']?[+:][^\s"\'+:]'
+                         r'|["\']?force["\']?\s*[:=]\s*["\']?(?:true|True)')
+# A request that writes: explicit method, or a body option that makes `gh api`/`curl` POST.
+LABEL_WRITE = re.compile(r'\b(?:POST|PUT|PATCH)\b|(?<![\w-])(?:-f|-F|--field|--raw-field|--input|-d|--data[\w-]*'
+                         r'|--json)(?![\w-])')
+SPAN_LINES = 40
 
 
 def job_text(job):
@@ -632,6 +659,47 @@ def job_text(job):
         parts.append(str(step.get('run', '')))
         parts.extend(str(v) for v in (step.get('with') or {}).values())
     return '\n'.join(parts)
+
+
+def command_span(text, pos):
+    """The whole command or call around text[pos].
+
+    It starts at the line of the outermost bracket still open at `pos` (within SPAN_LINES lines),
+    or earlier when the previous lines end in a shell backslash continuation, and ends at the first
+    newline after `pos` with every bracket closed and no continuation. So a multiline python call
+    or argv list, or a continued shell command, is read as one unit.
+    """
+    floor = 0
+    for _ in range(SPAN_LINES):
+        floor = text.rfind('\n', 0, floor or pos)
+        if floor < 0:
+            floor = 0
+            break
+    start = text.rfind('\n', 0, pos) + 1
+    depth = 0
+    for i in range(pos - 1, floor - 1, -1):
+        if text[i] in ')]}':
+            depth += 1
+        elif text[i] in '([{':
+            if depth:
+                depth -= 1
+            else:
+                start = text.rfind('\n', 0, i) + 1
+    while start > 0 and text[:start - 1].rstrip(' \t').endswith('\\'):
+        start = text.rfind('\n', 0, start - 1) + 1
+    depth, end, lines = 0, len(text), 0
+    for i in range(start, len(text)):
+        char = text[i]
+        if char in '([{':
+            depth += 1
+        elif char in ')]}':
+            depth -= 1
+        elif char == '\n' and i >= pos:
+            lines += 1
+            if (depth <= 0 and not text[:i].rstrip(' \t').endswith('\\')) or lines > SPAN_LINES:
+                end = i
+                break
+    return text[start:end]
 
 
 def granted(text):
@@ -647,6 +715,7 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         self.assertEqual(found, set(WRITER_FILES))
         for name, jobs in WRITER_JOBS.items():
             self.assertEqual(set(workflow(name)['jobs']), set(jobs) | NON_WRITER_JOBS[name])
+        self.assertEqual(set(workflow('conflict-scan.yml')['jobs']), set(SCAN_JOBS))
 
     def test_writers_never_dispatch_rerun_or_ready_ci(self):
         for name in WRITER_FILES:
@@ -669,11 +738,13 @@ class CrossLaneAdmissionTests(unittest.TestCase):
             with self.subTest(workflow=name):
                 self.assertNotRegex(text, r'--add-label|gh pr edit|labels\[\]=')
                 self.assertNotRegex(text, r'"labels":\s*\[\s*"(ci:full|enhancement)"')
-                # Every label write (URL line plus the next line) is the handoff label; ci:full is
-                # only ever removed (DELETE of a gate-owned label event).
-                for match in re.finditer(r'[^\n]*/labels[^\n]*\n[^\n]*', text):
-                    if re.search(r'"(POST|PUT|PATCH)"|-X (POST|PUT|PATCH)|--method (POST|PUT|PATCH)', match.group(0)):
-                        self.assertIn('HANDOFF_LABEL', match.group(0))
+                # Every label write is the handoff label; ci:full is only ever removed (DELETE of a
+                # gate-owned label event). Each check reads the whole call or continued shell command
+                # around `/labels`, so a method or body written on another line still counts.
+                for match in re.finditer(r'/labels\b', text):
+                    span = command_span(text, match.start())
+                    if LABEL_WRITE.search(span):
+                        self.assertIn('HANDOFF_LABEL', span)
                 self.assertEqual(set(re.findall(r'HANDOFF_LABEL = "([^"]+)"', text)) - {'needs-decision'}, set())
 
     def test_conflict_resolve_caller_permissions_are_exact(self):
@@ -717,6 +788,33 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         scan = workflow('conflict-scan.yml')['jobs']['conflict-scan']
         self.assertEqual(scan['permissions'], {'actions': 'read', 'contents': 'read', 'pull-requests': 'read'})
         self.assertFalse(PUSH.search(job_text(scan)))
+        self.assertIsNone(MODEL_ACCESS.search(str(scan)))
+
+    def test_push_matcher_and_spans(self):
+        # Option-bearing and prefixed argv pushes are pushes; a prompt word list is not.
+        for push in ('subprocess.run(["git", "-C", repo, "push", ...])', 'run_git(["-C", repo, "push"])',
+                     'subprocess.run(prefix + ["push", "origin", "HEAD"])', 'run([*prefix, "push", "origin"])',
+                     'python3 -c "run([\\"git\\", \\"-C\\", \\"$R\\", \\"push\\"])"', 'git -C "$dir" \\\n  push origin',
+                     'repo.run_git(["push", "-q", "--no-verify", url, ref], token=token)'):
+            with self.subTest(push=push):
+                self.assertTrue(PUSH.search(push))
+        for other in ('"check", "commit", "diff", "gh", "git", "log", "origin", "pr", "push", "pytest",',
+                      'NEVER push or force-push', 'subprocess.run(["git", "-C", repo, "status"])'):
+            with self.subTest(other=other):
+                self.assertFalse(PUSH.search(other))
+        # The force check reads the whole wrapped command.
+        for forced in ('run_git([\n    "push",\n    "--force-with-lease", url])', 'run_git(["push",\n    "-f"])',
+                       'git push \\\n  --force origin HEAD', 'run_git(["push", url, f"+{sha}:refs/heads/x"])',
+                       'run_git(["push", "--delete", url, ref])', 'run_git(["push", "--mirror", url])'):
+            with self.subTest(forced=forced):
+                self.assertRegex(command_span(forced, PUSH.search(forced).start()), FORCED_PUSH)
+        ordinary = 'repo.run_git([\n    "push", "-q", "--no-verify", url,\n    f"{sha}:refs/heads/x"], token=token)'
+        self.assertNotRegex(command_span(ordinary, PUSH.search(ordinary).start()), FORCED_PUSH)
+        # The label check reads the whole call, so a method before the URL still counts as a write.
+        post = 'check_call(\n    ["gh", "api", "--method", "POST",\n     f"repos/{r}/issues/{n}/labels",\n     "--input", f])'
+        self.assertRegex(command_span(post, post.index('/labels')), LABEL_WRITE)
+        delete = 'check_call(\n    ["gh", "api", "-X", "DELETE",\n     f"repos/{r}/issues/{n}/labels/ci:full"])'
+        self.assertNotRegex(command_span(delete, delete.index('/labels')), LABEL_WRITE)
 
     def test_writers_share_one_per_pr_lock_without_cancellation(self):
         for name, jobs in WRITER_JOBS.items():
@@ -752,11 +850,13 @@ class CrossLaneAdmissionTests(unittest.TestCase):
                     uses_model = any(str(s.get('uses', '')).startswith('anthropics/claude-code-action') for s in job['steps'])
                     self.assertEqual(uses_model, role == 'model')
                     if role != 'model':
-                        self.assertNotIn('CLAUDE_CODE_OAUTH_TOKEN', text)
+                        # The whole job (env, step env, `with`, `uses`, scripts), not only run/with text.
+                        self.assertIsNone(MODEL_ACCESS.search(str(job)))
                     if role == 'publish':
                         self.assertNotRegex(text, r'"\+[^"]*:refs/heads|\+\{[^}]*\}:refs/heads')
-                        for line in (ln for ln in text.splitlines() if 'push' in ln):
-                            self.assertNotRegex(line, r'--force|force-with-lease|force-if-includes|\s-f\b')
+                        # The whole push command, however it is wrapped: one ordinary fast-forward.
+                        for match in PUSH.finditer(granted(text)):
+                            self.assertNotRegex(command_span(granted(text), match.start()), FORCED_PUSH)
                         self.assertIn('# Ordinary push: no force, no lease.', text)
                     if role == 'model':
                         allowed = re.findall(r'--allowedTools "([^"]*)"', text)

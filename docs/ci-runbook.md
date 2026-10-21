@@ -19,7 +19,7 @@ adds `ci:full` / `enhancement` (AGENTS.md:117-118, 129-133). Escalate on the Lin
 | `linux-gates` green on the current head | Tests ran and passed, or the change is docs-only by the filter (contract §3, G16 fixed by CSL-397) | Nothing. |
 | `linux-gates` red | A test failed, or a dependency was cancelled, skipped unexpectedly or missing: the aggregate fails closed (contract §4) | Open the failing job. If it is `settle` or a cancelled cell, see §3 below. |
 | `linux-gates` red on a draft | Expected: drafts skip the matrix and the aggregate fails closed until `ready_for_review` (AGENTS.md:364) | Mark ready when done. |
-| No `linux-gates` on the head | No `ci.yml` job reached that head: a run cancelled before any job started (contract §3 row 22(a)), a skip annotation or unresolved conflict (GitHub creates no run), or an approval-required run | §4 below. |
+| No `linux-gates` on the head | No `ci.yml` job reached that head: a run cancelled before any job started, by its concurrency group (a push, manual, label or schedule run; contract §3 row 21(a)) or by the controller (row 22(a)), a skip annotation or unresolved conflict (GitHub creates no run), or an approval-required run | §4 below. |
 | `Devin Review` missing or pending | External app; not produced by this repository's workflows (contract §1) | Ask for a review through the Discord bot or Devin; do not push to retrigger it. |
 | `cancel-ancestors` red in `ci label retrigger` | Usually a fail-closed refusal, not a CI failure. Known variants: `Unverified triggering run provenance` (CSL-388) and `Triggering run identity changed` (CSL-410), mostly during merge bursts | Not a merge blocker. Report a new refusal text on CSL-356. |
 
@@ -40,7 +40,9 @@ adds `ci:full` / `enhancement` (AGENTS.md:117-118, 129-133). Escalate on the Lin
 
 - Ordinary PR runs queue (`queue: max`, no automatic cancel). The default-branch controller cancels
   only verified strict-ancestor runs after a real current-head successor exists (contract §5).
-  Identical-head twins are never cancelled (B2 = no).
+  B2 only stops two pending runs of the same head from cancelling each other. Once a newer head
+  exists, the controller still retires both as ancestors (contract §5, the §6 B2 evidence row, G2),
+  so a cancelled twin on an old head is expected, not a CSL-356 refusal.
 - Never cancel an in-progress run on the PR's current head; that leaves `linux-gates` red or missing.
 - A run you cancelled on an old head posts a red `linux-gates` on that old head only, or none if no
   job had started; a check that had already completed stays as it was (contract §3 row 22). The current head decides.
@@ -54,6 +56,8 @@ adds `ci:full` / `enhancement` (AGENTS.md:117-118, 129-133). Escalate on the Lin
    approval setting (contract G14); a writer reviews the fork diff, then approves. A `pull_request`
    opened, synchronized or reopened by a `GITHUB_TOKEN` automation also waits for approval (GitHub
    docs, triggering a workflow); the Claude writers push with an App token instead (contract §7).
+   Any other event a `GITHUB_TOKEN` triggers, such as a label or `ready_for_review`, creates no run
+   at all, so recovery is a human action or an App or PAT identity.
 3. A run is queued for minutes: check the org runner capacity (Team plan: 60 concurrent jobs, 5
    macOS, shared with recursion and every bot workflow; GitHub docs, Actions limits). macOS
    saturates first.
@@ -72,7 +76,11 @@ adds `ci:full` / `enhancement` (AGENTS.md:117-118, 129-133). Escalate on the Lin
 | Revert the PR that changed a workflow | Restores the previous code in a normal PR that a founder merges; never force-push. Writer state kept in PR comments (attempt reservations, receipts, loop-cap and `ci:full` ownership markers) is not reverted, so set `CLAUDE_FIXER_PAUSE=true` first and check those markers after the revert | Founder merge |
 
 Writers outside this guard: `codex-gate.yml` (adds the gate-owned `ci:full` on READY) and
-`stuck-thread-watch.yml` (resolves review threads with `CODEX_TRIGGER_PAT`). They are covered by
+`stuck-thread-watch.yml`. The watcher is advisory: it posts one `@codex review` comment on a stuck
+Devin thread with `CODEX_TRIGGER_PAT` and keeps one Linear `needs-decision` roll-up per PR
+(`Stuck PR threads: <repo>#<PR>`). It never resolves threads, pushes or merges
+(`.github/scripts/stuck_thread_watch.py` docstring; AGENTS.md:382), so a stuck thread stays open
+until a human resolves it or records the decision. They are covered by
 their own tests (`tools/test_codex_gate.py`, `app/tests/test_stuck_thread_watch.py`) and by contract §7, not by
 `CrossLaneAdmissionTests`.
 
@@ -101,10 +109,12 @@ their own tests (`tools/test_codex_gate.py`, `app/tests/test_stuck_thread_watch.
 - Writer workflows (`claude.yml`, `conflict-scan.yml`, `claude-conflict-writer.yml`) must keep the
   admission surface that `CrossLaneAdmissionTests` checks statically: no CI dispatch, re-run,
   ready-for-review or CI-label add (the only CI-label write is revoking a gate-owned `ci:full`);
-  pushes only from the model-free publish jobs as one ordinary fast-forward; one shared
+  pushes only from the model-free publish jobs as one ordinary fast-forward (no prep or publish job
+  holds `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` or the Claude action); one shared
   `claude-<PR>` lock without cancellation; the eight-commit guard on both claude.yml writers, the
   Devin path's three-attempt reservation, one publish per prepared run, and the pause. A new Claude
-  workflow or job fails the test until it is added there. Retry behaviour itself is tested in
+  workflow, or a new job in any of the three, fails the test until it is classified there
+  (conflict-scan.yml: the read-only `conflict-scan` job and the `conflict-resolve` caller). Retry behaviour itself is tested in
   `tools/test_claude_fixer_*.py` and `tools/test_claude_pr_fixer.py`.
 - **The conflict writer has no eight-commit guard and no cross-run attempt budget.** Each run
   publishes at most once (claude-conflict-writer.yml:2168, 2241-2250); the scan starts it every two
