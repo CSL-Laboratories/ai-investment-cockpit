@@ -29,7 +29,9 @@ Before acting on your own, apply the `proceed-or-escalate` skill
 (`.claude/skills/proceed-or-escalate/SKILL.md`). It carries the gates of
 [AGENTS.md's proceed-or-escalate section](AGENTS.md#proceed-or-escalate) and expands
 on them; if they differ, AGENTS.md wins. Escalate wins over proceed, including for
-the order path, risk, brokers, audit, PnL and the paper/live switch.
+the order path, risk, brokers, audit, PnL, halt, kill switch, gate, approval, veto,
+their tests and the paper/live switch; a failing test there is not a clear defect to
+fix alone.
 
 Current implementation:
 A solo-developer, subscription-powered, **human-gated** AI investing copilot.

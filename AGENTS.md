@@ -46,7 +46,7 @@ remain in force; this wording does not activate R2a or grant a live run.
 
 The loop starts only from objectives, feature admission and direction decisions approved by a founder acting within the founder decisions section above. Within them, agents run bounded autonomous research, implementation and tests, then close out with evidence. When blocked, an agent preserves its work, records the blocker and releases its execution claim, then moves to the next eligible issue. A human-decision hold needs an explicit decision receipt; a technical or dependency blocker needs evidence that its condition cleared. In either case, recompute readiness and obtain a fresh ownership claim before resuming. Closeout records the exact tested head, commands and results, unresolved criteria, review evidence and linked follow-ups. Mark work complete only under its existing acceptance criteria; a merge or issue status is not empirical acceptance.
 
-An issue is admitted only when it states its objective, non-goals, evidence dependencies, allowed effects and files, budget and stop condition, acceptance criteria and falsifiers, and verifier and rollback. Existing authorizations persist: routine, reversible work and fixes inside an admitted issue do not ask again and do not force new paid research. Decision and direction issues still follow the Linear-first research requirement. A new consequential feature, architecture, risk, public-semantics, effect or budget question stops only the affected lane, with options and a recommendation posted on the Linear issue for founder decision under the founder decisions section above. Human decisions are never inferred from silence, elapsed time, a merge, CI results or issue status. When an agent relays a human decision, it labels the source and attribution and never invents a human receipt or an exact-digest acceptance.
+An issue is admitted only when it states its objective, non-goals, evidence dependencies, allowed effects and files, budget and stop condition, acceptance criteria and falsifiers, and verifier and rollback. Existing authorizations persist: routine, reversible work and fixes inside an admitted issue do not ask again, unless they touch the escalate list in [Proceed or escalate](#proceed-or-escalate), and do not force new paid research. Decision and direction issues still follow the Linear-first research requirement. A new consequential feature, architecture, risk, public-semantics, effect or budget question stops only the affected lane, with options and a recommendation posted on the Linear issue for founder decision under the founder decisions section above. Human decisions are never inferred from silence, elapsed time, a merge, CI results or issue status. When an agent relays a human decision, it labels the source and attribution and never invents a human receipt or an exact-digest acceptance.
 
 Ownership is currently manual. The human-designated ownership coordinator (not the CI candidate coordinator) serializes overlapping writers on Linear; a claim is replaced only after an explicit release and acknowledgement. Record scope, writer, branch/head and handoff evidence on the issue, following existing assignment conventions. This execution claim is coordination only: it does not allocate, replace or close a REGISTER package claim. Before publishing, read the remote head. Preserve uncertain in-flight work and stop on ambiguity. Each agent holds at most one execution lane; this guide sets no numeric project WIP cap; any new cap is a separate founder decision. RW-33 swarm depth and leaf limits are unaffected. Atomic compare-and-set claims, leases, fencing, a transactional cost ledger and WIP enforcement are proposed and unimplemented; do not treat them as current machine guarantees. This section changes no platform state, status or claim schema and does not rewrite REGISTER policy.
 
@@ -70,15 +70,15 @@ interactive sessions, scheduled loops and Grok Bots. Repository workflows
 conflict-scan, review-gate, the CSL-259 candidate coordinator and other repository
 workflows) and Devin automations keep the roles in [Review roles](#review-roles) and
 [Automations](#automations); their documented markers, receipts and audit comments
-are unchanged. A bot review the founder directed in the same session under Review roles is that
-founder's review and is not covered here; scheduled or unattended reviews are not,
-and Review roles alone says what counts as one.
+are unchanged. Founder-directed bot reviews under Review roles are that founder's
+reviews and are not covered here; Review roles alone says what counts as one.
 
 **Escalate wins.** If any escalate condition holds, escalate, even inside an
 admitted issue and even when every proceed condition also holds.
 
 **Proceed** only when all hold: the work is within an admitted issue's acceptance
-criteria (routine, reversible work inside an admitted issue does not ask again), or
+criteria (routine, reversible work inside an admitted issue does not ask again,
+unless it touches the escalate list below), or
 is a clear defect or failing check with an evident cause on an issue you already
 hold (Linear-first still requires a `CSL-N`); it stays inside the
 issue's scope and its REGISTER package or `REGISTER: none` contract; no product
@@ -95,8 +95,13 @@ or writer's run is active on the branch, files or package; and it starts no paid
 - it is an architecture, language, dependency or data-source choice;
 - it touches the order path (risk, mode, approval, `OrderGateway`), `app/risk/`,
   `app/brokers/`, the audit chain (`app/storage/audit.py`), order eligibility or the
-  allowlist, secrets handling, PnL (`app/quant/pnl.py`), the paper/live switch or any
-  existing live flag, or any of the nine invariants, whatever the issue admits;
+  allowlist, secrets handling, PnL (`app/quant/pnl.py`), halt, kill switch and gate
+  (`app/orchestrator/halt.py`, `killswitch.py`, `gate.py`), approval and veto
+  (`app/bridge/approval.py`, `veto.py`), their tests (`app/tests/risk/`,
+  `app/tests/brokers/`, `app/tests/quant/test_pnl.py`, `app/tests/storage/`), the
+  paper/live switch or any existing live flag, or any of the nine invariants,
+  whatever the issue admits. A failing test there is not a "clear defect" you may
+  fix alone;
 - it touches governance files, decision records, contracts or another owner's work;
 - a tool or platform refused the action (report it; do not route around it or turn
   one refusal into a standing rule);
@@ -119,8 +124,8 @@ Linux scope, which runs Blacksmith Linux even for a docs-only diff. Adding
 Linux and Windows plus GitHub-hosted `macos-latest`. `ci-label-retrigger.yml` is a
 no-op on drafts and fork heads. Dispatching the fixer, Codex gate, stuck-thread
 watch or other `ubuntu-latest` workflows is not a Blacksmith run but still needs a
-human ask. Pushes to drafts or to branches without a PR, and read-only API queries,
-are fine.
+human ask. A push to `main` runs `ci.yml` and starts paid CI. Pushes to drafts or to
+branches other than `main` without a PR, and read-only API queries, are fine.
 
 **How.** Ask on the work issue: one Linear comment @mentioning the issue owner with
 the question, two or three options, your recommendation, and what you will do
@@ -136,7 +141,8 @@ other admitted work that is next under the human-approved order.
 **Comment labels.** Agents usually post through a developer's account, so start
 every agent comment with `Agent (<tool/session>, for <developer>):`; it carries no
 authority. A **developer-approved comment** counts as that developer's personal
-receipt (Lucas's decision, CSL-353 comment 6e602e3a) only when all hold:
+receipt (Lucas's decision, CSL-353 comment 6e602e3a; in force in this repository from
+the merge of this section, CSL-354 comment f5bcb490) only when all hold:
 
 1. immediately before posting, the agent showed the developer the final exact text
    and the developer approved it in the same session; approval from an earlier turn
@@ -164,9 +170,8 @@ watches) may only do "proceed" work. They do not resolve human-authored threads,
 change scope, close issues as decided or post developer-approved comments (nobody
 is there to approve the text). They never mark ready, add or remove GitHub labels,
 dispatch, re-run or cancel, and they label every comment
-`Agent (unattended run, for <developer>):`. Only a review the founder directed in
-the same session under Review roles is not covered here; a scheduled or standing
-review is an unattended run.
+`Agent (unattended run, for <developer>):`. Founder-directed bot reviews under
+Review roles are not covered here.
 
 ## Codex boundary
 
@@ -366,7 +371,7 @@ Hosted split (PR #102):
   1. **CI/fixer gate** (CSL-103/259, `.github/workflows/codex-gate.yml`) - one nonce-bound `@codex review` per exact head/base/merge/tree candidate and fixer generation; the reply echoes that identity and ends with `CODEX-GATE: READY|MEDIATE`. See Code Review Rules.
   2. **Stuck-thread watch** (CSL-86 / PR #124, `.github/workflows/stuck-thread-watch.yml`) — one advisory `@codex review` on unresolved Devin threads Claude could not settle, and **one** Linear `needs-decision` Triage roll-up per PR titled `Stuck PR threads: <repo>#<PR>`. Shared keys with the Codex CI/fixer gate: `<!-- stuck-pr-threads:owner/repo#N -->` and `<!-- codex-gate-mediate:owner/repo:N -->`; each writer owns only its fenced block. It adopts an existing roll-up only by that `stuck-pr-threads` HTML marker, never by title, and writes Linear only when at least one thread is actionable after the per-PR cap and `CODEX_TRIGGER_PAT` checks (or to create a missing roll-up after an earlier Linear outage). It skips already-approved PRs and updates that roll-up instead of filing a new issue per thread. That reply must **not** include a `CODEX-GATE:` line, and must not push, merge, resolve the thread, or open a fix PR.
 - **Blacksmith** hosts the paid test matrix. That is the GitHub test-CI path, not a revival of the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired from research/dev swarm dispatch" still apply to research/dev swarm jobs.
-- Cursor, Codex (as a coding agent), Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs, except the stuck-thread watcher. A founder may have their own bot post reviews under their account when they direct that specific review in the same session; scheduled, standing or otherwise unattended runs do not qualify and stay under the unattended-run label rule. The author agent may fix CI failures on its own PR.
+- Cursor, Codex (as a coding agent), Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs, except the stuck-thread watcher. A founder may have their own bot post reviews under their account when they direct it. The author agent may fix CI failures on its own PR.
 
 ## Review loop
 

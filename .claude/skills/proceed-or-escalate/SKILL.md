@@ -32,7 +32,8 @@ admitted issue and even when everything on the proceed list also holds.
 ## Proceed on your own when ALL of these hold
 
 - The work is within an admitted issue's acceptance criteria (routine, reversible
-  work inside an admitted issue does not ask again), or it is a clear defect or
+  work inside an admitted issue does not ask again, unless it touches the escalate
+  list below), or it is a clear defect or
   failing check with an evident cause on an issue you already hold (Linear-first
   still requires a `CSL-N`).
 - It stays inside the issue's scope and its REGISTER package or `REGISTER: none`
@@ -44,8 +45,9 @@ admitted issue and even when everything on the proceed list also holds.
   workflows.
 - Nobody else holds a claim on the branch, files or package, and no other writer's
   run (such as the fixer's `claude-<PR>` lock) is in flight.
-- It starts no paid CI (see below). Pushing to a draft PR or a branch with no PR,
-  and read-only Actions/API queries, are fine.
+- It starts no paid CI (see below). Pushing to a draft PR or a branch other than
+  `main` with no PR, and read-only Actions/API queries, are fine. A push to `main`
+  runs `ci.yml` and starts paid CI.
 
 ## Raise it to a human when ANY of these hold
 
@@ -54,9 +56,13 @@ admitted issue and even when everything on the proceed list also holds.
 - It is an architecture, language, dependency or data-source choice.
 - It touches the order path (risk, mode, approval, `OrderGateway`), `app/risk/`,
   `app/brokers/`, the audit chain (`app/storage/audit.py`), order eligibility or
-  the allowlist, secrets handling, PnL (`app/quant/pnl.py`), the paper/live switch
-  or any existing live flag, or any of the nine invariants, whatever the issue
-  admits. A failing test there is not a "clear defect" you may fix alone.
+  the allowlist, secrets handling, PnL (`app/quant/pnl.py`), halt, kill switch and
+  gate (`app/orchestrator/halt.py`, `killswitch.py`, `gate.py`), approval and veto
+  (`app/bridge/approval.py`, `veto.py`), their tests (`app/tests/risk/`,
+  `app/tests/brokers/`, `app/tests/quant/test_pnl.py`, `app/tests/storage/`), the
+  paper/live switch or any existing live flag, or any of the nine invariants,
+  whatever the issue admits. A failing test there is not a "clear defect" you may
+  fix alone.
 - It touches governance files, decision records, contracts, or another owner's work.
 - A tool or platform refused the action. Report it; do not route around it, and
   do not turn one refusal into a standing rule.
@@ -130,7 +136,9 @@ wrote a comment from the author field. Make it visible in the text.
 - **Agent comment** (status, evidence, proposals): start with
   `Agent (<tool/session>, for <developer>):`. It carries no authority.
 - **Developer-approved comment**: counts as that developer's personal receipt
-  (Lucas's decision, CSL-353 comment 6e602e3a) only when all of these hold:
+  (Lucas's decision, CSL-353 comment 6e602e3a; in force in this repository from the
+  merge of the AGENTS.md section, CSL-354 comment f5bcb490) only when all of these
+  hold:
   1. Immediately before posting, you showed the developer the final exact text
      and they approved it in this same session. Approval from an earlier turn or
      another context does not carry over; ask again.
