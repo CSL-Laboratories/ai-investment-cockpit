@@ -168,7 +168,10 @@ a developer-approved comment meeting the conditions above carries it, or it is
 recorded in `docs/adr/` or a linked Linear decision issue. When relying on a
 developer-approved comment, check that the marker is present, the comment is
 unedited and the named developer has not disputed it; if any of that is unclear,
-ask that developer before acting. Agent repetition,
+ask that developer before acting. A comment from a founder or developer account
+that has no agent prefix and was posted before this rule took effect (the merge of
+#217, 2026-10-21T03:50:42Z) counts as that person's decision only if they confirm
+it when asked (Lucas's decision, CSL-354 comment 0a86b61c). Agent repetition,
 silence, a merge or an issue auto-closing to Done is not a decision.
 
 **Unattended runs** (loops acting through a developer's account while nobody
@@ -368,6 +371,7 @@ Hosted split (PR #102):
 - Non-draft synchronize events wait in `settle` for 120 seconds. Paid jobs and required aggregates accept successful settle or an event's intentional skip; failure, cancellation, and unexpected skips block. The wait consumes hosted capacity and does not guarantee savings.
 - CI caches pip downloads, never virtualenvs. Each cell creates a fresh environment, installs direct pins, and runs `pip check`; one fresh no-cache retry handles install/cache failure. Direct pins are not a transitive hash lock.
 - Queue protection is staged: proposed stable checks are `linux-gates`, `queue-gates`, `rust-gates`, and `review-gate`. The latter verifies the current genuine Devin bot commit status on every exact required PR head, with bounded polling and manual same-head recovery. Existing required `linux-gates` and `Devin Review` remain unchanged. See [the rollout and owner decisions](docs/ci-queue-rollout.md); synthetic tests do not establish live queue enforcement.
+- A rate-limited `CODEX_TRIGGER_PAT` does not fail the stuck-thread watch workflow run. The watcher reads with `github.token` and uses the PAT only for writes; a failed write is logged as `pr=<N> thread=<id> mediate=error` (or `pr=<N> label=error` when labelling is on) in a run that still passes. Inside the script, only a failure to list pull requests (which a `github.token` rate limit can cause) or a missing `GITHUB_REPOSITORY` returns non-zero; the job can also fail at checkout or on its 10-minute timeout. So read the log before treating a failed run as a code problem. The required checks (`linux-gates`, Devin Review) decide CI either way (Lucas's decision on CSL-390, comment 242120cc).
 
 ## Review roles
 
