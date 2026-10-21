@@ -49,6 +49,11 @@ MAX_MARKER_SIZE = 1000
 UNMERGED = ("diff", "--name-only", "-z", "--diff-filter=U")
 CONFLICT_GIT = {"conflicts": ("diff", "--name-only", "--diff-filter=U"), "merge-abort": ("merge", "--abort")}
 STAGE = ("add", "-A", "--", ".", ":(exclude).claude-fixer-out", ":(exclude).claude-fixer-replies")
+UNTRACKED = ("ls-files", "-z", "--others", "--exclude-standard")
+MODIFIED = ("ls-files", "-z", "--modified")
+# The protected names Claude Code's sandbox masks when they do not exist (Claude Code 2.1.30x).
+SANDBOX_MASKED = frozenset({".gitconfig", ".gitmodules", ".bashrc", ".bash_profile", ".zshrc", ".zprofile",
+                            ".profile", ".ripgreprc", ".mcp.json", ".vscode", ".idea"})
 
 
 def command(args, **kwargs):
@@ -147,6 +152,48 @@ def conflict_marker(sizes):
     return re.compile(rf"^(?:(?:<{low}|\|{low}|>{low})(?: |$)|(?:{separators})$)", re.MULTILINE)
 
 
+class MaskedPath(ValueError):
+    """A tracked path the sandbox masked: named to the model, unlike other refusals."""
+
+
+def sandbox_masks(run):
+    """Exclude pathspecs for the sandbox's masks among untracked paths.
+
+    Claude Code's sandbox read-only binds /dev/null over protected paths that do not exist
+    (.bashrc, .gitconfig, .idea, ...). Git lists them as untracked, then `git add` refuses the
+    device and stages nothing, so they are left out. While another sandbox is still active,
+    the CLI leaves those mount points behind as empty regular files; they are left out too.
+    Only missing paths are masked, so a tracked path never is: one that became a device was
+    deleted, and that deletion cannot be staged, so the commit is refused instead.
+    """
+    workspace = Path.cwd()
+
+    def status(name):
+        try:
+            return os.lstat(workspace / name)
+        except FileNotFoundError:
+            return None  # a deletion: `add -A` stages it
+        # Any other OSError propagates and the commit fails closed.
+
+    def regular(info):
+        return stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode)
+
+    for name in filter(None, git(run, *MODIFIED).split("\0")):
+        info = status(name)
+        # A directory here is a real change (a file replaced by a directory, a moved gitlink).
+        if info is not None and not (regular(info) or stat.S_ISDIR(info.st_mode)):
+            raise MaskedPath("a tracked path is masked by the sandbox (deleted?), so it cannot be committed")
+    masks = []
+    for name in filter(None, git(run, *UNTRACKED).split("\0")):
+        info = status(name)
+        if info is None:
+            continue
+        leftover = name in SANDBOX_MASKED and stat.S_ISREG(info.st_mode) and not info.st_size
+        if leftover or not regular(info):
+            masks.append(":(exclude,literal)" + name)
+    return masks
+
+
 def commit(body_path, run, mode):
     # The message is validated like a comment body and passed as one argv element.
     message = read_body(body_path)
@@ -167,7 +214,7 @@ def commit(body_path, run, mode):
         for name in present:
             if conflict_marker(sizes[name]).search((workspace / name).read_text(encoding="utf-8", errors="replace")):
                 raise ValueError("conflict markers remain")
-    git(run, *STAGE)
+    git(run, *STAGE, *sandbox_masks(run))
     # In the conflict job this completes the in-progress merge.
     git(run, "commit", "--no-verify", "-q", "-m", message)
     return git(run, "rev-parse", "HEAD")
@@ -246,6 +293,15 @@ def main():
         if not os.environ.get("GH_TOKEN") and (directory / READ_TOKEN).is_file():
             os.environ["GH_TOKEN"] = (directory / READ_TOKEN).read_text(encoding="utf-8").strip()
         print(model_api(config, sys.argv[2:]))
+    except MaskedPath as error:
+        print(f"Helper operation failed: {error}.", file=sys.stderr)
+        return 1
+    except subprocess.CalledProcessError as error:
+        # Name the failed step, never its output.
+        cmd = list(error.cmd) if isinstance(error.cmd, (list, tuple)) else []
+        step = f"git {cmd[len(GIT)]}" if cmd[:len(GIT)] == list(GIT) and len(cmd) > len(GIT) else "a command"
+        print(f"Helper operation failed: {step} exited {error.returncode}.", file=sys.stderr)
+        return 1
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
         print("Helper operation failed or is not permitted.", file=sys.stderr)
         return 1
