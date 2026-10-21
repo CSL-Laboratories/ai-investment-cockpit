@@ -1753,7 +1753,7 @@ jobs:
                                   GIT_CONFIG_GLOBAL=os.devnull, GIT_TERMINAL_PROMPT="0")
                   self.run_git(["init", "-q", "--bare", str(self.dir)], bare=False)
 
-              def run_git(self, args, token=None, input=None, ok=(0,), bare=True, timeout=180, fsck=False):
+              def run_git(self, args, token=None, input=None, ok=(0,), bare=True, timeout=180, fsck=False, local=False):
                   env = dict(self.env)
                   if token is not None:
                       # Header via environment-scoped config: not argv, not on disk.
@@ -1765,6 +1765,9 @@ jobs:
                   if fsck:
                       # Before Git 2.46 a bundle fetch ignores these, so check_objects() also runs a full fsck.
                       prefix += ["-c", "fetch.fsckObjects=true", "-c", "transfer.fsckObjects=true"]
+                  if local:
+                      # The bundle is a local file; no other transport (https, ssh, ext) may run.
+                      prefix += ["-c", "protocol.allow=never", "-c", "protocol.file.allow=always"]
                   if bare:
                       prefix += ["--git-dir", str(self.dir)]
                   result = self.runner(prefix + list(args), env=env, input=input, capture_output=True, timeout=timeout)
@@ -1864,10 +1867,11 @@ jobs:
           def check_objects(repo):
               """fsck every object, including the bundle's, whatever the runner's Git version.
 
-              `.`, `..` and `.git` tree entries are errors here, not warnings; duplicate entries already are.
+              `.`, `..` and `.git` tree entries, slash-containing (fullPathname) or empty names, bad file modes
+              and null object IDs are errors here, not warnings; duplicate entries already are.
               """
               severities = []
-              for msg in ("hasDot", "hasDotdot", "hasDotgit"):
+              for msg in ("hasDot", "hasDotdot", "hasDotgit", "fullPathname", "emptyName", "badFilemode", "nullSha1"):
                   severities += ["-c", f"fsck.{msg}=error"]
               try:
                   repo.run_git(severities + ["fsck", "--no-dangling", "--no-progress"])
@@ -1891,7 +1895,8 @@ jobs:
                   raise Refused("bundle must carry exactly one HEAD")
               try:
                   # Git 2.46+ fscks bundle objects here; older Git leaves that to check_objects().
-                  repo.run_git(["fetch", "-q", "--no-tags", str(bundle), "HEAD:refs/claude/candidate"], fsck=True)
+                  repo.run_git(["fetch", "-q", "--no-tags", "--recurse-submodules=no", str(bundle), "HEAD:refs/claude/candidate"],
+                               fsck=True, local=True)
               except Refused:
                   raise Refused("candidate bundle refused at fetch (fsck or corrupt pack)") from None
               check_objects(repo)
@@ -1943,11 +1948,13 @@ jobs:
 
           def fetch_recorded(repo, config, token):
               url = f"{GITHUB_HOST}/{config['repo']}.git"
-              repo.run_git(["fetch", "-q", "--no-tags", url, f"+refs/heads/{config['ref']}:refs/claude/head"], token=token)
+              repo.run_git(["fetch", "-q", "--no-tags", "--recurse-submodules=no", url, f"+refs/heads/{config['ref']}:refs/claude/head"],
+                           token=token)
               if repo.text("rev-parse", "--verify", "refs/claude/head^{commit}") != config["base"]:
                   raise Refused("PR branch moved since the recorded checkout")
               if config["mode"] == "conflict":
-                  repo.run_git(["fetch", "-q", "--no-tags", url, f"+refs/heads/{config['base_ref']}:refs/claude/base"], token=token)
+                  repo.run_git(["fetch", "-q", "--no-tags", "--recurse-submodules=no", url,
+                                f"+refs/heads/{config['base_ref']}:refs/claude/base"], token=token)
                   # A merge against a base that has since moved would leave the PR conflicted; a fresh scan retries.
                   if repo.text("rev-parse", "--verify", "refs/claude/base^{commit}") != config["merge_base"]:
                       raise Refused("base branch moved since the recorded checkout")
@@ -2189,13 +2196,7 @@ jobs:
                   return "", notes
               read, out = deps["read"], deps["out"]
               live_head(config, env, read, {config["base"]})
-              try:
-                  token = deps["mint"](env)
-              except WorkflowValidationSkip:
-                  out("::notice::Claude App token exchange reported workflow validation; nothing published. "
-                      "This is expected until this workflow version is on the default branch.")
-                  notes.append("App token unavailable (workflow validation); nothing published")
-                  return "", notes
+              token = None
               pushed = ""
               try:
                   if bundle is not None:
@@ -2207,6 +2208,8 @@ jobs:
                           candidate = validate_candidate(repo, config, bundle)
                           state_path.write_text(json.dumps({"candidate": candidate}), encoding="utf-8")
                           live_head(config, env, read, {config["base"]})
+                          # CSL-405: no App token exists while untrusted objects are parsed.
+                          token = deps["mint"](env)
                           push_candidate(repo, config, candidate, token)
                       for attempt in range(3):
                           try:
@@ -2218,14 +2221,21 @@ jobs:
                                   raise
                               deps["sleep"](2)
                       notes.append(f"pushed candidate `{pushed}` as one ordinary fast-forward")
+                  if token is None:
+                      token = deps["mint"](env)
+
                   def write(method, path, body):
                       return deps["http"](method, f"{GITHUB_API}/{path}", token=token, body=body)
                   posted, refused = publish_records(config, env, records, pushed, write, read, deps["consumer"])
                   notes.append(f"{posted} queued write(s) posted, {refused} refused")
+              except WorkflowValidationSkip:
+                  out("::notice::Claude App token exchange reported workflow validation; nothing published. "
+                      "This is expected until this workflow version is on the default branch.")
+                  notes.append("App token unavailable (workflow validation); nothing published")
               except Refused as error:
                   notes.append(f"refused: {error}; queued writes dropped")
               finally:
-                  if not deps["revoke"](token):
+                  if token is not None and not deps["revoke"](token):
                       out("::warning::Claude App token revocation could not be confirmed.")
               return pushed, notes
 
