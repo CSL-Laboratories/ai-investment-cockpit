@@ -124,7 +124,11 @@ already revoked when the model job ends, before publish runs. The action's
 credential helper and its exact-match permission bypass are its own behaviour,
 so every `anthropics/claude-code-action` use is pinned to a full commit SHA
 (v1.0.256, CSL-412). The fixer-failure escalation binds to that same reference,
-and a bump must recheck both behaviours. Claude Code turns
+and a bump must recheck both behaviours. Each model job's package step also fails the
+package (`package_status=failed`, so publish refuses everything) when any git
+config scope it can list holds a credential: a token or userinfo in a URL, an
+`x-access-token`, a GitHub token shape or an authorization header. Every run
+therefore checks that the action left the job token out of `.git/config`. Claude Code turns
 `Read(...)`/`Edit(...)` deny rules into sandbox denies for Bash too, so the
 model jobs deny writes only to the `.git` paths git can be made to execute or
 redirect through (hooks, config, info, commondir, modules, worktrees), never

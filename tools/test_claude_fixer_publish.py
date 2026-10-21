@@ -1455,12 +1455,18 @@ class WorkflowWiringTests(unittest.TestCase):
         # Runs each model job's real package script against a repo, with a git wrapper that can fail `bundle`.
         for name, _prep, model, _pub, _group, ids in self.pipelines():
             script = [s for s in model["steps"] if s.get("name") == "Package untrusted model output"][0]["run"]
-            for case in ("unchanged", "bundled", "failed"):
+            for case in ("unchanged", "bundled", "failed", "credential", "helper"):
                 with self.subTest(workflow=name, job=ids[1], case=case), tempfile.TemporaryDirectory() as tmp:
                     root = Path(tmp)
                     work = Work(root / "repo")
                     subprocess.run(["git", "init", "-q", "-b", "main", str(work.path)], env=git_env(), check=True)
                     head = work.commit({"a.txt": "a\n"}, message="head")
+                    # CSL-412: the action's credential-helper layout is clean; a token in the URL is not.
+                    url = ("https://x-access-token:" + TOKEN + "@github.com/acme/example.git" if case == "credential"
+                           else "https://github.com/acme/example.git")
+                    work.git("remote", "add", "origin", url)
+                    if case == "helper":
+                        work.git("config", "credential.helper", str(root / ".git-credential-gh-token"))
                     if case != "unchanged":
                         work.commit({"a.txt": "b\n"}, message="model fix")
                     shim = root / "bin"
@@ -1474,9 +1480,10 @@ class WorkflowWiringTests(unittest.TestCase):
                     env = dict(git_env(), PATH=f"{shim}{os.pathsep}{os.environ['PATH']}", RUNNER_TEMP=str(root),
                                GITHUB_OUTPUT=str(output), HEAD_SHA=head, BASE_SHA=head, EXECUTION_FILE="")
                     subprocess.run(["bash", "-c", script], cwd=work.path, env=env, check=True, capture_output=True)
-                    self.assertEqual(output.read_text(), f"package_status={case}\n")
+                    expected = {"credential": "failed", "helper": "bundled"}.get(case, case)
+                    self.assertEqual(output.read_text(), f"package_status={expected}\n")
                     bundle = root / "claude-writer-out" / "candidate.bundle"
-                    self.assertEqual(bundle.exists(), case == "bundled")
+                    self.assertEqual(bundle.exists(), expected == "bundled")
 
     def test_model_jobs_scrub_credentials_and_run_no_repository_code(self):
         # Chaandan's review at 5f904c3: PR code must not run next to the OAuth token.

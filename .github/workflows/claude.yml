@@ -1394,6 +1394,14 @@ jobs:
               rm -f "$out/candidate.bundle"
             fi
           fi
+          # CSL-412: allowed_non_write_users keeps the job token out of git config, where Read
+          # could open it. A credential in any config scope fails the package; publish then refuses.
+          if git config --list --includes 2>/dev/null \
+              | grep -Eiq 'x-access-token|://[^/[:space:]@]+@|gh[opsuvr]_[a-z0-9]{36}|github_pat_|authorization:'; then
+            echo "::error::A credential is in the checkout's git config; nothing from this run is published."
+            status=failed
+            rm -f "$out/candidate.bundle"
+          fi
           echo "package_status=$status" >> "$GITHUB_OUTPUT"
           if [ -f .claude-fixer-out/outbox.jsonl ] && [ ! -L .claude-fixer-out/outbox.jsonl ]; then
             cp .claude-fixer-out/outbox.jsonl "$out/outbox.jsonl"
@@ -4357,6 +4365,14 @@ jobs:
             else
               rm -f "$out/candidate.bundle"
             fi
+          fi
+          # CSL-412: allowed_non_write_users keeps the job token out of git config, where Read
+          # could open it. A credential in any config scope fails the package; publish then refuses.
+          if git config --list --includes 2>/dev/null \
+              | grep -Eiq 'x-access-token|://[^/[:space:]@]+@|gh[opsuvr]_[a-z0-9]{36}|github_pat_|authorization:'; then
+            echo "::error::A credential is in the checkout's git config; nothing from this run is published."
+            status=failed
+            rm -f "$out/candidate.bundle"
           fi
           echo "package_status=$status" >> "$GITHUB_OUTPUT"
           if [ -f .claude-fixer-out/outbox.jsonl ] && [ ! -L .claude-fixer-out/outbox.jsonl ]; then
