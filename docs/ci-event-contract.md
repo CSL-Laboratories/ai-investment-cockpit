@@ -1,6 +1,6 @@
 # CI event-to-check contract
 
-Contract version: v1 (2026-10-20)
+Contract version: v2 (2026-10-21). v2 records CSL-408 (#224): every job now runs on a free GitHub-hosted runner. The test jobs moved from Blacksmith to `ubuntu-24.04` and `windows-2025`, and the Windows cells' timeout went from 30 to 50 minutes. Event rows, conditions and required checks are unchanged from v1.
 
 **Versioning.** Any change to a workflow, `scripts/ci/**`, a required check or the rulesets
 that changes a row here updates this file in the same PR. Bump the version for a semantic
@@ -8,7 +8,8 @@ change (v1 → v2) and the patch for a correction (v1.1). Record the new base co
 count merged changes; edits made during a PR's own review are part of that version. Tracked
 under CSL-255 / CSL-385.
 
-- **Base commit:** `578a8ca8` (`main`, merge of #223). The rows were traced at `7b0dcf27` (#215). Since then:
+- **Base commit (v2):** main `b29ef6d5` (merge of #221) plus the CSL-408 runner change in #224. #224 keeps the line counts of `ci.yml`, `rust.yml`, `AGENTS.md` and `tools/ci_runner_cost.py`. The only cited lines whose text changes are the runner labels (ci.yml:352, 609, 822; rust.yml:282-283, 287-288), the benchmarks comment (ci.yml:21-23) and `AGENTS.md`:238 and 241. Every other v1 citation still holds.
+- **Base commit (v1):** `578a8ca8` (`main`, merge of #223). The rows were traced at `7b0dcf27` (#215). Since then:
   - #220 (CSL-383) added three lines in two places in `claude.yml` and once in `conflict-scan.yml`.
   - #222 (CSL-393) added 15 lines to `AGENTS.md` item 6.
   - #223 (CSL-397) changed the `ci.yml` docs filter (G16): 11 more lines, `--no-renames`, the new run-tests patterns and the `tools/test_ci_docs_filter.py` step.
@@ -34,9 +35,7 @@ under CSL-255 / CSL-385.
 | **[O]** | Locally observed on 2026-10-20 through read-only REST (`gh api`): run, job or check-run IDs given. Older runs may have used older YAML. `workflow_dispatch` runs use the dispatched branch's YAML. |
 | **[I]** | Inferred from GitHub platform behaviour or from reading code. Not tested and not observed here. |
 
-Paid-runner cost figures use the [cost budget](ci-cost-budget.md) method: each started job
-rounded up to whole minutes, at $0.004/min Linux and $0.008/min Windows. They are estimates,
-not invoices.
+**Since CSL-408 (v2) runner compute is $0.** Every job runs on a standard GitHub-hosted runner, which is free on this public repository. "Paid" and the L/W/M counts in this contract now mean that a test runner was allocated. That is a cost in runner capacity and queue time, not money. The dollar figures below are **historical** Blacksmith estimates for runs before CSL-408. They use the [cost budget](ci-cost-budget.md) method: each started job rounded up to whole minutes, at $0.004/min Linux and $0.008/min Windows. Blacksmith billed each job that got a runner, per started minute (CSL-255 calibration). They are estimates, not invoices.
 
 ## 1. Required checks
 
@@ -69,27 +68,27 @@ does not prove it, because the repository ruleset `required-ci` allows admin byp
 requests ([O] RepositoryRole 5, line 43), so a merge alone doesn't show the check was satisfied.
 The org ruleset's bypass actors are unverified ([I], line 42); this reasoning doesn't rely on them.
 
-## 2. Workflows that start paid runners
+## 2. Workflows that start the test runners
 
-[S] grep of `.github/` at the base commit. Only three `ci.yml` jobs and the `rust.yml` `rust-book` Linux and Windows cells run on Blacksmith; its optional macOS cell is `macos-latest`:
+[S] grep of `.github/` at the base commit. Three `ci.yml` jobs and the `rust.yml` `rust-book` Linux and Windows cells are the test runners. Before CSL-408 they ran on Blacksmith (`blacksmith-2vcpu-ubuntu-2404`, `blacksmith-2vcpu-windows-2025`); since then they run on free GitHub-hosted runners. The optional macOS cell is `macos-latest`:
 
 | Workflow | Job | Runner | Lines |
 | --- | --- | --- | --- |
-| ci.yml | `linux` (3.11, 3.12) | `blacksmith-2vcpu-ubuntu-2404` | ci.yml:331-352 |
-| ci.yml | `windows` (3.11, 3.12) | `blacksmith-2vcpu-windows-2025` | ci.yml:584-609 |
-| ci.yml | `benchmarks` (1 cell) | `blacksmith-2vcpu-ubuntu-2404` | ci.yml:806-822 |
-| rust.yml | `rust-book` matrix (Linux 2, Windows 0 or 2) | from `filter` output; the optional macOS cell is `macos-latest` (GitHub-hosted, free) | rust.yml:281-293, 313-328 |
+| ci.yml | `linux` (3.11, 3.12) | `ubuntu-24.04` | ci.yml:331-352 |
+| ci.yml | `windows` (3.11, 3.12) | `windows-2025` (timeout 50 min, ci.yml:610) | ci.yml:584-609 |
+| ci.yml | `benchmarks` (1 cell) | `ubuntu-24.04` | ci.yml:806-822 |
+| rust.yml | `rust-book` matrix (Linux 2, Windows 0 or 2) | from `filter` output: `ubuntu-24.04`, `windows-2025`, and the optional macOS cell `macos-latest` | rust.yml:281-293, 313-328 |
 
 The following run on free GitHub-hosted runners in this public repo: `filter`, `settle`, the
 aggregates, `macos` and the Rust macOS cell (`macos-latest`), and all of ci-label-retrigger.yml, codex-gate.yml,
 review-gate.yml, claude.yml, conflict-scan.yml, pr-lint.yml, linear-pr-sync.yml and
 stuck-thread-watch.yml (`runs-on: ubuntu-latest`).
 
-**Exception to the team rule.** The team rule is that test jobs run on Blacksmith. The
-`macos` test job (ci.yml) and the Rust macOS cell (rust.yml:290-293) are test jobs on
+**No exception since CSL-408.** In v1 the team rule was that test jobs run on Blacksmith, and the
+`macos` test job (ci.yml) and the Rust macOS cell (rust.yml:290-293) were the exception on
 GitHub-hosted `macos-latest` ([O] dispatch run 39065062851 used a GitHub-hosted macOS runner).
-Blacksmith's macOS label for that role is `blacksmith-6vcpu-macos-latest`. This contract records
-the exception and does not change it.
+Since CSL-408 every test job is GitHub-hosted, so macOS is no longer an exception. CSL-281,
+which would have moved macOS to Blacksmith, was canceled by Lucas's decision.
 
 **Correction to the task brief:** claude.yml has **no Blacksmith runner** at the base
 commit. Its jobs use `ubuntu-latest` (claude.yml:90, 504, 534, 561, 1318). [O] Across the
@@ -102,10 +101,10 @@ is skipped for draft `pull_request` events (ci.yml:102; rust.yml:93). The ordina
 key for PR runs is `ci-ci-<PR>-default` or `ci-ci-<PR>-draft`, and `rust-rust-<PR>-…` in
 rust.yml (ci.yml:95; rust.yml:86).
 
-"L" means Blacksmith Linux, "W" means Blacksmith Windows, "M" means free macOS. "Rust-relevant"
+"L" means a Linux test runner (`ubuntu-24.04`), "W" a Windows test runner (`windows-2025`) and "M" macOS (`macos-latest`). All are free GitHub-hosted runners since CSL-408; before it, L and W were Blacksmith. "Rust-relevant"
 means the `RUST_PATHS` match in rust.yml:242-263. Note that the list includes `.github/`.
 
-| # | Event | ci.yml jobs | rust.yml jobs | Paid runners started | `linux-gates` | Evidence |
+| # | Event | ci.yml jobs | rust.yml jobs | Test runners started | `linux-gates` | Evidence |
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | `pull_request` opened, **draft** | filter, settle, linux, windows, macos and benchmarks are skipped. `linux-gates` and `queue-gates` run. | filter and rust-book skipped. rust-gates runs. | **None** | **FAIL** ("filter job did not succeed"). rust-gates also fails. | [S] ci.yml:102, 322, 478, 492-495; rust.yml:93, 442, 461-464. [O] run 39378544947 (#217): all paid jobs skipped, linux-gates log `filter=skipped linux=skipped`. |
 | 2 | opened, **non-draft** | filter decides `run-tests` (ci.yml:255-314). settle skipped. linux if run-tests. benchmarks if run-tests. Python windows and macos only if `ci:full` is already on the PR in the event payload **and** `run-tests == true` (ci.yml:597-602, 708-715), so a docs-only PR with `ci:full` starts neither. | filter diffs the merge tree (rust.yml:216-228). Cells for Linux, plus Windows and macOS with `ci:full` (rust.yml:206-207). | L×2 + L×1 (benchmarks) when run-tests. Rust L×2 when Rust-relevant. With `ci:full`: W×2 and M from ci.yml only when run-tests, plus Rust W×2 and Rust M when Rust-relevant, even if run-tests is false (rust.yml:206-207, 242-293). | PASS if `linux` succeeded, or if run-tests=false and linux skipped (docs/no-change noop). Otherwise FAIL. | [S] ci.yml:322, 336-344, 597-603, 708-716, 813-821. [O] see row 7. [I] A PR created with labels also gets a `labeled` event, so row 9 can fire as well. |
@@ -125,11 +124,11 @@ means the `RUST_PATHS` match in rust.yml:242-263. Note that the list includes `.
 | 16 | `merge_group` | Declared (ci.yml:39-40; rust.yml:36-37), but **unreachable**: no merge-queue rule (section 1). | Same | None | n/a | [S] + [O] ruleset read. Offline tests only. |
 | 17 | `workflow_dispatch`, manual (no PR inputs) | One dispatch targets one workflow; neither `ci.yml` nor `rust.yml` dispatches the other (the label path issues two separate commands, ci-label-retrigger.yml:53-58). A `ci.yml` dispatch: group `manual-<scope>` per ref, cancel-in-progress true. `run-tests` forced true. linux×2. windows×2 + macos unless `scope=linux`. | Only from a separate `rust.yml` dispatch: all cells for the scope, no path filter | `ci.yml` dispatch: L×2 (+W×2 +M). A separate `rust.yml` dispatch adds the Rust cells. | PASS or FAIL as a check run on the dispatched tip (app 15368). Effect on the PR's required `linux-gates`: not observed. [I] Unverified: whether a `workflow_dispatch` check run satisfies or replaces the PR's required `linux-gates`. GitHub's troubleshooting doc for required checks says it does not. | [S] ci.yml:46-82, 95-97, 203-206, 231-235, 599, 709. Test `test_dispatch_defaults_and_existing_events`. |
 | 18 | `workflow_dispatch`, **candidate** (CSL-259 coordinator) | Dispatched on the default branch with the full tuple and `scope=full`. Group `candidate-<id>`, `queue: max`, no cancel. The staged policy validator runs in every validating job. All five Python cells run, plus `candidate-ci-gates`. | All five Rust cells | L×2 + W×2 + M (+ Rust L×2 + W×2 + M) | Runs, but [I] binds to the policy (main) SHA, not the PR head, so it does not satisfy the PR's required check. | [S] candidate_gate.py:8-10, 533-534; ci.yml:95-97, 555-582; ci-candidate-readiness.md:68-71, 151-158, 214-220. [O] Inactive: codex-gate run 39496664994 executed `legacy` (requires `vars.CANDIDATE_COORDINATOR != 'true'`, codex-gate.yml:66-67). |
-| 19 | `schedule` (cron `17 7 * * *`, ci.yml only) | filter: `run-tests=false`. macos runs only if `main` had commits in the last 24 h, or if the commit count can't be read, in which case filter fails open to `run-macos=true` (ci.yml:241-244, G17). linux-gates and queue-gates are skipped. | No schedule trigger | None (macOS is free) | **Skipped.** The job does not run; GitHub records a `skipped` `linux-gates` job/check on the main SHA. | [S] ci.yml:43-45, 236-253, 478, 520, 710. [O] run 39424586371: macos success, linux-gates skipped. It was created 12:44:11Z for the 07:17 cron, which shows real schedule latency. |
+| 19 | `schedule` (cron `17 7 * * *`, ci.yml only) | filter: `run-tests=false`. macos runs only if `main` had commits in the last 24 h, or if the commit count can't be read, in which case filter fails open to `run-macos=true` (ci.yml:241-244, G17). linux-gates and queue-gates are skipped. | No schedule trigger | M×1 when `macos` runs (recent commits on `main`, or an unreadable commit count); otherwise none | **Skipped.** The job does not run; GitHub records a `skipped` `linux-gates` job/check on the main SHA. | [S] ci.yml:43-45, 236-253, 478, 520, 710. [O] run 39424586371: macos success, linux-gates skipped. It was created 12:44:11Z for the 07:17 cron, which shows real schedule latency. |
 | 20 | Rerun (attempt > 1) | [I] Re-executes with the original event payload. GitHub offers three modes: re-run all jobs, re-run failed jobs, and re-run one job. The last two re-execute only the selected jobs and their dependents, so rerunning `benchmarks` alone reruns no Linux cell and no `linux-gates`, while rerunning a failed `linux` cell also reruns `linux-gates`. A full rerun of a draft-era run still skips filter and fails linux-gates. Re-run jobs re-enter concurrency. | Same | Full rerun: every paid cell of the original event. Failed-only or single-job rerun: only the selected paid jobs and their paid dependents. | [I] Full rerun: as the original event. Partial rerun: `linux-gates` is re-evaluated only when it or one of its dependencies (filter, settle, linux) is rerun; otherwise its existing check stands. | [S] Controller: rerun targets are never cancelled (ci_cancel_controller.py:375), and any current-head rerun disables cleanup (305-306). [O] No attempt > 1 among the last 100 ci or rust runs. **Unobserved.** |
 | 21 | Cancellation by concurrency | Only non-PR groups cancel in progress: push, manual, label, schedule and merge_group (unreachable today) (ci.yml:96; rust.yml:87). PR and candidate groups queue instead. In a cancelled run, `linux-gates` still runs (`always()`). `linux-gates` needs only filter, settle and linux (ci.yml:477), so it can start only after all three have finished. [O] In every observed cancellation (e.g. 39490583816) a dependency was `cancelled`, so "Required Linux gate" failed at steps 1-5 and "Reject workflow cancellation" (`if: cancelled()`) was skipped because `cancelled()` was false. | Same (rust-gates) | Already-started cells are lost | Outcome by timing (section 4): (a) no job had started → no `linux-gates` check ([O] 39492190159, 0 jobs); (b) a started gate dependency (filter, settle or linux) was cancelled or failed → FAIL from steps 1-5 ([O] 39490583816); (c) `linux-gates` had already completed and only a non-dependency such as `benchmarks` (ci.yml:812) was still running → its existing check stays, success if it passed ([I]); (d) the cancel lands while `linux-gates` itself is running → it fails only if `cancelled()` is true for the reject step ([I], not observed). A pending run displaced by `queue: single` never starts, so case (a) applies. | [S] ci.yml:96-97, 478, 511-513; rust.yml:87-88, 442, 466-468. Test `test_cancellation_runs_and_fails_the_required_aggregate`. |
 | 22 | Cancellation by the cancel-ancestors controller | See row 5 and section 5. | Same | None started by the controller itself | Cancelled run, on an **ancestor** SHA only. Outcome by timing (section 4): (a) no job had started → no `linux-gates` check ([O] 39492190159, 0 jobs); (b) a started gate dependency (filter, settle or linux) was cancelled or failed → FAIL from steps 1-5 ([O] 39490583816); (c) `linux-gates` had already completed and only a non-dependency such as `benchmarks` (ci.yml:812) was still running → its existing check stays, success if it passed ([I]); (d) the cancel lands while `linux-gates` itself is running → it fails only if `cancelled()` is true for the reject step ([I], not observed). | [S] ci-label-retrigger.yml:61-83. [O] rows 5 and 8. |
-| 23 | Fork PR (`pull_request` from a fork) | [I] Same as rows 1-7: ci.yml and rust.yml have no fork guard. The benchmarks comment step is skipped (ci.yml:857). Label retrigger and the controller exclude forks. | Same | [I] Yes, Blacksmith, subject to GitHub's fork-approval setting (not verified). A draft fork starts none (row 1). | Draft fork: as row 1 (FAIL). Non-draft fork: as row 2. [I] While a run awaits fork approval, no job starts and no check is posted. | [S] ci-label-retrigger.yml:35; ci_cancel_controller.py:147-148. |
+| 23 | Fork PR (`pull_request` from a fork) | [I] Same as rows 1-7: ci.yml and rust.yml have no fork guard. The benchmarks comment step is skipped (ci.yml:857). Label retrigger and the controller exclude forks. | Same | [I] Yes, the test runners (free since CSL-408), subject to GitHub's fork-approval setting (not verified). A draft fork starts none (row 1). | Draft fork: as row 1 (FAIL). Non-draft fork: as row 2. [I] While a run awaits fork approval, no job starts and no check is posted. | [S] ci-label-retrigger.yml:35; ci_cancel_controller.py:147-148. |
 
 ## 4. Aggregation semantics
 
@@ -263,7 +262,7 @@ This summarises [ci-cancellation-controller.md](ci-cancellation-controller.md).
     finished at 20:25:30Z, re-ran settle, and started L×3 before an ancestor cancel.
   - ci 39492186505 and 39492190159 (`1f0628b5d3`).
   - rust 39492186705 and 39492189661 both ran L×2 to success, back to back. The duplicate
-    cost was about $0.012 (3 L-min).
+    cost was about $0.012 (3 L-min, at Blacksmith rates before CSL-408).
 - The REST API does not expose the `pull_request` action, so the cause of the duplicate
   events is undetermined.
 
@@ -297,7 +296,7 @@ At the base commit these ran locally (Python 3.13):
 | --- | --- | --- |
 | 1, 3: drafts skip filter; aggregate fails | PROVEN (expression and shell level) | test_ci_dispatch_scope `test_dispatch_runs_linux_and_drafts_keep_existing_guard`, `test_linux_gate_fails_closed`; test_queue_gates `test_exhaustive_aggregate_states` |
 | Draft and default groups are separate; PR runs queue without cancel | PROVEN | `test_pr_concurrency_queues_old_heads_but_isolates_drafts`; test_ci_cancel_controller `test_ordinary_only_policy_and_shared_identity`, `test_delayed_A_admission_does_not_displace_B_active_or_pending` |
-| 2, 4, 6, 7: settle table and eligibility of paid jobs | PROVEN | test_ci_settle `test_event_table_and_settle_outcomes`, `test_known_non_synchronize_paths_are_not_accidentally_suppressed`; `test_settle_debounce_gates_blacksmith_only_on_pr_synchronize` |
+| 2, 4, 6, 7: settle table and eligibility of paid jobs | PROVEN | test_ci_settle `test_event_table_and_settle_outcomes`, `test_known_non_synchronize_paths_are_not_accidentally_suppressed`; `test_settle_debounce_gates_test_cells_only_on_pr_synchronize` |
 | ci.yml `decide` for pull_request, push and schedule (docs-only regex, 24 h idle skip) | **PARTIAL** | pull_request: `tools/test_ci_docs_filter.py` `DecideScriptTests` runs the real script on temporary-repo diffs, including renames (CSL-397). workflow_dispatch: `test_dispatch_runs_linux_and_drafts_keep_existing_guard`. Candidate docs case: test_candidate_workflows `test_docs_candidate_executes_all_five_python_and_rust_cells`. push and schedule remain untested. |
 | Rust path filter (merge tree, push and queue ranges) | PROVEN | `test_actual_rust_merge_tree_filter_with_diverged_base`, `test_label_regex_and_rust_filter_route_native_paths_consistently`, test_queue_gates `test_actual_rust_path_and_platform_matrix` |
 | Platform selection per event (Windows, macOS, Rust cells) | PROVEN | `test_platform_conditions_and_actual_rust_matrix` |
@@ -325,7 +324,7 @@ At the base commit these ran locally (Python 3.13):
     gate paths (claude.yml:3-43).
   - Jobs: `resolve-pr`, `event-paths`, `forward-conflict-scan`, `claude-mention` and
     `devin-review-fix`. All run on `ubuntu-latest` (claude.yml:90, 504, 534, 561, 1318), so
-    there is **no Blacksmith compute**.
+    there is **no test-runner compute**.
   - Model usage goes through `CLAUDE_CODE_OAUTH_TOKEN` (claude.yml:1085, 2413; subscription
     route per ci-cost-budget.md:57-58). Each fixer installs the full runtime and runs
     `ruff` and `pytest` on the free runner (claude.yml:731, 1118-1119).
@@ -364,17 +363,18 @@ At the base commit these ran locally (Python 3.13):
       the diff against `RUST_PATHS` (rust.yml:201-299, `relevant()` at 242-280). Those
       paths include the bare prefixes `rust/` and `.github/`, so **Markdown under `rust/`
       or `.github/` is Rust-relevant**. For example, a PR that only edits the tracked
-      `.github/pull_request_template.md` starts Rust L×2 on Blacksmith, plus Rust W×2 and
+      `.github/pull_request_template.md` starts Rust L×2, plus Rust W×2 and
       Rust M with `ci:full` (`RUN_WINDOWS`/`RUN_MACOS` come from the label,
       rust.yml:206-207). A non-Rust code event starts no Rust cells. See G18.
   - ci-candidate-readiness.md:51-54 ("New READY decisions do not add `ci:full`") applies
     only to the coordinator path, which is currently off ([O] 39496664994).
-- **Benchmarks:** `benchmarks` (Blacksmith L×1, about 0.5-1 min) runs on a non-draft PR
+- **Benchmarks:** `benchmarks` (L×1, about 0.5-1 min) runs on a non-draft PR
   event with `run-tests=true` when `settle` succeeded or was intentionally skipped
   (ci.yml:812-821), so a failed or cancelled settle skips it. It is outside every aggregate, so its failure never blocks.
   It is also not covered by the dispatch paths (ci.yml:804-822).
-- **Main-push fallback:** row 15, about $0.196 for ci plus $0.048 for rust per relevant merge
-  ([O]). It is retained by owner decision (ci-queue-rollout.md:20-22, 116-117).
+- **Main-push fallback:** row 15. Before CSL-408 this cost about $0.196 for ci plus $0.048 for rust per
+  relevant merge ([O]); since CSL-408 it is $0. On GitHub-hosted `windows-2025` the Python Windows cells
+  took 22-28 min ([O] run 39531231867), against 6-11.5 min on Blacksmith, so the fallback now finishes later. It is retained by owner decision (ci-queue-rollout.md:20-22, 116-117).
 - **Manual and label dispatch** bypass the docs-only filter (`run-tests` forced true,
   ci.yml:231-235; rust.yml:205).
 
@@ -386,7 +386,7 @@ At the base commit these ran locally (Python 3.13):
 | G2 | Identical-head twins observed (section 5). B2 keeps them, so each twin re-executes settle and paid cells serially unless a newer head lets the controller cancel them as ancestors. The duplicate-event cause is unknown, and there is no explicit twin test. | [O] / PARTIAL | Add a controller fixture asserting two active live-head runs both survive. Investigate the duplicate `pull_request` deliveries (read-only). |
 | G3 | Stale label dispatch (row 13), and same-key label or manual re-dispatch (cancel-in-progress true), can create a failing `linux-gates` check run on the **current** head. Whether a dispatch check run affects the required check is unverified; GitHub's doc says it does not. | [I] | Observe or test which SHA receives the check. Consider documenting the "rerun or wait for the ordinary run" recovery. |
 | G4 | The ci.yml PR filter diffs raw `base.sha..head.sha` (ci.yml:256-257, 277), while rust.yml uses the merge tree (rust.yml:216-228). On a stale base, ci over-selects tests (fails open, extra spend). Since CSL-397, `tools/test_ci_docs_filter.py` `DecideScriptTests` runs the real decide script on pull_request diffs (section 6). The push and schedule paths still have no executing test. | [S] | Align with the rust.yml merge-tree diff in a separately admitted CI task, and add shell-execution tests for push and schedule. |
-| G5 | Stale workflow comments: ci.yml:316-319 (settle relies on #157 concurrency cancel), ci.yml:17-23 and 718-719 ($50 budget, superseded by ci-cost-budget.md:48-50), ci.yml:515-516 (`queue-gates` "required"). | [S] | Comment-only fix in a human-assigned workflow issue. |
+| G5 | Stale workflow comments: ci.yml:316-319 (settle relies on #157 concurrency cancel), ci.yml:17 and 718-719 ($50 budget, superseded by ci-cost-budget.md:48-50; CSL-408 removed the benchmarks cost note that was at ci.yml:21-23), ci.yml:515-516 (`queue-gates` "required"). | [S] | Comment-only fix in a human-assigned workflow issue. |
 | G6 | `merge_group` paths and `queue-gates` are untested live. The merge queue is not enabled. | [O] | Covered by the ci-queue-rollout.md activation sequence. |
 | G7 | A PR created with `ci:full` or `enhancement` gets both `opened` and `labeled`, which means an ordinary run plus a label dispatch (duplicate full matrix). | [I] | Observe once (read-only) and record. |
 | G8 | `ci:full` added by a founder or Devin persists, so every later qualifying push runs Windows and macOS, plus Rust Windows and Rust macOS (subject to the path filters, section 7). The legacy READY label is gate-owned and is cleared on the next push, after one full-matrix run. | [S]+[O] | Addressed by the AGENTS.md CI-etiquette rule merged at this base (CSL-393, #222; AGENTS.md:161-176): remove a manual `ci:full` once its full run passes and no further automatic READY is needed. A manual removal holds READY and, with the candidate coordinator on, candidate runs and MEDIATE handoffs. Recursion's equivalent merged as CSL-395 (#259), and its human-hold caveat as CSL-403 (#261). |
@@ -395,8 +395,8 @@ At the base commit these ran locally (Python 3.13):
 | G11 | Duplicate controller cancel POSTs (4 per target observed) consume API budget. Harmless today. | [O] | None required. Note it in the controller doc if budget pressure appears. |
 | G12 | Main-push groups cancel in progress, so a fast second merge cancels the first fallback run and the minutes already spent are lost. The old main SHA's `linux-gates` outcome depends on timing, as in row 21: no check if no job had started (a), red if a gate dependency was cancelled (b), green if `linux-gates` had already passed while only Windows was still running (c; `benchmarks` runs only on `pull_request`, ci.yml:821), and red only if the cancel lands while `linux-gates` itself is running and `cancelled()` is true for its reject step (d). | [I] | Observe. It is consistent with "keep fallback" but undocumented. |
 | G13 | The nightly schedule ran about 5.5 h late (created 12:44Z for the 07:17 cron). | [O] | Note in AGENTS.md:242 that schedule time is best-effort. |
-| G14 | Fork PRs can start Blacksmith jobs in ci.yml and rust.yml (no fork guard). Exposure depends on the unverified fork-approval setting. | [I] | Lucas set "Require approval for all external contributors" in both repos, 2026-10-20 (relayed; not readable from this session). |
+| G14 | Fork PRs can start test jobs in ci.yml and rust.yml (no fork guard; free since CSL-408, but they use capacity). Exposure depends on the unverified fork-approval setting. | [I] | Lucas set "Require approval for all external contributors" in both repos, 2026-10-20 (relayed; not readable from this session). |
 | G15 | Org-level ruleset listing (`gh api orgs/CSL-Laboratories/rulesets`) is blocked in this session. The org ruleset was read through the repo-scoped endpoints `rulesets/25015519` and `rules/branches/main`. | [O] | None. Repo-scoped effective rules are authoritative for `main`. |
 | G16 | **Docs-only green no-op: fixed by CSL-397 (#223, merged at this base).** The filter now runs tests for everything under `app/` (including the LLM prompts `app/workflows/prompts/*.md`), the 21 test-read files from the CSL-392 audit, and `.gitignore` (ci.yml:303-307). It diffs with `--no-renames` (ci.yml:277), so renaming a test-read file still runs tests. `tools/test_ci_docs_filter.py` runs the real decide script and fails if a test references a file the filter skips; it runs in the required `linux` job (ci.yml:443). Residual: plain docs that no test reads still skip, as intended, and the static guard can't see dynamically built paths. The pre-fix description follows, cited at the previous base `be97ff3b` because this base no longer behaves this way. The PR filter marked `docs/` and `*.md` changes (apart from the listed swarm dirs and `.py`/`.json`/`.yaml`) as no-test (`be97ff3b` ci.yml:288-300). `linux-gates` then passes with `linux` skipped (section 4, step 4). `git grep -E "\.md['\"]" -- 'app/tests/*.py' 'tools/test_*.py'` prints 69 matching lines in 17 files; many are temporary paths (`comment.md`, `brief.md`) ([O]). Concrete cases: `app/tests/test_o7_operator_contract.py:51-54` hashes four `docs/replacement/*.md` contracts, and `app/tests/system/test_rw01_market_day.py:771` reads `docs/setup/accounts-and-keys.md`. A change to only those docs gets a green required check without the tests that read them, the same class recursion fixed in CSL-376. Code cannot skip this way: any `.py` change forces `run-tests`. The risk of a Rust PnL change landing untested belongs to G1 (`rust-gates` is advisory), not to this regex. | [S]+[O] | Audited in CSL-392 (21 test-read files, including the LLM prompts). Fixed by option B, CSL-397 (#223): `app/**` and the test-read docs always run tests, plus a guard test. |
 | G17 | Two fail-open-to-spend branches: `ci.yml:240-245` (nightly macOS on an unreadable commit window; free runner) and `rust.yml:226-227` (`DIFF_FILES='rust/'` fallback starts L×2). They over-spend rather than skip tests. | [S] | Note only. |
-| G18 | **The Python and Rust selectors disagree on Markdown.** ci.yml's filter treats `rust/*.md` and `.github/*.md` as docs-only (ci.yml:290-313), while rust.yml's `RUST_PATHS` treats them as Rust-relevant (rust.yml:242-280). Such a change skips the required ci.yml Python matrix (G16), but still starts the Blacksmith Rust cells, which run their own pytest list including `tests/test_invariants.py` (rust.yml:424-430): L×2; plus W×2 and the free macOS cell with `ci:full`; plus W×2 on a `main` push. This is over-spend for the required check. The Rust cells' pytest list (including `tests/quant/test_pnl.py`) still runs, but `rust-book` is advisory, so a red result does not block merge (G1). | [S] | **Accepted** by Lucas, 2026-10-20 (relayed on CSL-385). CSL-397 (the G16 fix) did not change this case: ci.yml:308 still skips `\.md$`, so the Python/Rust Markdown split remains for `rust/*.md` and `.github/*.md`. |
+| G18 | **The Python and Rust selectors disagree on Markdown.** ci.yml's filter treats `rust/*.md` and `.github/*.md` as docs-only (ci.yml:290-313), while rust.yml's `RUST_PATHS` treats them as Rust-relevant (rust.yml:242-280). Such a change skips the required ci.yml Python matrix (G16), but still starts the Rust cells, which run their own pytest list including `tests/test_invariants.py` (rust.yml:424-430): L×2; plus W×2 and the free macOS cell with `ci:full`; plus W×2 on a `main` push. This is over-spend for the required check. The Rust cells' pytest list (including `tests/quant/test_pnl.py`) still runs, but `rust-book` is advisory, so a red result does not block merge (G1). | [S] | **Accepted** by Lucas, 2026-10-20 (relayed on CSL-385). CSL-397 (the G16 fix) did not change this case: ci.yml:308 still skips `\.md$`, so the Python/Rust Markdown split remains for `rust/*.md` and `.github/*.md`. |

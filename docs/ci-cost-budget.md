@@ -38,7 +38,7 @@ snapshots, not statements that the PRs have landed or that controls are active.
 | --- | ---: |
 | `blacksmith-2vcpu-ubuntu-2404` | 0.004 |
 | `blacksmith-2vcpu-windows-2025` | 0.008 |
-| Standard GitHub `ubuntu-latest` / `macos-latest`, these public repos | 0 runner compute |
+| Standard GitHub `ubuntu-latest` / `ubuntu-24.04` / `windows-2025` / `macos-latest`, these public repos | 0 runner compute |
 | Other/larger/custom runners, including #174 paid macOS | Unpriced in core ledger |
 
 [Blacksmith pricing](https://www.blacksmith.sh/pricing) checked 2026-10-17 lists
@@ -75,7 +75,9 @@ three runs only. This is historical diagnostic evidence, not current-candidate
 qualification. These examples exclude ordinary pushes, post-merge fallback,
 storage and #174; do not multiply them by final PR count and call that total cost.
 
-For a prospective month use:
+For a prospective month use the formula below. It applies only to Blacksmith runs before
+CSL-408. Runs after CSL-408 use standard GitHub-hosted runners, so their runner compute is
+$0 for these public repositories, and the forecast for them is $0 plus any other paid workload.
 
 `core = 0.152 * Cockpit full pairs + 0.024 * Recursion full runs + other paid starts`
 
@@ -159,3 +161,12 @@ compliance. Store receipts separately and reconcile invoice credits once at the
 account level, documenting differences rather than altering exported evidence.
 
 Regression gate: `python -m unittest discover -s tools -p test_ci_runner_cost.py`.
+
+## Runner change, 2026-10-21 (CSL-408)
+
+Lucas decided to move every test job off Blacksmith. The Python and Rust
+Linux cells and `benchmarks` now run on `ubuntu-24.04`, and the Windows cells on
+`windows-2025`. Both are standard GitHub-hosted runners, so runner compute is $0
+for this public repository. The Blacksmith rates above stay for accounting of runs
+before the change. Billing calibration for that period: Blacksmith charged per
+started minute for each job that got a runner (CSL-255).

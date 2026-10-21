@@ -15,7 +15,7 @@ RATES = {
     "blacksmith-2vcpu-ubuntu-2404": Decimal("0.004"),
     "blacksmith-2vcpu-windows-2025": Decimal("0.008"),
 }
-PUBLIC_CORE = {"ubuntu-latest", "macos-latest"}
+PUBLIC_CORE = {"ubuntu-latest", "ubuntu-24.04", "windows-2025", "macos-latest"}  # free here (CSL-408)
 REPOSITORIES = {
     "CSL-Laboratories/ai-investment-cockpit",
     "CSL-Laboratories/recursion",

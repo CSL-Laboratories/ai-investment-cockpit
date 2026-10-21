@@ -18,9 +18,9 @@ run-name: ${{ inputs.candidate_id && format('candidate:{0}:rust:{1}', inputs.can
 # Ordinary labeled/unlabeled events do not start this workflow, so they cannot
 # cancel an in-progress rust-book matrix. `ci:full` and `enhancement` re-trigger
 # via ci-label-retrigger.yml (workflow_dispatch). Draft PRs skip the test cells
-# until ready_for_review. `filter` is GitHub-hosted; rust-book stays on Blacksmith.
-# Windows cells use Blacksmith 2 vCPU (same as ci.yml).
-# Swatinem/rust-cache is redirected to Blacksmith's co-located cache.
+# until ready_for_review. Every job is GitHub-hosted and free on this public
+# repository (CSL-408): rust-book uses ubuntu-24.04 and windows-2025, like ci.yml.
+# Swatinem/rust-cache uses the GitHub Actions cache.
 #
 # This workflow does not replace linux-gates or the DEC-09 local matrix (native
 # Windows + Ubuntu/WSL2, each on Python 3.11 and 3.12). It does not touch
@@ -279,13 +279,13 @@ jobs:
           if os.environ.get("SKIP_CELLS") != "true" and (
                   os.environ.get("CHECK_PATHS") != "true" or relevant(os.environ.get("DIFF_FILES", "rust/"))):
               include = [
-                  {"runner": "blacksmith-2vcpu-ubuntu-2404", "python-version": "3.11", "os-name": "linux"},
-                  {"runner": "blacksmith-2vcpu-ubuntu-2404", "python-version": "3.12", "os-name": "linux"},
+                  {"runner": "ubuntu-24.04", "python-version": "3.11", "os-name": "linux"},
+                  {"runner": "ubuntu-24.04", "python-version": "3.12", "os-name": "linux"},
               ]
               if os.environ["RUN_WINDOWS"] == "true":
                   include.extend([
-                      {"runner": "blacksmith-2vcpu-windows-2025", "python-version": "3.11", "os-name": "windows"},
-                      {"runner": "blacksmith-2vcpu-windows-2025", "python-version": "3.12", "os-name": "windows"},
+                      {"runner": "windows-2025", "python-version": "3.11", "os-name": "windows"},
+                      {"runner": "windows-2025", "python-version": "3.12", "os-name": "windows"},
                   ])
               if os.environ["RUN_MACOS"] == "true":
                   include.append(
