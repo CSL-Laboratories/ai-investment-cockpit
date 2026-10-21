@@ -56,22 +56,27 @@ _CHILD_ENV_ALLOWLIST = frozenset({
     "CLAUDE_CONFIG_DIR", "CODEX_HOME",
     # Scratch space.
     "TEMP", "TMP", "TMPDIR",
-    # Locale, time zone and terminal.
+    # Locale, time zone and terminal. The LC_* names are the exact POSIX locale categories plus
+    # glibc's extra ones, not an LC_ prefix: a prefix let any LC_-named variable through,
+    # including a secret such as LC_INTERNAL_BEARER (Devin, #240).
     "LANG", "LANGUAGE", "TZ", "TERM", "NO_COLOR",
+    "LC_ALL", "LC_COLLATE", "LC_CTYPE", "LC_MESSAGES", "LC_MONETARY", "LC_NUMERIC", "LC_TIME",
+    "LC_ADDRESS", "LC_IDENTIFICATION", "LC_MEASUREMENT", "LC_NAME", "LC_PAPER", "LC_TELEPHONE",
     # Network reachability behind a proxy or a corporate CA. Values are passed only when they
     # carry no userinfo (see _proxy_has_credentials).
     "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
     "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS",
 })
-# Prefix families that are locale-only and carry no credentials.
-_CHILD_ENV_ALLOWED_PREFIXES = ("LC_",)
 _PROXY_NAMES = frozenset({"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"})
 
 # Belt and braces: a name that LOOKS like a secret never reaches the child, even if a future edit
 # adds it to the allowlist above. JEV_API_KEY is named explicitly as well (the original strip).
-_SECRET_NAME_MARKERS = ("TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "API_KEY",
-                        "AUTH", "COOKIE", "SESSION")
-_SECRET_NAME_SUFFIXES = ("_KEY", "_PAT")
+# Substring markers, matched anywhere in the upper-cased name. CREDENTIAL also covers CREDENTIALS,
+# AUTH covers OAUTH/AUTHORIZATION, SESSION covers SESSIONID, PRIVATE covers PRIVATE_KEY.
+_SECRET_NAME_MARKERS = ("TOKEN", "SECRET", "PASSWORD", "PASSWD", "PASSPHRASE", "CREDENTIAL",
+                        "API_KEY", "APIKEY", "AUTH", "BEARER", "COOKIE", "SESSION", "PRIVATE",
+                        "SIGNING", "JWT")
+_SECRET_NAME_SUFFIXES = ("_KEY", "_PAT", "_PWD", "_PASS", "_DSN")
 _SECRET_NAME_PREFIXES = ("GH_", "GITHUB_", "JEV_", "AWS_", "AZURE_", "GOOGLE_", "GCP_")
 
 
@@ -101,7 +106,7 @@ def build_child_env(parent: Mapping[str, str] | None = None) -> dict[str, str]:
     env: dict[str, str] = {}
     for name, value in source.items():
         upper = name.upper()
-        if not (upper in _CHILD_ENV_ALLOWLIST or upper.startswith(_CHILD_ENV_ALLOWED_PREFIXES)):
+        if upper not in _CHILD_ENV_ALLOWLIST:
             continue
         if _looks_secret(upper):
             continue

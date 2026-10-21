@@ -8,6 +8,8 @@ and find its own login store still do.
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import sys
 
 import pytest
@@ -31,6 +33,7 @@ SECRETS = {
     "SOME_SERVICE_KEY": "svc-key",
     "DB_PASSWORD": "pw",
     "MY_PAT": "pat",
+    "LC_INTERNAL_BEARER": "bearer-example",
     "COCKPIT_ENV_FILE": "/srv/cockpit/.env",
     "UNRELATED_FLAG": "1",
 }
@@ -76,6 +79,41 @@ def test_every_allowlisted_name_passes(name):
 @pytest.mark.parametrize("name", ["Path", "SystemRoot", "https_proxy", "no_proxy", "windir"])
 def test_names_match_case_insensitively_and_keep_their_spelling(name):
     assert build_child_env({name: "value"}) == {name: "value"}
+
+
+@pytest.mark.parametrize("name", [
+    # Devin on #240: an LC_ prefix let these through, and BEARER was not a marker.
+    "LC_INTERNAL_BEARER", "LC_TOKEN", "LC_ANYTHING", "LC_TERMINAL",
+])
+def test_only_real_locale_categories_pass_not_any_lc_name(name):
+    assert build_child_env({name: "value"}) == {}
+
+
+@pytest.mark.parametrize("name", [
+    "LC_ALL", "LC_CTYPE", "LC_COLLATE", "LC_MESSAGES", "LC_MONETARY", "LC_NUMERIC", "LC_TIME",
+    "LC_ADDRESS", "LC_IDENTIFICATION", "LC_MEASUREMENT", "LC_NAME", "LC_PAPER", "LC_TELEPHONE",
+])
+def test_posix_and_glibc_locale_categories_pass(name):
+    assert build_child_env({name: "en_US.UTF-8"}) == {name: "en_US.UTF-8"}
+
+
+@pytest.mark.parametrize("name", [
+    "INTERNAL_BEARER", "SERVICE_CREDENTIALS", "GOOGLE_APPLICATION_CREDENTIALS", "PROXY_AUTH",
+    "AUTHORIZATION", "OAUTH_CLIENT", "BROWSER_COOKIE", "SESSIONID", "SSH_PRIVATE", "PRIVATE_KEY",
+    "GPG_PASSPHRASE", "SIGNING_MATERIAL", "JWT", "SERVICE_APIKEY", "DB_PWD", "SMTP_PASS",
+    "SENTRY_DSN", "LC_INTERNAL_BEARER",
+])
+def test_secret_detection_covers_credential_shaped_names(name):
+    """The guard is the second line of defence, so it must recognise these spellings on its own,
+    independently of the allowlist."""
+    assert transport_mod._looks_secret(name)
+
+
+def test_secret_detection_catches_an_allowlisted_lc_secret(monkeypatch):
+    """Even if a future edit allowlisted LC_INTERNAL_BEARER, the guard drops it."""
+    monkeypatch.setattr(transport_mod, "_CHILD_ENV_ALLOWLIST",
+                        transport_mod._CHILD_ENV_ALLOWLIST | {"LC_INTERNAL_BEARER"})
+    assert build_child_env({"LC_INTERNAL_BEARER": "x"}) == {}
 
 
 def test_secret_guard_wins_even_if_a_secret_name_is_allowlisted(monkeypatch):
@@ -130,3 +168,24 @@ def test_real_child_does_not_see_parent_secrets(monkeypatch):
         parent_value = transport_mod.os.environ.get(name)
         if parent_value is not None:
             assert child.get(name) == parent_value, f"{name} did not reach the child"
+
+
+# ---------------------------------------------------------------------------------------
+# Authenticated-CLI smoke (Devin on #240). Opt-in, because CI and most dev hosts have no
+# logged-in runtime. ``claude auth status`` and ``codex login status`` read the local login store
+# and spend no model turn. Run on the deploy host with COCKPIT_CLI_AUTH_SMOKE=1 to check that
+# each CLI still finds its login through the allowlisted environment.
+# ---------------------------------------------------------------------------------------
+_AUTH_SMOKE = os.environ.get("COCKPIT_CLI_AUTH_SMOKE") == "1"
+
+
+@pytest.mark.skipif(not _AUTH_SMOKE, reason="set COCKPIT_CLI_AUTH_SMOKE=1 on a logged-in host")
+@pytest.mark.parametrize("argv", [["claude", "auth", "status"], ["codex", "login", "status"]],
+                         ids=["claude", "codex"])
+def test_cli_is_still_logged_in_under_the_allowlisted_env(argv):
+    if shutil.which(argv[0]) is None:
+        pytest.skip(f"{argv[0]} CLI not installed on this host")
+    result = SubprocessTransport().run(argv, input_text="", timeout_s=120, cwd=None)
+    assert result.returncode == 0, (
+        f"{argv[0]} does not see its login under the allowlisted env "
+        f"(an env-only credential would now be dropped by design): {result.stderr!r}")
