@@ -602,16 +602,24 @@ class DispatchScopeTests(unittest.TestCase):
 
 
 
-# CSL-416 (CSL-255 exit criterion 5): fixer and conflict writers reach CI only through
-# ordinary `synchronize` admission. They never dispatch or rerun CI, never add a CI label,
-# run only on GitHub-hosted runners, share one per-PR lock, and keep bounded retries.
+# CSL-416 (CSL-255 exit criterion 5): a static guard on the admission surface of the Claude
+# writers. They reach CI only through the ordinary `synchronize` of their own push: no CI
+# dispatch, re-run, ready-for-review or CI-label add (the only CI-label write is revoking a
+# gate-owned `ci:full`); GitHub-hosted runners only; one shared per-PR lock without
+# cancellation; pushes only from model-free publish jobs as one ordinary fast-forward; the
+# eight-commit guard, the one-attempt publish guard and the pause. Retry behaviour itself is
+# exercised by tools/test_claude_fixer_*.py and tools/test_claude_pr_fixer.py.
 WRITER_FILES = ('claude.yml', 'claude-conflict-writer.yml', 'conflict-scan.yml')
 WRITER_JOBS = {
     'claude.yml': {'mention-prepare': 'prep', 'claude-mention': 'model', 'mention-publish': 'publish',
                    'fixer-prepare': 'prep', 'devin-review-fix': 'model', 'fixer-publish': 'publish'},
     'claude-conflict-writer.yml': {'prepare': 'prep', 'model': 'model', 'publish': 'publish'},
 }
+NON_WRITER_JOBS = {'claude.yml': {'resolve-pr', 'event-paths', 'forward-conflict-scan'},
+                   'claude-conflict-writer.yml': set()}
 HOSTED = {'ubuntu-latest', 'ubuntu-24.04', 'ubuntu-22.04', 'windows-2025', 'windows-latest', 'macos-latest'}
+MODEL_BASH = 'Bash(python3 ${{ runner.temp }}/claude-fixer-guard/model-api --:*)'
+PUSH = re.compile(r'run_git\(\[\s*"push"|\bgit push\b|/git/refs/')
 
 
 def job_text(job):
@@ -623,26 +631,44 @@ def job_text(job):
     return '\n'.join(parts)
 
 
+def granted(text):
+    # `--disallowedTools` denials (e.g. `Bash(git push:*)`) are not grants.
+    return re.sub(r'--disallowedTools "[^"]*"', '', text)
+
+
 class CrossLaneAdmissionTests(unittest.TestCase):
-    def test_writers_never_dispatch_or_rerun_ci(self):
+    def test_writer_workflow_set_is_complete(self):
+        # A new Claude workflow must be added here (and to the contract) before it can merge.
+        found = {p.name for p in WORKFLOWS.glob('*.yml')
+                 if 'CLAUDE_CODE_OAUTH_TOKEN' in p.read_text() or 'claude-code-action' in p.read_text()}
+        self.assertEqual(found, set(WRITER_FILES))
+        for name, jobs in WRITER_JOBS.items():
+            self.assertEqual(set(workflow(name)['jobs']), set(jobs) | NON_WRITER_JOBS[name])
+
+    def test_writers_never_dispatch_rerun_or_ready_ci(self):
         for name in WRITER_FILES:
             text = (WORKFLOWS / name).read_text()
             with self.subTest(workflow=name):
-                self.assertEqual(set(re.findall(r'gh workflow run (\S+)', text)) - {'conflict-scan.yml'}, set())
-                self.assertNotRegex(text, r'/dispatches\b')
-                self.assertNotRegex(text, r'/rerun|rerun-failed-jobs|gh run rerun')
+                self.assertNotRegex(text, r'/dispatches\b|createWorkflowDispatch|reRunWorkflow|actions/github-script')
+                self.assertNotRegex(text, r'/rerun|rerun-failed-jobs|gh run rerun|gh pr ready|ready_for_review"?\s*[,)]')
+        dispatching = {job for job, spec in workflow('claude.yml')['jobs'].items()
+                       if 'gh workflow run' in job_text(spec)}
+        self.assertEqual(dispatching, {'forward-conflict-scan'})
+        self.assertEqual(set(re.findall(r'gh workflow run (\S+)', (WORKFLOWS / 'claude.yml').read_text())),
+                         {'conflict-scan.yml'})
 
     def test_writers_never_add_ci_labels(self):
         for name in WRITER_FILES:
             text = (WORKFLOWS / name).read_text()
             with self.subTest(workflow=name):
-                self.assertNotIn('--add-label', text)
-                # The only label POST is the human handoff label; ci:full is only ever removed.
-                for line in re.findall(r'.*/labels["\'].*', text):
-                    if '"POST"' in line:
-                        self.assertIn('HANDOFF_LABEL', line)
-                self.assertEqual(set(re.findall(r'HANDOFF_LABEL = "([^"]+)"', text)) - {'needs-decision'}, set())
+                self.assertNotRegex(text, r'--add-label|gh pr edit|labels\[\]=')
                 self.assertNotRegex(text, r'"labels": \[\s*"(ci:full|enhancement)"')
+                # Every label write (URL line plus the next line) is the handoff label; ci:full is
+                # only ever removed (DELETE of a gate-owned label event).
+                for match in re.finditer(r'[^\n]*/labels[^\n]*\n[^\n]*', text):
+                    if re.search(r'"(POST|PUT|PATCH)"|-X (POST|PUT|PATCH)|--method (POST|PUT|PATCH)', match.group(0)):
+                        self.assertIn('HANDOFF_LABEL', match.group(0))
+                self.assertEqual(set(re.findall(r'HANDOFF_LABEL = "([^"]+)"', text)) - {'needs-decision'}, set())
 
     def test_writer_workflows_use_github_hosted_runners_only(self):
         for name in WRITER_FILES:
@@ -656,7 +682,6 @@ class CrossLaneAdmissionTests(unittest.TestCase):
     def test_writers_share_one_per_pr_lock_without_cancellation(self):
         for name, jobs in WRITER_JOBS.items():
             doc = workflow(name)
-            self.assertEqual(set(jobs) - set(doc['jobs']), set())
             for job_name in jobs:
                 conc = doc['jobs'][job_name]['concurrency']
                 with self.subTest(workflow=name, job=job_name):
@@ -672,13 +697,23 @@ class CrossLaneAdmissionTests(unittest.TestCase):
                 text = job_text(job)
                 perms = job.get('permissions') or {}
                 with self.subTest(workflow=name, job=job_name, role=role):
-                    pushes = bool(re.search(r'run_git\(\["push"', text))
-                    self.assertEqual(pushes, role == 'publish')
+                    self.assertEqual(bool(PUSH.search(granted(text))), role == 'publish')
                     self.assertEqual(perms.get('id-token') == 'write', role == 'publish')
-                    if pushes:
-                        self.assertNotRegex(text, r'--force|\+refs/heads/[^:]*:refs/heads|force-with-lease')
+                    self.assertEqual(perms.get('contents'), 'read')
+                    uses_model = any(str(s.get('uses', '')).startswith('anthropics/claude-code-action') for s in job['steps'])
+                    self.assertEqual(uses_model, role == 'model')
+                    if role != 'model':
+                        self.assertNotIn('CLAUDE_CODE_OAUTH_TOKEN', text)
+                    if role == 'publish':
+                        self.assertNotRegex(text, r'--force|force-with-lease|force-if-includes|\s-f\b|"\+[^"]*:refs/heads|\+\{[^}]*\}:refs/heads')
+                        self.assertIn('# Ordinary push: no force, no lease.', text)
                     if role == 'model':
-                        self.assertIn('Bash(git push:*)', text)
+                        allowed = re.findall(r'--allowedTools "([^"]*)"', text)
+                        denied = re.findall(r'--disallowedTools "([^"]*)"', text)
+                        self.assertEqual(len(allowed), 1)
+                        self.assertTrue(denied and 'Bash(git push:*)' in denied[0])
+                        bash = [tool for tool in allowed[0].split(',') if tool.startswith('Bash')]
+                        self.assertEqual(bash, [MODEL_BASH])
                         for step in job['steps']:
                             if str(step.get('uses', '')).startswith('actions/checkout'):
                                 self.assertEqual(step['with']['persist-credentials'], 'false')
@@ -687,14 +722,31 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         claude = (WORKFLOWS / 'claude.yml').read_text()
         writer = (WORKFLOWS / 'claude-conflict-writer.yml').read_text()
         scan = (WORKFLOWS / 'conflict-scan.yml').read_text()
-        self.assertGreaterEqual(claude.count('LOOP_CAP = 8'), 2)  # @claude and Devin prepare steps
-        self.assertIn('Fixer loop cap (>=8 claude[bot] commits since last human commit)', claude)
-        for text in (claude, writer):
-            self.assertNotRegex(text, r'MAX_ATTEMPTS = (?!3\b)')
-            self.assertIn('MAX_ATTEMPTS = 3', text)
+        # Eight-commit guard: one constant per claude.yml prepare job, compared in the @claude path,
+        # and the Devin path's `cap` step; no other cap value anywhere.
+        self.assertEqual(re.findall(r'^\s*LOOP_CAP = (\d+)$', claude, re.M), ['8', '8'])
+        self.assertNotRegex(writer + scan, r'LOOP_CAP = ')
+        self.assertIn('if streak >= LOOP_CAP:', job_text(workflow('claude.yml')['jobs']['mention-prepare']))
+        cap = job_text(workflow('claude.yml')['jobs']['fixer-prepare'])
+        self.assertRegex(cap, r'if \[ "\$total" -ge 250 \] && \[ "\$count" -lt 8 \]')
+        self.assertIn('echo "loop_commit_count=$count"', cap)
+        # The Devin path reserves bounded attempts; every publisher allows one publish per prepared run.
+        self.assertEqual(re.findall(r'^\s*MAX_ATTEMPTS = (\d+)$', claude, re.M), ['3', '3', '3'])
+        self.assertIn('Select pending findings and reserve bounded attempt', claude)
+        for name, jobs in WRITER_JOBS.items():
+            doc = workflow(name)
+            for job_name, role in jobs.items():
+                if role == 'publish':
+                    with self.subTest(publisher=f'{name}:{job_name}'):
+                        self.assertIn('publish attempt already used; nothing published', job_text(doc['jobs'][job_name]))
+        # The human pause: labels and the repository variable, in every writer path and the scan.
         for text in (claude, writer, scan):
             self.assertIn('PAUSE_LABELS = frozenset({"claude:pause", "hold"})', text)
         self.assertGreaterEqual(claude.count('CLAUDE_FIXER_PAUSE: ${{ vars.CLAUDE_FIXER_PAUSE }}'), 4)
+        self.assertGreaterEqual(writer.count('CLAUDE_FIXER_PAUSE'), 2)
+        self.assertIn('CLAUDE_FIXER_PAUSE', scan)
+        # The conflict writer starts only from scheduled or manual scans, never from a main push.
+        self.assertIn("if: github.event_name != 'push'", scan)
 
 if __name__ == '__main__':
     unittest.main()
