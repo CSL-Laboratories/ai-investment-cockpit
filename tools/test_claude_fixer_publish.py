@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -144,6 +145,19 @@ class ProtectedPathTests(unittest.TestCase):
                 self.assertTrue(p.is_protected(path))
         for path in ("app/a.py", "tools/test_other.py", "docs/agents.md.bak", "scripts/run.sh", "app/environment.py",
                      "github/x", "tools/ci_gate.py.md", "app/claude/x.py", "docs/scripts/ci/x.py", "mcp.json"):
+            with self.subTest(path=path):
+                self.assertFalse(p.is_protected(path))
+
+    def test_fixer_test_suites_and_credential_filenames_are_protected(self):
+        # CSL-430 (Lucas's receipt): the fixer's own tests, and credential filenames at any depth.
+        for path in ("tools/test_claude_fixer_guard.py", "tools/test_claude_fixer_publish.py",
+                     "tools/test_claude_fixer_receipts.py", "TOOLS/Test_Claude_Fixer_Publish.py",
+                     ".netrc", "_netrc", "home/.netrc", ".npmrc", "web/.npmrc", ".NPMRC", ".pypirc", "pkg/.pypirc"):
+            with self.subTest(path=path):
+                self.assertTrue(p.is_protected(path))
+        for path in ("docs/tools/test_claude_fixer_publish.py", "tools/test_claude_fixer_publish.py.bak",
+                     "tools/test_fixer_failure_escalation.py", "tools/test_codex_gate.py", "netrc", "docs/npmrc.md",
+                     "pypirc.example", ".aws/config", ".pgpass"):
             with self.subTest(path=path):
                 self.assertFalse(p.is_protected(path))
 
@@ -387,6 +401,64 @@ class TreeEntryTests(GitCase):
         raw.write_bytes(b"100644 x\0" + bytes.fromhex(blob))
         return repo.text("hash-object", "-t", "tree", "-w", "--literally", str(raw))
 
+    def test_check_objects_refuses_slash_or_empty_names_and_null_ids(self):
+        # CSL-405: these are fsck warnings by default; the publisher makes them errors.
+        repo = p.FreshRepo(tempfile.mkdtemp(dir=self.root))
+        blob_file = self.root / "blob"
+        blob_file.write_text("x\n")
+        blob = repo.text("hash-object", "-w", str(blob_file))
+        # (An empty name already fails plain fsck as an unparseable tree.)
+        for entry in ((b"100644", b"a/b", blob), (b"100644", b"n", "0" * 40), (b"100777", b"m", blob)):
+            with self.subTest(entry=entry[1:]):
+                repo = p.FreshRepo(tempfile.mkdtemp(dir=self.root))
+                repo.text("hash-object", "-w", str(blob_file))
+                raw = self.root / "root-tree"
+                raw.write_bytes(entry[0] + b" " + entry[1] + b"\0" + bytes.fromhex(entry[2]))
+                repo.run_git(["hash-object", "-t", "tree", "-w", "--literally", str(raw)])
+                # Control: plain fsck accepts this tree (a warning at most).
+                plain = subprocess.run(["git", "--git-dir", str(repo.dir), "fsck", "--no-dangling", "--no-progress"],
+                                       env=git_env(), capture_output=True, check=False)
+                self.assertEqual(plain.returncode, 0, plain.stderr)
+                with self.assertRaisesRegex(p.Refused, "^candidate objects fail git fsck$"):
+                    p.check_objects(repo)
+
+    def test_the_bundle_fetch_allows_no_network_transport(self):
+        repo = p.FreshRepo(tempfile.mkdtemp(dir=self.root))
+        marker = self.root / "ext-ran"
+        for url in ("https://example.invalid/x.git", f"ext::sh -c touch% {marker}", "ssh://example.invalid/x"):
+            with self.subTest(url=url[:8]):
+                started = time.monotonic()
+                with self.assertRaises(p.Refused):
+                    repo.run_git(["fetch", "-q", "--no-tags", url, "HEAD:refs/x"], local=True, timeout=20)
+                self.assertLess(time.monotonic() - started, 10)  # refused locally, no connection attempt
+        self.assertFalse(marker.exists())
+        repo = p.FreshRepo(tempfile.mkdtemp(dir=self.root))
+        repo.run_git(["fetch", "-q", str(self.src.path), self.head])
+        # git itself names the refused transport; the publisher's own Refused hides stderr.
+        argv = []
+        results = []
+
+        def runner(cmd, **kwargs):
+            argv.append(cmd)
+            result = subprocess.run(cmd, check=False, **kwargs)
+            results.append(result)
+            return result
+        probe = p.FreshRepo(tempfile.mkdtemp(dir=self.root), runner=runner)
+        with self.assertRaises(p.Refused):
+            probe.run_git(["fetch", "-q", "https://example.invalid/x.git", "HEAD:refs/x"], local=True)
+        self.assertIn(b"transport 'https' not allowed", results[-1].stderr)
+        self.assertEqual(argv[-1][argv[-1].index("protocol.allow=never") - 1:][:4],
+                         ["-c", "protocol.allow=never", "-c", "protocol.file.allow=always"])
+        calls = []
+        real = repo.run_git
+        repo.run_git = lambda args, **kwargs: calls.append((args, kwargs)) or real(args, **kwargs)
+        self.model.commit({"app/a.py": "a = 2\n"})
+        with contextlib.suppress(p.Refused):
+            p.validate_candidate(repo, self.config(), self.bundle())
+        fetch = next(c for c in calls if c[0][0] == "fetch")
+        self.assertEqual((fetch[1].get("fsck"), fetch[1].get("local")), (True, True))
+        self.assertIn("--recurse-submodules=no", fetch[0])
+
     def test_diff_paths_with_dot_or_empty_components_are_refused(self):
         for path in (b"../x", b"./x", b"a/../x", b"a//x", b"a/.", b"a/"):
             with self.subTest(path=path):
@@ -421,6 +493,19 @@ class RecordedFetchAndPushTests(GitCase):
         repo = p.FreshRepo(tempfile.mkdtemp(dir=self.root))
         p.fetch_recorded(repo, config, TOKEN)
         return repo, p.validate_candidate(repo, config, self.bundle())
+
+    def test_recorded_fetches_never_recurse_into_submodules(self):
+        self.base = self.head
+        config = self.config("conflict")
+        repo = p.FreshRepo(tempfile.mkdtemp(dir=self.root))
+        calls = []
+        real = repo.run_git
+        repo.run_git = lambda args, **kwargs: calls.append(args) or real(args, **kwargs)
+        p.fetch_recorded(repo, config, TOKEN)
+        fetches = [c for c in calls if c[0] == "fetch"]
+        self.assertEqual(len(fetches), 2)
+        for fetch in fetches:
+            self.assertIn("--recurse-submodules=no", fetch)
 
     def test_happy_path_pushes_exactly_the_candidate_without_leaving_the_token_on_disk(self):
         commit = self.model.commit({"app/a.py": "a = 2\n"})
@@ -660,6 +745,8 @@ class Harness:
         self.mint_error = None
         self.candidate = B
         self.validate_error = None
+        self.push_error = None
+        self.minted_at_validation = None
 
     def read(self, path):
         if "/pulls/comments/" in path:
@@ -694,11 +781,15 @@ class Harness:
                 "consumer": receipts, "post": lambda config, body: self.audits.append(body)}
 
         def validate(repo, config, bundle):
+            if self.minted_at_validation is not None:
+                self.minted_at_validation.append(self.minted)
             if self.validate_error:
                 raise self.validate_error
             return self.candidate
 
         def push(repo, config, candidate, token):
+            if self.push_error:
+                raise self.push_error
             self.pushed.append((candidate, token))
             self.heads = [self.candidate]
 
@@ -774,13 +865,14 @@ class PublishFlowTests(unittest.TestCase):
                 self.assertEqual((h.minted, h.pushed, h.writes), (0, [], []))
                 self.assertIn("nothing published", h.audits[0])
 
-    def test_head_moving_after_mint_blocks_push_and_revokes(self):
+    def test_head_moving_before_push_blocks_it_without_minting(self):
         h = Harness(self, bundle=True, records=[{"op": "comment", "body": "x"}])
         h.heads = [A, C, C]  # first check passes, the pre-push recheck sees a moved head
         h.run()
         self.assertEqual(h.pushed, [])
         self.assertEqual(h.writes, [])
-        self.assertEqual(h.revoked, [TOKEN])
+        # CSL-405: the token is minted after the recheck, so none exists to revoke.
+        self.assertEqual((h.minted, h.revoked), (0, []))
         self.assertIn("queued writes dropped", h.audits[0])
 
     def test_pause_between_records_stops_the_rest(self):
@@ -817,7 +909,7 @@ class PublishFlowTests(unittest.TestCase):
         h = Harness(self, bundle=True, records=[{"op": "comment", "body": "pushed!"}])
         h.validate_error = p.Refused("candidate changes a protected path")
         h.run()
-        self.assertEqual((h.pushed, h.writes, h.revoked), ([], [], [TOKEN]))
+        self.assertEqual((h.pushed, h.writes, h.minted, h.revoked), ([], [], 0, []))
         self.assertIn("refused: candidate changes a protected path; queued writes dropped", h.audits[0])
 
     def test_label_only_in_conflict_job(self):
@@ -838,13 +930,31 @@ class PublishFlowTests(unittest.TestCase):
         self.assertEqual((h.minted, h.writes), (0, []))
         self.assertIn("run attempt differs", h.audits[0])
 
-    def test_unexpected_error_still_revokes_and_audits(self):
+    def test_unexpected_error_audits_and_revokes_any_minted_token(self):
         h = Harness(self, bundle=True, records=[{"op": "comment", "body": "x"}])
         h.validate_error = RuntimeError(TOKEN)  # Even a token-bearing message is never echoed.
         self.assertEqual(h.run(), 1)
-        self.assertEqual(h.revoked, [TOKEN])
+        self.assertEqual((h.minted, h.revoked), (0, []))  # CSL-405: failed before any mint
         self.assertIn("publisher error (RuntimeError)", h.audits[0])
         self.assertNotIn(TOKEN, "\n".join(h.audits + h.lines))
+        h = Harness(self, bundle=True, records=[{"op": "comment", "body": "x"}])
+        h.push_error = RuntimeError(TOKEN)
+        self.assertEqual(h.run(), 1)
+        self.assertEqual((h.minted, h.revoked), (1, [TOKEN]))
+        self.assertIn("publisher error (RuntimeError)", h.audits[0])
+        self.assertNotIn(TOKEN, "\n".join(h.audits + h.lines))
+
+    def test_the_app_token_is_minted_only_after_validation(self):
+        # CSL-405: no token exists while the untrusted bundle is fetched, fsck'd and parsed.
+        h = Harness(self, bundle=True, records=[{"op": "comment", "body": "x"}])
+        h.minted_at_validation = []
+        h.run()
+        self.assertEqual(h.minted_at_validation, [0])
+        self.assertEqual((h.minted, h.pushed, h.revoked), (1, [(B, TOKEN)], [TOKEN]))
+        # Queued writes alone still mint once, then revoke.
+        h = Harness(self, records=[{"op": "comment", "body": "x"}])
+        h.run()
+        self.assertEqual((h.minted, len(h.writes), h.revoked), (1, 1, [TOKEN]))
 
     def test_workflow_validation_skip_publishes_nothing_but_audits(self):
         h = Harness(self, bundle=True, records=[{"op": "comment", "body": "x"}])
@@ -1038,6 +1148,114 @@ class OutboxHelperTests(unittest.TestCase):
             p.load_outbox(raw, "fixer", {11})
         self.assertEqual(len(p.load_outbox(raw.rsplit(b"\n", 2)[0] + b"\n", "fixer", {11})), 3)
 
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "POSIX special files")
+    def test_commit_leaves_non_regular_paths_unstaged(self):
+        # CSL-377 canary on #227: the sandbox's /dev/null masks made `git add -A` refuse the commit.
+        os.mkfifo("mask")
+        Path("real.txt").write_text("x\n")
+        Path(".claude-fixer-replies/msg.txt").write_text("fix: x\n")
+        calls = []
+
+        def run(argv):
+            calls.append(argv)
+            if argv[len(self.GIT):] == list(o.UNTRACKED):
+                return "mask\0real.txt\0gone.txt\0*glob\0sub/.zshrc\0.zshrc\0"
+            return "f" * 40 if argv[-2:] == ["rev-parse", "HEAD"] else ""
+        Path("*glob").write_text("x\n")
+        Path("sub").mkdir()
+        Path("sub/.zshrc").write_text("")  # only top-level names are masked
+        Path(".zshrc").write_text("")  # an empty leftover mount point
+        o.model_api(self.CONFIG, ["commit", ".claude-fixer-replies/msg.txt"], run=run)
+        self.assertEqual(calls[2], self.GIT + ["add", "-A", "--", ".", ":(exclude,literal)mask",
+                                               ":(exclude,literal).zshrc"])
+        self.assertEqual(calls[3], self.GIT + list(o.UNSTAGE))  # a dispatch run: nothing was restored
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "POSIX special files")
+    def test_masked_paths_stay_out_of_a_real_commit(self):
+        # Runs without bubblewrap (CI) with real git for every call but the untracked listing: a
+        # plain checkout never lists a device or FIFO as untracked the way bwrap's mount points are.
+        with patch.dict(os.environ, git_env(), clear=True):
+            o.command(["git", "init", "-q", "-b", "fix"])
+            for name in ("a.txt", ".bashrc", "b.txt"):
+                Path(name).write_text(name + "\n")
+            o.command(["git", "add", "-A"])
+            o.command(["git", "commit", "-q", "-m", "base"])
+            Path("a.txt").write_text("b\n")
+            Path(".bashrc").write_text("")  # a tracked file emptied by the model is a real change
+            os.mkfifo("*mask")
+            Path(".zshrc").write_text("")  # a leftover empty mount point
+            Path("docs").mkdir()
+            Path("docs/.profile").write_text("")  # not a mount point: staged
+            Path(".claude-fixer-replies/msg.txt").write_text("fix: a\n")
+
+            def run(argv):
+                if argv[len(self.GIT):] == list(o.UNTRACKED):
+                    return "*mask\0.zshrc\0docs/.profile\0"
+                return o.command(argv)
+            head = o.model_api(self.CONFIG, ["commit", ".claude-fixer-replies/msg.txt"], run=run)
+            files = o.command(["git", "show", "--name-only", "--format=", head]).split("\n")
+            self.assertEqual(sorted(files), [".bashrc", "a.txt", "docs/.profile"])
+            # A tracked path the sandbox later masked (a deletion) refuses the commit, unstubbed.
+            Path("b.txt").unlink()
+            os.mkfifo("b.txt")
+            with self.assertRaisesRegex(o.MaskedPath, "tracked path is masked"):
+                o.model_api(self.CONFIG, ["commit", ".claude-fixer-replies/msg.txt"])
+            self.assertEqual(o.command(["git", "rev-parse", "HEAD"]), head)
+            # A tracked file replaced by a directory is a real change, not a mask.
+            Path("b.txt").unlink()
+            Path("b.txt").mkdir()
+            Path("b.txt/c.txt").write_text("c\n")
+            head = o.model_api(self.CONFIG, ["commit", ".claude-fixer-replies/msg.txt"])
+            self.assertEqual(sorted(o.command(["git", "show", "--name-status", "--format=", head]).split("\n")),
+                             ["A\tb.txt/c.txt", "D\tb.txt"])
+
+    @unittest.skipUnless(shutil.which("bwrap") and subprocess.run(
+        ["bwrap", "--dev-bind", "/", "/", "true"], capture_output=True, check=False).returncode == 0,
+        "needs a working bubblewrap")
+    def test_commit_works_under_bubblewrap_device_masks(self):
+        # The real failure: bwrap's mount points list as untracked files but stat as /dev/null.
+        helper = Path("helper").resolve()
+        helper.mkdir()
+        script = helper / "model-api"
+        script.write_text((ROOT / "scripts/ci/claude_fixer_outbox.py").read_text(encoding="utf-8"))
+        repo = Path("repo").resolve()
+        env = git_env()
+        subprocess.run(["git", "init", "-q", "-b", "fix", str(repo)], env=env, check=True)
+        (repo / "a.txt").write_text("a\n")
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], env=env, check=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "base"], env=env, check=True)
+        head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], env=env, capture_output=True,
+                              text=True, check=True).stdout.strip()
+        install = dict(env, REPO=REPO, PR_NUMBER="7", HEAD_SHA=head, HEAD_REF="fix", WRITER_MODE="mention")
+        subprocess.run([sys.executable, "-I", str(script), "install"], env=install, check=True)
+        (repo / "a.txt").write_text("b\n")
+        (repo / ".git/info").mkdir(exist_ok=True)
+        with open(repo / ".git/info/exclude", "a", encoding="utf-8") as handle:
+            handle.write(".claude-fixer-out/\n.claude-fixer-replies/\n")  # the model job's layout
+        (repo / ".claude-fixer-replies").mkdir()
+        (repo / ".claude-fixer-replies" / "m.txt").write_text("fix: a\n")
+        (repo / ".claude-fixer-out").mkdir()
+        (repo / ".claude-fixer-out" / "outbox.jsonl").write_text("")
+        sandbox = ["bwrap", "--dev-bind", "/", "/", "--ro-bind", "/dev/null", str(repo / ".zshrc"),
+                   "--ro-bind", "/dev/null", str(repo / ".idea"), "--chdir", str(repo)]
+        # Control: plain `git add -A` fails on the masks.
+        control = subprocess.run([*sandbox, "git", "add", "-A"], env=env, capture_output=True, text=True, check=False)
+        self.assertNotEqual(control.returncode, 0, control.stderr)
+        self.assertIn("can only add regular files", control.stderr)
+        result = subprocess.run([*sandbox, sys.executable, "-I", str(script), "--", "commit", ".claude-fixer-replies/m.txt"],
+                                env=env, capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        new = result.stdout.strip()
+        self.assertRegex(new, r"\A[0-9a-f]{40}\Z")
+        files = subprocess.run(["git", "-C", str(repo), "show", "--name-only", "--format=", new], env=env,
+                               capture_output=True, text=True, check=True).stdout.split()
+        self.assertEqual(files, ["a.txt"])
+        # Nothing left to commit: the helper names the failed step, not its output.
+        again = subprocess.run([*sandbox, sys.executable, "-I", str(script), "--", "commit", ".claude-fixer-replies/m.txt"],
+                               env=env, capture_output=True, text=True, check=False)
+        self.assertEqual(again.returncode, 1)
+        self.assertEqual(again.stderr.strip(), "Helper operation failed: git commit exited 1.")
+
     def test_install_stores_the_read_token_for_scrubbed_reads(self):
         # Claude Code's subprocess scrub removes GH_TOKEN, so reads fall back to the installed file.
         helper = Path("helper")
@@ -1101,12 +1319,17 @@ class OutboxHelperTests(unittest.TestCase):
             calls = []
             run = lambda a, calls=calls: calls.append(a) or ("f" * 40 if a[-2:] == ["rev-parse", "HEAD"] else "")
             with self.subTest(mode=mode):
-                out = o.model_api(self.CONFIG | {"mode": mode}, ["commit", ".claude-fixer-replies/msg.txt"], run=run)
+                out = o.model_api(self.CONFIG | {"mode": mode, "restored": mode != "conflict"},
+                                  ["commit", ".claude-fixer-replies/msg.txt"], run=run)
                 self.assertEqual(out, "f" * 40)
                 if mode == "conflict":  # unmerged paths are checked for leftover markers first
                     self.assertEqual(calls.pop(0), self.GIT + ["diff", "--name-only", "-z", "--diff-filter=U"])
                 self.assertEqual(calls, [
-                    self.GIT + ["add", "-A", "--", ".", ":(exclude).claude-fixer-out", ":(exclude).claude-fixer-replies"],
+                    self.GIT + ["ls-files", "-z", "--modified"],
+                    self.GIT + ["ls-files", "-z", "--others", "--exclude-standard"],
+                    self.GIT + ["add", "-A", "--", "."],
+                    self.GIT + ["reset", "-q", "--", ".claude-fixer-out", ".claude-fixer-replies"]
+                    + ([] if mode == "conflict" else list(o.ACTION_RESTORED)),
                     self.GIT + ["commit", "--no-verify", "-q", "-m", "-fix: a message\nwith a second line\n"],
                     self.GIT + ["rev-parse", "HEAD"]])
         for body in ("", "<!-- claude-fixer-result:{} -->"):
@@ -1151,6 +1374,283 @@ class OutboxHelperTests(unittest.TestCase):
             self.assertEqual(o.command(["git", "ls-files"]).splitlines(), ["a.txt", "b.txt"])
             self.assertFalse(Path("hook-ran").exists())
             self.assertIn(".claude-fixer-out", o.command(["git", "status", "--short"]))  # left untracked
+
+    def test_commit_with_the_model_jobs_ignored_helper_dirs(self):
+        # CSL-377 canary run 39569528483: the model job lists both helper dirs in .git/info/exclude, and
+        # `git add` exits 1 when a pathspec, even an exclude, names an ignored path ("git add exited 1").
+        with patch.dict(os.environ, git_env(), clear=True):
+            o.command(["git", "init", "-q", "-b", "main"])
+            Path("a.txt").write_text("a\n")
+            o.command(["git", "add", "a.txt"])
+            o.command(["git", "commit", "-q", "-m", "base"])
+            base = o.command(["git", "rev-parse", "HEAD"])
+            Path(".git/info").mkdir(exist_ok=True)
+            with open(".git/info/exclude", "a", encoding="utf-8") as handle:
+                handle.write(".claude-fixer-out/\n.claude-fixer-replies/\n")  # as the model job's install step does
+            o.model_api(self.CONFIG, ["comment", ".claude-fixer-replies/r.txt"])  # creates .claude-fixer-out/
+            Path("a.txt").write_text("b\n")
+            Path(".claude-fixer-replies/msg.txt").write_text("fix: change a\n")
+            # Control: the old exclude pathspecs fail on this layout after staging the change.
+            control = subprocess.run(["git", "add", "-A", "--", ".", ":(exclude).claude-fixer-out",
+                                      ":(exclude).claude-fixer-replies"], capture_output=True, text=True, check=False)
+            self.assertEqual(control.returncode, 1, control.stderr)
+            self.assertIn("ignored", control.stderr)
+            o.command(["git", "reset", "-q"])
+            head = o.model_api(self.CONFIG, ["commit", ".claude-fixer-replies/msg.txt"])
+            self.assertEqual(o.command(["git", "rev-parse", "HEAD^"]), base)
+            self.assertEqual(o.command(["git", "show", "--name-only", "--format=", head]).split(), ["a.txt"])
+
+    def test_commit_keeps_tracked_helper_dir_changes_out(self):
+        # The unstage covers tracked paths too, as the exclude pathspecs did.
+        with patch.dict(os.environ, git_env(), clear=True):
+            o.command(["git", "init", "-q", "-b", "main"])
+            Path("a.txt").write_text("a\n")
+            Path(".claude-fixer-out").mkdir()
+            Path(".claude-fixer-out/tracked.txt").write_text("old\n")
+            o.command(["git", "add", "-A"])
+            o.command(["git", "commit", "-q", "-m", "base"])
+            Path("a.txt").write_text("b\n")
+            Path(".claude-fixer-out/tracked.txt").write_text("new\n")
+            Path(".claude-fixer-replies/msg.txt").write_text("fix: change a\n")
+            head = o.model_api(self.CONFIG, ["commit", ".claude-fixer-replies/msg.txt"])
+            self.assertEqual(o.command(["git", "show", "--name-only", "--format=", head]).split(), ["a.txt"])
+            self.assertEqual(o.command(["git", "show", f"{head}:.claude-fixer-out/tracked.txt"]), "old")
+
+    def test_install_records_whether_the_action_restored_config(self):
+        # Codex 4335300680 / Chaandan at cac2a13: the action restores only for a PR entity event
+        # (run.ts: isEntityContext && isPR), never for workflow/repository dispatch or the conflict job.
+        helper = Path("helper")
+        helper.mkdir()
+        script = helper / "model-api"
+        script.write_text((ROOT / "scripts/ci/claude_fixer_outbox.py").read_text(encoding="utf-8"))
+        env = {k: v for k, v in os.environ.items() if k not in {"GH_TOKEN", "GITHUB_EVENT_NAME"}}
+        cases = [("mention", "issue_comment", True), ("fixer", "pull_request_review", True),
+                 ("fixer", "pull_request_review_comment", True), ("fixer", "workflow_dispatch", False),
+                 ("fixer", "repository_dispatch", False), ("fixer", None, False), ("mention", "issues", False),
+                 ("conflict", "issue_comment", False), ("conflict", "schedule", False)]
+        for mode, event, expected in cases:
+            with self.subTest(mode=mode, event=event):
+                for leftover in helper.glob("context.json"):
+                    leftover.unlink()
+                install = dict(env, REPO=REPO, PR_NUMBER="7", HEAD_SHA=A, HEAD_REF="fix", WRITER_MODE=mode)
+                if event:
+                    install["GITHUB_EVENT_NAME"] = event
+                subprocess.run([sys.executable, "-I", str(script), "install"], env=install, check=True)
+                self.assertIs(json.loads((helper / "context.json").read_text())["restored"], expected)
+        for bad in ({"restored": 1}, {"restored": "true"}, {"restored": True, "mode": "conflict"}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                o.validate(self.CONFIG | bad)
+
+    def install_trigger(self, mode, event, payload):
+        # The install step's trigger recording, run as the real helper with a runner-style event file.
+        helper = Path("helper")
+        helper.mkdir(exist_ok=True)
+        script = helper / "model-api"
+        script.write_text((ROOT / "scripts/ci/claude_fixer_outbox.py").read_text(encoding="utf-8"))
+        for leftover in helper.glob("context.json"):
+            leftover.unlink()
+        env = {k: v for k, v in os.environ.items()
+               if k not in {"GH_TOKEN", "GITHUB_EVENT_NAME", "GITHUB_EVENT_PATH"}}
+        install = dict(env, REPO=REPO, PR_NUMBER="7", HEAD_SHA=A, HEAD_REF="fix", WRITER_MODE=mode)
+        if event:
+            install["GITHUB_EVENT_NAME"] = event
+        if payload is not None:
+            Path("event.json").write_text(json.dumps(payload))
+            install["GITHUB_EVENT_PATH"] = str(Path("event.json").resolve())
+        subprocess.run([sys.executable, "-I", str(script), "install"], env=install, check=True)
+        return json.loads((helper / "context.json").read_text())
+
+    def test_install_records_the_mention_trigger_from_the_event_file(self):
+        # CSL-377 canary run 39649522054: the mention reads its own comment by the event's ID, never the model's.
+        for event in ("issue_comment", "pull_request_review_comment"):
+            with self.subTest(event=event):
+                self.assertEqual(self.install_trigger("mention", event, {"comment": {"id": 123}})["trigger"],
+                                 {"event": event, "id": 123})
+        refused = [("fixer", "issue_comment", {"comment": {"id": 123}}),
+                   ("conflict", "issue_comment", {"comment": {"id": 123}}),
+                   ("mention", "pull_request_review", {"comment": {"id": 123}}),
+                   ("mention", "workflow_dispatch", {"comment": {"id": 123}}),
+                   ("mention", "issues", {"comment": {"id": 123}}),
+                   ("mention", "issue_comment", None), ("mention", None, {"comment": {"id": 123}}),
+                   ("mention", "issue_comment", {"comment": {"id": 0}}),
+                   ("mention", "issue_comment", {"comment": {"id": -1}}),
+                   ("mention", "issue_comment", {"comment": {"id": "123"}}),
+                   ("mention", "issue_comment", {"comment": {"id": True}}),
+                   ("mention", "issue_comment", {"comment": None}), ("mention", "issue_comment", [])]
+        for mode, event, payload in refused:
+            with self.subTest(mode=mode, event=event, payload=payload):
+                self.assertNotIn("trigger", self.install_trigger(mode, event, payload))
+
+    def test_validate_refuses_a_malformed_or_misplaced_trigger(self):
+        mention = self.CONFIG | {"mode": "mention", "roots": []}
+        o.validate(mention | {"trigger": {"event": "issue_comment", "id": 5}})
+        for config in (self.CONFIG | {"trigger": {"event": "issue_comment", "id": 5}},
+                       self.CONFIG | {"mode": "conflict", "trigger": {"event": "issue_comment", "id": 5}},
+                       mention | {"trigger": {"event": "pull_request_review", "id": 5}},
+                       mention | {"trigger": {"event": "issue_comment", "id": 5, "path": "x"}},
+                       mention | {"trigger": {"event": "issue_comment", "id": "5"}},
+                       mention | {"trigger": {"event": "issue_comment", "id": 0}},
+                       mention | {"trigger": {"event": "issue_comment", "id": -1}},
+                       mention | {"trigger": {"event": "issue_comment", "id": True}},
+                       mention | {"trigger": ["issue_comment", 5]}):
+            with self.subTest(config=config), self.assertRaises(ValueError):
+                o.validate(config)
+
+    def trigger_config(self, event="issue_comment", cid=5):
+        return self.CONFIG | {"mode": "mention", "roots": [], "trigger": {"event": event, "id": cid}}
+
+    @staticmethod
+    def comment(cid=5, body="please fix the typo", login="NotSkittlz"):
+        return json.dumps({"id": cid, "body": body, "user": {"login": login}})
+
+    def test_trigger_reads_only_the_triggering_comment_at_a_fixed_endpoint(self):
+        for event, path in (("issue_comment", f"repos/{REPO}/issues/comments/5"),
+                            ("pull_request_review_comment", f"repos/{REPO}/pulls/comments/5")):
+            calls = []
+            run = lambda args, calls=calls: calls.append(args) or self.comment()
+            with self.subTest(event=event):
+                out = o.model_api(self.trigger_config(event), ["trigger"], run=run)
+                self.assertEqual(calls, [["gh", "api", "--method", "GET", path]])
+                self.assertEqual(out, "Triggering comment 5 by NotSkittlz (untrusted data):\nplease fix the typo")
+        # No model-chosen ID, endpoint or option, and only the mention job has a trigger to read.
+        never = lambda args: self.fail(f"gh ran: {args}")
+        for config, args in ((self.trigger_config(), ["trigger", "6"]), (self.trigger_config(), ["trigger", "--paginate"]),
+                             (self.trigger_config(), ["trigger", "repos/x/y"]),
+                             (self.CONFIG | {"mode": "mention", "roots": []}, ["trigger"]),
+                             (self.CONFIG, ["trigger"]), (self.CONFIG | {"mode": "conflict"}, ["trigger"])):
+            with self.subTest(config=config, args=args), self.assertRaises(ValueError):
+                o.model_api(config, args, run=never)
+
+    def test_read_trigger_rechecks_the_mode_itself(self):
+        # Defence in depth behind validate(): a trigger in another mode's context is never read.
+        never = lambda args: self.fail(f"gh ran: {args}")
+        for mode in ("fixer", "conflict"):
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                o.read_trigger(self.trigger_config() | {"mode": mode}, never)
+
+    def test_trigger_refuses_an_unexpected_response(self):
+        for response in (self.comment(cid=6), json.dumps({"id": 5, "body": None}), json.dumps({"id": 5}),
+                         json.dumps([{"id": 5, "body": "x"}]), json.dumps("x")):
+            with self.subTest(response=response), self.assertRaises(ValueError):
+                o.model_api(self.trigger_config(), ["trigger"], run=lambda args, r=response: r)
+        # True == 1 in Python: the response must have an integer ID as well as match the trusted ID.
+        with self.assertRaises(ValueError):
+            o.model_api(self.trigger_config(cid=1), ["trigger"], run=lambda args: self.comment(cid=True))
+        # A missing or odd author is labelled, not trusted.
+        out = o.model_api(self.trigger_config(), ["trigger"], run=lambda args: json.dumps({"id": 5, "body": "b"}))
+        self.assertEqual(out, "Triggering comment 5 by unknown (untrusted data):\nb")
+
+    def test_trigger_output_is_bounded_in_utf16_units_and_fails_closed(self):
+        # Claude Code shows at most 30000 characters inline; one long comment can exceed that by itself.
+        self.assertEqual(o.MAX_TRIGGER_UNITS, 24000)
+        for body, ok in (("a" * 24000, True), ("a" * 24001, False),
+                         ("\U0001F600" * 12000, True), ("\U0001F600" * 12000 + "a", False),
+                         ("\U0001F600" * 12001, False)):
+            with self.subTest(units=len(body.encode("utf-16-le")) // 2):
+                run = lambda args, b=body: self.comment(body=b)
+                if ok:
+                    self.assertEqual(o.model_api(self.trigger_config(), ["trigger"], run=run),
+                                     "Triggering comment 5 by NotSkittlz (untrusted data):\n" + body)
+                else:
+                    with self.assertRaises(o.TriggerTooLong):
+                        o.model_api(self.trigger_config(), ["trigger"], run=run)
+
+    @unittest.skipIf(os.name == "nt", "POSIX shell fixture")
+    def test_oversized_trigger_names_its_own_failure_and_prints_no_body(self):
+        context = self.install_trigger("mention", "issue_comment", {"comment": {"id": 5}})
+        self.assertEqual(context["trigger"], {"event": "issue_comment", "id": 5})
+        bin_dir = Path("bin")
+        bin_dir.mkdir()
+        body = "Z" * 24001
+        (bin_dir / "gh").write_text("#!/bin/sh\ncat \"$GH_FIXTURE\"\n")
+        (bin_dir / "gh").chmod(0o755)
+        Path("fixture.json").write_text(self.comment(body=body))
+        env = {k: v for k, v in os.environ.items() if k != "GH_TOKEN"}
+        env.update(PATH=f"{bin_dir.resolve()}{os.pathsep}{env['PATH']}", GH_FIXTURE=str(Path("fixture.json").resolve()))
+        result = subprocess.run([sys.executable, "-I", "helper/model-api", "--", "trigger"], env=env,
+                                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr.strip(), "Helper operation failed: the triggering comment is longer than "
+                                                "24000 characters; ask for a shorter request.")
+        self.assertNotIn("ZZZ", result.stderr)
+        # Any other failure keeps the generic message, so the two cases stay distinguishable.
+        Path("fixture.json").write_text(self.comment(cid=6))
+        other = subprocess.run([sys.executable, "-I", "helper/model-api", "--", "trigger"], env=env,
+                               capture_output=True, text=True, check=False)
+        self.assertEqual((other.returncode, other.stderr.strip()), (1, "Helper operation failed or is not permitted."))
+
+    def test_oversized_trigger_notice_is_published_as_a_pr_comment(self):
+        # Devin 4341582246: exercise the prompt's failure command through the real outbox/publisher.
+        action = next(s for s in jobs("claude.yml")["claude-mention"]["steps"]
+                      if s.get("uses", "").startswith("anthropics/claude-code-action@"))
+        failure = action["with"]["prompt"].split("If trigger fails", 1)[1].split("2. Make", 1)[0]
+        operation = re.search(r"model-api -- (\w+) BODY_FILE", failure)
+        self.assertIsNotNone(operation, "trigger failure must specify a publishable notification command")
+        self.assertEqual(operation[1], "comment")
+        for event, parent in (("issue_comment", None), ("pull_request_review_comment", None),
+                              ("pull_request_review_comment", 4)):
+            with self.subTest(event=event, parent=parent):
+                config = self.trigger_config(event)
+                with self.assertRaises(o.TriggerTooLong) as refused:
+                    o.model_api(config, ["trigger"], run=lambda args: self.comment(body="Z" * 24001))
+                notice = f"{refused.exception}. Please post a shorter request."
+                body_file = ".claude-fixer-replies/shorter.txt"
+                Path(body_file).write_text(notice, encoding="utf-8")
+                o.OUTBOX.unlink(missing_ok=True)
+                o.model_api(config, [operation[1], body_file], run=lambda args: self.fail("unexpected API call"))
+                h = Harness(self, mode="mention")
+                targets = {} if event == "issue_comment" else {
+                    5: {"id": 5, "in_reply_to_id": parent,
+                        "pull_request_url": f"https://api.github.com/repos/{REPO}/pulls/7"}}
+                h.targets = targets
+                (h.artifact / "outbox.jsonl").write_bytes(o.OUTBOX.read_bytes())
+                self.assertEqual(h.run(), 0)
+                self.assertEqual(h.writes, [("POST", f"{p.GITHUB_API}/repos/{REPO}/issues/7/comments",
+                                             TOKEN, {"body": notice})])
+                self.assertEqual(h.pushed, [])
+                self.assertIn("1 queued write(s) posted, 0 refused", h.audits[0])
+                self.assertNotIn("ZZZ", json.dumps(h.writes))
+                if event == "issue_comment" or parent is not None:
+                    # Negative control: the old reply instruction loses this same notice.
+                    old = Harness(self, mode="mention", records=[{"op": "reply", "comment_id": 5, "body": notice}])
+                    old.targets = targets
+                    self.assertEqual(old.run(), 0)
+                    self.assertEqual(old.writes, [])
+                    self.assertIn("0 queued write(s) posted, 1 refused", old.audits[0])
+
+    def test_pr_event_commit_leaves_the_actions_base_branch_restores_out(self):
+        # Fable rehearsal of a5fd6b7: for PR events claude-code-action's restoreConfigFromBase leaves the
+        # base branch's .claude/, CLAUDE.md, .ripgreprc, ... unstaged in the worktree. Staging them would
+        # revert the PR's versions (and the publisher refuses protected paths, dropping the whole run).
+        # A dispatch run gets no restore, so its edits to those paths are real and are committed.
+        self.assertEqual(o.ACTION_RESTORED, (".claude", ".mcp.json", ".claude.json", ".gitmodules", ".ripgreprc",
+                                             "CLAUDE.md", "CLAUDE.local.md", ".husky"))
+        for mode, restored in (("mention", True), ("fixer", True), ("fixer", False)):
+            with self.subTest(mode=mode, restored=restored), tempfile.TemporaryDirectory() as tmp, \
+                    patch.dict(os.environ, git_env(), clear=True):
+                os.chdir(tmp)
+                o.command(["git", "init", "-q", "-b", "main"])
+                for name, text in (("a.txt", "a\n"), ("CLAUDE.md", "pr\n"), (".claude/settings.json", "{}\n"),
+                                   (".husky/pre-commit", "pr\n")):
+                    Path(name).parent.mkdir(exist_ok=True)
+                    Path(name).write_text(text)
+                o.command(["git", "add", "-A"])
+                o.command(["git", "commit", "-q", "-m", "base"])
+                # What the restore leaves behind: base-branch content, unstaged, plus base-only files.
+                Path("CLAUDE.md").write_text("main\n")
+                Path(".claude/settings.json").write_text('{"main": 1}\n')
+                Path(".husky/pre-commit").unlink()
+                Path(".ripgreprc").write_text("--hidden\n")
+                Path("a.txt").write_text("b\n")
+                Path(".claude-fixer-replies").mkdir()
+                Path(".claude-fixer-replies/msg.txt").write_text("fix: change a\n")
+                head = o.model_api(self.CONFIG | {"mode": mode, "restored": restored},
+                                   ["commit", ".claude-fixer-replies/msg.txt"])
+                files = o.command(["git", "show", "--name-only", "--format=", head]).split()
+                self.assertEqual(sorted(files), ["a.txt"] if restored else
+                                 [".claude/settings.json", ".husky/pre-commit", ".ripgreprc", "CLAUDE.md", "a.txt"])
+                os.chdir(self.tmp.name)
 
     def test_user_level_git_config_cannot_run_drivers_filters_or_signing(self):
         # Fable review of 7fbe079: only GIT_CONFIG_GLOBAL/NOSYSTEM stop these, as in the publisher.
@@ -1393,7 +1893,31 @@ PIPELINES = {
 }
 
 
+# Samir's review of #231 at 7f06a3b: each alternative of the package step's credential grep has a
+# case that it alone matches, so removing any one alternative fails the test.
+ISOLATED_CREDENTIALS = {
+    "userinfo": ("remote.origin.url", "https://someone:notatoken@github.com/acme/example.git"),
+    "access-token-user": ("credential.https://github.com.username", "x-access-token"),
+    # The actions/checkout layout, with a value that is not token-shaped.
+    "extraheader": ("http.https://github.com/.extraheader", "AUTHORIZATION: basic bm90YXRva2Vu"),
+    "pat": ("credential.https://github.com.password", "github_pat_NotARealToken"),
+    "token-shape": ("credential.https://github.com.password", TOKEN),
+}
+
+
 class WorkflowWiringTests(unittest.TestCase):
+    def test_mention_trigger_responses_use_comments_and_finding_replies_use_roots(self):
+        action = next(s for s in jobs("claude.yml")["claude-mention"]["steps"]
+                      if s.get("uses", "").startswith("anthropics/claude-code-action@"))
+        prompt = action["with"]["prompt"]
+        self.assertIn("For every response to the triggering comment, including failures and no-change results, "
+                      "use comment BODY_FILE.", prompt)
+        self.assertIn("Respond to the triggering comment with a top-level PR comment", prompt)
+        self.assertIn("If there is nothing to change, queue a top-level PR comment", prompt)
+        self.assertNotIn("queue a reply to the triggering comment", prompt)
+        self.assertIn("-- reply ROOT_COMMENT_ID BODY_FILE", prompt)
+        self.assertIn("A reply accepts only a root review-comment ID on this PR", prompt)
+
     def test_conflict_writer_devin_race_check_reads_author_and_committer(self):
         text = (ROOT / ".github/workflows/claude-conflict-writer.yml").read_text(encoding="utf-8")
         line = next(l for l in text.splitlines() if l.strip().startswith('head_author="$(gh api'))
@@ -1455,12 +1979,25 @@ class WorkflowWiringTests(unittest.TestCase):
         # Runs each model job's real package script against a repo, with a git wrapper that can fail `bundle`.
         for name, _prep, model, _pub, _group, ids in self.pipelines():
             script = [s for s in model["steps"] if s.get("name") == "Package untrusted model output"][0]["run"]
-            for case in ("unchanged", "bundled", "failed"):
+            for case in ("unchanged", "bundled", "failed", "credential", "helper", "big", "unreadable",
+                         *ISOLATED_CREDENTIALS):
                 with self.subTest(workflow=name, job=ids[1], case=case), tempfile.TemporaryDirectory() as tmp:
                     root = Path(tmp)
                     work = Work(root / "repo")
                     subprocess.run(["git", "init", "-q", "-b", "main", str(work.path)], env=git_env(), check=True)
                     head = work.commit({"a.txt": "a\n"}, message="head")
+                    # CSL-412: the action's credential-helper layout is clean; a token in the URL is not.
+                    url = ("https://x-access-token:" + TOKEN + "@github.com/acme/example.git" if case == "credential"
+                           else "https://github.com/acme/example.git")
+                    work.git("remote", "add", "origin", url)
+                    if case == "helper":
+                        work.git("config", "credential.helper", str(root / ".git-credential-gh-token"))
+                    if case in ISOLATED_CREDENTIALS:
+                        work.git("config", *ISOLATED_CREDENTIALS[case])
+                    if case == "big":  # Fable review of 7d56eb8: a hit before >64 KiB of config still fails
+                        work.git("config", "remote.origin.url", "https://x-access-token:" + TOKEN + "@github.com/a/b.git")
+                        for index in range(1500):
+                            work.git("config", "--add", "filler.value", f"{index:04d}" + "x" * 60)
                     if case != "unchanged":
                         work.commit({"a.txt": "b\n"}, message="model fix")
                     shim = root / "bin"
@@ -1468,15 +2005,20 @@ class WorkflowWiringTests(unittest.TestCase):
                     real_git = shutil.which("git")
                     (shim / "git").write_text("#!/bin/sh\n"
                                               + ('for a in "$@"; do [ "$a" = bundle ] && exit 1; done\n' if case == "failed" else "")
+                                              # git config fails (only the listing): fail closed, not clean
+                                              + ('[ "$1" = config ] && exit 1\n' if case == "unreadable" else "")
                                               + f'exec "{real_git}" "$@"\n')
                     (shim / "git").chmod(0o755)
                     output = root / "output"
                     env = dict(git_env(), PATH=f"{shim}{os.pathsep}{os.environ['PATH']}", RUNNER_TEMP=str(root),
                                GITHUB_OUTPUT=str(output), HEAD_SHA=head, BASE_SHA=head, EXECUTION_FILE="")
                     subprocess.run(["bash", "-c", script], cwd=work.path, env=env, check=True, capture_output=True)
-                    self.assertEqual(output.read_text(), f"package_status={case}\n")
+                    expected = ("failed" if case in ISOLATED_CREDENTIALS else
+                                {"credential": "failed", "helper": "bundled", "big": "failed",
+                                 "unreadable": "failed"}.get(case, case))
+                    self.assertEqual(output.read_text(), f"package_status={expected}\n")
                     bundle = root / "claude-writer-out" / "candidate.bundle"
-                    self.assertEqual(bundle.exists(), case == "bundled")
+                    self.assertEqual(bundle.exists(), expected == "bundled")
 
     def test_model_jobs_scrub_credentials_and_run_no_repository_code(self):
         # Chaandan's review at 5f904c3: PR code must not run next to the OAuth token.

@@ -6,6 +6,12 @@
     "context7": {
       "url": "https://mcp.context7.com/mcp"
     },
+    "exa": {
+      "url": "https://mcp.exa.ai/mcp",
+      "headers": {
+        "x-api-key": "${env:EXA_API_KEY}"
+      }
+    },
     "linear": {
       "url": "https://mcp.linear.app/mcp"
     },

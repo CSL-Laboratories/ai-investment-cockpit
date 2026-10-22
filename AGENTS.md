@@ -315,11 +315,15 @@ provisioned.
 Prefer the project `parallel-search` MCP server (`web_search` / `web_fetch`) for web lookups.
 It is declared in `.cursor/mcp.json` (Cursor) and `.mcp.json` (Claude Code); no API key is required.
 Search/Extract is for lookups. Assignee decision/direction work also needs the Task API — see Linear-first.
+Use the `exa` MCP server only for substantial deep research (multi-source investigations,
+`agent_run` research tasks); Parallel stays the default for quick lookups and current web facts.
+Exa is billable and capped; see the Exa MCP entry below.
 
 ## Engineering stack (Oct 2026)
 
 - **Parallel Search MCP** — web search and fetch at https://search.parallel.ai/mcp (no key).
 - **Context7 MCP** — up-to-date library docs at https://mcp.context7.com/mcp (works without a key).
+- **Exa MCP** — substantial deep research: multi-source investigations and `agent_run` research tasks. Parallel stays the default for quick lookups and current web facts. Declared in `.cursor/mcp.json` and `.mcp.json` (https://mcp.exa.ai/mcp). The key goes in the `x-api-key` header from env var `EXA_API_KEY` (Cursor `${env:EXA_API_KEY}`, Claude Code `${EXA_API_KEY:-}`, so a missing key falls back to Exa's free rate-limited mode instead of breaking the file) and lives only in each environment's secret settings, never in tracked files, prompts, chat or logs. Capped at $50 per person per month (Lucas's decision, CSL-378 comment ff7227ac). Start a billable run only when it keeps you under the cap, and record each run's cost in its research record. Same query rules as Parallel: keep queries generic, with no secrets, proprietary code or private data.
 - **Linear MCP** — issues, comments, and status at https://mcp.linear.app/mcp (or the Devin Linear integration).
 - **Linear** — source of truth for work. Workspace **CSL laboratories**, team key **CSL**, project **ai-investment-cockpit**.
 - **GitHub** — org **CSL-Laboratories**.

@@ -31,8 +31,11 @@ Each Claude writer is a pipeline of three jobs that share the per-PR
   receipt consumer to `RUNNER_TEMP` and runs them with `python3 -I`. The
   publisher mints the Claude App token like claude-code-action (OIDC audience
   `claude-code-github-action`, Anthropic token exchange), masks it, never
-  prints it and revokes it in a `finally` block. A workflow-validation refusal
-  is a fail-closed skip with a notice.
+  prints it and revokes it in a `finally` block. It mints only after the bundle
+  has been fetched, checked and validated and the live head rechecked (or, with
+  no bundle, just before posting queued writes), so no App token exists while
+  untrusted objects are parsed (CSL-405). A workflow-validation refusal is a
+  fail-closed skip with a notice.
 
 The publisher refuses everything when the live PR is closed, on another
 branch or repository, has moved from the recorded head, carries `claude:pause`
@@ -46,8 +49,10 @@ queued write unless that status matches the artifact, so a failed
 `git bundle create` cannot look like a run without commits. It fetches the recorded head into a fresh bare
 repository (no system/global config, hooks or fsmonitor; the credential travels
 in environment-scoped config, never argv or disk), verifies and fetches the
-bundle, runs `git fsck` on every object (`.`, `..` and `.git` tree entries are
-errors), and accepts at most 20 new commits that:
+bundle (no submodule recursion on any fetch; the bundle fetch allows only the
+local `file` transport), runs `git fsck` on every object (`.`, `..` and `.git`
+tree entries, slash-containing or empty names, bad modes and null object IDs
+are errors), and accepts at most 20 new commits that:
 
 - descend linearly from the recorded head (conflict job: exactly one merge
   commit whose parents are the recorded head and recorded base, and the base
@@ -97,9 +102,28 @@ lists with no model-supplied options, no shell, hooks, fsmonitor or pager:
 `head` (`log -1 --stat`), and in the conflict job `conflicts`
 (`diff --name-only --diff-filter=U`) and `merge-abort`. `commit MSGFILE` reads
 the message from `.claude-fixer-replies/NAME.txt` with the comment-body checks,
-stages every change except `.claude-fixer-out` and `.claude-fixer-replies`,
-runs `git commit --no-verify -q -m <message>` (completing the merge in the
-conflict job) and prints the full new `HEAD`. Its install step makes the helper
+stages every change except the sandbox's masks, then unstages
+`.claude-fixer-out` and `.claude-fixer-replies` with `git reset`. Claude Code
+binds `/dev/null` over protected paths that do not exist, such as `.bashrc`,
+`.idea` or `.mcp.json`, and `git add` refuses those devices. An untracked path
+that is not a regular file or symlink, or an empty top-level leftover of one of
+those names, is skipped. A tracked path that became a device was deleted, so
+the commit is refused before anything is staged, rather than dropping it. The
+helper directories are not `:(exclude)` pathspecs: the model job lists them in
+`.git/info/exclude`, and `git add` exits 1 when a pathspec names an ignored
+path, which failed every commit in the second canary run (39569528483). When
+the job's event made claude-code-action restore config from the base branch (a
+PR comment or review event: `isEntityContext && isPR` in the pinned action), it
+also unstages those paths (`.claude`, `.mcp.json`, `.claude.json`,
+`.gitmodules`, `.ripgreprc`, `CLAUDE.md`, `CLAUDE.local.md`, `.husky`): the
+worktree holds the base's versions there, so staging them would revert the PR's
+files, and the publisher would refuse the protected ones and drop the run. A
+model edit to those paths in such a run is therefore not committed. The install
+step records this from `GITHUB_EVENT_NAME` before Claude runs. Workflow and
+repository dispatch runs and the conflict job get no restore, so their edits,
+and a base-side change in a conflict merge, are kept. Then
+`commit` runs `git commit --no-verify -q -m <message>` (completing the merge in
+the conflict job) and prints the full new `HEAD`. Its install step makes the helper
 directory root-owned, with the directory and helper `0755` and its context and
 token `0644`, and checks the owner, so Claude's commands (as the runner user) can
 run and read it but cannot replace it. Lint and tests run in the required
@@ -120,7 +144,15 @@ add a GitHub (`ghp_`/`gho_`/`ghs_`/`ghu_`/`ghr_`/`ghv_`, `github_pat_`) or
 Anthropic (`sk-ant-`) token shape, or an added or modified path containing one, and an
 outbox body that contains one. An encoded or split copy (base64, or a string
 broken across lines) would pass that scan; the job token it could carry is read-only and
-already revoked when the model job ends, before publish runs. Claude Code turns
+already revoked when the model job ends, before publish runs. The action's
+credential helper and its exact-match permission bypass are its own behaviour,
+so every `anthropics/claude-code-action` use is pinned to a full commit SHA
+(v1.0.256, CSL-412). The fixer-failure escalation binds to that same reference,
+and a bump must recheck both behaviours. Each model job's package step also fails the
+package (`package_status=failed`, so publish refuses everything) when any git
+config scope it can list holds a credential: a token or userinfo in a URL, an
+`x-access-token`, a GitHub token shape or an authorization header. Every run
+therefore checks that the action left the job token out of `.git/config`. Claude Code turns
 `Read(...)`/`Edit(...)` deny rules into sandbox denies for Bash too, so the
 model jobs deny writes only to the `.git` paths git can be made to execute or
 redirect through (hooks, config, info, commondir, modules, worktrees), never

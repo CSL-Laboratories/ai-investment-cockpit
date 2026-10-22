@@ -44,7 +44,7 @@ class EvidenceTests(unittest.TestCase):
                     "head_repository": {"full_name": REPO}, "pull_requests": [{"number": 7}]}
         self.job = {"id": 123, "run_id": 10, "run_attempt": 1, "name": "devin-review-fix", "status": "completed", "conclusion": "failure",
                     "steps": [{"number": 8, "name": m.CONTEXT_PREFIX + HEAD + ":" + self.key["fingerprint"], "conclusion": "success"},
-                              {"number": 9, "name": "Run anthropics/claude-code-action@v1", "conclusion": "failure"}]}
+                              {"number": 9, "name": f"Run {m.ACTION_USES}", "conclusion": "failure"}]}
         self.calls = []
         self.active = 0
         self.private = False
@@ -316,6 +316,17 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(self.collect(), {})
         self.assertEqual(len(m.receipts.findings(self.threads, self.comments)), 1)
         self.assertEqual(m.receipts.attempt_count(self.history, m.receipts.attempt_key("b" * 40, self.items)), 0)
+
+    def test_every_claude_action_use_is_pinned_to_the_escalation_sha(self):
+        # CSL-412: a moving tag could change the action's git-auth and permission behaviour
+        # unseen; the pinned ref also names the step escalation binds to.
+        import re
+        self.assertRegex(m.ACTION_USES, r"\Aanthropics/claude-code-action@[0-9a-f]{40}\Z")
+        uses = []
+        for path in sorted((ROOT / ".github/workflows").glob("*.y*ml")):
+            uses += re.findall(r"uses:\s*[\"']?(anthropics/claude-code-action@[^\s\"'#]*)", path.read_text(encoding="utf-8"))
+        self.assertGreaterEqual(len(uses), 3)
+        self.assertEqual(set(uses), {m.ACTION_USES})
 
     def test_workflow_emits_context_from_actual_locked_eligibility_and_embeds_consumer(self):
         import re

@@ -1,6 +1,6 @@
 # CSL-377 canary
 
 Scratch file for the CSL-377 post-merge canary (runbook: Linear document
-0ac0c9ba624f). It exists only on the canary PR and is never merged.
+0ac0c9ba624f). On main it exists only for the conflict trial; a reviewed cleanup PR removes it.
 
-The Claude writer should receive one request to fix the typo in this sentence.
+The conflict trial changed this sentence on main so that canary PR #227 conflicts here.

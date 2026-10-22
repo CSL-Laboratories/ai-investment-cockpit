@@ -1,6 +1,6 @@
 # CI event-to-check contract
 
-Contract version: v2.1 (2026-10-21), a correction to v2. v2 records CSL-408 (#224): every job now runs on a free GitHub-hosted runner. The test jobs moved from Blacksmith to `ubuntu-24.04` and `windows-2025`, and the Windows cells' timeout went from 30 to 50 minutes. Event rows, conditions and required checks are unchanged from v1. v2.1 re-pins the `AGENTS.md` citations after #217, cites the first post-merge runs, widens the [O] legend to dated runs, and corrects what a `GITHUB_TOKEN` push starts (section 7).
+Contract version: v2.4 (2026-10-21), a patch that re-pins the `claude.yml` and `claude-conflict-writer.yml` citations after #238 (CSL-377), with no row change (see the v2.4 base below). v2.3 (2026-10-21), a patch that re-pins the `claude.yml` and `claude-conflict-writer.yml` citations after #231, #232 and #233 and the `AGENTS.md` citations after #235, with no row change (see the v2.3 base below). v2.2 (2026-10-21) was a patch to v2 that records merged workflow changes without a row change. v2.2 records #216 (CSL-352/CSL-377) in section 7 and the concurrency table: the Claude fixer's restructured jobs, the new conflict-writer workflow, the human pause and the `@claude` eight-commit guard; it re-pins every `claude.yml` citation. No event-matrix row, required check or aggregation changes. Earlier: v2 records CSL-408 (#224): every job now runs on a free GitHub-hosted runner. The test jobs moved from Blacksmith to `ubuntu-24.04` and `windows-2025`, and the Windows cells' timeout went from 30 to 50 minutes. Event rows, conditions and required checks are unchanged from v1. v2.1 re-pins the `AGENTS.md` citations after #217, cites the first post-merge runs, widens the [O] legend to dated runs, and corrects what a `GITHUB_TOKEN` push starts (section 7).
 
 **Versioning.** Any change to a workflow, `scripts/ci/**`, a required check or the rulesets
 that changes a row here updates this file in the same PR. Bump the version for a semantic
@@ -8,8 +8,11 @@ change (v1 → v2) and the patch for a correction (v1.1). Record the new base co
 count merged changes; edits made during a PR's own review are part of that version. Tracked
 under CSL-255 / CSL-385.
 
+- **Base commit (v2.4):** the merge of #238 (CSL-377: stage without the ignored helper directories, and unstage the action's restored paths only on events where the action restores them), traced at #238 head `447a1c16f39dd0c3fe760bdc5227f09aaf120aad` on main `26fc9dda`. #238 changed `claude.yml` and `claude-conflict-writer.yml` and makes no contract row change. Every line number below that cites those two files is re-pinned, 45 numbers or ranges in all, counting bare continuations. A line-sequence diff of each file from `26fc9dda` to `447a1c16` puts every cited line in an unchanged region, and a second pass that pairs all 75 citations (109 line numbers) finds identical text at each. No other line-cited file changed.
+- **Base commit (v2.3):** main `26fc9dda2658918a0477e16d2003ccb6f03a79b5` (merge of #235, CSL-378). #235 added four `AGENTS.md` lines (three after line 317, one after line 322), so the `AGENTS.md` citations below line 322 moved down by 4 (360-373 → 364-377, 368 → 372, and the runner-label pair in the v2 note, 364 and 367 → 368 and 371) and point at identical text; it also changed `.mcp.json` and `.cursor/mcp.json`, which are not cited. Before #235 the v2.3 base was main `42cff983ec4e866507399a0a804f42ba4de85d5b` (merge of #230, CSL-416). Since v2.2, #231 (CSL-412: the Claude action pinned by SHA, plus a git-config credential check in each model package step), #232 (CSL-405: the App token minted after bundle validation; fetch and fsck hardening) and #233 (CSL-377: the model helper's commit skips the sandbox's `/dev/null` masks) changed `claude.yml` and `claude-conflict-writer.yml`. Each of those PRs says "no contract row changes". Every line number below that cites those two files is re-pinned: 45 numbers or ranges, counting the bare numbers that continue an earlier `file:line` citation in the same sentence (for example "(1372-1400)" in section 7). A line-sequence diff of each file against the v2.2 base puts every cited line in an unchanged region, so each points at identical text. No other line-cited file changed (#230 added `docs/ci-runbook.md` and tests, which are not cited by line).
+- **Base commit (v2.2):** main `38f4790cc3b55ec19dda1aec5920b5474f089fae` (merge of #229, CSL-415). #229 replaced `AGENTS.md` line 171 with four lines, so the `AGENTS.md` citations below moved down by 3 more (284-299 → 287-302, 357-370 → 360-373, 365 → 368) and point at identical text; it also changed `.claude/skills/proceed-or-escalate/SKILL.md`, which is not cited. Before #229 the base was main `878a6859d22d3d440d5a35b4a1f6f60e58172792` (merge of #226). Since v2.1, #216 (CSL-352/CSL-377) rewrote `claude.yml`, `conflict-scan.yml` and the fixer scripts, added `claude-conflict-writer.yml` and added three `AGENTS.md` lines after line 480; #225 (CSL-390) added one `AGENTS.md` line after line 370 and changed no other cited file. Every `claude.yml` citation below is re-pinned to this base. Those #216/#225 insertions sit below every `AGENTS.md` citation, so they moved none. No other line-cited file changed.
 - **Base commit (v2.1):** main `f6a9a3c56f008599a3c0b9fb766597599c0567d0` (merge of #217). #217 (CSL-354) changed `AGENTS.md` line 49 and added 123 lines after line 58, so the `AGENTS.md` citations below moved down by 123 and point at identical text; no other cited file changed (#217 also changed `CLAUDE.md` and added `.claude/skills/proceed-or-escalate/SKILL.md`; neither is cited here).
-- **Base commit (v2):** main `b29ef6d5` (merge of #221) plus the CSL-408 runner change in #224. #224 keeps the line counts of `ci.yml`, `rust.yml`, `AGENTS.md` and `tools/ci_runner_cost.py`. The only cited lines whose text changes are the runner labels (ci.yml:352, 609, 822; rust.yml:282-283, 287-288), the benchmarks comment (ci.yml:21-23) and `AGENTS.md`:238 and 241 (now 361 and 364 after #217). Every other v1 citation still holds.
+- **Base commit (v2):** main `b29ef6d5` (merge of #221) plus the CSL-408 runner change in #224. #224 keeps the line counts of `ci.yml`, `rust.yml`, `AGENTS.md` and `tools/ci_runner_cost.py`. The only cited lines whose text changes are the runner labels (ci.yml:352, 609, 822; rust.yml:282-283, 287-288), the benchmarks comment (ci.yml:21-23) and `AGENTS.md`:238 and 241 (now 368 and 371 after #217, #229 and #235). Every other v1 citation still holds.
 - **Base commit (v1):** `578a8ca8` (`main`, merge of #223). The rows were traced at `7b0dcf27` (#215). Since then:
   - #220 (CSL-383) added three lines in two places in `claude.yml` and once in `conflict-scan.yml`.
   - #222 (CSL-393) added 15 lines to `AGENTS.md` item 6.
@@ -26,7 +29,7 @@ under CSL-255 / CSL-385.
   [candidate readiness](ci-candidate-readiness.md),
   [cost budget](ci-cost-budget.md),
   [queue rollout](ci-queue-rollout.md),
-  [AGENTS.md Hosted CI](../AGENTS.md#hosted-ci) (AGENTS.md:357-370).
+  [AGENTS.md Hosted CI](../AGENTS.md#hosted-ci) (AGENTS.md:364-377).
 
 ## Evidence classes
 
@@ -82,7 +85,7 @@ The org ruleset's bypass actors are unverified ([I], line 42); this reasoning do
 
 The following run on free GitHub-hosted runners in this public repo: `filter`, `settle`, the
 aggregates, `macos` and the Rust macOS cell (`macos-latest`), and all of ci-label-retrigger.yml, codex-gate.yml,
-review-gate.yml, claude.yml, conflict-scan.yml, pr-lint.yml, linear-pr-sync.yml and
+review-gate.yml, claude.yml, conflict-scan.yml, claude-conflict-writer.yml, pr-lint.yml, linear-pr-sync.yml and
 stuck-thread-watch.yml (`runs-on: ubuntu-latest`).
 
 **No exception since CSL-408.** In v1 the team rule was that test jobs run on Blacksmith, and the
@@ -92,7 +95,7 @@ Since CSL-408 every test job is GitHub-hosted, so macOS is no longer an exceptio
 which would have moved macOS to Blacksmith, was canceled by Lucas's decision.
 
 **Correction to the task brief:** claude.yml has **no Blacksmith runner** at the base
-commit. Its jobs use `ubuntu-latest` (claude.yml:90, 504, 534, 561, 1318). [O] Across the
+commit. Its jobs use `ubuntu-latest` (claude.yml:93, 506, 537, 566, 788, 1520, 3025, 3842, 4580). [O] In v1, across the
 last 60 claude.yml runs, all 13 jobs that started used `ubuntu-latest`. See section 7.
 
 ## 3. Event matrix
@@ -199,12 +202,12 @@ This job runs only for candidate dispatch. It requires `scope=full`, filter `suc
 | ci-label-retrigger, `workflow_run` | `ci-cancel-controller-<run_id>` (unique) | true (no-op) | `single` (omitted; GitHub's default) |
 | ci-label-retrigger, `labeled` | `ci-label-retrigger-<wf>-<PR>-<head>-<label>` | true | `single` (omitted; GitHub's default) |
 | review-gate | `review-gate-<PR or ref>` | true | `single` (omitted; GitHub's default) |
-| claude.yml fixer jobs | `claude-<PR>` (job level) | false | `max` |
+| claude.yml writer jobs and claude-conflict-writer.yml | `claude-<PR>` (job level) | false | `max` |
 
 Sources: [S] ci.yml:94-97; rust.yml:82-88; ci-label-retrigger.yml:24-28; review-gate.yml:23-25;
-claude.yml:557-560, 1314-1317. Pending-run caps ([GitHub workflow syntax, `concurrency`](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#concurrency)):
-`queue: max` keeps up to 100 pending runs in queue order (PR and candidate groups, the claude
-fixer); `queue: single` keeps one pending run and cancels the previous pending one (push,
+claude.yml:562-565, 784-787, 1516-1519, 3021-3024, 3838-3841, 4576-4579; claude-conflict-writer.yml:34-37, 128-131, 885-888. Pending-run caps ([GitHub workflow syntax, `concurrency`](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#concurrency)):
+`queue: max` keeps up to 100 pending runs in queue order (PR and candidate groups, the Claude
+writers in claude.yml and claude-conflict-writer.yml); `queue: single` keeps one pending run and cancels the previous pending one (push,
 schedule, manual and label groups). GitHub rejects `queue: max` with `cancel-in-progress: true`;
 ci.yml:96-97 never pairs them.
 
@@ -319,25 +322,53 @@ At the base commit these ran locally (Python 3.13):
 
 ## 7. Paid workloads outside CI admission
 
-- **claude.yml (Reliability lane):**
+- **claude.yml (Reliability lane; restructured by #216, CSL-352/CSL-377):**
   - Triggers: workflow_dispatch, repository_dispatch `devin-review-fix`, issue_comment,
     pull_request_review_comment, pull_request_review, and `pull_request` limited to fixer and
-    gate paths (claude.yml:3-43).
-  - Jobs: `resolve-pr`, `event-paths`, `forward-conflict-scan`, `claude-mention` and
-    `devin-review-fix`. All run on `ubuntu-latest` (claude.yml:90, 504, 534, 561, 1318), so
-    there is **no test-runner compute**.
-  - Model usage goes through `CLAUDE_CODE_OAUTH_TOKEN` (claude.yml:1085, 2413; subscription
-    route per ci-cost-budget.md:57-58). Each fixer installs the full runtime and runs
-    `ruff` and `pytest` on the free runner (claude.yml:731, 1118-1119).
-  - [O] Fixer pushes (`git push origin HEAD:refs/heads/<branch>`, claude.yml:1146) emit
-    `synchronize` and start ordinary paid CI (rows 4-5). The `ci` runs on fixer commits
-    were started by `claude[bot]` about 12 s after each commit: 39354662754 (#212
-    `8ede5ff793`), 39353490459 (#208 `571cb1ce11`) and 39079041390 (#199 `e875f2b8c3`).
-    [I] So the push credential is the Claude app, not the checkout `GITHUB_TOKEN`: its `synchronize`
-    would create approval-required runs that start only when a writer approves them (GitHub docs, triggering a workflow), and these started about 12 s after the commit with no approval observed.
-  - The eight-commit guard (`cap` step, claude.yml:1462) bounds only the automated
-    `devin-review-fix` job. `claude-mention` has no equivalent cap, so repeated authorized
-    `@claude` requests can push, and start paid `synchronize` runs, without that limit.
+    gate paths (claude.yml:3-46).
+  - Jobs: `resolve-pr`, `event-paths`, `forward-conflict-scan`; the `@claude` path
+    `mention-prepare` → `claude-mention` → `mention-publish`; the Devin path `fixer-prepare` →
+    `devin-review-fix` → `fixer-publish`. All run on `ubuntu-latest` (claude.yml:93, 506, 537,
+    566, 788, 1520, 3025, 3842, 4580), so there is **no test-runner compute**. conflict-scan.yml
+    calls `claude-conflict-writer.yml` once per selected PR, at most three per scan (`MAX_PRS = 3`; the rest are marked `over-cap`, conflict-scan.yml:80, 179-180, 371) with the same
+    prepare → model → publish split, also on `ubuntu-latest` (claude-conflict-writer.yml:38, 132, 889).
+  - Model usage goes through `CLAUDE_CODE_OAUTH_TOKEN` (claude.yml:1211, 4266; subscription
+    route per ci-cost-budget.md:57-58). The model jobs install the runtime (claude.yml:828-830,
+    3882-3884), but the model's only shell command is a fixed helper for git reads, GitHub reads
+    and a local commit; writes are queued to an outbox, and `git push` is disallowed
+    (claude.yml:843-862, 1309-1310, 4369-4370). No claude.yml step runs `pytest` or `ruff`: the
+    model jobs still install them ("Install acceptance-gate deps", claude.yml:828-830, 3882-3884) but
+    cannot invoke them, and `event-paths` (claude.yml:512-528, only on PRs that touch the fixer's
+    paths) runs the fixer's own `tools/test_*.py` scripts under `python3` plus actionlint.
+  - [S] Pushes come only from the model-free publish jobs. Each mints a Claude App token through
+    the OIDC exchange (`mint_app_token`, claude.yml:2232-2270, 5293-5331; claude-conflict-writer.yml:1603-1641;
+    `id-token: write` at claude.yml:1526, 4586; claude-conflict-writer.yml:895)
+    and pushes one ordinary fast-forward, no force (claude.yml:2681-2682, 5743;
+    claude-conflict-writer.yml:2053). [I] An App-token push emits `synchronize` and starts
+    ordinary CI (rows 4-5) without the approval step a `GITHUB_TOKEN` push would need (GitHub
+    docs, triggering a workflow). [O] Before #216, `ci` runs on fixer commits were started by
+    `claude[bot]` about 12 s after each commit: 39354662754 (#212 `8ede5ff793`), 39353490459
+    (#208 `571cb1ce11`) and 39079041390 (#199 `e875f2b8c3`). [O] After #216, run 39546148972 (#228,
+    `pull_request_review`, 2026-10-21) lists the nine jobs, all `ubuntu-latest`; `resolve-pr` and
+    `fixer-prepare` ran and the model and publish jobs were skipped. Run 39546857350 (#227,
+    `issue_comment`, 2026-10-21) reached `mention-publish`, which succeeded after posting one queued
+    write without pushing. No post-#216 fixer push has been observed, so the App-token push remains [I].
+  - Human pause (#216): a `claude:pause` or `hold` label on the PR, or the repository variable
+    `CLAUDE_FIXER_PAUSE=true` for every PR, stops the writers before any checkout or reservation
+    (`mention-prepare` claude.yml:603-606, 654-662, 701; `fixer-prepare` claude.yml:3068-3070, 3119-3127,
+    3166; conflict-writer `prepare` claude-conflict-writer.yml:72-84; the scan never selects a paused PR,
+    conflict-scan.yml:78-79, 167-168, 333-334) and is rechecked by the publishers (claude.yml:2127,
+    2322-2331, 5188, 5383-5392; claude-conflict-writer.yml:1498, 1693-1702).
+  - The eight-commit guard now covers both claude.yml writers: the `cap` step in `fixer-prepare`
+    for the Devin path (claude.yml:3242-3282) and the `mention-prepare` streak check for `@claude`
+    (claude.yml:726-731, `LOOP_CAP = 8` at 606). v2.1 said `claude-mention` had no cap; that is no
+    longer true. **The conflict writer has no eight-commit guard and no cross-run attempt budget.**
+    Its receipts helper defines `MAX_ATTEMPTS = 3` (claude-conflict-writer.yml:924), but only that
+    helper's `main()` checks it (1389-1417), and nothing in the workflow runs it: `prepare` reserves no
+    attempt, and `publish.py` loads the helper as a module (2244-2247). Each run is bounded only to one
+    publish attempt (2262, 2338-2347) and one validated merge commit (650). conflict-scan.yml starts it
+    on the two-hourly schedule and on manual dispatch, never on a `main` push (conflict-scan.yml:12-14,
+    355), so a PR that stays conflicted can receive a Claude merge attempt on every scheduled scan.
 - **Legacy Codex READY label (active):**
   - With `CANDIDATE_COORDINATOR` not `true`, the legacy job adds `ci:full` through
     `CODEX_TRIGGER_PAT` (codex_gate.py:7, 84, 1350-1356; codex-gate.yml:53-87).
@@ -390,12 +421,12 @@ At the base commit these ran locally (Python 3.13):
 | G5 | Stale workflow comments: ci.yml:316-319 (settle relies on #157 concurrency cancel), ci.yml:17 and 718-719 ($50 budget, superseded by ci-cost-budget.md:48-50; CSL-408 removed the benchmarks cost note that was at ci.yml:21-23), ci.yml:515-516 (`queue-gates` "required"). | [S] | Comment-only fix in a human-assigned workflow issue. |
 | G6 | `merge_group` paths and `queue-gates` are untested live. The merge queue is not enabled. | [O] | Covered by the ci-queue-rollout.md activation sequence. |
 | G7 | A PR created with `ci:full` or `enhancement` gets both `opened` and `labeled`, which means an ordinary run plus a label dispatch (duplicate full matrix). | [I] | Observe once (read-only) and record. |
-| G8 | `ci:full` added by a founder or Devin persists, so every later qualifying push runs Windows and macOS, plus Rust Windows and Rust macOS (subject to the path filters, section 7). The legacy READY label is gate-owned and is cleared on the next push, after one full-matrix run. | [S]+[O] | Addressed by the AGENTS.md CI-etiquette rule merged at this base (CSL-393, #222; AGENTS.md:284-299): remove a manual `ci:full` once its full run passes and no further automatic READY is needed. A manual removal holds READY and, with the candidate coordinator on, candidate runs and MEDIATE handoffs. Recursion's equivalent merged as CSL-395 (#259), and its human-hold caveat as CSL-403 (#261). |
+| G8 | `ci:full` added by a founder or Devin persists, so every later qualifying push runs Windows and macOS, plus Rust Windows and Rust macOS (subject to the path filters, section 7). The legacy READY label is gate-owned and is cleared on the next push, after one full-matrix run. | [S]+[O] | Addressed by the AGENTS.md CI-etiquette rule merged at this base (CSL-393, #222; AGENTS.md:287-302): remove a manual `ci:full` once its full run passes and no further automatic READY is needed. A manual removal holds READY and, with the candidate coordinator on, candidate runs and MEDIATE handoffs. Recursion's equivalent merged as CSL-395 (#259), and its human-hold caveat as CSL-403 (#261). |
 | G9 | The task brief said claude.yml has Blacksmith runners. It does not at the base commit. Its paid effect is indirect, through pushes that trigger CI. | [S]+[O] | Correct the brief and the Reliability-lane notes. |
 | G10 | GitHub rerun semantics (payload reuse, concurrency re-entry, and which dependents a failed-only or single-job rerun re-executes) have not been observed. | [I] | Record the next real rerun. |
 | G11 | Duplicate controller cancel POSTs (4 per target observed) consume API budget. Harmless today. | [O] | None required. Note it in the controller doc if budget pressure appears. |
 | G12 | Main-push groups cancel in progress, so a fast second merge cancels the first fallback run and the minutes already spent are lost. The old main SHA's `linux-gates` outcome depends on timing, as in row 21: no check if no job had started (a), red if a gate dependency was cancelled (b), green if `linux-gates` had already passed while only Windows was still running (c; `benchmarks` runs only on `pull_request`, ci.yml:821), and red only if the cancel lands while `linux-gates` itself is running and `cancelled()` is true for its reject step (d). | [I] | Observe. It is consistent with "keep fallback" but undocumented. |
-| G13 | The nightly schedule ran about 5.5 h late (created 12:44Z for the 07:17 cron). | [O] | Note in AGENTS.md:365 that schedule time is best-effort. |
+| G13 | The nightly schedule ran about 5.5 h late (created 12:44Z for the 07:17 cron). | [O] | Note in AGENTS.md:372 that schedule time is best-effort. |
 | G14 | Fork PRs can start test jobs in ci.yml and rust.yml (no fork guard; free since CSL-408, but they use capacity). Exposure depends on the unverified fork-approval setting. | [I] | Lucas set "Require approval for all external contributors" in both repos, 2026-10-20 (relayed; not readable from this session). |
 | G15 | Org-level ruleset listing (`gh api orgs/CSL-Laboratories/rulesets`) is blocked in this session. The org ruleset was read through the repo-scoped endpoints `rulesets/25015519` and `rules/branches/main`. | [O] | None. Repo-scoped effective rules are authoritative for `main`. |
 | G16 | **Docs-only green no-op: fixed by CSL-397 (#223, merged at this base).** The filter now runs tests for everything under `app/` (including the LLM prompts `app/workflows/prompts/*.md`), the 21 test-read files from the CSL-392 audit, and `.gitignore` (ci.yml:303-307). It diffs with `--no-renames` (ci.yml:277), so renaming a test-read file still runs tests. `tools/test_ci_docs_filter.py` runs the real decide script and fails if a test references a file the filter skips; it runs in the required `linux` job (ci.yml:443). Residual: plain docs that no test reads still skip, as intended, and the static guard can't see dynamically built paths. The pre-fix description follows, cited at the previous base `be97ff3b` because this base no longer behaves this way. The PR filter marked `docs/` and `*.md` changes (apart from the listed swarm dirs and `.py`/`.json`/`.yaml`) as no-test (`be97ff3b` ci.yml:288-300). `linux-gates` then passes with `linux` skipped (section 4, step 4). `git grep -E "\.md['\"]" -- 'app/tests/*.py' 'tools/test_*.py'` prints 69 matching lines in 17 files; many are temporary paths (`comment.md`, `brief.md`) ([O]). Concrete cases: `app/tests/test_o7_operator_contract.py:51-54` hashes four `docs/replacement/*.md` contracts, and `app/tests/system/test_rw01_market_day.py:771` reads `docs/setup/accounts-and-keys.md`. A change to only those docs gets a green required check without the tests that read them, the same class recursion fixed in CSL-376. Code cannot skip this way: any `.py` change forces `run-tests`. The risk of a Rust PnL change landing untested belongs to G1 (`rust-gates` is advisory), not to this regex. | [S]+[O] | Audited in CSL-392 (21 test-read files, including the LLM prompts). Fixed by option B, CSL-397 (#223): `app/**` and the test-read docs always run tests, plus a guard test. |
