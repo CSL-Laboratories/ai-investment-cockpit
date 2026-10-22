@@ -125,13 +125,13 @@ which you find only by its `<!-- stuck-pr-threads:owner/repo#N -->` marker (neve
 title), writing inside your own block. Product and architecture questions stay on
 the work issue.
 
-If you are the assignee of a decision or direction issue, the Parallel Task API
+If you are the assignee or the claimant of a decision or direction issue, the Parallel Task API
 brief in AGENTS.md "Linear-first workflow" still comes first. Grok Bots do not
 research or resolve decision issues.
 
-Then stop that line of work, release your claim under the repo's existing
-convention, and take only other admitted work that is next under the
-human-approved order. If there is no such order, propose one and wait. Do not ask
+Then stop that line of work, release your claim, if you hold one, with a release record (AGENTS.md
+"Bounded issue execution and shared evidence"), and take only other admitted work
+that is next under the human-approved order. If there is no such order, propose one and wait. Do not ask
 again until something changes.
 
 ## Speaking for a developer
