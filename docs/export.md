@@ -2,6 +2,6 @@
 
 Intro line.
 
-Supported formats: csv.
+Supported formats: csv, json.
 
 Footer line.
