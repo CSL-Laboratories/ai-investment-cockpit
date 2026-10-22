@@ -1,7 +1,7 @@
 # Export
 
-Intro line.
+Intro line (updated).
 
-Supported formats: csv.
+Supported formats: csv, parquet.
 
 Footer line.
