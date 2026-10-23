@@ -253,6 +253,58 @@ def _correction_supersedes_void(
     return _admitted_fill_matches(fixture, item, instrument_id)
 
 
+def _linked_reversal_ids(fixture: dict) -> set[str]:
+    """Entry ids of a settlement and the correction-linked mirror that reverses it.
+
+    The mirror is a positive ``settlement_payout`` on the same instrument with
+    the sides swapped and the amounts unchanged. The correction names that
+    settlement, with ``cause`` ``settlement_payout``. A zero pair, a partial
+    swap, or a correction that names a missing entry does not qualify.
+    """
+    paired: set[str] = set()
+    used: set[str] = set()
+    journal = fixture.get("journal", ())
+    for item in fixture.get("corrections", ()):
+        if item.get("cause") != "settlement_payout":
+            continue
+        original_id = item.get("reverses_entry_id")
+        instrument_id = item.get("instrument_id")
+        if not isinstance(original_id, str) or original_id in used:
+            continue
+        if not isinstance(instrument_id, str):
+            continue
+        original = next(
+            (entry for entry in journal if entry.get("entry_id") == original_id),
+            None,
+        )
+        if original is None or original.get("reason") != "settlement_payout":
+            continue
+        if not _only_instrument(original, instrument_id):
+            continue
+        if not _signature_positive(_line_signature(original, reverse=False)):
+            continue
+        wanted = _line_signature(original, reverse=True)
+        partner_id = None
+        for entry in journal:
+            entry_id = entry.get("entry_id")
+            if not isinstance(entry_id, str) or entry_id == original_id or entry_id in used:
+                continue
+            if entry.get("reason") != "settlement_payout":
+                continue
+            if not _only_instrument(entry, instrument_id):
+                continue
+            if _line_signature(entry, reverse=False) == wanted:
+                partner_id = entry_id
+                break
+        if partner_id is None:
+            continue
+        paired.add(original_id)
+        paired.add(partner_id)
+        used.add(original_id)
+        used.add(partner_id)
+    return paired
+
+
 def _reject_void_unwind_shape(fixture: dict, failures: set[str]) -> None:
     """Direction and cause of a void_unwind, without reading market-state rows."""
     void_evidence = {
@@ -629,6 +681,7 @@ def evaluate_semantics(fixture: dict) -> set[str]:
     settlement_seq: dict[str, int] = {}
     reserved_presettle = dict(checkpoint_reservations)
     reserved_end = dict(checkpoint_reservations)
+    linked_reversals = _linked_reversal_ids(fixture)
 
     for entry in sorted(fixture["journal"], key=lambda item: item["sequence"]):
         debits = 0
@@ -738,15 +791,21 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                 line_instruments <= settled_ids or line_instruments <= voided
             ):
                 failures.add("settlement_unreconciled")
+            allowed_settlement = {
+                ("cash_available", "dr"),
+                ("cash_available", "cr"),
+                ("collateral_reserved", "cr"),
+                ("realized_pnl", "dr"),
+                ("realized_pnl", "cr"),
+                ("fees_expense", "dr"),
+            }
+            # The mirror of a real settlement debits the collateral the
+            # original released. Only that correction-linked pair may do so.
+            if entry.get("entry_id") in linked_reversals:
+                allowed_settlement.add(("collateral_reserved", "dr"))
+                allowed_settlement.add(("fees_expense", "cr"))
             for line in entry["lines"]:
-                if (line["account"], line["side"]) not in {
-                    ("cash_available", "dr"),
-                    ("cash_available", "cr"),
-                    ("collateral_reserved", "cr"),
-                    ("realized_pnl", "dr"),
-                    ("realized_pnl", "cr"),
-                    ("fees_expense", "dr"),
-                }:
+                if (line["account"], line["side"]) not in allowed_settlement:
                     failures.add("settlement_unreconciled")
         premium_delta = 0
         fee_delta = 0
@@ -771,11 +830,15 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                     corporate_cash_by[line["instrument_id"]] = (
                         corporate_cash_by.get(line["instrument_id"], 0) + amount
                     )
-                if entry["reason"] == "settlement_payout" and side == "cr":
+                counts_settlement = (
+                    entry["reason"] == "settlement_payout"
+                    and entry.get("entry_id") not in linked_reversals
+                )
+                if counts_settlement and side == "cr":
                     settlement_fee_cash_by[line["instrument_id"]] = (
                         settlement_fee_cash_by.get(line["instrument_id"], 0) + amount
                     )
-                if entry["reason"] == "settlement_payout" and side == "dr":
+                if counts_settlement and side == "dr":
                     settlement_cash_dr += amount
                     settlement_cash_by[line["instrument_id"]] = (
                         settlement_cash_by.get(line["instrument_id"], 0) + amount
@@ -812,7 +875,11 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                     reserved_presettle[line["instrument_id"]] = (
                         reserved_presettle.get(line["instrument_id"], 0) + collateral_delta
                     )
-                if entry["reason"] == "settlement_payout" and side == "cr":
+                counts_settlement = (
+                    entry["reason"] == "settlement_payout"
+                    and entry.get("entry_id") not in linked_reversals
+                )
+                if counts_settlement and side == "cr":
                     settlement_collateral_by[line["instrument_id"]] = (
                         settlement_collateral_by.get(line["instrument_id"], 0) + amount
                     )
@@ -822,7 +889,10 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                 delta = amount if side == "cr" else -amount
                 bucket = attribution.setdefault(strategy_id, {"realized_pnl_minor": 0, "fees_minor": 0})
                 bucket["realized_pnl_minor"] += delta
-                if entry["reason"] == "settlement_payout":
+                if (
+                    entry["reason"] == "settlement_payout"
+                    and entry.get("entry_id") not in linked_reversals
+                ):
                     if side == "dr":
                         settlement_loss_by[line["instrument_id"]] = (
                             settlement_loss_by.get(line["instrument_id"], 0) + amount
@@ -837,7 +907,10 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                     journal_fees += delta
                 bucket = attribution.setdefault(strategy_id, {"realized_pnl_minor": 0, "fees_minor": 0})
                 bucket["fees_minor"] += delta
-                if entry["reason"] == "settlement_payout":
+                if (
+                    entry["reason"] == "settlement_payout"
+                    and entry.get("entry_id") not in linked_reversals
+                ):
                     settlement_fee_by[line["instrument_id"]] = (
                         settlement_fee_by.get(line["instrument_id"], 0) + amount
                     )
@@ -897,9 +970,16 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             pre_release = opening + created
             ending = order_hold.get(order_id, opening)
             filled_notional = order_fills_total.get(order_id, 0)
+            checkpoint_qty = order.get("checkpoint_filled_qty", 0)
             terminal = order.get("terminal_state") or order["state"]
             if filled_notional > 0:
                 if pre_release != filled_notional:
+                    failures.add("balance_mismatch")
+            elif checkpoint_qty > 0:
+                # No fill row carries the notional. Compare a post-checkpoint
+                # reserve with the checkpoint hold, the same way fill rows
+                # are compared with premium plus fees.
+                if pre_release != opening:
                     failures.add("balance_mismatch")
             elif terminal in LATE_TERMINALS and ending != 0:
                 failures.add("balance_mismatch")

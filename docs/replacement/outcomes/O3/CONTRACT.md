@@ -286,7 +286,12 @@ means checkpoint holds that name the order, plus `reserve_collateral`
 debits in the journal. A release credit does not reduce that total.
 An extra checkpoint hold on top of a journal reserve that already
 matches the fills fails `balance_mismatch`. A reserve that exceeds or
-falls short of that executed total fails the same way. A hold for the
+falls short of that executed total fails the same way. When the order's
+fills exist only as `checkpoint_filled_qty`, with no fill row carrying
+the notional, a post-checkpoint `reserve_collateral` is compared the
+same way: the pre-release total has to equal the checkpoint hold
+already attributed to that order. A new reserve on top of those
+checkpoint fills fails `balance_mismatch`. A hold for the
 still-unfilled remainder, above that executed total, is not represented
 in this candidate. A fill is funded by the collateral that order still
 holds at the fill's sequence. The checkpoint hold counts from the start.
@@ -404,6 +409,20 @@ instrument. A losing contract is not a fee: `fees_expense` on the
 settlement entry must equal the evidence's `misc_fee_minor` when the fee
 is not already deducted from the payout, and must not exist at all when
 it is (`fee_double_count`).
+
+A correction may reverse one settlement and leave a corrected settlement
+in its place. The reversal is itself a `settlement_payout`. It qualifies
+only when the correction's `cause` is `settlement_payout`,
+`instrument_id` is that settlement's instrument, and `reverses_entry_id`
+names the original entry, and another journal entry is the exact mirror:
+same instrument, same accounts and amounts, debit and credit swapped, and
+the amounts positive. That mirror may debit `collateral_reserved` (and
+credit `fees_expense` when the original debited it). In the payout,
+collateral-release, fee, and gain/loss identity the original and the
+mirror cancel as a pair and drop out. The settlement that remains has to
+match the evidence on its own. A zero-value pair, a partial swap, or a
+reversal whose correction names a missing entry does not cancel a
+settlement and does not permit the collateral debit.
 
 `market_void` evidence on an instrument that also has settlement evidence,
 a `settled` market row, or a `settlement_payout` fails `void_unreconciled`.
