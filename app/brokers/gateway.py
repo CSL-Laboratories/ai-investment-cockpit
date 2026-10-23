@@ -1412,8 +1412,9 @@ class OrderGateway:
                 returned_at = time.monotonic()
                 if returned_at - started > _ADMISSION_WAIT_BUDGET_S:
                     return _deadline_abort()
-                if admission_deadline is not None and returned_at > admission_deadline:
-                    return _deadline_abort()
+                # Only the per-call bound applies here: a re-fence re-verifies ownership
+                # (CAS) and renews the lease, so it must not be compared against the
+                # deadline derived from the previous fence.
                 if paper_transport and value is None:
                     return self._abort_after_intent(
                         st,
