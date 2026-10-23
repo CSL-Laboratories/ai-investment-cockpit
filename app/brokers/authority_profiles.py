@@ -438,7 +438,8 @@ _SCHEMA = (
         order_ref TEXT,
         claim_generation INTEGER NOT NULL DEFAULT 0,
         reconciled INTEGER NOT NULL DEFAULT 0,
-        claimed_at TEXT
+        claimed_at TEXT,
+        transport_client_hash TEXT
     )
     """,
 )
@@ -1397,7 +1398,8 @@ class AuthorityProfileStore:
                 row[1] for row in conn.execute("PRAGMA table_info(profiles)").fetchall()
             }
             required_reservation_columns = {
-                "order_ref", "handoff_state", "claim_generation", "reconciled", "claimed_at"
+                "order_ref", "handoff_state", "claim_generation", "reconciled", "claimed_at",
+                "transport_client_hash",
             }
             if version == STORE_USER_VERSION:
                 # A current-version store missing a column is corruption, not
@@ -1430,6 +1432,10 @@ class AuthorityProfileStore:
                     )
                 if "claimed_at" not in columns:
                     conn.execute("ALTER TABLE reservations ADD COLUMN claimed_at TEXT")
+                if "transport_client_hash" not in columns:
+                    conn.execute(
+                        "ALTER TABLE reservations ADD COLUMN transport_client_hash TEXT"
+                    )
                 if "stop_capability_hash" not in profile_columns:
                     conn.execute(
                         "ALTER TABLE profiles ADD COLUMN stop_capability_hash TEXT"
@@ -1566,12 +1572,13 @@ class AuthorityProfileStore:
         self, client_order_id: str, generation: int, order_ref: str
     ) -> TransportPermit:
         nonce = secrets.token_urlsafe(32)
-        self._live_permits = {
-            key: value
-            for key, value in self._live_permits.items()
-            if value[0] != client_order_id
-        }
-        self._live_permits[nonce] = (client_order_id, generation, order_ref)
+        with self._lock:
+            self._live_permits = {
+                key: value
+                for key, value in self._live_permits.items()
+                if value[0] != client_order_id
+            }
+            self._live_permits[nonce] = (client_order_id, generation, order_ref)
         return TransportPermit(self, nonce)
 
     def _matching_permit(self, nonce: str) -> tuple[str, tuple[str, int, str]] | None:
@@ -1582,8 +1589,11 @@ class AuthorityProfileStore:
                 return key, value
         return None
 
-    def _assert_live_claim(self, conn, client_id: str, generation: int, order_ref: str, now):
-        """Authority, generation, lease, and order, as one read inside ``_txn``."""
+    def _assert_live_claim(
+        self, conn, client_id: str, generation: int, order_ref: str, now,
+        *, order=None, producing_runtime=None,
+    ):
+        """Authority, generation, lease, and the reservation bindings, inside ``_txn``."""
         row = conn.execute(
             "SELECT * FROM reservations WHERE client_order_id = ?",
             (client_id,),
@@ -1611,14 +1621,38 @@ class AuthorityProfileStore:
             raise
         self._refuse_if_blocked(conn, profile)
         claimed_at = row["claimed_at"]
-        if not claimed_at or now >= _parse_claimed_at(claimed_at) + CLAIM_LEASE:
+        claimed = None if not claimed_at else _parse_claimed_at(claimed_at)
+        if claimed is None or claimed > now or now >= claimed + CLAIM_LEASE:
             raise ProfileRefused(
                 "stale_claim",
                 "handoff claim generation or lease is stale before broker submit",
             )
+        if row["action"] != "submit_paper":
+            raise ProfileRefused("action_refused", "action is outside the paper submit handoff")
+        if order is None:
+            raise ProfileRefused("order_required", "paper submit requires the gateway order")
+        if getattr(order, "id", None) is None or str(order.id) != order_ref:
+            raise ProfileRefused(
+                "client_order_conflict", "permit is bound to a different order"
+            )
+        if type(producing_runtime) is not str or producing_runtime != profile.provider:
+            raise ProfileRefused(
+                "binding_provider", "producing runtime does not match the profile provider"
+            )
+        if getattr(order, "account", None) != row["account_id"]:
+            raise ProfileRefused("account_mismatch", "order account is outside the profile")
+        order_notional = getattr(order, "notional", None)
+        if order_notional is None or _parse_money(
+            order_notional, code="notional"
+        ) != _parse_money(row["notional"], code="notional"):
+            raise ProfileRefused(
+                "notional_mismatch", "order notional does not match the reservation"
+            )
+        return row
 
     def _consume_transport_permit(
-        self, nonce: str, *, order_ref: str, client: object = None
+        self, nonce: str, *, order_ref: str, client: object = None,
+        order=None, producing_runtime=None,
     ) -> tuple[object, str, int, str]:
         """Re-check the live claim, then burn the nonce. Returns the binding."""
         if type(nonce) is not str or type(order_ref) is not str or not order_ref:
@@ -1637,16 +1671,35 @@ class AuthorityProfileStore:
                 raise ProfileRefused(
                     "client_order_conflict", "permit is bound to a different order"
                 )
-            self._assert_live_claim(conn, client_id, generation, bound_order, now)
-            del self._live_permits[key]
+            row = self._assert_live_claim(
+                conn, client_id, generation, bound_order, now,
+                order=order, producing_runtime=producing_runtime,
+            )
             if client is not None:
-                self._admitted_clients[bound_order] = client
+                digest = _remember_transport_client(client)
+                stored_hash = row["transport_client_hash"]
+                if type(stored_hash) is str and stored_hash:
+                    if not hmac.compare_digest(digest, stored_hash):
+                        raise ProfileRefused(
+                            "broker_unknown", "broker client is not the admitted transport"
+                        )
+                else:
+                    conn.execute(
+                        """
+                        UPDATE reservations SET transport_client_hash = ?
+                        WHERE client_order_id = ?
+                        """,
+                        (digest, client_id),
+                    )
+                self._admitted_clients[bound_order] = _unwrap_client(client)
+            del self._live_permits[key]
         return (self, client_id, generation, bound_order)
 
     def _recheck_transport_authority(
-        self, client_order_id: str, generation: int, order_ref: str
+        self, client_order_id: str, generation: int, order_ref: str,
+        *, order=None, producing_runtime=None,
     ) -> None:
-        """The transport call re-reads authority after the gateway's safety checks."""
+        """The transport call re-reads authority and the reservation bindings."""
         client_id = _ident(client_order_id, code="client_order_id")
         if type(generation) is not int or type(order_ref) is not str or not order_ref:
             raise ProfileRefused(
@@ -1654,7 +1707,8 @@ class AuthorityProfileStore:
             )
         with self._txn() as conn:
             self._assert_live_claim(
-                conn, client_id, generation, order_ref, self._authoritative_now
+                conn, client_id, generation, order_ref, self._authoritative_now,
+                order=order, producing_runtime=producing_runtime,
             )
 
     def _read_store_clock(self) -> datetime:
@@ -1946,7 +2000,8 @@ def _fence_now(gateway, kwargs: Mapping):
 
 
 def accept_transport_permit(
-    permit: object, *, order_ref: str, client: object = None
+    permit: object, *, order_ref: str, client: object = None,
+    order=None, producing_runtime=None,
 ) -> tuple[object, str, int, str]:
     """Consume a permit only if it still matches this order and the live claim."""
     if type(permit) is not TransportPermit or type(permit.store) is not AuthorityProfileStore:
@@ -1954,8 +2009,49 @@ def accept_transport_permit(
             "claim_required", "paper submit requires a validated profile claim"
         )
     return permit.store._consume_transport_permit(
-        permit.nonce, order_ref=order_ref, client=client
+        permit.nonce, order_ref=order_ref, client=client,
+        order=order, producing_runtime=producing_runtime,
     )
+
+
+def _unwrap_client(client):
+    real = getattr(client, "_real_client", None)
+    return client if real is None else real
+
+
+def _remember_transport_client(client) -> str:
+    """Mint a process-local token and return only its hash for the store."""
+    real = _unwrap_client(client)
+    token = getattr(real, "_cockpit_transport_token", None)
+    if type(token) is not str or len(token) < 20:
+        token = secrets.token_urlsafe(32)
+        try:
+            setattr(real, "_cockpit_transport_token", token)
+        except Exception as exc:
+            raise ProfileRefused(
+                "broker_unknown", "broker client cannot carry its transport identity"
+            ) from exc
+    return _capability_hash(token)
+
+
+def _transport_client_matches(store, order_ref: str, client) -> bool:
+    with store._txn() as conn:
+        rows = conn.execute(
+            "SELECT transport_client_hash FROM reservations WHERE order_ref = ?",
+            (order_ref,),
+        ).fetchall()
+    hashes = [
+        row["transport_client_hash"] for row in rows
+        if type(row["transport_client_hash"]) is str and row["transport_client_hash"]
+    ]
+    if not hashes:
+        return True
+    real = _unwrap_client(client)
+    token = getattr(real, "_cockpit_transport_token", None)
+    if type(token) is not str:
+        return False
+    digest = _capability_hash(token)
+    return all(hmac.compare_digest(digest, stored) for stored in hashes)
 
 
 def _broker_order_visibility(gateway, order_ref: str, *, store=None) -> str:
@@ -1971,9 +2067,12 @@ def _broker_order_visibility(gateway, order_ref: str, *, store=None) -> str:
     if not isinstance(broker, AlpacaPaperBroker):
         return "unknown"
     client = getattr(broker, "_client", None)
+    real = _unwrap_client(client)
     if store is not None:
+        if not _transport_client_matches(store, order_ref, real):
+            return "unknown"
         admitted = getattr(store, "_admitted_clients", {}).get(order_ref)
-        if admitted is not None and client is not admitted:
+        if admitted is not None and real is not _unwrap_client(admitted):
             return "unknown"
     client_order_id = f"cockpit-{order_ref}"[:128]
     try:
