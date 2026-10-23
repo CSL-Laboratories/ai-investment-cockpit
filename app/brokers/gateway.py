@@ -169,6 +169,21 @@ def _naive_utc(dt: datetime) -> datetime:
     return dt if dt.tzinfo is None else dt.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+@dataclass(frozen=True)
+class OrderBoundPermit:
+    """One fence admission bound to the exact order about to be sent.
+
+    ``order_id`` and ``order_tuple_hash`` have to match that order. ``remaining_s``
+    is the lease left when the fence returned, or None when the fence reports no
+    shorter remainder than the admission ceiling. A bool or a bare object is not
+    a permit.
+    """
+
+    order_id: str
+    order_tuple_hash: str
+    remaining_s: float | None = None
+
+
 def _lease_remaining_s(fence_result: object) -> float | None:
     """Seconds of claim lease a fence reported, or None when it reported none.
 
@@ -253,10 +268,9 @@ class OrderGateway:
         self._claim_fence = claim_fence
         # Same-thread re-entry (the state lock is an RLock). A fence must not submit again.
         self._submit_active = False
-        # Captured once at construction. A later replacement of the class attribute is not
-        # the implementation this gateway was trusted to call.
-        from brokers.alpaca_paper import AlpacaPaperBroker
-        self._admitted_paper_submit = AlpacaPaperBroker.submit_order
+        # A paper-profile subclass supplies ``_admitted_paper_type`` and
+        # ``_admitted_paper_submit`` before the first submit. This class does not
+        # import a concrete broker.
 
     @property
     def execution_scope(self) -> str:
@@ -343,18 +357,164 @@ class OrderGateway:
 
     @staticmethod
     def _order_notional(order: Order) -> Decimal:
-        """Best-effort notional for the exposure cap: explicit notional, else qty*limit_price,
-        else 0 (an un-priced market order contributes nothing to the sum but is still gated by
-        the risk engine's own pending-exposure check)."""
+        """Exposure size for the cap: the larger of a positive explicit notional and
+        qty*limit_price. A detached notional of $1 cannot shrink a 10 x $30 limit.
+        An un-priced market order with no positive notional contributes 0 here; open
+        market siblings are sized from the exposure frozen at send."""
+        sizes: list[Decimal] = []
         if order.notional is not None:
-            n = _dec(order.notional)
-            if n.is_finite():
-                return n
-        if order.limit_price is not None:
-            n = _dec(order.qty) * _dec(order.limit_price)
-            if n.is_finite():
-                return n
-        return Decimal("0")
+            explicit = _dec(order.notional)
+            if explicit.is_finite() and explicit > 0:
+                sizes.append(explicit)
+        if order.limit_price is not None and order.qty is not None:
+            product = _dec(order.qty) * _dec(order.limit_price)
+            if product.is_finite() and product > 0:
+                sizes.append(product)
+        if not sizes:
+            return Decimal("0")
+        return max(sizes)
+
+    def _frozen_market_exposure(self, st, order) -> Decimal | None:
+        """Exposure signed when a market order was sent, or None when none was.
+
+        A missing freeze does not invent Infinity. An unpriced market order with
+        no signed exposure still contributes nothing, which is the chain rule for
+        a "0" notional. A positive signed exposure is a floor the chain cannot
+        understate.
+        """
+        order_ref = "" if getattr(order, "id", None) is None else str(order.id)
+        audit = None if st is None else getattr(st, "audit", None)
+        if audit is None or not order_ref or not hasattr(audit, "_rows"):
+            return None
+        found = None
+        for row in audit._rows():
+            try:
+                signed = audit.verify_entry(row)
+            except Exception:  # noqa: BLE001 - an unreadable row is not exposure
+                signed = False
+            if not signed:
+                continue
+            if getattr(row, "event_type", None) not in {
+                "paper_protective_limit", "paper_submission",
+            }:
+                continue
+            refs = row.refs or {}
+            if str(refs.get("order_id") or "") != order_ref:
+                continue
+            text = (row.payload or {}).get("exposure")
+            if type(text) is not str or not text:
+                continue
+            amount = _dec(text)
+            if amount.is_finite() and amount > 0:
+                found = amount if found is None else max(found, amount)
+        return found
+
+    def _sized_open_exposure(self, st, order, chain_notional) -> Decimal:
+        """max(chain notional, qty x limit, frozen market exposure), ignoring gaps.
+
+        A limit order uses qty x limit. A market order uses a signed frozen
+        exposure when one exists. A non-positive limit fails closed.
+        """
+        sizes: list[Decimal] = []
+        if (
+            chain_notional is not None
+            and chain_notional.is_finite()
+            and chain_notional > 0
+        ):
+            sizes.append(chain_notional)
+        limit = getattr(order, "limit_price", None)
+        qty = getattr(order, "qty", None)
+        if limit is not None and qty is not None:
+            product = _dec(qty) * _dec(limit)
+            if not product.is_finite() or product <= 0:
+                return Decimal("Infinity")
+            sizes.append(product)
+        else:
+            frozen = self._frozen_market_exposure(st, order)
+            if frozen is not None:
+                sizes.append(frozen)
+        if not sizes:
+            return Decimal("0")
+        return max(sizes)
+
+    def _resolve_admitted_paper_transport(self):
+        """Resolve the paper transport before any submit intent is written.
+
+        The generic gateway names no concrete broker. A profile subclass sets
+        ``_admitted_paper_type`` and ``_admitted_paper_submit``, or overrides
+        this method. An import or lookup failure raises here, with no intent open.
+        """
+        if not bool(getattr(type(self), "_admits_paper_profile", False)):
+            return None
+        broker_type = getattr(self, "_admitted_paper_type", None)
+        submit = getattr(self, "_admitted_paper_submit", None)
+        if broker_type is None or not callable(submit):
+            raise ImportError("admitted paper transport is not resolved")
+        broker = self._broker
+        client = getattr(broker, "_client", None)
+        client_submit = None if client is None else getattr(client, "submit_order", None)
+        if client is None or not callable(client_submit):
+            raise ImportError("admitted paper client is not resolved")
+        return {
+            "broker": broker,
+            "broker_type": broker_type,
+            "submit": submit,
+            "client": client,
+            "client_submit": client_submit,
+        }
+
+    @staticmethod
+    def _callable_identity(fn):
+        if fn is None:
+            return None
+        return getattr(fn, "__func__", fn)
+
+    def _order_permit_refusal(self, value, order, resolved_hash) -> str | None:
+        """None when ``value`` is a permit for this order. Otherwise a refusal reason."""
+        if type(value) is not OrderBoundPermit:
+            return "claim fence returned no order-bound permit"
+        if (
+            str(value.order_id) != str(getattr(order, "id", ""))
+            or value.order_tuple_hash != resolved_hash
+        ):
+            return "claim fence permit does not bind this order"
+        remaining = value.remaining_s
+        if remaining is None:
+            return None
+        if isinstance(remaining, bool) or not isinstance(remaining, (int, float)):
+            return "claim fence lease metadata unreadable: remaining_s"
+        number = float(remaining)
+        if number != number or number in (float("inf"), float("-inf")) or number < 0:
+            return "claim fence lease metadata unreadable: remaining_s"
+        return None
+
+    def _feed_refusal(self, st, order, breaker_engine, clock):
+        """Stale or unreadable market data, or None when the feed is fresh or absent."""
+        market_data = getattr(st, "market_data", None)
+        if market_data is None:
+            return None
+        now = clock.now()
+        try:
+            reason = market_data.stale_reason(
+                order.symbol,
+                now=now,
+                limit_s=getattr(
+                    market_data, "max_age_s", BreakerThresholds().data_staleness_s
+                ),
+            )
+        except Exception:  # noqa: BLE001 - a broken guard cannot grant order authority
+            reason = "market-data freshness guard unavailable"
+        if reason is None:
+            return None
+        try:
+            market_open = is_market_open(now)
+        except Exception:  # noqa: BLE001 - broken calendar/clock must refuse cleanly
+            return ("market_data", None, "market-hours freshness guard unavailable")
+        if market_open and breaker_engine.needs_watch_only_transition("market_data"):
+            breaker_engine.enter_watch_only(
+                "market_data", reason, clock=clock, actor="order_gateway"
+            )
+        return ("market_data", None, reason)
 
     def _cap(self, st: OrchestratorState) -> Decimal:
         if self._cap_override is not None:
@@ -517,29 +677,9 @@ class OrderGateway:
         caller-supplied clock is not authority here: age and freshness use ``st.clock``.
         """
         clock = st.clock
-        market_data = getattr(st, "market_data", None)
-        if market_data is not None:
-            now = clock.now()
-            try:
-                reason = market_data.stale_reason(
-                    order.symbol,
-                    now=now,
-                    limit_s=getattr(
-                        market_data, "max_age_s", BreakerThresholds().data_staleness_s
-                    ),
-                )
-            except Exception:  # noqa: BLE001 - a broken guard cannot grant order authority
-                reason = "market-data freshness guard unavailable"
-            if reason is not None:
-                try:
-                    market_open = is_market_open(now)
-                except Exception:  # noqa: BLE001 - broken calendar/clock must refuse cleanly
-                    return ("market_data", None, "market-hours freshness guard unavailable")
-                if market_open and breaker_engine.needs_watch_only_transition("market_data"):
-                    breaker_engine.enter_watch_only(
-                        "market_data", reason, clock=clock, actor="order_gateway"
-                    )
-                return ("market_data", None, reason)
+        feed = self._feed_refusal(st, order, breaker_engine, clock)
+        if feed is not None:
+            return feed
 
         verdict = risk_recheck(positions)
         decision = _verdict_get(verdict, "decision")
@@ -552,6 +692,11 @@ class OrderGateway:
                     f"risk re-run failed hard checks {list(failed)}",
                 )
             return ("risk", None, f"risk re-run decision {decision!r} != approved")
+        # The quote can expire inside the blocking risk re-run. Check it again
+        # before this refresh is allowed to stand.
+        feed = self._feed_refusal(st, order, breaker_engine, clock)
+        if feed is not None:
+            return feed
 
         db_appr = self._load_row(st, ApprovalRecord, getattr(approval, "id", None))
         if db_appr is None:
@@ -1008,10 +1153,17 @@ class OrderGateway:
             if chain_n is None:
                 tampered = True          # (4) an open member with no verified chain notional
                 continue                 # never fold the mutable column: understatement is fine
-            pending += chain_n           # chain-anchored notional only, never the mutable column
+            row = db_rows.get(rid)
+            # A sibling is the larger of its chain notional, qty x limit, and (for a
+            # market order) the exposure frozen when it was sent.
+            sized = chain_n if row is None else self._sized_open_exposure(st, row, chain_n)
+            if not sized.is_finite():
+                return (False, sized, cap)
+            pending += sized
 
-        # The current order's OWN contribution, chain-anchored (round-3 bypass A): a zeroed
-        # mutable order_row.notional cannot shrink it; no verified chain notional => fail closed.
+        # The current order's OWN contribution is the larger of its signed chain
+        # notional and ``_order_notional`` (explicit notional or qty x limit, whichever
+        # is larger). No verified chain notional => fail closed.
         cur_chain_n = chain_notional.get(order.id)
         if cur_chain_n is None:
             return (False, pending, cap)
@@ -1156,7 +1308,16 @@ class OrderGateway:
                                      stage="halt", reason=reason, actor=producing_runtime)
                 return GateOutcome(False, "halt", reason, order_tuple_hash=resolved_hash)
 
-            # ALL gates passed -> two-phase submit (SEC-13). Intent BEFORE the broker call.
+            # ALL gates passed -> two-phase submit (SEC-13). Resolve the paper
+            # transport first: an import or lookup failure must not leave an intent open.
+            # The generic gateway does not import a concrete broker.
+            binding = self._resolve_admitted_paper_transport()
+            broker = self._broker
+            broker_type = type(broker)
+            execution_scope = self._execution_scope
+            paper_transport = binding is not None
+
+            # Intent BEFORE the broker call.
             intent = st.audit.intent(
                 "order_submit",
                 refs={"order_id": order.id, "proposal_id": order.proposal_id,
@@ -1199,18 +1360,10 @@ class OrderGateway:
                     resolved_hash=resolved_hash,
                 )
 
-            # Pin the transport before the potentially blocking, caller-supplied fence.
-            # The callback cannot replace the adapter, its submit implementation, or the
-            # paper scope. Profile transport calls the class function captured at init,
-            # so a subclass override or a swapped instance method cannot run.
-            broker = self._broker
-            broker_type = type(broker)
-            execution_scope = self._execution_scope
-            # Profile paper admission is a subclass that sets this flag. The subclass
-            # lives in its own module; this hook must not import it.
-            paper_transport = bool(getattr(type(self), "_admits_paper_profile", False))
-            from brokers.alpaca_paper import AlpacaPaperBroker
-            admitted_paper_submit = self._admitted_paper_submit
+            # The transport binding above was taken before the intent and before this
+            # fence. The callback cannot replace the adapter, its client, the client's
+            # submit callable, or the paper scope. Profile transport calls the client
+            # callable captured with that binding.
             if paper_transport:
                 if claim_fence is not None and claim_fence is not self._claim_fence:
                     return self._abort_after_intent(
@@ -1234,14 +1387,33 @@ class OrderGateway:
                         resolved_hash=resolved_hash,
                     )
             lease_remaining_s: float | None = None
+            admission_deadline: float | None = None
+            last_permit = None
+
+            def _deadline_abort():
+                return self._abort_after_intent(
+                    st,
+                    order,
+                    intent,
+                    stage="claim_fence",
+                    reason="claim fence deadline exceeded the admission wait budget",
+                    actor=producing_runtime,
+                    resolved_hash=resolved_hash,
+                )
 
             def _run_fence():
-                nonlocal lease_remaining_s
+                nonlocal lease_remaining_s, admission_deadline, last_permit
+                started = time.monotonic()
                 refused, value = self._call_claim_fence(
                     claim_fence, st, order, intent, producing_runtime, resolved_hash
                 )
                 if refused is not None:
                     return refused
+                returned_at = time.monotonic()
+                if returned_at - started > _ADMISSION_WAIT_BUDGET_S:
+                    return _deadline_abort()
+                if admission_deadline is not None and returned_at > admission_deadline:
+                    return _deadline_abort()
                 if paper_transport and value is None:
                     return self._abort_after_intent(
                         st,
@@ -1252,6 +1424,8 @@ class OrderGateway:
                         actor=producing_runtime,
                         resolved_hash=resolved_hash,
                     )
+                if paper_transport:
+                    last_permit = value
                 try:
                     lease_remaining_s = _lease_remaining_s(value)
                 except BaseException as exc:  # noqa: BLE001 - cover the intent, then refuse or re-raise
@@ -1267,6 +1441,15 @@ class OrderGateway:
                     if not isinstance(exc, Exception):
                         raise
                     return outcome
+                now = time.monotonic()
+                budget = _ADMISSION_WAIT_BUDGET_S
+                if lease_remaining_s is not None:
+                    budget = min(budget, lease_remaining_s)
+                # The deadline is the moment the fence returned plus the lease it
+                # reported. Time spent reading that remainder counts against it.
+                admission_deadline = returned_at + budget
+                if now > admission_deadline:
+                    return _deadline_abort()
                 return None
 
             if claim_fence is not None:
@@ -1275,14 +1458,39 @@ class OrderGateway:
                     return refused
 
             def _transport_changed() -> bool:
+                current_client = getattr(self._broker, "_client", None)
+                current_submit = (
+                    None if current_client is None else getattr(current_client, "submit_order", None)
+                )
+                pinned_client = None if binding is None else binding["client"]
+                pinned_submit = None if binding is None else binding["client_submit"]
                 return (
                     self._broker is not broker
-                    or type(broker) is not broker_type
+                    or type(self._broker) is not broker_type
                     or self._execution_scope != execution_scope
-                    or (paper_transport and (
+                    or (binding is not None and (
                         self._execution_scope != "paper"
-                        or not isinstance(broker, AlpacaPaperBroker)
+                        or not isinstance(broker, binding["broker_type"])
+                        or current_client is not pinned_client
+                        or self._callable_identity(current_submit)
+                        is not self._callable_identity(pinned_submit)
                     ))
+                )
+
+            def _permit_abort():
+                if not paper_transport:
+                    return None
+                reason = self._order_permit_refusal(last_permit, order, resolved_hash)
+                if reason is None:
+                    return None
+                return self._abort_after_intent(
+                    st,
+                    order,
+                    intent,
+                    stage="claim_fence",
+                    reason=reason,
+                    actor=producing_runtime,
+                    resolved_hash=resolved_hash,
                 )
 
             if _transport_changed():
@@ -1295,6 +1503,9 @@ class OrderGateway:
                     actor=producing_runtime,
                     resolved_hash=resolved_hash,
                 )
+            refused = _permit_abort()
+            if refused is not None:
+                return refused
 
             def _refresh_validity():
                 # Caller ``clock`` is not authority for this refresh. ``st.clock`` is.
@@ -1324,6 +1535,12 @@ class OrderGateway:
             def _final_admission() -> tuple[str | None, str | None]:
                 stage = None
                 reason = None
+                if last_permit is not None:
+                    permit_reason = self._order_permit_refusal(
+                        last_permit, order, resolved_hash
+                    )
+                    if permit_reason is not None:
+                        return "claim_fence", permit_reason
                 lock = st.safety_admission_lock
                 if not lock.acquire(timeout=_ADMISSION_WAIT_BUDGET_S):
                     return (
@@ -1377,6 +1594,9 @@ class OrderGateway:
                             actor=producing_runtime,
                             resolved_hash=resolved_hash,
                         )
+                    refused = _permit_abort()
+                    if refused is not None:
+                        return refused
                     # The post-fence risk refresh can block on broker HTTP too, so the
                     # wait budget covers it as well as the admission read. The budget is
                     # the lease remainder the fence just reported, capped at the ceiling.
@@ -1390,6 +1610,13 @@ class OrderGateway:
                     if refused is not None:
                         return refused
                     refused = _refresh_validity()
+                    if refused is not None:
+                        return refused
+                    # The refresh above is the last blocking risk work. Re-read
+                    # watch-only and analysis authority after it, before transport.
+                    refused = self._cover_admission(
+                        st, order, intent, producing_runtime, resolved_hash, _final_admission
+                    )
                     if refused is not None:
                         return refused
                     waited = time.monotonic() - started
@@ -1429,8 +1656,8 @@ class OrderGateway:
                 # F1: the response-shape contract is validated INSIDE the protected region,
                 # so a broker that RETURNS garbage (None/str/non-JSON-native fields) takes
                 # the same covered abort path as a broker that raises.
-                if paper_transport:
-                    raw_result = admitted_paper_submit(broker, broker_request)
+                if binding is not None:
+                    raw_result = binding["client_submit"](broker_request)
                 else:
                     raw_result = broker.submit_order(broker_request)
                 result = _sanitize_broker_response(raw_result)

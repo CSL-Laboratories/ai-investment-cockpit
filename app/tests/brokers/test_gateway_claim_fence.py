@@ -13,8 +13,11 @@ from datetime import timedelta
 
 import pytest
 
+import builtins
+import inspect
+
 from brokers.alpaca_paper import AlpacaPaperBroker
-from brokers.gateway import OrderGateway, _ADMISSION_WAIT_BUDGET_S
+from brokers.gateway import OrderBoundPermit, OrderGateway, _ADMISSION_WAIT_BUDGET_S
 from config.settings import Mode
 from core.clock import FrozenClock
 from orchestrator.halt import default_halt_path, set_halt
@@ -49,9 +52,26 @@ class _ProbeBroker:
 
 
 class _MarkedPaper(OrderGateway):
-    """Stand-in for the profile paper subclass, which lives in its own module."""
+    """Stand-in for the profile paper subclass, which lives in its own module.
+
+    The generic gateway does not import a concrete broker. This subclass supplies
+    the admitted paper type and the submit callable captured at init.
+    """
 
     _admits_paper_profile = True
+
+    def __init__(self, broker, **kwargs):
+        self._admitted_paper_type = AlpacaPaperBroker
+        self._admitted_paper_submit = AlpacaPaperBroker.submit_order
+        super().__init__(broker, **kwargs)
+
+
+def _permit(scenario, remaining_s=None):
+    return OrderBoundPermit(
+        order_id=scenario.order.id,
+        order_tuple_hash=scenario.tuple_hash,
+        remaining_s=remaining_s,
+    )
 
 
 def _paper_gateway(st, broker=None):
@@ -214,7 +234,7 @@ def test_profile_transport_calls_the_admitted_paper_submit(st):
             }
 
         broker.submit_order = swapped
-        return object()
+        return _permit(scenario)
 
     gateway = _MarkedPaper(broker, st=st, execution_scope="paper", claim_fence=fence)
     scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
@@ -476,14 +496,20 @@ def test_refresh_refuses_an_order_left_unsubmittable_during_the_fence(st):
 
 def test_admitted_paper_submit_is_captured_at_init(st):
     broker = AlpacaPaperBroker()
+    bound = {}
 
     def fence():
-        return object()
+        return OrderBoundPermit(
+            order_id=bound["order"].id,
+            order_tuple_hash=bound["hash"],
+        )
 
     gateway = _MarkedPaper(broker, st=st, execution_scope="paper", claim_fence=fence)
     captured = AlpacaPaperBroker.submit_order
     assert gateway._admitted_paper_submit is captured
     scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    bound["order"] = scenario.order
+    bound["hash"] = scenario.tuple_hash
 
     def evil(_self, _canonical):
         broker.evil_calls = getattr(broker, "evil_calls", 0) + 1
@@ -703,5 +729,201 @@ def test_admission_read_exception_covers_the_intent(st):
     assert outcome.stage == "admission_lock"
     assert "admission read failed" in outcome.reason
     assert lock.held is False
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_generic_gateway_does_not_depend_on_the_paper_broker():
+    source = inspect.getsource(inspect.getmodule(OrderGateway))
+    assert "alpaca_paper" not in source
+    assert "AlpacaPaperBroker" not in source
+
+
+def test_paper_transport_import_failure_leaves_no_open_intent(st, monkeypatch):
+    """An import while resolving the admitted transport must not leave an intent."""
+    broker = _CountingPaper()
+
+    class ImportingPaper(OrderGateway):
+        _admits_paper_profile = True
+
+        def _resolve_admitted_paper_transport(self):
+            from brokers.alpaca_paper import AlpacaPaperBroker as _Paper
+
+            return {
+                "broker": self._broker,
+                "broker_type": _Paper,
+                "submit": _Paper.submit_order,
+                "client": self._broker._client,
+                "client_submit": self._broker._client.submit_order,
+            }
+
+    gateway = ImportingPaper(
+        broker, st=st, execution_scope="paper", claim_fence=lambda: None
+    )
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    real_import = builtins.__import__
+
+    def guarded(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "brokers.alpaca_paper":
+            raise ImportError("alpaca_paper unavailable")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", guarded)
+    with pytest.raises(ImportError, match="alpaca_paper unavailable"):
+        scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_fence_that_blocks_past_the_deadline_refuses(st, monkeypatch):
+    scenario, broker = _paper_gateway(st)
+    elapsed = {"s": 0.0}
+
+    def monotonic():
+        return elapsed["s"]
+
+    def fence():
+        elapsed["s"] += _ADMISSION_WAIT_BUDGET_S + 1.0
+        return None
+
+    monkeypatch.setattr(time, "monotonic", monotonic)
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=fence, **scenario.submit_kwargs()
+    )
+    assert outcome.ok is False
+    assert outcome.stage == "claim_fence"
+    assert "deadline" in outcome.reason
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_slow_lease_remainder_is_past_its_deadline(st, monkeypatch):
+    scenario, broker = _paper_gateway(st)
+    elapsed = {"s": 0.0}
+
+    class SlowLease:
+        @property
+        def remaining_s(self):
+            elapsed["s"] += 4.0
+            return 3.0
+
+    def monotonic():
+        return elapsed["s"]
+
+    monkeypatch.setattr(time, "monotonic", monotonic)
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=lambda: SlowLease(), **scenario.submit_kwargs()
+    )
+    assert outcome.ok is False
+    assert outcome.stage == "claim_fence"
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_profile_rejects_a_permit_for_another_order(st):
+    broker = _CountingPaper()
+    gateway = _MarkedPaper(
+        broker,
+        st=st,
+        execution_scope="paper",
+        claim_fence=lambda: OrderBoundPermit(order_id="other", order_tuple_hash="nope"),
+    )
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    outcome = scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+    assert outcome.ok is False
+    assert outcome.stage == "claim_fence"
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+@pytest.mark.parametrize("value", [False, object()])
+def test_profile_rejects_a_permit_that_is_not_order_bound(st, value):
+    broker = _CountingPaper()
+    gateway = _MarkedPaper(
+        broker, st=st, execution_scope="paper", claim_fence=lambda: value
+    )
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    outcome = scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+    assert outcome.ok is False
+    assert outcome.stage == "claim_fence"
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_swapped_paper_client_does_not_receive_the_order(st):
+    broker = _CountingPaper()
+    replacement = _CountingPaper()
+    holder = {}
+
+    def fence():
+        broker._client = replacement._client
+        return _permit(holder["scenario"])
+
+    gateway = _MarkedPaper(broker, st=st, execution_scope="paper", claim_fence=fence)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    holder["scenario"] = scenario
+    outcome = scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+    assert outcome.ok is False
+    assert outcome.stage == "transport_scope"
+    assert broker.calls == replacement.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_watch_only_during_the_final_risk_refresh_does_not_submit(st):
+    scenario, broker = _paper_gateway(st)
+    calls = {"n": 0}
+    denial = {"reason": None}
+    original = scenario.breaker.watch_only_reason
+
+    def watch():
+        return denial["reason"] or original()
+
+    def recheck(_positions):
+        calls["n"] += 1
+        if calls["n"] >= 4:
+            denial["reason"] = "watch_only admitted during the final risk refresh"
+        return {"decision": "approved", "failed_checks": []}
+
+    scenario.breaker.watch_only_reason = watch
+    outcome = scenario.gateway.submit(
+        scenario.order,
+        claim_fence=lambda: None,
+        **scenario.submit_kwargs(risk_recheck=recheck),
+    )
+    assert calls["n"] >= 4
+    assert outcome.ok is False
+    assert outcome.stage == "mode"
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_quote_that_expires_during_the_final_risk_refresh_does_not_submit(st):
+    scenario, broker = _paper_gateway(st)
+    calls = {"n": 0}
+
+    class Guard:
+        def __init__(self):
+            self.reason = None
+
+        def stale_reason(self, symbol, *, now, limit_s):
+            return self.reason
+
+    guard = Guard()
+    scenario.st.market_data = guard
+
+    def recheck(_positions):
+        calls["n"] += 1
+        if calls["n"] >= 4:
+            guard.reason = "quote expired during the final risk refresh"
+        return {"decision": "approved", "failed_checks": []}
+
+    outcome = scenario.gateway.submit(
+        scenario.order,
+        claim_fence=lambda: None,
+        **scenario.submit_kwargs(risk_recheck=recheck),
+    )
+    assert calls["n"] >= 4
+    assert outcome.ok is False
+    assert outcome.stage == "market_data"
     assert broker.calls == 0
     assert scenario.st.audit.unresolved_intents() == []

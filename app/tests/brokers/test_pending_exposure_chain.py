@@ -599,3 +599,49 @@ def test_transition_payloads_carry_notional_and_symbol(st):
     assert p2["symbol"] == "MSFT"
     assert isinstance(p2["notional"], str) and Decimal(p2["notional"]) == Decimal("800")
     assert st.audit.verify_chain().ok
+
+
+def test_order_notional_uses_the_larger_of_notional_and_qty_times_limit():
+    order = Order(notional="1", qty="10", limit_price="30", order_type="limit")
+    assert OrderGateway._order_notional(order) == Decimal("300")
+
+
+def test_pending_sibling_uses_qty_times_limit_when_the_chain_is_smaller(st):
+    """A birth signed at $1 must not hide a sibling whose limit is 10 x $300."""
+    broker = RecordingBroker()
+    cap = Decimal("2000")
+    sc = build_scenario(
+        st, gateway=OrderGateway(broker, pending_exposure_cap=cap), broker=broker,
+    )
+    _approved_sibling(st, qty="10", limit_price="300", notional="1")
+    current, _appr, _rd = _fresh_submittable(
+        st, sc, qty="1", limit_price="100", notional="100",
+    )
+    ok, total, out_cap = sc.gateway._pending_ok(st, current)
+    assert ok is False
+    assert total == Decimal("3100")
+    assert out_cap == cap
+
+
+def test_pending_market_sibling_uses_the_frozen_exposure(st):
+    broker = RecordingBroker()
+    cap = Decimal("2000")
+    sc = build_scenario(
+        st, gateway=OrderGateway(broker, pending_exposure_cap=cap), broker=broker,
+    )
+    sibling = _approved_sibling(
+        st, qty="10", order_type="market", limit_price=None, notional="1",
+    )
+    st.audit.append(
+        "paper_submission",
+        actor="paper",
+        refs={"order_id": sibling.id},
+        payload={"exposure": "2500"},
+    )
+    current, _appr, _rd = _fresh_submittable(
+        st, sc, qty="1", limit_price="100", notional="100",
+    )
+    ok, total, out_cap = sc.gateway._pending_ok(st, current)
+    assert ok is False
+    assert total == Decimal("2600")
+    assert out_cap == cap
