@@ -1010,7 +1010,7 @@ def test_owned_in_progress_claim_is_refused_until_reconciled(st, tmp_path, monke
         lambda: reconcile_handoff_to_gateway(
             store, gateway, client_order_id="crash-1",
             submit_args=(scenario.order,), submit_kwargs=_paper_submit_kwargs(scenario),
-            now=now,
+            now=now, actor="recovery-owner",
         )
     ) == "claim_leased"
     assert calls["n"] == 1
@@ -1025,7 +1025,7 @@ def test_owned_in_progress_claim_is_refused_until_reconciled(st, tmp_path, monke
     reconciled = reconcile_handoff_to_gateway(
         store, gateway, client_order_id="crash-1",
         submit_args=(scenario.order,), submit_kwargs=_paper_submit_kwargs(scenario),
-        now=later,
+        now=later, actor="recovery-owner",
     )
     assert calls["n"] == 2
     assert broker.calls == 1
@@ -1070,7 +1070,7 @@ def test_reconcile_completes_a_landed_submit_without_a_second_one(st, tmp_path):
     result = reconcile_handoff_to_gateway(
         store, gateway, client_order_id="landed-1",
         submit_args=(scenario.order,), submit_kwargs=_paper_submit_kwargs(scenario),
-        now=now,
+        now=now, actor="recovery-owner",
     )
     assert result.reached_gateway is False
     assert broker.calls == 1
@@ -1171,6 +1171,7 @@ def test_handoff_ignores_instance_submit_override(st, tmp_path, monkeypatch, rec
         result = reconcile_handoff_to_gateway(
             store, gateway, client_order_id="override-1", submit_args=(scenario.order,),
             submit_kwargs=kwargs, now=now + CLAIM_LEASE + timedelta(seconds=1),
+            actor="recovery-owner",
         )
     else:
         result = handoff_to_gateway(
@@ -1348,7 +1349,7 @@ def test_release_stop_derives_reconcile_from_store_state(st, tmp_path):
         return reconcile_handoff_to_gateway(
             store, gateway, client_order_id=client_order_id,
             submit_args=(scenario.order,), submit_kwargs=_paper_submit_kwargs(scenario),
-            now=now,
+            now=now, actor="recovery-owner",
         )
 
     # pending reservation blocks the release
@@ -1372,10 +1373,25 @@ def test_release_stop_derives_reconcile_from_store_state(st, tmp_path):
             "profile-b", actor="stop-owner", now=now, reconciled=True
         )
     ) == "not_reconciled"
-    # kill is active so the dead claim cannot be re-owned: it resolves as
-    # failed+reconciled, which consumes only its own slice and unblocks release.
-    assert _refuse(lambda: reconcile("rel-inprog")) == "failed"
-    store.release_stop("profile-b", actor="stop-owner", now=now, reconciled=True)
+    # An unexpired in_progress lease is still an active submit. Kill must not
+    # mark it reconciled, and release stays blocked.
+    assert _refuse(lambda: reconcile("rel-inprog")) == "claim_leased"
+    assert _refuse(
+        lambda: store.release_stop(
+            "profile-b", actor="stop-owner", now=now, reconciled=True
+        )
+    ) == "not_reconciled"
+    assert int(_handoff_row(path, "rel-inprog")["handoff_done"]) == 0
+    later = now + CLAIM_LEASE + timedelta(seconds=1)
+    scenario.clock._at = later
+    assert _refuse(
+        lambda: reconcile_handoff_to_gateway(
+            store, gateway, client_order_id="rel-inprog",
+            submit_args=(scenario.order,), submit_kwargs=_paper_submit_kwargs(scenario),
+            now=later, actor="recovery-owner",
+        )
+    ) == "failed"
+    store.release_stop("profile-b", actor="stop-owner", now=later, reconciled=True)
 
     # failed-and-unreconciled blocks the release the same way
     store.authorize(client_order_id="rel-failed", **call)
@@ -1399,7 +1415,9 @@ def test_stopped_proposal_completes_after_reconcile_and_release(tmp_path):
         notional=Decimal("10.00"), actor="stop-owner", now=NOW,
     )
     store.hold("profile-b", actor="stop-owner", now=NOW, reason="operator hold")
-    assert store.reconcile_non_gateway_handoff("prop-1", now=NOW) == "failed"
+    assert store.reconcile_non_gateway_handoff(
+        "prop-1", now=NOW, actor="recovery-owner"
+    ) == "failed"
     store.release_stop("profile-b", actor="stop-owner", now=NOW, reconciled=True)
     assert store.claim_handoff("prop-1", now=NOW, awaiting_submit=False) == "completed"
     assert store.claim_handoff("prop-1", now=NOW, awaiting_submit=False) == "replay"
@@ -1459,11 +1477,12 @@ def test_direct_caller_cannot_forge_a_submitted_verdict(st, tmp_path, monkeypatc
     reconcile_paths = {
         "public": lambda: reconcile_handoff_to_gateway(
             store, gateway, client_order_id="forge-1", submit_args=(scenario.order,),
-            submit_kwargs=kwargs, now=now,
+            submit_kwargs=kwargs, now=now, actor="recovery-owner",
         ),
         # Omitting the caller's order_ref must still check the stored identity.
         "private": lambda: store._reconcile_handoff(
             "forge-1", order_ref=None, gateway=gateway, ladder=kwargs["ladder"], now=now,
+            actor="recovery-owner",
         ),
         "record_landed": lambda: _record_landed(
             store, gateway, "forge-1", order_ref, kwargs, now,
@@ -1476,17 +1495,22 @@ def test_direct_caller_cannot_forge_a_submitted_verdict(st, tmp_path, monkeypatc
             )
         assert_unresolved()
     assert _refuse(
-        lambda: store.reconcile_non_gateway_handoff("forge-1", now=now)
+        lambda: store.reconcile_non_gateway_handoff(
+            "forge-1", now=now, actor="recovery-owner"
+        )
     ) == "store"
     assert_unresolved()
     for supplied_ref in (None, order_ref):
         assert _refuse(
-            lambda: store._reconcile_handoff("forge-1", order_ref=supplied_ref, now=now)
+            lambda: store._reconcile_handoff(
+                "forge-1", order_ref=supplied_ref, now=now, actor="recovery-owner"
+            )
         ) == "gateway_identity"
         assert_unresolved()
     assert _refuse(
         lambda: store._reconcile_handoff(
             "forge-1", order_ref=order_ref, gateway=gateway, now=now,
+            actor="recovery-owner",
         )
     ) == "gateway_identity"
     assert_unresolved()
@@ -1535,7 +1559,7 @@ def test_unbound_reservation_refuses_any_order_identity_at_reconcile(tmp_path):
     assert isinstance(ticket, ClaimTicket)
     assert _refuse(
         lambda: store._reconcile_handoff(
-            "unbound-1", order_ref="someone-elses-order", now=NOW
+            "unbound-1", order_ref="someone-elses-order", now=NOW, actor="recovery-owner"
         )
     ) == "client_order_conflict"
     row = _handoff_row(store.path, "unbound-1")
@@ -1579,7 +1603,7 @@ def test_reconcile_rechecks_account_and_notional_against_the_reservation(st, tmp
         lambda: reconcile_handoff_to_gateway(
             store, gateway, client_order_id="forged-1",
             submit_args=(forged_account,), submit_kwargs=_paper_submit_kwargs(scenario),
-            now=now,
+            now=now, actor="recovery-owner",
         )
     ) == "account_mismatch"
     assert broker.calls == 0
@@ -1599,7 +1623,7 @@ def test_reconcile_rechecks_account_and_notional_against_the_reservation(st, tmp
         lambda: reconcile_handoff_to_gateway(
             store, gateway, client_order_id="forged-2",
             submit_args=(forged_notional,), submit_kwargs=_paper_submit_kwargs(scenario),
-            now=now,
+            now=now, actor="recovery-owner",
         )
     ) == "notional_mismatch"
     assert broker.calls == 0
@@ -1651,7 +1675,7 @@ def test_concurrent_reconcile_lease_prevents_a_double_send(st, tmp_path, monkeyp
         return reconcile_handoff_to_gateway(
             store, gateway, client_order_id="lease-1",
             submit_args=(scenario.order,), submit_kwargs=_paper_submit_kwargs(scenario),
-            now=now_,
+            now=now_, actor="recovery-owner",
         )
 
     # The lease has expired: reconciler A re-owns the claim (generation 2) and
@@ -1905,6 +1929,7 @@ def test_running_owner_fenced_out_after_expired_lease_takeover(st, tmp_path):
         scenario.clock._at = initial + timedelta(seconds=171)
         ticket_b = store_b._reconcile_handoff(
             "fence-1", order_ref=str(scenario.order.id), now=scenario.clock.now(),
+            actor="recovery-owner",
             gateway=scenario.gateway, ladder=scenario.ladder,
         )
         assert isinstance(ticket_b, ClaimTicket)
@@ -1963,6 +1988,7 @@ def test_owner_fenced_out_when_takeover_happens_after_final_admission(st, tmp_pa
             scenario.clock._at = initial + timedelta(seconds=171)
             store_b._reconcile_handoff(
                 "fence-1", order_ref=str(scenario.order.id), now=scenario.clock.now(),
+                actor="recovery-owner",
                 gateway=scenario.gateway, ladder=scenario.ladder,
             )
         store_a._confirm_claim_before_broker_call(
@@ -2015,8 +2041,8 @@ def test_claim_fence_clock_failure_refuses_without_writing_lease(st, tmp_path, f
     assert st.audit.verify_chain().ok
 
 
-@pytest.mark.parametrize("recovery", [False, True], ids=["handoff", "reconcile"])
 @_NEEDS_GATEWAY_FENCE
+@pytest.mark.parametrize("recovery", [False, True], ids=["handoff", "reconcile"])
 def test_handoff_clock_failure_cannot_fall_back_to_handoff_time(
     st, tmp_path, monkeypatch, recovery,
 ):
@@ -2062,6 +2088,7 @@ def test_handoff_clock_failure_cannot_fall_back_to_handoff_time(
         result = reconcile_handoff_to_gateway(
             store, gateway, client_order_id="clock-failure-1",
             submit_args=(scenario.order,), submit_kwargs=kwargs, now=scenario.clock.now(),
+            actor="recovery-owner",
         )
     else:
         result = handoff_to_gateway(
@@ -2080,8 +2107,8 @@ def test_handoff_clock_failure_cannot_fall_back_to_handoff_time(
     assert st.audit.verify_chain().ok
 
 
-@pytest.mark.parametrize("mutation", ["paper-broker", "other-adapter", "broker-type", "scope"])
 @_NEEDS_GATEWAY_FENCE
+@pytest.mark.parametrize("mutation", ["paper-broker", "other-adapter", "broker-type", "scope"])
 def test_claim_fence_cannot_swap_transport_or_paper_scope(st, tmp_path, mutation):
     """4303485166: callback mutations never reach either the old or new transport."""
     scenario, store, ticket, broker = _claimed_paper_scenario(st, tmp_path)
@@ -2183,3 +2210,133 @@ def test_configured_anchor_must_be_present_before_a_negative_lookup(st):
     ) == "chain_unreadable"
 
 
+def test_current_store_missing_a_ledger_table_is_not_recreated(tmp_path):
+    import sqlite3
+
+    from brokers.authority_profiles import STORE_USER_VERSION
+
+    path = tmp_path / "damaged.sqlite"
+    store = AuthorityProfileStore(path)
+    _install(store)
+    store._conn.close()
+    conn = sqlite3.connect(path)
+    conn.execute("DROP TABLE reservations")
+    conn.commit()
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    conn.close()
+    assert version == STORE_USER_VERSION
+    assert _refuse(lambda: AuthorityProfileStore(path)) == "store"
+    conn = sqlite3.connect(path)
+    names = {
+        row[0]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+    conn.close()
+    assert "reservations" not in names
+
+
+def test_historical_perimeter_does_not_reseed_missing_consumption(tmp_path):
+    store = _store(tmp_path)
+    _install(store)
+    store.revoke("profile-b", actor="stop-owner", now=NOW, reason="operator revoke")
+    with store._txn() as conn:
+        conn.execute("DELETE FROM consumption")
+    assert _refuse(
+        lambda: _install(store, _document(profile_id="profile-c"))
+    ) == "store"
+    with store._txn() as conn:
+        remaining = conn.execute("SELECT COUNT(*) FROM consumption").fetchone()[0]
+    assert remaining == 0
+
+
+def test_reconcile_refuses_an_actor_who_is_not_the_recovery_owner(st, tmp_path):
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway, mint=False)
+    path = tmp_path / "recovery.sqlite"
+    store = AuthorityProfileStore(path)
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    store.authorize(
+        "profile-b", action="submit_paper", client_order_id="rec-1",
+        notional=Decimal(str(scenario.order.notional)), actor="stop-owner", now=now,
+        order_ref=str(scenario.order.id),
+    )
+    store.claim_handoff("rec-1", now=now, awaiting_submit=True)
+    later = now + CLAIM_LEASE + timedelta(seconds=1)
+    scenario.clock._at = later
+    kwargs = _paper_submit_kwargs(scenario)
+    assert _refuse(
+        lambda: reconcile_handoff_to_gateway(
+            store, gateway, client_order_id="rec-1", submit_args=(scenario.order,),
+            submit_kwargs=kwargs, now=later, actor="stop-owner",
+        )
+    ) == "recovery_owner"
+    assert _refuse(
+        lambda: store.reconcile_non_gateway_handoff("rec-1", now=later, actor="stop-owner")
+    ) == "recovery_owner"
+    row = _handoff_row(path, "rec-1")
+    assert (row["handoff_state"], row["handoff_done"]) == ("in_progress", 0)
+    assert _refuse(
+        lambda: store.reconcile_non_gateway_handoff(
+            "rec-1", now=later, actor="recovery-owner"
+        )
+    ) == "store"
+
+
+def test_stop_cannot_reconcile_an_unexpired_in_progress_submit(st, tmp_path):
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway, mint=False)
+    path = tmp_path / "active-stop.sqlite"
+    store = AuthorityProfileStore(path)
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    order_ref = str(scenario.order.id)
+    store.authorize(
+        "profile-b", action="submit_paper", client_order_id="active-1",
+        notional=Decimal(str(scenario.order.notional)), actor="stop-owner", now=now,
+        order_ref=order_ref,
+    )
+    store.claim_handoff("active-1", now=now, awaiting_submit=True)
+    store.kill("profile-b", actor="stop-owner", now=now, reason="operator kill")
+    assert _refuse(
+        lambda: store._reconcile_handoff(
+            "active-1", order_ref=order_ref, now=now, actor="recovery-owner",
+            gateway=gateway, ladder=scenario.ladder,
+        )
+    ) == "claim_leased"
+    row = _handoff_row(path, "active-1")
+    assert (row["handoff_state"], row["handoff_done"]) == ("in_progress", 0)
+
+
+def test_reconcile_refuses_a_null_order_ref_on_submit_paper(tmp_path):
+    store = _store(tmp_path)
+    _install(store)
+    store.authorize(
+        "profile-b", action="submit_paper", client_order_id="null-ref",
+        notional=Decimal("10.00"), actor="stop-owner", now=NOW,
+    )
+    ticket = store.claim_handoff("null-ref", now=NOW, awaiting_submit=True)
+    assert isinstance(ticket, ClaimTicket)
+    assert _refuse(
+        lambda: store._reconcile_handoff(
+            "null-ref", order_ref=None, now=NOW, actor="recovery-owner",
+        )
+    ) == "order_ref"
+    row = _handoff_row(store.path, "null-ref")
+    assert (row["handoff_state"], row["handoff_done"]) == ("in_progress", 0)

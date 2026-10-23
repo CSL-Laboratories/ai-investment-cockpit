@@ -474,12 +474,48 @@ class AuthorityProfileStore:
             if has_history is None:
                 conn.execute(
                     """
-                    INSERT OR IGNORE INTO controls (
+                    INSERT INTO controls (
                         account_id, venue, environment, kill, hold
                     ) VALUES (?, ?, ?, 0, 0)
                     """,
                     profile.binding(),
                 )
+                conn.execute(
+                    """
+                    INSERT INTO consumption (
+                        account_id, venue, environment, reserved_notional, reserved_count,
+                        ceiling_notional, ceiling_count, ceiling_order
+                    ) VALUES (?, ?, ?, '0.00', 0, ?, ?, ?)
+                    """,
+                    (
+                        *profile.binding(),
+                        format(profile.notional_cap, "f"),
+                        profile.order_count_cap,
+                        format(profile.max_order_notional, "f"),
+                    ),
+                )
+            else:
+                # A historical perimeter whose ledgers were lost in a damaged
+                # restore must not be reseeded at zero. That would let the next
+                # profile spend the cap again.
+                control = conn.execute(
+                    """
+                    SELECT 1 FROM controls
+                    WHERE account_id = ? AND venue = ? AND environment = ?
+                    """,
+                    profile.binding(),
+                ).fetchone()
+                if control is None:
+                    raise ProfileRefused("store", "stop ledger is missing")
+                consumption = conn.execute(
+                    """
+                    SELECT 1 FROM consumption
+                    WHERE account_id = ? AND venue = ? AND environment = ?
+                    """,
+                    profile.binding(),
+                ).fetchone()
+                if consumption is None:
+                    raise ProfileRefused("store", "consumption ledger is missing")
             self._refuse_if_blocked(conn, profile)
             occupied = conn.execute(
                 """
@@ -514,28 +550,6 @@ class AuthorityProfileStore:
                     actor,
                     now.astimezone(timezone.utc).isoformat(),
                     _capability_hash(token),
-                ),
-            )
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO controls (
-                    account_id, venue, environment, kill, hold
-                ) VALUES (?, ?, ?, 0, 0)
-                """,
-                profile.binding(),
-            )
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO consumption (
-                    account_id, venue, environment, reserved_notional, reserved_count,
-                    ceiling_notional, ceiling_count, ceiling_order
-                ) VALUES (?, ?, ?, '0.00', 0, ?, ?, ?)
-                """,
-                (
-                    *profile.binding(),
-                    format(profile.notional_cap, "f"),
-                    profile.order_count_cap,
-                    format(profile.max_order_notional, "f"),
                 ),
             )
             self._tighten_ceiling(conn, profile)
@@ -1000,6 +1014,7 @@ class AuthorityProfileStore:
         *,
         order_ref: str | None,
         now: datetime,
+        actor: str,
         gateway=None,
         ladder=None,
         require_no_gateway: bool = False,
@@ -1031,6 +1046,7 @@ class AuthorityProfileStore:
             ).fetchone()
             if row is None:
                 raise ProfileRefused("unknown_reservation", "reservation is missing")
+            self._require_recovery_actor(conn, row["profile_id"], actor)
             if require_no_gateway and (
                 row["action"] == "submit_paper" or row["order_ref"] is not None
             ):
@@ -1044,6 +1060,12 @@ class AuthorityProfileStore:
             if order_ref is not None and row["order_ref"] != order_ref:
                 raise ProfileRefused(
                     "client_order_conflict", "reservation is bound to a different order"
+                )
+            # A submit_paper row with no bound order ref is not reconcilable.
+            # Do not treat the absence as "not submitted".
+            if row["order_ref"] is None and row["action"] == "submit_paper":
+                raise ProfileRefused(
+                    "order_ref", "reconcile refuses a reservation with no order ref"
                 )
             state = row["handoff_state"]
             if state not in {"pending", "in_progress", "failed"} or int(row["handoff_done"]):
@@ -1082,6 +1104,18 @@ class AuthorityProfileStore:
                 if updated.rowcount != 1:
                     raise ProfileRefused("store", "handoff reconcile was not admitted")
                 return "failed"
+            # An in_progress row whose lease has not expired is still an active
+            # submit. A stop set during broker I/O must not mark it reconciled:
+            # the chain can still be missing the transition while the call lands.
+            claimed_at = row["claimed_at"]
+            if claimed_at is None:
+                raise ProfileRefused(
+                    "store", "in-progress claim is missing its lease timestamp"
+                )
+            if now < _parse_claimed_at(claimed_at) + CLAIM_LEASE:
+                raise ProfileRefused(
+                    "claim_leased", "handoff claim lease has not expired"
+                )
             # Abandoned in_progress and nothing reached the gateway: the claim
             # is dead. Re-own it under a new generation only when a fresh claim
             # would be admitted; otherwise resolve it failed+reconciled so the
@@ -1121,20 +1155,8 @@ class AuthorityProfileStore:
                 if updated.rowcount != 1:
                     raise ProfileRefused("store", "handoff reconcile was not admitted")
                 return "failed"
-            # The lease is the only thing stopping two reconcilers from both
-            # treating the same claim as abandoned: a claim younger than
-            # ``CLAIM_LEASE`` is refused outright, because its owner (this
-            # attempt or a concurrent one) may still be mid-flight to the
-            # gateway. Only once the lease has actually expired, with the
-            # chain still showing no submission (checked above), may a new
-            # generation be minted.
-            claimed_at = row["claimed_at"]
-            if claimed_at is None:
-                raise ProfileRefused("store", "in-progress claim is missing its lease timestamp")
-            if now < _parse_claimed_at(claimed_at) + CLAIM_LEASE:
-                raise ProfileRefused(
-                    "claim_leased", "handoff claim lease has not expired"
-                )
+            # The lease was checked above, before any reconciled write. Only an
+            # expired lease with no signed submission may mint a new generation.
             updated = conn.execute(
                 """
                 UPDATE reservations
@@ -1148,7 +1170,9 @@ class AuthorityProfileStore:
                 raise ProfileRefused("store", "handoff reconcile was not admitted")
             return ClaimTicket(client_id, generation + 1, "retry")
 
-    def reconcile_non_gateway_handoff(self, client_order_id: str, *, now: datetime) -> str | ClaimTicket:
+    def reconcile_non_gateway_handoff(
+        self, client_order_id: str, *, now: datetime, actor: str
+    ) -> str | ClaimTicket:
         """Reconcile a ``propose`` or ``submit_dry_run`` reservation after a stop.
 
         Neither action ever reaches a gateway, so nothing can have been
@@ -1159,7 +1183,7 @@ class AuthorityProfileStore:
         verdict from the gateway's own signed chain.
         """
         return self._reconcile_handoff(
-            client_order_id, order_ref=None, now=now,
+            client_order_id, order_ref=None, now=now, actor=actor,
             require_no_gateway=True,
         )
 
@@ -1274,6 +1298,20 @@ class AuthorityProfileStore:
                             "pre-current profile store holds rows; recreate the store "
                             "or re-install profiles through the authenticated install path",
                         )
+            if version == STORE_USER_VERSION:
+                # CREATE TABLE IF NOT EXISTS would silently rebuild a ledger
+                # lost in a damaged restore. Refuse before any recreation.
+                names = {
+                    row[0]
+                    for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    ).fetchall()
+                }
+                required_tables = {"profiles", "controls", "consumption", "reservations"}
+                if not required_tables <= names:
+                    raise ProfileRefused(
+                        "store", "current profile store is missing a ledger table"
+                    )
             for statement in _SCHEMA:
                 conn.execute(statement)
             columns = {
@@ -1422,6 +1460,15 @@ class AuthorityProfileStore:
     def _require_actor(self, actor: str, *, expected: str) -> None:
         if type(actor) is not str or actor != expected:
             raise ProfileRefused("unauthenticated", "actor is not the stop owner")
+
+    def _require_recovery_actor(self, conn: sqlite3.Connection, profile_id: str, actor: str) -> None:
+        row = conn.execute(
+            "SELECT recovery_owner FROM profiles WHERE profile_id = ?",
+            (profile_id,),
+        ).fetchone()
+        owner = None if row is None else row["recovery_owner"]
+        if type(actor) is not str or type(owner) is not str or not hmac.compare_digest(actor, owner):
+            raise ProfileRefused("recovery_owner", "actor is not the recovery owner")
 
     def _require_capability(self, conn: sqlite3.Connection, profile_id: str, capability: object) -> None:
         token = _capability_token(capability)
@@ -1630,6 +1677,7 @@ def reconcile_handoff_to_gateway(
     submit_args: tuple = (),
     submit_kwargs: Mapping | None = None,
     now: datetime,
+    actor: str,
 ) -> ProfiledHandoff:
     """Reconcile an abandoned claim against the gateway's durable order identity.
 
@@ -1666,6 +1714,7 @@ def reconcile_handoff_to_gateway(
         client_id,
         order_ref=order_ref,
         now=now,
+        actor=actor,
         gateway=gateway,
         ladder=kwargs.get("ladder"),
     )
