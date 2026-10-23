@@ -265,6 +265,57 @@ def reconcile_startup(
                     "AMBIGUOUS; confirm against the broker and cancel or settle the order."
                 )
 
+    # A landed send whose local row never became open leaves a sticky block.
+    # Clear it once the order is counted or terminal. Leave it, and alert,
+    # while the row is still proposed: new risk-increasing orders stay refused.
+    from brokers.gateway import UNRECONCILED_LANDED_EXPOSURE
+
+    stuck_landed = False
+    with st.session_factory() as s:
+        landed_rows = s.execute(
+            select(AuditEntry)
+            .where(AuditEntry.event_type == UNRECONCILED_LANDED_EXPOSURE)
+            .order_by(AuditEntry.seq)
+        ).scalars().all()
+    latest_landed: dict[str, dict] = {}
+    for landed in landed_rows:
+        if not audit.verify_entry(landed):
+            stuck_landed = True
+            alerter(
+                "#system reconcile: an unreconciled-landed marker failed verification — "
+                "new risk-increasing orders stay refused."
+            )
+            continue
+        payload = landed.payload or {}
+        order_id = str((landed.refs or {}).get("order_id") or payload.get("order_id") or "")
+        if order_id:
+            latest_landed[order_id] = payload
+    counted_states = {"approved", "submitted", "partially_filled"} | set(TERMINAL_STATES)
+    for order_id, payload in latest_landed.items():
+        if payload.get("kind") != "block":
+            continue
+        with st.session_factory() as s:
+            order_row = s.get(Order, order_id)
+        state = None if order_row is None else order_row.state
+        if state in counted_states:
+            audit.append(
+                UNRECONCILED_LANDED_EXPOSURE,
+                actor="reconcile",
+                refs={"order_id": order_id},
+                payload={
+                    "kind": "clear",
+                    "order_id": order_id,
+                    "notional": payload.get("notional"),
+                },
+            )
+            continue
+        stuck_landed = True
+        alerter(
+            f"#system reconcile: order {order_id} landed but local exposure is still "
+            f"unreconciled (state={state!r}) — new risk-increasing orders stay refused "
+            "until the order is settled."
+        )
+
     # 1:1 completeness gate — orphan results + uncovered domain rows (bypassed record_state_change).
     orphans = tuple(audit.orphan_results())
     for oseq in orphans:
@@ -280,7 +331,7 @@ def reconcile_startup(
                 f"audit entry (state change bypassed record_state_change): {list(gaps)}"
             )
 
-    ok = not alerted and not orphans and not uncovered and not ambiguous
+    ok = not alerted and not orphans and not uncovered and not ambiguous and not stuck_landed
     return ReconcileReport(
         healed=tuple(healed),
         alerted=tuple(alerted),

@@ -1612,6 +1612,183 @@ def test_post_send_local_write_failure_stays_counted_and_visible(st, monkeypatch
     )
 
 
+def _install_gap(scenario, mutate):
+    """Apply ``mutate`` once the send hold has started on 031c3c0b.
+
+    Two HALT probes take the admission lock and release it. The next hold is
+    the send. ``watch_only_reason`` runs there, after mode and exposure were
+    already read. A mutation at that point is the old gap.
+    """
+    inner = scenario.st.safety_admission_lock
+    locked_halts = {"n": 0}
+    fired = {"v": False}
+    real_watch = scenario.breaker.watch_only_reason
+    real_halt = __import__("brokers.gateway", fromlist=["_halt_active"])._halt_active
+
+    def halt(path):
+        active = real_halt(path)
+        if inner.locked():
+            locked_halts["n"] += 1
+        return active
+
+    def watch():
+        reason = real_watch()
+        if inner.locked() and locked_halts["n"] >= 2 and not fired["v"]:
+            fired["v"] = True
+            mutate()
+        return reason
+
+    return halt, watch, fired
+
+
+def test_mode_changed_in_the_send_hold_gap_does_not_submit(st, monkeypatch):
+    """A mode flip while the send hold is entered must not reach the broker.
+
+    On 031c3c0b the flip lands after mode was read and is not read again.
+    """
+    scenario, broker = _paper_gateway(st)
+
+    def mutate():
+        scenario.ladder.set_mode(Mode.review_live, actor="op")
+
+    halt, watch, fired = _install_gap(scenario, mutate)
+    monkeypatch.setattr("brokers.gateway._halt_active", halt)
+    scenario.breaker.watch_only_reason = watch
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=lambda: None, **scenario.submit_kwargs()
+    )
+    assert fired["v"] is True
+    assert outcome.ok is False
+    assert outcome.stage == "mode"
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_sibling_approved_in_the_send_hold_gap_does_not_submit(st, monkeypatch):
+    """A sibling approved as the send hold is entered stays inside the cap."""
+    scenario, broker = _capped_paper(st)
+
+    def mutate():
+        _approved_sibling(st)
+
+    halt, watch, fired = _install_gap(scenario, mutate)
+    monkeypatch.setattr("brokers.gateway._halt_active", halt)
+    scenario.breaker.watch_only_reason = watch
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=lambda: None, **scenario.submit_kwargs()
+    )
+    assert fired["v"] is True
+    assert outcome.ok is False
+    assert outcome.stage == "pending_exposure"
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_halt_set_in_the_send_hold_gap_does_not_submit(st, monkeypatch):
+    """HALT set as the send hold is entered must not reach the broker."""
+    scenario, broker = _paper_gateway(st)
+
+    def mutate():
+        set_halt(default_halt_path(), reason="HALT in the send-hold gap")
+
+    halt, watch, fired = _install_gap(scenario, mutate)
+    monkeypatch.setattr("brokers.gateway._halt_active", halt)
+    scenario.breaker.watch_only_reason = watch
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=lambda: None, **scenario.submit_kwargs()
+    )
+    assert fired["v"] is True
+    assert outcome.ok is False
+    assert outcome.stage == "halt"
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_lease_expired_in_the_send_hold_gap_does_not_submit(st, monkeypatch):
+    """A lease that expires after the send hold's first sample must not be sent.
+
+    The first monotonic read after the gap stays fresh, which is the sample
+    031c3c0b takes and then does not repeat. A later read is past the lease.
+    """
+    scenario, broker = _paper_gateway(st)
+    real_mono = time.monotonic
+    jump = {"v": False, "reads": 0}
+
+    def mono():
+        now = real_mono()
+        if not jump["v"]:
+            return now
+        jump["reads"] += 1
+        if jump["reads"] == 1:
+            return now
+        return now + _ADMISSION_WAIT_BUDGET_S + 5
+
+    def mutate():
+        jump["v"] = True
+
+    halt, watch, fired = _install_gap(scenario, mutate)
+    monkeypatch.setattr("brokers.gateway._halt_active", halt)
+    monkeypatch.setattr("brokers.gateway.time.monotonic", mono)
+    scenario.breaker.watch_only_reason = watch
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=lambda: None, **scenario.submit_kwargs()
+    )
+    assert fired["v"] is True
+    assert outcome.ok is False
+    assert outcome.stage == "claim_fence"
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_landed_order_whose_local_writes_both_fail_blocks_the_next_buy(st, monkeypatch):
+    """A landed $1,500 whose approval and recovery writes both fail sticks.
+
+    The row stays proposed, so the cap alone would admit another $1,500 under
+    $2,000. The sticky marker refuses that buy until reconcile can clear it.
+    Reconcile leaves the marker in place while the row is still proposed.
+    """
+    from orchestrator.reconcile import reconcile_startup
+    from tests.brokers.test_pending_exposure_chain import _fresh_submittable
+
+    scenario, broker = _capped_paper(st)
+    real = scenario.st.audit.record_state_change
+    fail = {"v": True}
+
+    def record(obj, event_type, *args, **kwargs):
+        if fail["v"] and broker.calls >= 1:
+            raise OSError("local write failed")
+        return real(obj, event_type, *args, **kwargs)
+
+    monkeypatch.setattr(scenario.st.audit, "record_state_change", record)
+    outcome = scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+    fail["v"] = False
+    assert broker.calls == 1
+    assert outcome.ok is False
+    assert outcome.stage == "broker_error"
+    with scenario.st.session_factory() as session:
+        row = session.get(Order, scenario.order.id)
+        assert row.state == "proposed"
+    alerts: list[str] = []
+    report = reconcile_startup(
+        scenario.st, broker_history_fn=lambda _oid: [], alerter=alerts.append
+    )
+    assert report.ok is False
+    assert any("unreconciled" in alert for alert in alerts)
+    second, approval, risk = _fresh_submittable(
+        st, scenario, proposal="p-next", nonce="n-next",
+    )
+    nxt = scenario.gateway.submit(
+        second,
+        **scenario.submit_kwargs(
+            approval=approval, risk_decision=risk, token_nonce="n-next",
+        ),
+    )
+    assert nxt.ok is False
+    assert nxt.stage == "pending_exposure"
+    assert broker.calls == 1
+    assert scenario.st.audit.unresolved_intents() == []
+
+
 def test_quote_that_expires_during_the_final_risk_refresh_does_not_submit(st):
     scenario, broker = _paper_gateway(st)
     calls = {"n": 0}

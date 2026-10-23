@@ -601,6 +601,63 @@ def test_transition_payloads_carry_notional_and_symbol(st):
     assert st.audit.verify_chain().ok
 
 
+def _legacy_transition(monkeypatch):
+    """Sign transitions the way rows written before ``exposure`` existed did."""
+    import brokers.order_state_machine as fsm
+
+    original = fsm._transition_payload
+
+    def legacy(order, from_state, reason):
+        payload = original(order, from_state, reason)
+        payload.pop("exposure", None)
+        return payload
+
+    monkeypatch.setattr(fsm, "_transition_payload", legacy)
+
+
+def test_legacy_unsigned_limit_uses_qty_times_limit(st, monkeypatch):
+    """A limit row with no signed exposure still counts max(notional, qty x limit)."""
+    _legacy_transition(monkeypatch)
+    broker = RecordingBroker()
+    cap = Decimal("2000")
+    sc = build_scenario(
+        st, gateway=OrderGateway(broker, pending_exposure_cap=cap), broker=broker,
+    )
+    sibling = _approved_sibling(st, qty="10", limit_price="150", notional="1")
+    with st.session_factory() as s:
+        payloads = [
+            e.payload for e in s.execute(select(AuditEntry).order_by(AuditEntry.seq)).scalars()
+            if e.event_type == EVENT_ORDER_TRANSITION
+            and (e.refs or {}).get("row_id") == sibling.id
+        ]
+    assert payloads and all("exposure" not in payload for payload in payloads)
+    ok, total, out_cap = sc.gateway._pending_ok(st, sc.order)
+    assert ok is False
+    assert total == Decimal("3000")
+    assert out_cap == cap
+
+
+def test_legacy_unsigned_row_without_qty_times_limit_is_refused(st, monkeypatch):
+    """An unsigned open row that cannot price qty x limit must not count as $1.
+
+    A $1,500 order beside that row is 1,501 under a $2,000 cap and would be
+    admitted if the missing leg were ignored.
+    """
+    _legacy_transition(monkeypatch)
+    broker = RecordingBroker()
+    cap = Decimal("2000")
+    sc = build_scenario(
+        st, gateway=OrderGateway(broker, pending_exposure_cap=cap), broker=broker,
+    )
+    _approved_sibling(
+        st, symbol="GME", qty="10", order_type="market", limit_price=None, notional="1",
+    )
+    ok, total, out_cap = sc.gateway._pending_ok(st, sc.order)
+    assert ok is False
+    assert out_cap == cap
+    assert not total.is_finite() or total > cap
+
+
 def test_order_notional_uses_the_larger_of_notional_and_qty_times_limit():
     order = Order(notional="1", qty="10", limit_price="30", order_type="limit")
     assert OrderGateway._order_notional(order) == Decimal("300")

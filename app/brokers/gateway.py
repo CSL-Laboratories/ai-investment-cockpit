@@ -169,6 +169,12 @@ def _dec(x) -> Decimal:
         return Decimal("NaN")
 
 
+# A landed send whose local approval and order-state writes both failed.
+# ``kind=block`` refuses new risk-increasing orders. ``kind=clear`` is the
+# reconcile receipt that the order is now open-counted or terminal.
+UNRECONCILED_LANDED_EXPOSURE = "unreconciled_landed_exposure"
+
+
 def _naive_utc(dt: datetime) -> datetime:
     return dt if dt.tzinfo is None else dt.astimezone(timezone.utc).replace(tzinfo=None)
 
@@ -508,6 +514,106 @@ class OrderGateway:
         if not sizes:
             return Decimal("0")
         return max(sizes)
+
+    @staticmethod
+    def _unsigned_open_exposure(order, chain_notional) -> Decimal:
+        """max(notional, qty x limit) when the signed ``exposure`` field is absent.
+
+        A legacy open row has to price both legs. A missing or non-positive
+        qty x limit cannot fall back to a small notional: that is the
+        undercount. The caller fails closed on a non-finite result.
+        """
+        limit = getattr(order, "limit_price", None)
+        qty = getattr(order, "qty", None)
+        if limit is None or qty is None:
+            return Decimal("Infinity")
+        product = _dec(qty) * _dec(limit)
+        if not product.is_finite() or product <= 0:
+            return Decimal("Infinity")
+        sizes = [product]
+        if (
+            chain_notional is not None
+            and chain_notional.is_finite()
+            and chain_notional > 0
+        ):
+            sizes.append(chain_notional)
+        return max(sizes)
+
+    def _unreconciled_landed_notional(self, st) -> Decimal | None:
+        """Exposure of landed sends whose local row is still not counted.
+
+        The latest verified marker per order wins. A ``clear`` drops it. A
+        block whose order is already open or terminal is waiting for
+        reconcile and is not added again here. ``None`` means a marker could
+        not be read, which the caller treats as fail-closed.
+        """
+        with st.session_factory() as s:
+            rows = s.execute(
+                select(AuditEntry)
+                .where(AuditEntry.event_type == UNRECONCILED_LANDED_EXPOSURE)
+                .order_by(AuditEntry.seq)
+            ).scalars().all()
+        latest: dict[str, dict] = {}
+        for row in rows:
+            if not st.audit.verify_entry(row):
+                return None
+            payload = row.payload or {}
+            order_id = str(
+                (row.refs or {}).get("order_id") or payload.get("order_id") or ""
+            )
+            if not order_id:
+                return None
+            latest[order_id] = payload
+        if not latest:
+            return Decimal("0")
+        counted = {"approved", "submitted", "partially_filled"} | set(TERMINAL_STATES)
+        total = Decimal("0")
+        with st.session_factory() as s:
+            for order_id, payload in latest.items():
+                if payload.get("kind") != "block":
+                    continue
+                order_row = s.get(Order, order_id)
+                state = None if order_row is None else order_row.state
+                if state in counted:
+                    continue
+                text = payload.get("notional")
+                amount = _dec(text) if type(text) is str else Decimal("NaN")
+                if not amount.is_finite() or amount <= 0:
+                    return None
+                total += amount
+        return total
+
+    def _persist_unreconciled_landed(self, st, order, actor) -> None:
+        """Stick a refusal when a landed send never became an open row.
+
+        The approval-consume write and its recovery write both missed. Pending
+        exposure does not count a ``proposed`` row, so the marker is what
+        blocks the next risk-increasing order until reconcile clears it.
+        """
+        with st.session_factory() as s:
+            row = s.get(Order, getattr(order, "id", None))
+            state = None if row is None else row.state
+        counted = {"approved", "submitted", "partially_filled"}
+        if state in counted or state in TERMINAL_STATES:
+            return
+        amount = self._order_notional(order)
+        text = str(amount) if amount.is_finite() and amount > 0 else "Infinity"
+        try:
+            st.audit.append(
+                UNRECONCILED_LANDED_EXPOSURE,
+                actor=actor,
+                refs={"order_id": getattr(order, "id", None)},
+                payload={
+                    "kind": "block",
+                    "order_id": getattr(order, "id", None),
+                    "notional": text,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 - a lost marker must not look settled
+            st.admit_integrity_failure(
+                "unreconciled landed exposure was not persisted: "
+                f"{type(exc).__name__}: {exc}"
+            )
 
     def _resolve_admitted_paper_transport(self):
         """Resolve the pinned paper send, or None when this is not a paper profile.
@@ -1350,6 +1456,7 @@ class OrderGateway:
         chain_latest: dict = {}          # row_id -> latest verified 'to' state
         chain_notional: dict = {}        # row_id -> MAX verified payload notional across history
         chain_exposure: dict = {}        # row_id -> MAX signed conservative exposure
+        exposure_signed: set = set()     # row_ids whose history carries an exposure field
         chain_ids: set = set()           # row_ids with >=1 verified transition
         chain_to_states: dict = {}       # row_id -> set of every verified 'to' state ever signed
         for e in entries:
@@ -1374,13 +1481,15 @@ class OrderGateway:
                     prev = chain_notional.get(row_id)
                     chain_notional[row_id] = n if prev is None else max(prev, n)
             exposure_text = p.get("exposure")
-            if type(exposure_text) is str and exposure_text:
-                amount = _dec(exposure_text)
-                if amount.is_finite() and amount > 0:
-                    prev_exposure = chain_exposure.get(row_id)
-                    chain_exposure[row_id] = (
-                        amount if prev_exposure is None else max(prev_exposure, amount)
-                    )
+            if type(exposure_text) is str:
+                exposure_signed.add(row_id)
+                if exposure_text:
+                    amount = _dec(exposure_text)
+                    if amount.is_finite() and amount > 0:
+                        prev_exposure = chain_exposure.get(row_id)
+                        chain_exposure[row_id] = (
+                            amount if prev_exposure is None else max(prev_exposure, amount)
+                        )
 
         # Every persisted Order row EXCEPT the current order (sized separately below).
         with st.session_factory() as s:
@@ -1427,13 +1536,20 @@ class OrderGateway:
             row = db_rows.get(rid)
             # A sibling is the larger of its chain notional, the exposure signed at
             # creation, qty x limit, and (for a market order) the frozen exposure.
-            # The frozen map is built once for this scan.
-            sized = chain_n if row is None else self._sized_open_exposure(
-                st, row, chain_n,
-                signed_exposure=chain_exposure.get(rid),
-                frozen=frozen_index.get(str(rid)),
-                frozen_known=True,
-            )
+            # The frozen map is built once for this scan. A legacy row with no
+            # exposure field is max(notional, qty x limit), or fail-closed when
+            # that product cannot be computed.
+            if rid not in exposure_signed:
+                if row is None:
+                    return (False, Decimal("Infinity"), cap)
+                sized = self._unsigned_open_exposure(row, chain_n)
+            else:
+                sized = chain_n if row is None else self._sized_open_exposure(
+                    st, row, chain_n,
+                    signed_exposure=chain_exposure.get(rid),
+                    frozen=frozen_index.get(str(rid)),
+                    frozen_known=True,
+                )
             if not sized.is_finite():
                 return (False, sized, cap)
             pending += sized
@@ -1449,6 +1565,13 @@ class OrderGateway:
         if cur_exposure is not None and cur_exposure > floor:
             floor = cur_exposure
         total = pending + max(floor, self._order_notional(order))
+        landed = self._unreconciled_landed_notional(st)
+        if landed is None:
+            return (False, Decimal("Infinity"), cap)
+        # A landed send that is still proposed is not in ``pending``. Refuse
+        # every new buy until reconcile clears the marker, even under the cap.
+        if landed > 0 and str(getattr(order, "side", "") or "") != "sell":
+            return (False, total + landed, cap)
         return (total <= cap and not tampered, total, cap)
 
     # ---- public: pure dry-run re-check (no submit, no token consume) --------------------
@@ -2019,16 +2142,18 @@ class OrderGateway:
                             resolved_hash=resolved_hash,
                         )
 
-                # Authority, mode, and pending scan the ledger. They stay outside
-                # safety_admission_lock: that lock is the kill switch and the
-                # integrity-publication lock, and it is not reentrant. st.lock
-                # serializes writers in this process only. Another process sharing
-                # the database can still commit a mode change or an approved sibling,
-                # so mode and pending exposure are read again after the final HALT
-                # probe and before the brief hold. That hold covers the quote,
-                # watch-only, analysis, the permit, and the send. A change between
-                # the re-read and the hold loops under the lease. Abort and integrity
-                # records are written after the lock is released.
+                # One admission hold through the send. HALT, the claim lease,
+                # authority, mode, pending exposure, the quote, watch-only,
+                # analysis, and the permit are decided under that hold. The lock
+                # is not reentrant and it is the kill switch, so this hold only
+                # records the decision. Abort, integrity, refusal, and watch-only
+                # writes happen after it is released.
+                #
+                # ``st.lock`` serializes this process only. Another process that
+                # shares the database is outside both locks. This gateway assumes
+                # a single dispatcher. A head-seq reread is not a reservation: it
+                # misses a keyless UPDATE and does not fence a second process.
+                # Cross-process dispatch needs an owner-signed reservation.
                 def _heavy_dispatch_refusal():
                     if claim_fence is None:
                         return None
@@ -2115,25 +2240,16 @@ class OrderGateway:
                     admission_lock_held = True
                     return True
 
-                def _probe_under_lock():
-                    found = _cheap_dispatch_refusal()
-                    if found is not None:
-                        return found
+                def _halt_decision():
                     if _halt_active(default_halt_path()):
                         return (
                             "halt",
                             None,
                             "HALT set immediately before broker call (SEC-04)",
                         )
-                    if _lease_expired():
-                        return (
-                            "claim_fence",
-                            None,
-                            "claim lease expired before transport",
-                        )
-                    found = _cheap_dispatch_refusal()
-                    if found is not None:
-                        return found
+                    return None
+
+                def _lease_decision():
                     if _lease_expired():
                         return (
                             "claim_fence",
@@ -2141,6 +2257,37 @@ class OrderGateway:
                             "claim lease expired before transport",
                         )
                     return None
+
+                def _decide_under_lock():
+                    """Record the send decision. No audit or watch-only writes.
+
+                    Two HALT probes run before the other reads so a mutation on
+                    the last probe is visible, and so a mutation that waits for
+                    those probes (the old gap between release and the send
+                    acquire) is visible to the same hold. The lease is sampled
+                    again as the last act before the caller sends. An unfenced
+                    submit skips authority, mode, and pending: another chain
+                    read after the snapshot would hide an integrity fault.
+                    """
+                    found = _halt_decision()
+                    if found is not None:
+                        return found
+                    found = _halt_decision()
+                    if found is not None:
+                        return found
+                    found = _cheap_dispatch_refusal()
+                    if found is not None:
+                        return found
+                    found = _heavy_dispatch_refusal()
+                    if found is not None:
+                        return found
+                    found = _halt_decision()
+                    if found is not None:
+                        return found
+                    found = _lease_decision()
+                    if found is not None:
+                        return found
+                    return _lease_decision()
 
                 def _admission_lock_abort():
                     return self._abort_after_intent(
@@ -2151,134 +2298,28 @@ class OrderGateway:
                         resolved_hash=resolved_hash,
                     )
 
-                def _mode_and_pending():
-                    """Mode and the exposure cap, outside the admission lock.
-
-                    Returns ``(refusal, snapshot)``. ``refusal`` is set when the
-                    picture itself forbids the send. ``snapshot`` is what the
-                    lease loop compares before taking the hold.
-                    """
-                    if claim_fence is None:
-                        return None, ("unfenced",)
-                    mode = ladder.current()
-                    mode_v = mode.value if hasattr(mode, "value") else str(mode)
-                    if mode_v not in self._allowed_modes:
-                        return (
-                            (
-                                "mode",
-                                None,
-                                f"mode {mode_v!r} cannot use "
-                                f"{self._execution_scope!r} broker transport",
-                            ),
-                            None,
-                        )
-                    pending_ok, total, cap = self._pending_ok(st, order)
-                    if not pending_ok:
-                        return (
-                            (
-                                "pending_exposure",
-                                None,
-                                "pending exposure "
-                                f"{total} + order would exceed cap {cap} (SEC-07)",
-                            ),
-                            None,
-                        )
-                    return None, (mode_v, str(total))
-
-                heavy = _heavy_dispatch_refusal()
-                if heavy is not None:
-                    return _finish_refusal(heavy)
-
-                if not _acquire_admission_lock():
-                    return _admission_lock_abort()
-                try:
-                    early = _probe_under_lock()
-                finally:
-                    _release_admission_lock()
-                if early is not None:
-                    return _finish_refusal(early)
-
-                heavy = _heavy_dispatch_refusal()
-                if heavy is not None:
-                    return _finish_refusal(heavy)
-
                 broker_failure = None
                 sent = None
                 final_refusal = None
-                for _stable in range(_MAX_FENCE_ROUNDS):
-                    if _lease_expired():
-                        return _lease_abort()
-                    # The last HALT probe. Release before any abort write. The
-                    # send hold below does not probe HALT again: a probe there
-                    # would sit after this re-read.
-                    if not _acquire_admission_lock():
-                        return _admission_lock_abort()
-                    try:
-                        if _halt_active(default_halt_path()):
-                            probe_refusal = (
-                                "halt",
-                                None,
-                                "HALT set immediately before broker call (SEC-04)",
-                            )
-                        elif _lease_expired():
-                            probe_refusal = (
-                                "claim_fence",
-                                None,
-                                "claim lease expired before transport",
-                            )
-                        else:
-                            probe_refusal = None
-                    finally:
-                        _release_admission_lock()
-                    if probe_refusal is not None:
-                        return _finish_refusal(probe_refusal)
-
-                    refusal, snapshot = _mode_and_pending()
-                    if refusal is not None:
-                        return _finish_refusal(refusal)
-                    if _lease_expired():
-                        return _lease_abort()
-                    # Another process can commit between the re-read and the hold.
-                    confirm, confirmed = _mode_and_pending()
-                    if confirm is not None:
-                        return _finish_refusal(confirm)
-                    if confirmed != snapshot:
-                        continue
-                    if _lease_expired():
-                        return _lease_abort()
-
-                    if not _acquire_admission_lock():
-                        return _admission_lock_abort()
-                    try:
-                        final_refusal = _cheap_dispatch_refusal()
-                        if final_refusal is None and _lease_expired():
-                            final_refusal = (
-                                "claim_fence",
-                                None,
-                                "claim lease expired before transport",
-                            )
-                        if final_refusal is None:
-                            # Before the call: a raise can still mean the order landed.
-                            transport_entered = True
-                            try:
-                                if binding is not None:
-                                    raw_result = binding["client_submit"](broker_request)
-                                else:
-                                    raw_result = broker.submit_order(broker_request)
-                                sent = _sanitize_broker_response(raw_result)
-                            except BaseException as exc:  # noqa: BLE001 - note the send, then re-raise
-                                broker_failure = exc
-                    finally:
-                        _release_admission_lock()
-                    break
-                else:
-                    return self._abort_after_intent(
-                        st, order, intent,
-                        stage="claim_fence",
-                        reason="admission wait exceeded the claim lease budget",
-                        actor=producing_runtime,
-                        resolved_hash=resolved_hash,
-                    )
+                if _lease_expired():
+                    return _lease_abort()
+                if not _acquire_admission_lock():
+                    return _admission_lock_abort()
+                try:
+                    final_refusal = _decide_under_lock()
+                    if final_refusal is None:
+                        # Before the call: a raise can still mean the order landed.
+                        transport_entered = True
+                        try:
+                            if binding is not None:
+                                raw_result = binding["client_submit"](broker_request)
+                            else:
+                                raw_result = broker.submit_order(broker_request)
+                            sent = _sanitize_broker_response(raw_result)
+                        except BaseException as exc:  # noqa: BLE001 - note the send, then re-raise
+                            broker_failure = exc
+                finally:
+                    _release_admission_lock()
 
                 if final_refusal is not None:
                     return _finish_refusal(final_refusal)
@@ -2367,6 +2408,10 @@ class OrderGateway:
                         raise
                     except Exception:  # noqa: BLE001 - one recovery attempt, then flag
                         pass
+                    # Both the original write and this recovery missed. A proposed
+                    # row drops out of pending exposure, so stick a refusal that
+                    # reconcile clears only once the order is counted or terminal.
+                    self._persist_unreconciled_landed(st, order, producing_runtime)
                     reason = (
                         "broker outcome ambiguous after transport: "
                         f"{type(exc).__name__}: {exc}"
