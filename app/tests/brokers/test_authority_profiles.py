@@ -663,14 +663,24 @@ class _CountingPaper(AlpacaPaperBroker):
 def _sends(broker) -> int:
     """Orders the admitted paper client accepted.
 
-    Profile transport calls ``AlpacaPaperBroker.submit_order`` captured before
-    the fence, so a subclass ``calls`` counter stays at zero when the order lands.
+    Profile transport calls ``AlpacaPaperBroker.submit_order`` captured at
+    init, so a subclass ``calls`` counter stays at zero when the order lands.
     """
     client = getattr(broker, "_client", None)
     submitted = getattr(client, "submitted", None)
     if submitted is not None:
         return len(submitted)
     return int(getattr(broker, "calls", 0))
+
+
+def _arm(gateway, store, client_order_id, generation):
+    """Arm the gateway's one fence. ``submit`` must not receive another callable."""
+    gateway.arm_profile_claim(store, client_order_id, generation)
+
+
+def _use_fence(gateway, fn):
+    """Run ``fn`` as the bound fence. The callable object stays the one from init."""
+    gateway.arm_profile_fence(fn)
 
 
 def test_paper_handoff_still_goes_through_the_gateway(st, tmp_path):
@@ -1132,13 +1142,8 @@ def test_reconcile_completes_a_landed_submit_without_a_second_one(st, tmp_path):
     )
     ticket = store.claim_handoff("landed-1", now=now, awaiting_submit=True)
     assert isinstance(ticket, ClaimTicket)
-    outcome = gateway.submit(
-        scenario.order,
-        claim_fence=lambda: store._confirm_claim_before_broker_call(
-            "landed-1", ticket.generation, now=now,
-        ),
-        **_paper_submit_kwargs(scenario),
-    )
+    _arm(gateway, store, "landed-1", ticket.generation)
+    outcome = gateway.submit(scenario.order, **_paper_submit_kwargs(scenario))
     assert outcome.ok is True
     assert _sends(broker) == 1
     # Crash between submit returning and complete_handoff: still in_progress.
@@ -1188,13 +1193,8 @@ def test_stale_claim_generation_is_a_noop_refusal(st, tmp_path):
     assert _refuse(
         lambda: store.fail_handoff("stale-1", generation=ticket.generation + 1)
     ) == "stale_claim"
-    outcome = gateway.submit(
-        scenario.order,
-        claim_fence=lambda: store._confirm_claim_before_broker_call(
-            "stale-1", ticket.generation, now=now,
-        ),
-        **_paper_submit_kwargs(scenario),
-    )
+    _arm(gateway, store, "stale-1", ticket.generation)
+    outcome = gateway.submit(scenario.order, **_paper_submit_kwargs(scenario))
     assert outcome.ok is True
     store.complete_handoff(
         "stale-1", generation=ticket.generation, gateway=gateway, ladder=scenario.ladder
@@ -1347,12 +1347,9 @@ def test_claim_ticket_cannot_complete_without_signed_submission(
     ticket = store.claim_handoff("completion-1", now=now, awaiting_submit=True)
     assert isinstance(ticket, ClaimTicket)
     if evidence in {"other-order", "invalid-signature"}:
+        _arm(gateway, store, "completion-1", ticket.generation)
         assert gateway.submit(
-            scenario.order,
-            claim_fence=lambda: store._confirm_claim_before_broker_call(
-                "completion-1", ticket.generation, now=now,
-            ),
-            **_paper_submit_kwargs(scenario),
+            scenario.order, **_paper_submit_kwargs(scenario),
         ).ok is True
     if evidence == "invalid-signature":
         with st.session_factory() as session:
@@ -1544,13 +1541,8 @@ def test_direct_caller_cannot_forge_a_submitted_verdict(st, tmp_path, monkeypatc
         if state == "failed":
             store.fail_handoff("forge-1", generation=ticket.generation)
     if state == "in_progress":
-        seeded = gateway.submit(
-            scenario.order,
-            claim_fence=lambda: store._confirm_claim_before_broker_call(
-                "forge-1", ticket.generation, now=now,
-            ),
-            **_paper_submit_kwargs(scenario),
-        )
+        _arm(gateway, store, "forge-1", ticket.generation)
+        seeded = gateway.submit(scenario.order, **_paper_submit_kwargs(scenario))
     else:
         # Pending and failed rows are not a live claim. Seed the signed chain
         # through a separate in-progress claim so PaperOrderGateway.submit still
@@ -1563,13 +1555,8 @@ def test_direct_caller_cannot_forge_a_submitted_verdict(st, tmp_path, monkeypatc
         )
         seed = store.claim_handoff("seed-1", now=now, awaiting_submit=True)
         assert isinstance(seed, ClaimTicket)
-        seeded = gateway.submit(
-            scenario.order,
-            claim_fence=lambda: store._confirm_claim_before_broker_call(
-                "seed-1", seed.generation, now=now,
-            ),
-            **_paper_submit_kwargs(scenario),
-        )
+        _arm(gateway, store, "seed-1", seed.generation)
+        seeded = gateway.submit(scenario.order, **_paper_submit_kwargs(scenario))
         assert seeded.ok is True
         store.complete_handoff(
             "seed-1", generation=seed.generation, gateway=gateway, ladder=scenario.ladder,
@@ -1996,14 +1983,16 @@ def test_halt_set_inside_claim_fence_refuses_and_covers_intent(st, tmp_path):
     fenced = []
 
     def fence():
-        store._confirm_claim_before_broker_call(
+        permit = store._confirm_claim_before_broker_call(
             "fence-1", ticket.generation, now=scenario.clock.now(),
         )
         set_halt(default_halt_path(), reason="HALT during claim fence")
         fenced.append(True)
+        return permit
 
+    _use_fence(scenario.gateway, fence)
     outcome = scenario.gateway.submit(
-        scenario.order, claim_fence=fence, **_paper_submit_kwargs(scenario),
+        scenario.order, **_paper_submit_kwargs(scenario),
     )
     assert fenced  # the fence also re-runs right before transport
     assert (outcome.ok, outcome.stage) == (False, "halt")
@@ -2027,10 +2016,13 @@ def test_claim_fence_cannot_renew_an_expired_or_future_lease(st, tmp_path, elaps
     store._clock._at = fence_time
 
     def fence():
-        store._confirm_claim_before_broker_call("fence-1", ticket.generation, now=fresh)
+        return store._confirm_claim_before_broker_call(
+            "fence-1", ticket.generation, now=fresh,
+        )
 
+    _use_fence(scenario.gateway, fence)
     outcome = scenario.gateway.submit(
-        scenario.order, claim_fence=fence, **_paper_submit_kwargs(scenario),
+        scenario.order, **_paper_submit_kwargs(scenario),
     )
     assert (outcome.ok, outcome.stage) == (False, "claim_fence")
     assert "stale" in outcome.reason
@@ -2063,8 +2055,9 @@ def test_running_owner_fenced_out_after_expired_lease_takeover(st, tmp_path):
             "fence-1", ticket_a.generation, now=scenario.clock.now(),
         )
 
+    _use_fence(scenario.gateway, delayed_owner_a_fence)
     outcome_a = scenario.gateway.submit(
-        scenario.order, claim_fence=delayed_owner_a_fence, **_paper_submit_kwargs(scenario),
+        scenario.order, **_paper_submit_kwargs(scenario),
     )
     assert (outcome_a.ok, outcome_a.stage) == (False, "claim_fence")
     assert _sends(broker) == 0
@@ -2079,11 +2072,9 @@ def test_running_owner_fenced_out_after_expired_lease_takeover(st, tmp_path):
         nonce="takeover-b", proposal_id=scenario.order.proposal_id,
         risk_decision_id=scenario.risk_decision.id, order_tuple_hash=scenario.tuple_hash,
     )
+    _arm(scenario.gateway, store_b, "fence-1", tickets_b[0].generation)
     outcome_b = scenario.gateway.submit(
         scenario.order,
-        claim_fence=lambda: store_b._confirm_claim_before_broker_call(
-            "fence-1", tickets_b[0].generation, now=scenario.clock.now(),
-        ),
         **_paper_submit_kwargs(scenario, token_nonce="takeover-b"),
     )
     assert outcome_b.ok is True
@@ -2115,12 +2106,13 @@ def test_owner_fenced_out_when_takeover_happens_after_final_admission(st, tmp_pa
                 actor="recovery-owner",
                 gateway=scenario.gateway, ladder=scenario.ladder,
             )
-        store_a._confirm_claim_before_broker_call(
+        return store_a._confirm_claim_before_broker_call(
             "fence-1", ticket_a.generation, now=scenario.clock.now(),
         )
 
+    _use_fence(scenario.gateway, fence)
     outcome = scenario.gateway.submit(
-        scenario.order, claim_fence=fence, **_paper_submit_kwargs(scenario),
+        scenario.order, **_paper_submit_kwargs(scenario),
     )
     assert len(calls) == 2
     assert (outcome.ok, outcome.stage) == (False, "claim_fence")
@@ -2149,12 +2141,13 @@ def test_claim_fence_clock_failure_refuses_without_writing_lease(st, tmp_path, f
             store._clock = None
         else:
             store._clock = BrokenClock()
-        store._confirm_claim_before_broker_call(
+        return store._confirm_claim_before_broker_call(
             "fence-1", ticket.generation, now=scenario.clock.now(),
         )
 
+    _use_fence(scenario.gateway, fence)
     outcome = scenario.gateway.submit(
-        scenario.order, claim_fence=fence, **_paper_submit_kwargs(scenario),
+        scenario.order, **_paper_submit_kwargs(scenario),
     )
     assert (outcome.ok, outcome.stage) == (False, "claim_fence")
     assert "clock" in outcome.reason
@@ -2183,23 +2176,28 @@ def test_handoff_clock_failure_cannot_fall_back_to_handoff_time(
         ),
         now=now,
     )
+    # The post-fence refresh and the store both read this clock, not the caller clock.
     broken = []
+    raise_once = {"left": 0}
+    original_now = scenario.clock.now
 
-    class FenceClock:
-        def now(self):
-            if broken:
-                raise RuntimeError("clock failed after the final audit read")
-            return scenario.clock.now()
+    def raising_now():
+        if raise_once["left"]:
+            raise_once["left"] = 0
+            raise RuntimeError("clock failed after the final audit read")
+        return original_now()
 
+    monkeypatch.setattr(scenario.clock, "now", raising_now)
     real_audit_check = gateway._final_audit_authority
 
     def audit_check(st_arg):
         result = real_audit_check(st_arg)
         broken.append(True)
+        raise_once["left"] = 1
         return result
 
     monkeypatch.setattr(gateway, "_final_audit_authority", audit_check)
-    kwargs = _paper_submit_kwargs(scenario, clock=FenceClock())
+    kwargs = _paper_submit_kwargs(scenario)
     notional = Decimal(str(scenario.order.notional))
     if recovery:
         store.authorize(
@@ -2208,12 +2206,14 @@ def test_handoff_clock_failure_cannot_fall_back_to_handoff_time(
         )
         store.claim_handoff("clock-failure-1", now=now, awaiting_submit=True)
         scenario.clock._at = now + CLAIM_LEASE + timedelta(seconds=1)
+        expected_claimed = original_now().isoformat()
         result = reconcile_handoff_to_gateway(
             store, gateway, client_order_id="clock-failure-1",
-            submit_args=(scenario.order,), submit_kwargs=kwargs, now=scenario.clock.now(),
+            submit_args=(scenario.order,), submit_kwargs=kwargs, now=original_now(),
             actor="recovery-owner",
         )
     else:
+        expected_claimed = now.isoformat()
         result = handoff_to_gateway(
             store, gateway, profile_id="profile-b", action="submit_paper",
             client_order_id="clock-failure-1", notional=notional, actor="stop-owner", now=now,
@@ -2224,7 +2224,7 @@ def test_handoff_clock_failure_cannot_fall_back_to_handoff_time(
     assert "clock" in result.outcome.reason
     assert _sends(broker) == 0
     row = _handoff_row(store.path, "clock-failure-1")
-    assert row["claimed_at"] == scenario.clock.now().isoformat()
+    assert row["claimed_at"] == expected_claimed
     assert (row["handoff_state"], row["handoff_done"]) == ("failed", 0)
     assert st.audit.unresolved_intents() == []
     assert st.audit.verify_chain().ok
@@ -2240,7 +2240,7 @@ def test_claim_fence_cannot_swap_transport_or_paper_scope(st, tmp_path, mutation
         pass
 
     def fence():
-        store._confirm_claim_before_broker_call(
+        permit = store._confirm_claim_before_broker_call(
             "fence-1", ticket.generation, now=scenario.clock.now(),
         )
         if mutation == "scope":
@@ -2249,9 +2249,11 @@ def test_claim_fence_cannot_swap_transport_or_paper_scope(st, tmp_path, mutation
             broker.__class__ = OtherPaper
         else:
             scenario.gateway._broker = swapped
+        return permit
 
+    _use_fence(scenario.gateway, fence)
     outcome = scenario.gateway.submit(
-        scenario.order, claim_fence=fence, **_paper_submit_kwargs(scenario),
+        scenario.order, **_paper_submit_kwargs(scenario),
     )
     assert (outcome.ok, outcome.stage) == (False, "transport_scope")
     assert _sends(broker) == swapped.calls == 0
@@ -2609,11 +2611,9 @@ def test_revocation_during_profile_handoff_does_not_reach_the_broker(st, tmp_pat
             )
         return {"decision": "approved", "failed_checks": []}
 
+    _arm(scenario.gateway, store, "fence-1", ticket.generation)
     outcome = scenario.gateway.submit(
         scenario.order,
-        claim_fence=lambda: store._confirm_claim_before_broker_call(
-            "fence-1", ticket.generation, now=scenario.clock.now(),
-        ),
         **_paper_submit_kwargs(scenario, risk_recheck=risk_recheck),
     )
     assert outcome.ok is False
@@ -2637,11 +2637,9 @@ def test_lost_claim_generation_during_risk_recheck_does_not_reach_the_broker(st,
         assert ticket_b.generation == ticket_a.generation + 1
         return {"decision": "approved", "failed_checks": []}
 
+    _arm(scenario.gateway, store_a, "fence-1", ticket_a.generation)
     outcome = scenario.gateway.submit(
         scenario.order,
-        claim_fence=lambda: store_a._confirm_claim_before_broker_call(
-            "fence-1", ticket_a.generation, now=scenario.clock.now(),
-        ),
         **_paper_submit_kwargs(scenario, risk_recheck=risk_recheck),
     )
     assert outcome.ok is False
@@ -2754,15 +2752,31 @@ def test_direct_paper_submit_requires_a_validated_claim(st, tmp_path):
     )
     assert (missing.ok, missing.stage) == (False, "claim_fence")
     assert _sends(broker) == 0
-    # #252 treats any callable fence as the claim check and will land this order.
-    # The permit rejection below is the standalone path, until that hook is present.
-    if not _order_gateway_claim_fence_landed():
-        noop = scenario.gateway.submit(
-            scenario.order, claim_fence=lambda: None, **_paper_submit_kwargs(scenario),
-        )
-        assert noop.ok is False
-        assert _sends(broker) == 0
-        assert broker._client.submitted == []
+    # The unarmed submit reaches capability consumption on the split gateway
+    # before the fence refuses. Each later refusal needs its own token.
+    _use_fence(scenario.gateway, lambda: None)
+    scenario.gateway.mint_submit_token(
+        nonce="noop", proposal_id=scenario.order.proposal_id,
+        risk_decision_id=scenario.risk_decision.id, order_tuple_hash=scenario.tuple_hash,
+    )
+    noop = scenario.gateway.submit(
+        scenario.order, **_paper_submit_kwargs(scenario, token_nonce="noop"),
+    )
+    assert (noop.ok, noop.stage) == (False, "claim_fence")
+    assert "no admission" in noop.reason
+    assert _sends(broker) == 0
+    scenario.gateway.mint_submit_token(
+        nonce="foreign", proposal_id=scenario.order.proposal_id,
+        risk_decision_id=scenario.risk_decision.id, order_tuple_hash=scenario.tuple_hash,
+    )
+    foreign = scenario.gateway.submit(
+        scenario.order,
+        claim_fence=lambda: None,
+        **_paper_submit_kwargs(scenario, token_nonce="foreign"),
+    )
+    assert (foreign.ok, foreign.stage) == (False, "claim_fence")
+    assert "bound at setup" in foreign.reason
+    assert broker._client.submitted == []
 
 
 def test_instance_precheck_cannot_skip_the_risk_gate(st, tmp_path):
@@ -2773,11 +2787,9 @@ def test_instance_precheck_cannot_skip_the_risk_gate(st, tmp_path):
     def rejected(_positions):
         return {"decision": "rejected", "failed_checks": ["hard"]}
 
+    _arm(scenario.gateway, store, "fence-1", ticket.generation)
     outcome = scenario.gateway.submit(
         scenario.order,
-        claim_fence=lambda: store._confirm_claim_before_broker_call(
-            "fence-1", ticket.generation, now=scenario.clock.now(),
-        ),
         **_paper_submit_kwargs(scenario, risk_recheck=rejected),
     )
     assert (outcome.ok, outcome.stage) == (False, "risk")
@@ -2794,18 +2806,40 @@ def test_instance_submit_order_cannot_replace_the_admitted_adapter(st, tmp_path)
         raise AssertionError("replaced submit_order")
 
     broker.submit_order = evil
+    _arm(scenario.gateway, store, "fence-1", ticket.generation)
     outcome = scenario.gateway.submit(
-        scenario.order,
-        claim_fence=lambda: store._confirm_claim_before_broker_call(
-            "fence-1", ticket.generation, now=scenario.clock.now(),
-        ),
-        **_paper_submit_kwargs(scenario),
+        scenario.order, **_paper_submit_kwargs(scenario),
     )
     assert called == []
     assert outcome.ok is True
     assert _sends(broker) == 1
     assert len(broker._client.submitted) == 1
     assert broker.calls == 0
+
+
+def test_risk_recheck_cannot_replace_the_pinned_broker(st, tmp_path):
+    """A callback inside submit cannot point transport at another broker."""
+    scenario, store, ticket, broker = _claimed_paper_scenario(st, tmp_path)
+    swapped = _ProbeBroker()
+
+    def risk_recheck(_positions):
+        scenario.gateway._broker = swapped
+        return {"decision": "approved", "failed_checks": []}
+
+    _arm(scenario.gateway, store, "fence-1", ticket.generation)
+    outcome = scenario.gateway.submit(
+        scenario.order,
+        **_paper_submit_kwargs(scenario, risk_recheck=risk_recheck),
+    )
+    assert swapped.calls == 0
+    if _order_gateway_claim_fence_landed():
+        # The parent snapshots the broker after precheck and refuses a non-paper swap.
+        assert (outcome.ok, outcome.stage) == (False, "transport_scope")
+        assert _sends(broker) == 0
+    else:
+        assert outcome.ok is True
+        assert _sends(broker) == 1
+    assert st.audit.unresolved_intents() == []
 
 
 def test_confirm_claim_before_broker_call_does_not_submit(st, tmp_path, monkeypatch):
@@ -2832,12 +2866,9 @@ def test_profile_transport_ignores_a_subclass_submit_override(st, tmp_path):
             raise AssertionError("subclass submit_order")
 
     broker.__class__ = OverridePaper
+    _arm(scenario.gateway, store, "fence-1", ticket.generation)
     outcome = scenario.gateway.submit(
-        scenario.order,
-        claim_fence=lambda: store._confirm_claim_before_broker_call(
-            "fence-1", ticket.generation, now=scenario.clock.now(),
-        ),
-        **_paper_submit_kwargs(scenario),
+        scenario.order, **_paper_submit_kwargs(scenario),
     )
     assert outcome.ok is True
     assert broker.calls == 0
@@ -2853,14 +2884,15 @@ def test_fence_rechecks_risk_after_it_returns(st, tmp_path):
         return {"decision": state["decision"], "failed_checks": []}
 
     def fence():
-        store._confirm_claim_before_broker_call(
+        permit = store._confirm_claim_before_broker_call(
             "fence-1", ticket.generation, now=scenario.clock.now(),
         )
         state["decision"] = "rejected"
+        return permit
 
+    _use_fence(scenario.gateway, fence)
     outcome = scenario.gateway.submit(
         scenario.order,
-        claim_fence=fence,
         **_paper_submit_kwargs(scenario, risk_recheck=recheck),
     )
     assert (outcome.ok, outcome.stage) == (False, "risk")
@@ -2885,13 +2917,15 @@ def test_fence_rechecks_feed_staleness_after_it_returns(st, tmp_path):
     scenario.st.market_data = guard
 
     def fence():
-        store._confirm_claim_before_broker_call(
+        permit = store._confirm_claim_before_broker_call(
             "fence-1", ticket.generation, now=scenario.clock.now(),
         )
         guard.reason = "market quote is stale"
+        return permit
 
+    _use_fence(scenario.gateway, fence)
     outcome = scenario.gateway.submit(
-        scenario.order, claim_fence=fence, **_paper_submit_kwargs(scenario),
+        scenario.order, **_paper_submit_kwargs(scenario),
     )
     assert (outcome.ok, outcome.stage) == (False, "market_data")
     assert "stale" in outcome.reason
@@ -2911,13 +2945,15 @@ def test_fence_rechecks_approval_ttl_after_it_returns(st, tmp_path):
         row.evaluated_at = opened - timedelta(seconds=890)
 
     def fence():
-        store._confirm_claim_before_broker_call(
+        permit = store._confirm_claim_before_broker_call(
             "fence-1", ticket.generation, now=opened,
         )
         scenario.clock._at = opened + timedelta(seconds=20)
+        return permit
 
+    _use_fence(scenario.gateway, fence)
     outcome = scenario.gateway.submit(
-        scenario.order, claim_fence=fence, **_paper_submit_kwargs(scenario),
+        scenario.order, **_paper_submit_kwargs(scenario),
     )
     assert outcome.ok is False
     assert outcome.stage == "approval"
@@ -2939,17 +2975,18 @@ def test_nested_submit_inside_claim_fence_is_reentrant(st, tmp_path):
     nested = {}
 
     def fence():
-        store._confirm_claim_before_broker_call(
+        permit = store._confirm_claim_before_broker_call(
             "fence-1", ticket.generation, now=scenario.clock.now(),
         )
         nested["outcome"] = scenario.gateway.submit(
             scenario.order,
-            claim_fence=lambda: None,
             **_paper_submit_kwargs(scenario, token_nonce="nested"),
         )
+        return permit
 
+    _use_fence(scenario.gateway, fence)
     outcome = scenario.gateway.submit(
-        scenario.order, claim_fence=fence, **_paper_submit_kwargs(scenario),
+        scenario.order, **_paper_submit_kwargs(scenario),
     )
     assert nested["outcome"].ok is False
     assert nested["outcome"].stage == "reentrant_submit"
@@ -2992,12 +3029,9 @@ def test_admission_lock_acquire_times_out_at_five_seconds(st, tmp_path):
     scenario, store, ticket, broker = _claimed_paper_scenario(st, tmp_path)
     lock = _BudgetLock()
     scenario.st.safety_admission_lock = lock
+    _arm(scenario.gateway, store, "fence-1", ticket.generation)
     outcome = scenario.gateway.submit(
-        scenario.order,
-        claim_fence=lambda: store._confirm_claim_before_broker_call(
-            "fence-1", ticket.generation, now=scenario.clock.now(),
-        ),
-        **_paper_submit_kwargs(scenario),
+        scenario.order, **_paper_submit_kwargs(scenario),
     )
     assert _ADMISSION_WAIT_BUDGET_S == 5.0
     assert (outcome.ok, outcome.stage) == (False, "admission_lock")
@@ -3022,9 +3056,10 @@ def test_claim_fence_base_exception_records_the_intent_and_propagates(st, tmp_pa
         )
         raise KeyboardInterrupt("fence interrupted")
 
+    _use_fence(scenario.gateway, fence)
     with pytest.raises(KeyboardInterrupt, match="fence interrupted"):
         scenario.gateway.submit(
-            scenario.order, claim_fence=fence, **_paper_submit_kwargs(scenario),
+            scenario.order, **_paper_submit_kwargs(scenario),
         )
     assert _sends(broker) == 0
     assert st.audit.unresolved_intents() == []
@@ -3037,3 +3072,109 @@ def test_claim_fence_base_exception_records_the_intent_and_propagates(st, tmp_pa
     ]
     assert covered
     assert st.audit.verify_chain().ok
+
+
+def test_store_clock_must_be_the_state_clock(st, tmp_path):
+    """The post-fence refresh reads ``st.clock``. A different store clock is refused."""
+    scenario, store, ticket, broker = _claimed_paper_scenario(st, tmp_path)
+    other = AuthorityProfileStore(store.path, clock=FrozenClock(scenario.clock.now()))
+    assert _refuse(
+        lambda: scenario.gateway.arm_profile_claim(other, "fence-1", ticket.generation)
+    ) == "clock"
+    _arm(scenario.gateway, store, "fence-1", ticket.generation)
+    store._clock = FrozenClock(scenario.clock.now())
+    outcome = scenario.gateway.submit(
+        scenario.order, **_paper_submit_kwargs(scenario),
+    )
+    assert (outcome.ok, outcome.stage) == (False, "claim_fence")
+    assert "clock" in outcome.reason
+    assert _sends(broker) == 0
+    assert st.audit.unresolved_intents() == []
+
+
+def test_bound_fence_attaches_remaining_when_the_lease_is_under_five_seconds(st, tmp_path, monkeypatch):
+    """A renewed lease shorter than the admission budget is reported on the permit."""
+    from brokers.authority_profiles import TransportPermit
+
+    scenario, store, ticket, broker = _claimed_paper_scenario(st, tmp_path)
+    _arm(scenario.gateway, store, "fence-1", ticket.generation)
+    full = scenario.gateway._profile_fence()
+    assert type(full) is TransportPermit
+    assert full.remaining_s is None
+    monkeypatch.setattr(
+        "brokers.authority_profiles.CLAIM_LEASE", timedelta(seconds=4),
+    )
+    short = scenario.gateway._profile_fence()
+    assert type(short) is TransportPermit
+    assert short.remaining_s is not None
+    assert 0 <= short.remaining_s < 5
+    assert _sends(broker) == 0
+
+
+@_NEEDS_GATEWAY_FENCE
+def test_second_gateway_on_the_same_state_is_reentrant(st, tmp_path):
+    """In-flight tracking lives on the shared state, so a second gateway is refused."""
+    scenario, store, ticket, broker = _claimed_paper_scenario(st, tmp_path)
+    other_broker = _CountingPaper()
+    other = OrderGateway(other_broker, st=st, execution_scope="paper")
+    other.mint_submit_token(
+        nonce="other",
+        proposal_id=scenario.order.proposal_id,
+        risk_decision_id=scenario.risk_decision.id,
+        order_tuple_hash=scenario.tuple_hash,
+    )
+    nested = {}
+
+    def fence():
+        permit = store._confirm_claim_before_broker_call(
+            "fence-1", ticket.generation, now=scenario.clock.now(),
+        )
+        nested["outcome"] = other.submit(
+            scenario.order,
+            **_paper_submit_kwargs(scenario, token_nonce="other"),
+        )
+        return permit
+
+    _use_fence(scenario.gateway, fence)
+    outcome = scenario.gateway.submit(
+        scenario.order, **_paper_submit_kwargs(scenario),
+    )
+    assert nested["outcome"].ok is False
+    assert nested["outcome"].stage == "reentrant_submit"
+    assert outcome.ok is True
+    assert _sends(broker) == 1
+    assert _sends(other_broker) == 0
+    assert other.live_token_count() == 1
+    assert st.audit.unresolved_intents() == []
+
+
+@_NEEDS_GATEWAY_FENCE
+def test_post_fence_refresh_uses_the_state_clock(st, tmp_path):
+    """A frozen caller clock cannot hide an approval that aged on ``st.clock``."""
+    from schemas.models.risk_decision import RiskDecision
+
+    scenario, store, ticket, broker = _claimed_paper_scenario(st, tmp_path)
+    scenario.gateway._ttl_override = 900
+    opened = scenario.clock.now()
+    with st.session_factory() as session, session.begin():
+        row = session.get(RiskDecision, scenario.risk_decision.id)
+        row.evaluated_at = opened - timedelta(seconds=890)
+    frozen = FrozenClock(opened)
+
+    def fence():
+        permit = store._confirm_claim_before_broker_call(
+            "fence-1", ticket.generation, now=opened,
+        )
+        scenario.clock._at = opened + timedelta(seconds=40)
+        return permit
+
+    _use_fence(scenario.gateway, fence)
+    outcome = scenario.gateway.submit(
+        scenario.order,
+        **_paper_submit_kwargs(scenario, clock=frozen),
+    )
+    assert outcome.ok is False
+    assert outcome.stage == "approval"
+    assert "expired" in outcome.reason
+    assert _sends(broker) == 0
+    assert st.audit.unresolved_intents() == []

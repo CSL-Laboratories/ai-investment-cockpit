@@ -218,10 +218,14 @@ class TransportPermit:
     Only ``AuthorityProfileStore`` mints these, after it has re-checked the
     profile and the caller's claim generation. A caller-built object is not a
     permit: the nonce has to be one this process just issued.
+
+    ``remaining_s`` is set when the renewed lease has less than the admission
+    budget left, so the gateway does not wait longer than the lease.
     """
 
     store: object
     nonce: str
+    remaining_s: float | None = None
 
 
 def model_output_grants_authority(model_output: object) -> bool:
@@ -1729,12 +1733,11 @@ def handoff_to_gateway(
         raise ProfileRefused("store", "handoff claim was not admitted")
     from brokers.paper_gateway import PaperOrderGateway
 
+    kwargs.pop("claim_fence", None)
+    gateway.arm_profile_claim(store, reservation.client_order_id, claim.generation)
     outcome = PaperOrderGateway.submit(
         gateway,
         *submit_args,
-        claim_fence=lambda: store._confirm_claim_before_broker_call(
-            reservation.client_order_id, claim.generation,
-        ),
         **kwargs,
     )
     chain_kwargs = dict(kwargs)
@@ -1821,12 +1824,11 @@ def reconcile_handoff_to_gateway(
         raise ProfileRefused("store", "handoff reconcile was not admitted")
     from brokers.paper_gateway import PaperOrderGateway
 
+    kwargs.pop("claim_fence", None)
+    gateway.arm_profile_claim(store, client_id, verdict.generation)
     outcome = PaperOrderGateway.submit(
         gateway,
         *submit_args,
-        claim_fence=lambda: store._confirm_claim_before_broker_call(
-            client_id, verdict.generation,
-        ),
         **kwargs,
     )
     if getattr(outcome, "ok", None) is not True:
