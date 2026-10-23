@@ -6,14 +6,18 @@ paper-profile flag. PaperOrderGateway itself stays on the authority-profile PR.
 """
 from __future__ import annotations
 
+import asyncio
+import threading
 import time
+from datetime import timedelta
 
 import pytest
 
 from brokers.alpaca_paper import AlpacaPaperBroker
-from brokers.gateway import OrderGateway
+from brokers.gateway import OrderGateway, _ADMISSION_WAIT_BUDGET_S
 from config.settings import Mode
 from orchestrator.halt import default_halt_path, set_halt
+from schemas.models.risk_decision import RiskDecision
 from tests.brokers.conftest import build_scenario
 
 
@@ -173,5 +177,230 @@ def test_refence_loop_rejects_transport_mutation(st, mutation):
     )
     assert len(seen) >= 2
     assert (outcome.ok, outcome.stage) == (False, "transport_scope")
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_profile_transport_calls_the_admitted_paper_submit(st):
+    """A fence-swapped method or a subclass override must not be the profile transport."""
+
+    class OverridePaper(AlpacaPaperBroker):
+        def __init__(self):
+            super().__init__()
+            self.override_calls = 0
+
+        def submit_order(self, canonical):
+            self.override_calls += 1
+            return {
+                "broker_order_id": "override",
+                "status": "accepted",
+                "filled_qty": "0",
+                "avg_fill_price": None,
+            }
+
+    broker = OverridePaper()
+    gateway = _MarkedPaper(broker, st=st, execution_scope="paper")
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+
+    def fence():
+        def swapped(_canonical):
+            broker.swapped = True
+            return {
+                "broker_order_id": "swapped",
+                "status": "accepted",
+                "filled_qty": "0",
+                "avg_fill_price": None,
+            }
+
+        broker.submit_order = swapped
+
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=fence, **scenario.submit_kwargs()
+    )
+    assert outcome.ok is True
+    assert outcome.stage == "submitted"
+    assert broker.override_calls == 0
+    assert getattr(broker, "swapped", False) is False
+    assert outcome.broker_order_id not in {"override", "swapped"}
+    assert broker._client.submitted
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_profile_gateway_requires_a_claim_fence(st):
+    broker = _CountingPaper()
+    gateway = _MarkedPaper(broker, st=st, execution_scope="paper")
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    outcome = scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+    assert outcome.ok is False
+    assert outcome.stage == "claim_fence"
+    assert "requires a claim fence" in outcome.reason
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_reentrant_submit_is_refused_before_the_token_is_consumed(st):
+    scenario, broker = _paper_gateway(st)
+    scenario.gateway.mint_submit_token(
+        nonce="nested",
+        proposal_id=scenario.order.proposal_id,
+        risk_decision_id=scenario.risk_decision.id,
+        order_tuple_hash=scenario.tuple_hash,
+    )
+    nested = {}
+
+    def fence():
+        nested["outcome"] = scenario.gateway.submit(
+            scenario.order,
+            claim_fence=lambda: None,
+            **scenario.submit_kwargs(token_nonce="nested"),
+        )
+
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=fence, **scenario.submit_kwargs()
+    )
+    assert nested["outcome"].ok is False
+    assert nested["outcome"].stage == "reentrant_submit"
+    assert outcome.ok is True
+    assert broker.calls == 1
+    assert scenario.gateway.live_token_count() == 1
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+class _BudgetLock:
+    """Stands in for ``safety_admission_lock``. A timed acquire fails closed; ``with`` does not."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.timeouts: list = []
+
+    def acquire(self, blocking=True, timeout=-1):
+        self.timeouts.append(timeout)
+        if timeout is not None and timeout >= 0:
+            return False
+        return self._lock.acquire(blocking, timeout)
+
+    def release(self):
+        self._lock.release()
+
+    def __enter__(self):
+        if not self.acquire():
+            raise RuntimeError("admission lock context manager acquired nothing")
+        return self
+
+    def __exit__(self, *_args):
+        self.release()
+        return False
+
+
+def test_admission_lock_acquire_is_bounded(st):
+    scenario, broker = _paper_gateway(st)
+    lock = _BudgetLock()
+    scenario.st.safety_admission_lock = lock
+    outcome = scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+    assert (outcome.ok, outcome.stage) == (False, "admission_lock")
+    assert "lock" in outcome.reason
+    assert _ADMISSION_WAIT_BUDGET_S in lock.timeouts
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_fence_wait_refreshes_a_flipped_risk_recheck(st):
+    scenario, broker = _paper_gateway(st)
+    state = {"decision": "approved"}
+
+    def recheck(_positions):
+        return {"decision": state["decision"], "failed_checks": []}
+
+    def fence():
+        state["decision"] = "rejected"
+
+    outcome = scenario.gateway.submit(
+        scenario.order,
+        claim_fence=fence,
+        **scenario.submit_kwargs(risk_recheck=recheck),
+    )
+    assert (outcome.ok, outcome.stage) == (False, "risk")
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_fence_wait_refreshes_a_stale_feed(st):
+    scenario, broker = _paper_gateway(st)
+
+    class Guard:
+        def __init__(self):
+            self.reason = None
+
+        def stale_reason(self, symbol, *, now, limit_s):
+            assert symbol == "AAPL"
+            return self.reason
+
+    guard = Guard()
+    scenario.st.market_data = guard
+
+    def fence():
+        guard.reason = "market quote for AAPL is stale"
+
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=fence, **scenario.submit_kwargs()
+    )
+    assert (outcome.ok, outcome.stage) == (False, "market_data")
+    assert "stale" in outcome.reason
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_fence_wait_refreshes_an_expired_risk_evaluation(st):
+    broker = _CountingPaper()
+    gateway = OrderGateway(
+        broker, st=st, execution_scope="paper", approval_ttl_seconds=900
+    )
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    aged = scenario.clock.now() - timedelta(seconds=890)
+    with st.session_factory() as session, session.begin():
+        row = session.get(RiskDecision, scenario.risk_decision.id)
+        row.evaluated_at = aged
+
+    def fence():
+        scenario.clock._at = scenario.clock.now() + timedelta(seconds=20)
+
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=fence, **scenario.submit_kwargs()
+    )
+    assert outcome.ok is False
+    assert outcome.stage == "approval"
+    assert "expired" in outcome.reason
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_claim_fence_base_exception_covers_the_intent(st):
+    scenario, broker = _paper_gateway(st)
+
+    def fence():
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        scenario.gateway.submit(
+            scenario.order, claim_fence=fence, **scenario.submit_kwargs()
+        )
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_refence_base_exception_covers_the_intent(st):
+    scenario, broker = _paper_gateway(st)
+    calls = {"n": 0}
+
+    def fence():
+        calls["n"] += 1
+        if calls["n"] >= 2:
+            raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        scenario.gateway.submit(
+            scenario.order, claim_fence=fence, **scenario.submit_kwargs()
+        )
+    assert calls["n"] >= 2
     assert broker.calls == 0
     assert scenario.st.audit.unresolved_intents() == []
