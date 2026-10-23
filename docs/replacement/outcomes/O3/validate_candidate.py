@@ -177,7 +177,13 @@ def evaluate_semantics(fixture: dict) -> set[str]:
 
     orders = {}
     for order in fixture["orders"]:
-        orders[order["order_id"]] = order
+        order_id = order["order_id"]
+        if order_id in orders:
+            # A later row must not replace the earlier one. Lifecycle checks
+            # read the retained row only, so both cannot share one fill total.
+            failures.add("position_divergence")
+            continue
+        orders[order_id] = order
         if order["instrument_id"] not in known_instruments:
             failures.add("unknown_instrument")
         if order["family"] != book_id:
@@ -227,9 +233,49 @@ def evaluate_semantics(fixture: dict) -> set[str]:
     if sum(checkpoint_reservations.values()) != checkpoint["collateral_reserved"]:
         failures.add("collateral_double_count")
     derived = {row["instrument_id"]: row["qty"] for row in checkpoint["positions"]}
+    checkpoint_qty: dict[str, int] = {}
+    for row in checkpoint["positions"]:
+        checkpoint_qty[row["instrument_id"]] = (
+            checkpoint_qty.get(row["instrument_id"], 0) + row["qty"]
+        )
+    checkpoint_order_qty: dict[str, int] = {}
+    for order in orders.values():
+        checkpoint_order_qty[order["instrument_id"]] = (
+            checkpoint_order_qty.get(order["instrument_id"], 0)
+            + order.get("checkpoint_filled_qty", 0)
+        )
+    for instrument_id in set(checkpoint_qty) | set(checkpoint_order_qty):
+        if checkpoint_qty.get(instrument_id, 0) != checkpoint_order_qty.get(instrument_id, 0):
+            failures.add("position_divergence")
+    order_checkpoint_hold: dict[str, int] = {}
+    for reservation in checkpoint["open_reservations"]:
+        owner = reservation.get("order_id")
+        if not isinstance(owner, str) or not owner:
+            continue
+        if owner not in orders:
+            failures.add("balance_mismatch")
+            continue
+        order_checkpoint_hold[owner] = (
+            order_checkpoint_hold.get(owner, 0) + reservation["amount_minor"]
+        )
+    order_hold = dict(order_checkpoint_hold)
     applied_fill_fees = 0
     fill_ids = {fill["fill_id"] for fill in fixture["fills"]}
     fills_by_id = {fill["fill_id"]: fill for fill in fixture["fills"]}
+    settlement_at: dict[str, int] = {}
+    for entry in fixture["journal"]:
+        if entry.get("reason") != "settlement_payout":
+            continue
+        sequence = entry.get("sequence")
+        if type(sequence) is not int:
+            continue
+        for line in entry.get("lines", ()):
+            instrument_id = line.get("instrument_id")
+            if not isinstance(instrument_id, str):
+                continue
+            previous = settlement_at.get(instrument_id)
+            if previous is None or sequence < previous:
+                settlement_at[instrument_id] = sequence
     post_checkpoint_qty: dict[str, int] = {}
     posted_premium: dict[str, int] = {}
     posted_fees: dict[str, int] = {}
@@ -264,6 +310,11 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             failures.add("late_fill_divergence")
             defect_instruments.add(fill["instrument_id"])
             continue
+        settle_at = settlement_at.get(fill["instrument_id"])
+        if settle_at is not None and fill["sequence"] > settle_at:
+            # The position at the settlement sequence does not include this fill.
+            failures.add("settlement_unreconciled")
+            continue
         filled = accepted_qty.get(order["order_id"], 0)
         if filled + fill["qty"] > order["qty"]:
             failures.add("partial_fill_divergence")
@@ -289,7 +340,11 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         applied_fill_fees += fill["fee_minor"]
 
     if not (failures & FILL_DEFECTS):
+        seen_lifecycle: set[str] = set()
         for order in fixture["orders"]:
+            if order["order_id"] in seen_lifecycle:
+                continue
+            seen_lifecycle.add(order["order_id"])
             terminal = order.get("terminal_state") or order["state"]
             filled_qty = (
                 order.get("checkpoint_filled_qty", 0)
@@ -304,7 +359,11 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                 failures.add("partial_fill_divergence")
 
     pre_settlement = dict(derived)
+    seen_market_instruments: set[str] = set()
     for market in fixture["markets"]:
+        if market["instrument_id"] in seen_market_instruments:
+            failures.add("settlement_unreconciled")
+        seen_market_instruments.add(market["instrument_id"])
         if market["instrument_id"] not in known_instruments:
             failures.add("unknown_instrument")
         if market["state"] != "settled":
@@ -434,6 +493,15 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         order_ref = entry.get("order_id")
         if fill_ref is not None and (fill_ref not in fill_ids or fill_ref in checkpointed_fill_ids):
             failures.add("position_divergence")
+        referenced_fill = fills_by_id.get(fill_ref) if fill_ref is not None else None
+        if referenced_fill is not None:
+            settle_at = settlement_at.get(referenced_fill["instrument_id"])
+            if (
+                settle_at is not None
+                and referenced_fill["sequence"] > settle_at
+                and entry["sequence"] < referenced_fill["sequence"]
+            ):
+                failures.add("position_divergence")
         if order_ref is not None and order_ref not in orders:
             failures.add("position_divergence")
         if fill_ref is not None and order_ref is not None:
@@ -538,6 +606,10 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                     order_reserve_total[order_ref] = (
                         order_reserve_total.get(order_ref, 0) + collateral_delta
                     )
+                    available = order_hold.get(order_ref, 0)
+                    if collateral_delta < 0 and -collateral_delta > available:
+                        failures.add("balance_mismatch")
+                    order_hold[order_ref] = available + collateral_delta
                 reserved_end[line["instrument_id"]] = (
                     reserved_end.get(line["instrument_id"], 0) + collateral_delta
                 )
@@ -595,9 +667,13 @@ def evaluate_semantics(fixture: dict) -> set[str]:
     if not (failures & FILL_DEFECTS):
         for fill in accepted_fills:
             reserve_seq = order_reserve_seq.get(fill["order_id"])
+            posted = posted_premium.get(fill["fill_id"], 0)
             if reserve_seq is None or reserve_seq > fill["sequence"]:
-                if posted_premium.get(fill["fill_id"], 0) != fill["qty"] * fill["price_minor"]:
+                if posted != fill["qty"] * fill["price_minor"]:
                     failures.add("balance_mismatch")
+            elif posted != 0:
+                # An earlier order reservation already funds this fill.
+                failures.add("balance_mismatch")
             if posted_fees.get(fill["fill_id"], 0) != fill["fee_minor"]:
                 failures.add("fee_mismatch")
 
@@ -607,11 +683,10 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             if order is None:
                 continue
             if order_id not in order_reserve_seq:
-                # The opening hold lives in the checkpoint, which carries no
-                # order_id; instrument-level reservation totals still reconcile.
-                # An order-linked release is only provable when the order held
-                # collateral at the checkpoint (it carried filled quantity).
-                if reserved < 0 and order.get("checkpoint_filled_qty", 0) <= 0:
+                # Checkpoint reservations fund a release only when they name
+                # this order. checkpoint_filled_qty is not ownership.
+                owned = order_checkpoint_hold.get(order_id, 0)
+                if reserved < 0 and -reserved != owned:
                     failures.add("balance_mismatch")
                 continue
             filled_qty = (
@@ -673,6 +748,38 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                 for row in fixture["reported"]["open_reservations"]
             )
         ):
+            failures.add("void_unreconciled")
+
+    superseded_void_sources: set[str] = set()
+    for item in fixture["corrections"]:
+        source = item.get("supersedes_source_id")
+        if (
+            isinstance(source, str)
+            and source
+            and item.get("reverses_entry_id") in journal_entry_ids
+        ):
+            superseded_void_sources.add(source)
+    settlement_instruments = {
+        item["instrument_id"]
+        for item in fixture["evidence"]
+        if item["kind"] == "market_settlement"
+    }
+    settlement_instruments.update(
+        market["instrument_id"]
+        for market in fixture["markets"]
+        if market["state"] == "settled"
+    )
+    for entry in fixture["journal"]:
+        if entry["reason"] != "settlement_payout":
+            continue
+        for line in entry["lines"]:
+            settlement_instruments.add(line["instrument_id"])
+    for item in fixture["evidence"]:
+        if item["kind"] != "market_void":
+            continue
+        if item["instrument_id"] not in settlement_instruments:
+            continue
+        if item.get("source_id") not in superseded_void_sources:
             failures.add("void_unreconciled")
 
     expected_dividend = sum(

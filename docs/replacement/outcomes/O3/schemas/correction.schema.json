@@ -7,6 +7,7 @@
     "correction_id": {"type": "string", "minLength": 1},
     "admits_fill_id": {"type": "string", "minLength": 1},
     "reverses_entry_id": {"type": "string", "minLength": 1},
-    "reason": {"type": "string", "minLength": 1}
+    "reason": {"type": "string", "minLength": 1},
+    "supersedes_source_id": {"type": "string", "minLength": 1}
   }
 }

@@ -253,15 +253,22 @@ the order is already in a cancel, expire, or reject terminal. A dead
 order that still carries the hold fails `balance_mismatch`. A
 `void_unwind` or `settlement_payout` that names that `order_id` and
 credits `collateral_reserved` reduces the hold. A release that does not
-name the order leaves the hold in place. Once the
+name the order leaves the hold in place. A checkpoint open reservation
+may name its owning `order_id`. Each release is reconciled against that
+order's own hold: checkpoint reservations that name it, plus collateral
+it reserved in the journal. `checkpoint_filled_qty` does not prove the
+order held the collateral. A release above that hold fails
+`balance_mismatch`. Once the
 order has an accepted fill, the order-linked reservation must equal the
 sum of those fills' `qty * price_minor` plus `fee_minor`. A reserve that
 exceeds or falls short of that executed total fails `balance_mismatch`.
 A hold for the still-unfilled remainder, above that executed total, is
 not represented in this candidate. When an order reserved collateral up
 front, its later fills do not re-post premium — the reservation already
-holds it — so those fills are exempt from the per-fill premium check
-while their fees still reconcile per fill. Only `fill`,
+holds it — so fill-linked premium on those fills must be zero. A
+fill-linked `reserve_collateral` or `fill` premium on top of that earlier
+reservation fails `balance_mismatch`. Fees still reconcile per fill.
+Only `fill`,
 `reserve_collateral`, and `trade_fee` entries contribute to a fill's
 posted premium and fee. A `void_unwind` that carries a `fill_id` does
 not satisfy that fill.
@@ -293,6 +300,16 @@ not change quantity.
   `partial_fill_divergence`.
 - **Duplicate.** A `fill_id` applies once. A second copy fails
   `duplicate_fill_divergence` and does not increase quantity again.
+  An `order_id` applies once too. A second order row with the same id
+  fails `position_divergence` and does not replace the earlier row.
+- **Checkpoint quantity.** The sum of `checkpoint_filled_qty` for the
+  orders of one instrument equals that instrument's checkpoint position.
+  A checkpointed buy the checkpoint does not hold fails
+  `position_divergence`.
+- **After settlement.** A fill sequenced after that instrument's
+  `settlement_payout` is not part of the position at the settlement
+  sequence and fails `settlement_unreconciled`. A journal entry sequenced
+  before that post-settlement fill fails `position_divergence`.
 - **Late.** A fill sequenced after a cancel-like terminal
   (`cancelled`, `expired`, `rejected`, `canary_breach`,
   `rejected_insufficient_collateral`, `expired_unfilled`,
@@ -313,6 +330,10 @@ a human receipt admits fixtures for them. An event-contract book rejects
 any corporate action (`family_crossed`).
 
 ## Resolution, void, and correction
+
+A fixture has one current market-state row per instrument. A second row,
+including an `open` row beside `settled`, fails `settlement_unreconciled`.
+Those rows carry no sequence, so they are not lifecycle history.
 
 Settlement evidence is a retained record: source id, market result, long
 quantity, short quantity, payout, settlement fee, whether that fee is
@@ -343,6 +364,13 @@ instrument. A losing contract is not a fee: `fees_expense` on the
 settlement entry must equal the evidence's `misc_fee_minor` when the fee
 is not already deducted from the payout, and must not exist at all when
 it is (`fee_double_count`).
+
+`market_void` evidence on an instrument that also has settlement evidence,
+a `settled` market row, or a `settlement_payout` fails `void_unreconciled`.
+A correction supersedes that void only when `reverses_entry_id` names a
+journal entry or a checkpoint applied entry and `supersedes_source_id`
+equals the void record's `source_id`. Any other correction leaves the
+contradiction in place.
 
 A voided market reconciles only when all of the following hold: a retained
 `market_void` record exists, reported quantity is zero, collateral is zero,

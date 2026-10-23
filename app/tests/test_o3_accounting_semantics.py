@@ -512,3 +512,143 @@ def test_o3_every_evidence_instrument_must_be_declared() -> None:
     fixture = json.loads(path.read_text(encoding="utf-8"))
     fixture["evidence"].append({"kind": "market_void", "instrument_id": "ghost", "source_id": "void-1"})
     assert "unknown_instrument" in _evaluate(fixture)
+
+
+def test_o3_fill_after_settlement_is_not_in_the_payout() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_yes_settlement.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    assert _evaluate(fixture) == set()
+    fixture["fills"][0]["sequence"] = 4
+    failures = _evaluate(fixture)
+    assert "settlement_unreconciled" in failures
+    assert "position_divergence" in failures
+
+
+def test_o3_checkpoint_filled_qty_must_match_checkpoint_position() -> None:
+    path = VALIDATOR.parent / "fixtures" / "equity_partial_then_dividend.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    assert _evaluate(fixture) == set()
+    fixture["orders"].append({
+        "order_id": "ord-eq-2",
+        "instrument_id": "eq-aapl",
+        "family": "equity",
+        "side": "buy",
+        "qty": 10,
+        "state": "filled",
+        "checkpoint_filled_qty": 10,
+    })
+    assert "position_divergence" in _evaluate(fixture)
+
+
+def test_o3_duplicate_order_id_rejected() -> None:
+    path = VALIDATOR.parent / "fixtures" / "equity_partial_then_dividend.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    assert _evaluate(fixture) == set()
+    fixture["instruments"].append({
+        "instrument_id": "eq-ibm",
+        "family": "equity_share",
+        "venue_id": "venue-equity-candidate",
+        "venue_symbol": "IBM",
+        "currency": "USD",
+        "unit": "share",
+    })
+    fixture["orders"].insert(0, {
+        "order_id": "ord-eq-1",
+        "instrument_id": "eq-ibm",
+        "family": "equity",
+        "side": "buy",
+        "qty": 100,
+        "state": "filled",
+    })
+    assert "position_divergence" in _evaluate(fixture)
+
+
+def test_o3_one_market_state_row_per_instrument() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_yes_settlement.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    assert _evaluate(fixture) == set()
+    fixture["markets"].insert(0, {"instrument_id": "ev-yes", "state": "open"})
+    assert "settlement_unreconciled" in _evaluate(fixture)
+
+
+def test_o3_earlier_reservation_forbids_fill_linked_premium() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_resting_order_reservation.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    assert _evaluate(fixture) == set()
+    fixture["journal"].append({
+        "entry_id": "j-reserve-fill",
+        "sequence": 4,
+        "idempotency_key": "reserve-fill-rest",
+        "fill_id": "f-rest",
+        "strategy_id": "s-event",
+        "reason": "reserve_collateral",
+        "lines": [
+            {
+                "account": "collateral_reserved",
+                "side": "dr",
+                "amount_minor": 800000,
+                "instrument_id": "ev-yes",
+            },
+            {
+                "account": "cash_available",
+                "side": "cr",
+                "amount_minor": 800000,
+                "instrument_id": "ev-yes",
+            },
+        ],
+    })
+    fixture["reported"]["cash_available"] -= 800000
+    fixture["reported"]["collateral_reserved"] += 800000
+    fixture["reported"]["open_reservations"].append({
+        "reservation_id": "reserve-fill-rest",
+        "instrument_id": "ev-yes",
+        "amount_minor": 800000,
+    })
+    assert "balance_mismatch" in _evaluate(fixture)
+
+
+def test_o3_release_must_match_the_owning_orders_hold() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_void_reconciled.json"
+    owned = json.loads(path.read_text(encoding="utf-8"))
+    owned["checkpoint"]["open_reservations"][0]["order_id"] = "ord-void"
+    owned["journal"][0]["order_id"] = "ord-void"
+    assert _evaluate(owned) == set()
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["checkpoint"]["positions"][0]["qty"] = 11
+    fixture["checkpoint"]["open_reservations"][0]["order_id"] = "ord-void"
+    fixture["orders"].append({
+        "order_id": "ord-ghost",
+        "instrument_id": "ev-void",
+        "family": "event",
+        "side": "buy",
+        "qty": 1,
+        "state": "cancelled",
+        "terminal_sequence": 1,
+        "checkpoint_filled_qty": 1,
+    })
+    fixture["journal"][0]["order_id"] = "ord-ghost"
+    failures = _evaluate(fixture)
+    assert "balance_mismatch" in failures
+    assert "position_divergence" not in failures
+
+
+def test_o3_void_evidence_contradicts_a_losing_settlement() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_no_settlement.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    assert _evaluate(fixture) == set()
+    fixture["evidence"].append({
+        "kind": "market_void",
+        "instrument_id": "ev-no",
+        "source_id": "void-no-1",
+    })
+    assert "void_unreconciled" in _evaluate(fixture)
+    fixture["corrections"].append({
+        "correction_id": "c-void",
+        "admits_fill_id": "f-no",
+        "reverses_entry_id": "missing-entry",
+        "reason": "supersede void",
+        "supersedes_source_id": "void-no-1",
+    })
+    assert "void_unreconciled" in _evaluate(fixture)
+    fixture["corrections"][0]["reverses_entry_id"] = "j-settle"
+    assert _evaluate(fixture) == set()

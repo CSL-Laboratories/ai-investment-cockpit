@@ -114,6 +114,10 @@
           "type": "string",
           "minLength": 1
         },
+        "order_id": {
+          "type": "string",
+          "minLength": 1
+        },
         "instrument_id": {
           "type": "string",
           "minLength": 1
