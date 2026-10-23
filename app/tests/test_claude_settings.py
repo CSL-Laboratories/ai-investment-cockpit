@@ -19,10 +19,26 @@ GUARD = ROOT / ".claude" / "hooks" / "guard-substitution.sh"
 
 PYTHONS = ("python", "python3")
 GH_READ = ("gh pr view", "gh pr diff", "gh pr checks", "gh pr list", "gh run list", "gh run view")
-# Script tests are allowed one exact rule each; a new tools/test_*.py fails this
-# guard until its rule is added on purpose.
-TOOL_TESTS = {f"Bash({py} -X utf8 -B tools/{path.name})"
-              for path in (ROOT / "tools").glob("test_*.py") for py in PYTHONS}
+# Script tests are allowed two exact rules each (python and python3); a new
+# tools/test_*.py fails this guard until its rules are added on purpose.
+TOOL_TEST_PATHS = tuple((ROOT / "tools").glob("test_*.py"))
+
+
+def tool_test_rules(paths) -> list[str]:
+    """The exact allow rules for these tools/test_*.py files, by file name, python then python3."""
+    return [f"Bash({py} -X utf8 -B tools/{name})"
+            for name in sorted(path.name for path in paths) for py in PYTHONS]
+
+
+def missing_rules_message(missing) -> str:
+    """Name the allow lines to add, as they appear in .claude/settings.json (CSL-426)."""
+    lines = "\n".join(f"      {json.dumps(rule)}," for rule in missing)
+    return ("Add these allow rules to .claude/settings.json for these tools/test_*.py "
+            "files:\n" + lines + "\n.claude/settings.json is the agent permission policy, "
+            "so a founder approves these lines in the PR; the Claude fixer must not add them.")
+
+
+TOOL_TESTS = set(tool_test_rules(TOOL_TEST_PATHS))
 ALLOW = (
     {f"Bash({py} -m pytest{arg})" for py in (*PYTHONS, "../.venv/bin/python") for arg in ("", " -q")}
     | {f"Bash({py} -m pytest -q app/tests)" for py in PYTHONS}
@@ -48,13 +64,71 @@ def _settings() -> dict:
     return json.loads(SETTINGS.read_text(encoding="utf-8"))
 
 
-def test_allow_and_ask_lists_match_the_reviewed_policy():
-    permissions = _settings()["permissions"]
+def _check_policy(permissions: dict, tool_test_paths) -> None:
     allow, ask = permissions["allow"], permissions["ask"]
     assert len(allow) == len(set(allow)) and len(ask) == len(set(ask))
-    assert set(allow) == ALLOW
+    tool_tests = tool_test_rules(tool_test_paths)
+    missing = [rule for rule in tool_tests if rule not in allow]
+    if missing:  # raised directly so pytest prints the lines exactly as settings.json holds them
+        raise AssertionError(missing_rules_message(missing))
+    assert set(allow) == (ALLOW - TOOL_TESTS) | set(tool_tests)
     assert set(ask) == ASK
     assert "deny" not in permissions and "defaultMode" not in permissions
+
+
+def test_allow_and_ask_lists_match_the_reviewed_policy():
+    _check_policy(_settings()["permissions"], TOOL_TEST_PATHS)
+
+
+# Synthetic names only: these paths are never read, so the tests below do not
+# depend on which tools/test_*.py files exist.
+SYNTHETIC_TOOL_TESTS = (Path("tools") / "test_synthetic_beta.py",
+                        Path("tools") / "test_synthetic_alpha.py")
+
+
+def _synthetic_permissions(drop=(), add=()) -> dict:
+    allow = (ALLOW - TOOL_TESTS) | set(tool_test_rules(SYNTHETIC_TOOL_TESTS))
+    return {"allow": sorted((allow - set(drop)) | set(add)), "ask": sorted(ASK)}
+
+
+def test_synthetic_settings_with_every_tool_test_rule_pass():
+    _check_policy(_synthetic_permissions(), SYNTHETIC_TOOL_TESTS)
+
+
+def test_tool_test_rules_are_sorted_by_name_then_python_then_python3():
+    assert tool_test_rules(SYNTHETIC_TOOL_TESTS) == [
+        "Bash(python -X utf8 -B tools/test_synthetic_alpha.py)",
+        "Bash(python3 -X utf8 -B tools/test_synthetic_alpha.py)",
+        "Bash(python -X utf8 -B tools/test_synthetic_beta.py)",
+        "Bash(python3 -X utf8 -B tools/test_synthetic_beta.py)",
+    ]
+
+
+@pytest.mark.parametrize("drop, lines", [
+    (["Bash(python3 -X utf8 -B tools/test_synthetic_beta.py)"],
+     ['      "Bash(python3 -X utf8 -B tools/test_synthetic_beta.py)",']),
+    (["Bash(python3 -X utf8 -B tools/test_synthetic_alpha.py)",
+      "Bash(python -X utf8 -B tools/test_synthetic_alpha.py)"],
+     ['      "Bash(python -X utf8 -B tools/test_synthetic_alpha.py)",',
+      '      "Bash(python3 -X utf8 -B tools/test_synthetic_alpha.py)",']),
+], ids=["missing-one", "missing-both"])
+def test_missing_tool_test_rules_name_the_exact_lines_for_a_founder(drop, lines):
+    with pytest.raises(AssertionError) as failure:
+        _check_policy(_synthetic_permissions(drop=drop), SYNTHETIC_TOOL_TESTS)
+    expected = ("Add these allow rules to .claude/settings.json for these tools/test_*.py files:\n"
+                + "\n".join(lines) + "\n.claude/settings.json is the agent permission policy, "
+                "so a founder approves these lines in the PR; the Claude fixer must not add them.")
+    assert str(failure.value) == expected
+
+
+@pytest.mark.parametrize("extra", [
+    "Bash(python -X utf8 -B tools/test_synthetic_gamma.py)",
+    "Bash(curl https://example.invalid)",
+])
+def test_extra_allow_rules_are_still_rejected(extra):
+    with pytest.raises(AssertionError) as failure:
+        _check_policy(_synthetic_permissions(add=[extra]), SYNTHETIC_TOOL_TESTS)
+    assert "Add these allow rules" not in str(failure.value)
 
 
 def test_no_allowed_bash_rule_can_publish_spend_or_reach_the_network():
