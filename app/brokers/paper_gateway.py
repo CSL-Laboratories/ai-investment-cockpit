@@ -551,7 +551,11 @@ def _owned_transport(http):
 
 
 def _bounded_http_timeout(timeout, budget: float):
-    """No owned paper call waits longer than the profile-store busy timeout."""
+    """No single httpx phase waits longer than the whole-send budget.
+
+    The phase values are not the deadline. ``_owned_http_session`` also stops
+    the request when that budget elapses on the wall clock.
+    """
     import httpx
 
     if isinstance(timeout, bool) or not isinstance(timeout, (int, float, httpx.Timeout)):
@@ -604,11 +608,39 @@ def _owned_http_session(http):
     )
 
     def request(method, url, *, headers=None, json=None, params=None, **_ignored):
-        outgoing = httpx.Request(method, url, headers=headers, json=json, params=params)
-        outgoing.extensions = dict(outgoing.extensions, timeout=pinned_timeout.as_dict())
-        response = owned_transport.handle_request(outgoing)
-        response.read()
-        return response
+        from brokers.alpaca_paper import paper_dispatch_budget_s
+
+        budget = paper_dispatch_budget_s()
+        if isinstance(budget, bool) or not isinstance(budget, (int, float)) or not budget > 0:
+            budget = pinned_timeout.read or 10.0
+        abort = threading.Event()
+        try:
+            owned_transport._paper_budget_abort = abort
+        except Exception:
+            pass
+
+        def _expire():
+            abort.set()
+            try:
+                owned_transport.close()
+            except Exception:
+                pass
+
+        timer = threading.Timer(float(budget), _expire)
+        timer.daemon = True
+        timer.start()
+        try:
+            outgoing = httpx.Request(method, url, headers=headers, json=json, params=params)
+            outgoing.extensions = dict(outgoing.extensions, timeout=pinned_timeout.as_dict())
+            response = owned_transport.handle_request(outgoing)
+            if abort.is_set():
+                raise httpx.TimeoutException("paper send exceeded the dispatch budget")
+            response.read()
+            if abort.is_set():
+                raise httpx.TimeoutException("paper send exceeded the dispatch budget")
+            return response
+        finally:
+            timer.cancel()
 
     class _Session:
         def request(self, method, url, **kwargs):
@@ -811,16 +843,49 @@ class BoundClaimFence:
         from brokers.authority_profiles import _state_quote
 
         market, quote_now = _state_quote(self._gateway)
+        order = getattr(self._local, "order", None)
         self._local.binding = accept_transport_permit(
             value,
             order_ref=order_ref,
             client=client,
-            order=getattr(self._local, "order", None),
+            order=order,
             producing_runtime=getattr(self._local, "producing_runtime", None),
             market=market,
             now_quote=quote_now,
         )
-        return value
+        return _published_fence_permit(value, order, order_ref)
+
+
+def _published_fence_permit(permit, order, order_ref):
+    """Return the gateway's order-bound permit when that type exists.
+
+    ``#252`` accepts only ``brokers.gateway.OrderBoundPermit`` for this order.
+    A ``TransportPermit`` has no order id or tuple hash and is refused there.
+    This tree's gateway has no such type, so the transport permit is returned
+    unchanged and the guarded send still consumes it above.
+    """
+    from brokers import gateway as gateway_mod
+
+    permit_type = getattr(gateway_mod, "OrderBoundPermit", None)
+    if not isinstance(permit_type, type):
+        return permit
+    if order is None:
+        from brokers.authority_profiles import ProfileRefused
+
+        raise ProfileRefused("order_required", "paper submit requires an order id")
+    from brokers.order_tuple import order_tuple_hash
+
+    resolved = order_tuple_hash(OrderGateway._resolve_tuple(order))
+    remaining = getattr(permit, "remaining_s", None)
+    if isinstance(remaining, bool) or not isinstance(remaining, (int, float)):
+        remaining = None
+    else:
+        remaining = float(remaining)
+    return permit_type(
+        order_id=str(order_ref),
+        order_tuple_hash=resolved,
+        remaining_s=remaining,
+    )
 
 
 def _with_short_remainder(store, client_order_id: str, permit):
@@ -909,6 +974,32 @@ def _chain_notionals(st) -> dict:
     return found
 
 
+def _chain_latest_states(st) -> dict:
+    """Latest verified transition ``to`` per order. Unverified rows are ignored."""
+    from sqlalchemy import select
+
+    from orchestrator.state import EVENT_ORDER_TRANSITION
+    from schemas.models.audit_entry import AuditEntry
+
+    found: dict = {}
+    if st is None or getattr(st, "audit", None) is None:
+        return found
+    with st.session_factory() as session:
+        entries = session.execute(
+            select(AuditEntry)
+            .where(AuditEntry.event_type == EVENT_ORDER_TRANSITION)
+            .order_by(AuditEntry.seq)
+        ).scalars().all()
+    for entry in entries:
+        if not st.audit.verify_entry(entry):
+            continue
+        row_id = (entry.refs or {}).get("row_id")
+        to_state = (entry.payload or {}).get("to")
+        if row_id and to_state:
+            found[row_id] = to_state
+    return found
+
+
 def _frozen_market_exposure(st, order):
     """The exposure signed when a market order was sent, or Infinity."""
     from decimal import Decimal
@@ -922,7 +1013,7 @@ def _frozen_market_exposure(st, order):
         if not getattr(audit, "verify_entry", lambda _row: False)(row):
             continue
         if getattr(row, "event_type", None) not in {
-            "paper_protective_limit", "paper_submission",
+            "paper_protective_limit", "paper_submission", "paper_market_exposure",
         }:
             continue
         refs = row.refs or {}
@@ -945,8 +1036,8 @@ def _sized_exposure(st, order, chain_notional, *, current=False, gateway=None):
     The signed chain notional is a floor. A detached ``order.notional`` of $1
     must not shrink a sibling whose limit says $30. The order being submitted
     has not frozen a market size yet, so its own size is the fresh touch. A
-    market sibling with no signed exposure uses that chain notional, and fails
-    closed only when the chain notional is missing too.
+    market sibling with no signed exposure fails closed. The birth chain
+    notional is not a substitute for that signature.
     """
     from decimal import Decimal
 
@@ -966,13 +1057,11 @@ def _sized_exposure(st, order, chain_notional, *, current=False, gateway=None):
         sizes.append(_tuple_exposure_notional(order, gateway))
     else:
         frozen = _frozen_market_exposure(st, order)
-        # A profile handoff signs the exposure. The production gateway does
-        # not. Use the verified chain notional when that signature is absent,
-        # and fail closed only when neither size exists.
-        if isinstance(frozen, Decimal) and frozen.is_finite() and frozen > 0:
-            sizes.append(frozen)
-        elif not sizes:
+        # The birth chain notional understates a market order signed at $1.
+        # Without a signed exposure the cap fails closed.
+        if not (isinstance(frozen, Decimal) and frozen.is_finite() and frozen > 0):
             return Decimal("Infinity")
+        sizes.append(frozen)
     if not sizes:
         return Decimal("Infinity")
     return max(sizes)
@@ -995,21 +1084,31 @@ def _paper_pending_ok(self, st, order):
     if not parent_ok:
         return parent_ok, parent_total, cap
     chain = _chain_notionals(st)
+    latest = _chain_latest_states(st)
     open_states = {"approved", "submitted", "partially_filled"}
     with st.session_factory() as session:
         rows = list(session.execute(select(Order)).scalars().all())
         for row in rows:
             session.expunge(row)
     total = Decimal("0")
+    counted: set = set()
     for row in rows:
         if row.id == order.id:
             continue
-        if row.state not in open_states:
+        # A keyless rewind to ``proposed`` leaves the chain open. The parent
+        # still counts the birth notional. Size the row from qty x limit.
+        chain_open = latest.get(row.id) in open_states
+        if row.state not in open_states and not chain_open:
             continue
+        counted.add(row.id)
         sized = _sized_exposure(st, row, chain.get(row.id))
         if not sized.is_finite():
             return False, sized, cap
         total += sized
+    for row_id, state in latest.items():
+        if row_id == order.id or row_id in counted or state not in open_states:
+            continue
+        return False, Decimal("Infinity"), cap
     current = _sized_exposure(
         st, order, chain.get(order.id), current=True, gateway=self,
     )
@@ -1047,6 +1146,52 @@ def _tuple_exposure_notional(order, gateway=None):
         return _tuple_notional(order, market=market, now=now)
     except Exception:  # noqa: BLE001 - a missing quote must not fall through to order.notional
         return Decimal("Infinity")
+
+
+def _record_execution_market_exposure(gateway, canonical) -> None:
+    """Sign the exposure a production market send is about to use.
+
+    ``PaperOrderGateway`` records this on ``paper_protective_limit``. This path
+    does not collar the order and does not write ``paper_submission``, which
+    would look like an approval attempt. A missing signature fails the later
+    cap closed instead of using the birth notional.
+    """
+    from decimal import Decimal
+
+    if not isinstance(canonical, dict):
+        return
+    if str(canonical.get("order_type") or "").strip().lower() != "market":
+        return
+    client_order_id = canonical.get("client_order_id")
+    if type(client_order_id) is not str or not client_order_id.startswith("cockpit-"):
+        return
+    order_id = client_order_id[len("cockpit-"):]
+    if not order_id:
+        return
+    try:
+        st = object.__getattribute__(gateway, "_st")
+    except Exception:
+        return
+    audit = None if st is None else getattr(st, "audit", None)
+    if audit is None or not callable(getattr(audit, "append", None)):
+        return
+    from schemas.models.order import Order
+
+    with st.session_factory() as session:
+        order = session.get(Order, order_id)
+        if order is not None:
+            session.expunge(order)
+    if order is None:
+        return
+    exposure = _tuple_exposure_notional(order, gateway)
+    if not isinstance(exposure, Decimal) or not exposure.is_finite() or exposure <= 0:
+        return
+    audit.append(
+        "paper_market_exposure",
+        actor="paper-gateway",
+        refs={"order_id": str(order.id), "client_order_id": client_order_id},
+        payload={"exposure": str(exposure)},
+    )
 
 
 class PaperExecutionGateway(OrderGateway):
@@ -1095,9 +1240,15 @@ class PaperExecutionGateway(OrderGateway):
         )
         self._paper_submit_open = False
         super().__init__(broker, **kwargs)
+        raw_submit = self._captured_submit
+
+        def _submit_and_sign(canonical, _raw=raw_submit, _gateway=self):
+            _record_execution_market_exposure(_gateway, canonical)
+            return _raw(canonical)
+
         client = _AdmittedPaperClient(
             self._admitted_client,
-            self._captured_submit,
+            _submit_and_sign,
             order_info=self._frozen_order_info,
         )
         self._transport = _BoundPaperTransport(

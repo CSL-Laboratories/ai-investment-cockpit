@@ -7132,10 +7132,64 @@ def test_unsigned_terminal_column_does_not_hide_a_chain_open_sibling(st, tmp_pat
     assert _sends(broker) == 1
 
 
-def test_execution_gateway_market_sibling_uses_chain_notional_when_unfrozen(st):
-    """4361840718: a market sibling without a frozen exposure is not an infinite block."""
+def test_proposed_rewind_does_not_slip_the_pending_cap(st, tmp_path):
+    """4362600950: rewinding a sibling to proposed must not drop it from the paper sum."""
+    from schemas.models.order import Order
+
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st, pending_exposure_cap=Decimal("40"))
+    first = build_scenario(
+        st, mode=Mode.paper, broker=broker, gateway=gateway,
+        qty="3", limit_price="10", notional="1.00",
+    )
+    store = _store(tmp_path, "proposed-sibling.sqlite")
+    now = first.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    opened = handoff_to_gateway(
+        store, gateway, profile_id="profile-b", action="submit_paper",
+        client_order_id="prop-1", notional=Decimal("30.00"), actor="stop-owner",
+        now=now, submit_args=(first.order,),
+        submit_kwargs=_paper_submit_kwargs(first), **_PAPER_BINDINGS,
+    )
+    assert getattr(opened.outcome, "ok", None) is True
+    with st.session_factory() as session:
+        row = session.get(Order, first.order.id)
+        row.state = "proposed"
+        session.commit()
+    second = _limit_sibling(st, broker, gateway, nonce="n-prop-2")
+    parent_ok, parent_total, cap = OrderGateway._pending_ok(gateway, st, second.order)
+    assert parent_ok is True
+    assert parent_total <= cap
+    gateway.mint_submit_token(
+        nonce="n-prop-2", proposal_id=second.order.proposal_id,
+        risk_decision_id=second.risk_decision.id, order_tuple_hash=second.tuple_hash,
+    )
+    blocked = handoff_to_gateway(
+        store, gateway, profile_id="profile-b", action="submit_paper",
+        client_order_id="prop-2", notional=Decimal("30.00"), actor="stop-owner",
+        now=now, submit_args=(second.order,),
+        submit_kwargs=_paper_submit_kwargs(second, token_nonce="n-prop-2"),
+        **_PAPER_BINDINGS,
+    )
+    assert getattr(blocked.outcome, "stage", None) == "pending_exposure"
+    assert _sends(broker) == 1
+
+
+def test_execution_gateway_market_sibling_does_not_use_the_birth_notional(st):
+    """4362589330: the $1 birth chain must not price a market sibling. Missing exposure fails closed."""
     from brokers.capability import TokenRegistry
-    from brokers.paper_gateway import PaperExecutionGateway
+    from brokers.paper_gateway import (
+        PaperExecutionGateway,
+        _chain_notionals,
+        _sized_exposure,
+    )
 
     broker = _CountingPaper()
     gateway = PaperExecutionGateway(
@@ -7146,16 +7200,34 @@ def test_execution_gateway_market_sibling_uses_chain_notional_when_unfrozen(st):
     st.market_data = _TouchQuote("1.40", "1.50")
     first = _market_buy(st, broker, gateway)
     assert gateway.submit(first.order, **_paper_submit_kwargs(first)).ok is True
+    # 10 x 1.50 x 1.05. The signed birth notional is $1.
+    assert _sized_exposure(
+        st, first.order, _chain_notionals(st).get(first.order.id),
+    ) == Decimal("15.75")
     second = build_scenario(
         st, mode=Mode.paper, broker=broker, gateway=gateway, mint=False,
-        qty="1", limit_price="1", notional="1.00",
+        qty="3", limit_price="10", notional="1.00",
     )
     gateway.mint_submit_token(
         nonce="n-mkt-sib", proposal_id=second.order.proposal_id,
         risk_decision_id=second.risk_decision.id, order_tuple_hash=second.tuple_hash,
     )
-    followed = gateway.submit(
+    blocked = gateway.submit(
         second.order, **_paper_submit_kwargs(second, token_nonce="n-mkt-sib"),
+    )
+    assert blocked.ok is False
+    assert blocked.stage == "pending_exposure"
+    assert _sends(broker) == 1
+    third = build_scenario(
+        st, mode=Mode.paper, broker=broker, gateway=gateway, mint=False,
+        qty="1", limit_price="1", notional="1.00",
+    )
+    gateway.mint_submit_token(
+        nonce="n-mkt-small", proposal_id=third.order.proposal_id,
+        risk_decision_id=third.risk_decision.id, order_tuple_hash=third.tuple_hash,
+    )
+    followed = gateway.submit(
+        third.order, **_paper_submit_kwargs(third, token_nonce="n-mkt-small"),
     )
     assert followed.ok is True
     assert followed.stage != "pending_exposure"
@@ -7236,7 +7308,7 @@ def test_open_store_refuses_a_dropped_clock_ledger(tmp_path):
 
 
 def test_store_lock_wait_matches_the_paper_http_timeout(tmp_path):
-    """A stop blocked on the dispatch write lock waits the paper HTTP budget, not 30s."""
+    """A stop waits longer than one whole send. Per-phase httpx limits are not that budget."""
     import inspect
 
     import httpx
@@ -7250,7 +7322,8 @@ def test_store_lock_wait_matches_the_paper_http_timeout(tmp_path):
     assert float(http_default) == float(PAPER_HTTP_TIMEOUT_S)
     store = _store(tmp_path, "lock-budget.sqlite")
     busy = store._conn.execute("PRAGMA busy_timeout").fetchone()[0]
-    assert int(busy) == int(float(PAPER_HTTP_TIMEOUT_S) * 1000)
+    # Equal budgets refuse a stop that is still waiting when the send ends.
+    assert int(busy) > int(float(PAPER_HTTP_TIMEOUT_S) * 1000)
     http = httpx.Client(timeout=60.0, trust_env=False)
     try:
         _session, owned = _owned_http_session(http)
@@ -7264,3 +7337,173 @@ def test_store_lock_wait_matches_the_paper_http_timeout(tmp_path):
         assert owned.timeout.pool <= float(PAPER_HTTP_TIMEOUT_S)
     finally:
         owned.close()
+
+
+def test_owned_request_budget_is_the_whole_send(monkeypatch):
+    """4362600969: four httpx phases do not add up to the send. The request itself stops."""
+    import time
+
+    import httpx
+
+    from brokers.paper_gateway import _owned_http_session
+
+    monkeypatch.setattr("brokers.alpaca_paper.PAPER_HTTP_TIMEOUT_S", 0.2)
+
+    def slow_handle(self, request):
+        del request
+        abort = getattr(self, "_paper_budget_abort", None)
+        if abort is not None and abort.wait(1.0):
+            raise httpx.ConnectError("dispatch budget elapsed")
+        time.sleep(1.0)
+        return _http_accept("alp-slow")
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", slow_handle)
+    http = httpx.Client(timeout=60.0, trust_env=False)
+    try:
+        session, owned = _owned_http_session(http)
+    finally:
+        http.close()
+    assert session is not None and owned is not None
+    started = time.monotonic()
+    try:
+        try:
+            session.request("POST", "https://paper-api.alpaca.markets/v2/orders", json={})
+            refused = False
+        except Exception:
+            refused = True
+        elapsed = time.monotonic() - started
+    finally:
+        owned.close()
+    assert refused is True
+    assert elapsed < 0.8
+
+
+def test_stop_during_a_slow_send_is_not_refused(st, tmp_path, monkeypatch):
+    """4362589528: a stop queued during the send commits when the send budget ends."""
+    import time
+
+    monkeypatch.setattr("brokers.alpaca_paper.PAPER_HTTP_TIMEOUT_S", 0.2)
+    broker = _CountingPaper()
+    real_submit = broker._client.submit_order
+    box = {"code": None, "landed": False, "store": None, "now": None}
+    started = threading.Event()
+    killer_in = threading.Event()
+
+    def slow(canonical):
+        started.set()
+        killer_in.wait(2)
+        store = box["store"]
+        abort = None if store is None else getattr(store, "_dispatch_abort", None)
+        if abort is not None and abort.wait(1.0):
+            raise TimeoutError("dispatch budget elapsed")
+        time.sleep(1.0)
+        box["landed"] = True
+        return real_submit(canonical)
+
+    broker._client.submit_order = slow
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    store = _store(tmp_path, "slow-send.sqlite", clock=scenario.clock)
+    now = scenario.clock.now()
+    box["store"] = store
+    box["now"] = now
+    other = AuthorityProfileStore(store.path, clock=scenario.clock)
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+
+    def killer():
+        if not started.wait(2):
+            box["code"] = "never-started"
+            return
+        other._conn.execute("PRAGMA busy_timeout = 500")
+        killer_in.set()
+        try:
+            other.kill(
+                "profile-b", actor="stop-owner", now=now, reason="kill during slow send",
+            )
+            box["code"] = "committed"
+        except ProfileRefused as exc:
+            box["code"] = exc.code
+
+    thread = threading.Thread(target=killer)
+    thread.start()
+    try:
+        handoff_to_gateway(
+            store, gateway, profile_id="profile-b", action="submit_paper",
+            client_order_id="slow-send",
+            notional=Decimal(str(scenario.order.notional)), actor="stop-owner",
+            now=now, submit_args=(scenario.order,),
+            submit_kwargs=_paper_submit_kwargs(scenario), **_PAPER_BINDINGS,
+        )
+    except ProfileRefused:
+        pass
+    thread.join(5)
+    assert box["code"] == "committed"
+    assert box["landed"] is False
+    assert _sends(broker) == 0
+    import sqlite3
+
+    raw = sqlite3.connect(store.path)
+    kill = raw.execute("SELECT kill FROM controls").fetchone()[0]
+    raw.close()
+    assert int(kill) == 1
+
+
+def test_bound_fence_returns_an_order_bound_permit_when_the_gateway_defines_one(
+    st, tmp_path, monkeypatch,
+):
+    """#252 accepts only brokers.gateway.OrderBoundPermit. A TransportPermit is refused."""
+    from dataclasses import dataclass
+
+    import brokers.gateway as gateway_mod
+    from brokers.authority_profiles import TransportPermit
+    from brokers.order_tuple import order_tuple_hash
+
+    @dataclass(frozen=True)
+    class OrderBoundPermit:
+        order_id: str
+        order_tuple_hash: str
+        remaining_s: float | None = None
+
+    monkeypatch.setattr(gateway_mod, "OrderBoundPermit", OrderBoundPermit, raising=False)
+
+    def refusal(value, order, resolved):
+        if type(value) is not OrderBoundPermit:
+            return "claim fence returned no order-bound permit"
+        if str(value.order_id) != str(order.id) or value.order_tuple_hash != resolved:
+            return "claim fence permit does not bind this order"
+        remaining = value.remaining_s
+        if remaining is None:
+            return None
+        if isinstance(remaining, bool) or not isinstance(remaining, (int, float)):
+            return "claim fence lease metadata unreadable: remaining_s"
+        number = float(remaining)
+        if number != number or number < 0:
+            return "claim fence lease metadata unreadable: remaining_s"
+        return None
+
+    scenario, store, ticket, broker = _claimed_paper_scenario(st, tmp_path)
+    _arm(scenario.gateway, store, "fence-1", ticket.generation)
+    scenario.gateway._profile_fence.bind_order(scenario.order)
+    scenario.gateway._profile_fence._local.producing_runtime = "claude"
+    resolved = order_tuple_hash(OrderGateway._resolve_tuple(scenario.order))
+    bound = scenario.gateway._profile_fence()
+    assert refusal(
+        TransportPermit(store, "not-a-permit"), scenario.order, resolved,
+    ) == "claim fence returned no order-bound permit"
+    assert refusal(bound, scenario.order, resolved) is None
+    monkeypatch.setattr(
+        "brokers.authority_profiles.CLAIM_LEASE", timedelta(seconds=4),
+    )
+    short = scenario.gateway._profile_fence()
+    assert type(short) is OrderBoundPermit
+    assert short.remaining_s is not None
+    assert 0 <= short.remaining_s < 5
+    assert refusal(short, scenario.order, resolved) is None
+    assert _sends(broker) == 0

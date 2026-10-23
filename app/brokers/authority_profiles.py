@@ -494,13 +494,14 @@ class AuthorityProfileStore:
         # prove that cockpit order absent.
         self._admitted_clients: dict[str, object] = {}
         try:
-            # The same budget as the paper HTTP client. A stop waiting on the
-            # dispatch write transaction is not queued for longer than that send.
-            from brokers.alpaca_paper import PAPER_HTTP_TIMEOUT_S
+            # Longer than one whole send. The send itself is capped at
+            # ``paper_dispatch_budget_s``; this wait lets a stop commit after
+            # that send instead of failing the transaction as busy.
+            from brokers.alpaca_paper import PAPER_STORE_BUSY_TIMEOUT_S
 
             self._conn = sqlite3.connect(
                 str(file_path), check_same_thread=False, isolation_level=None,
-                timeout=PAPER_HTTP_TIMEOUT_S,
+                timeout=PAPER_STORE_BUSY_TIMEOUT_S,
             )
         except sqlite3.Error as exc:
             raise ProfileRefused("store", "profile store is unreadable") from exc
@@ -2008,9 +2009,10 @@ class AuthorityProfileStore:
         ``kill``, ``hold``, and ``revoke`` take this same lock and a SQLite
         write transaction. Both stay held until ``send`` returns, so another
         connection cannot commit a stop or a new claim generation in between.
-        The connection busy wait is the paper HTTP budget, and the owned
-        session clamps its timeout to that same budget, so a stop is not
-        queued past the send.
+        ``send`` is capped at the paper dispatch budget for the whole call,
+        not for each network phase. The connection busy wait is longer than
+        that budget, so a stop waiting on this transaction commits when the
+        send returns.
         """
         with self._lock:
             began = False
@@ -2024,7 +2026,7 @@ class AuthorityProfileStore:
                     market=market, now_quote=now_quote,
                 )
                 try:
-                    return send()
+                    return self._send_within_budget(send)
                 finally:
                     if self._conn.in_transaction:
                         self._conn.rollback()
@@ -2036,6 +2038,29 @@ class AuthorityProfileStore:
                 raise
             finally:
                 self._authoritative_now = None
+
+    def _send_within_budget(self, send):
+        """Call ``send`` and signal ``_dispatch_abort`` when the wall clock expires.
+
+        The signal is how a slow send stops holding this write lock. Callers
+        that block inside ``send`` wait on the event. The owned HTTP session
+        uses the same budget to close its transport.
+        """
+        from brokers.alpaca_paper import paper_dispatch_budget_s
+
+        budget = paper_dispatch_budget_s()
+        if isinstance(budget, bool) or not isinstance(budget, (int, float)) or not budget > 0:
+            budget = 10.0
+        abort = threading.Event()
+        self._dispatch_abort = abort
+        timer = threading.Timer(float(budget), abort.set)
+        timer.daemon = True
+        try:
+            timer.start()
+            return send()
+        finally:
+            timer.cancel()
+            self._dispatch_abort = None
 
     @contextmanager
     def _txn(self, *, allow_clock_rewind: bool = False) -> Iterator[sqlite3.Connection]:
