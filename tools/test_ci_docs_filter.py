@@ -60,8 +60,6 @@ STILL_SKIPPED = ('docs/example.md', 'README.md', 'docs/research/notes.md', 'LICE
 ALLOWED_REFERENCES = {
     ('app/tests/test_linear_pr_sync.py', 'AGENTS.md'): 'fixture file name in a fake PR listing',
     ('app/tests/test_stuck_thread_watch.py', 'AGENTS.md'): 'fixture review-thread path',
-    ('app/tests/feasibility/test_inspect.py', 'CLAUDE.md'): 'existence check only; content is not '
-        'read (deleting or renaming CLAUDE.md would still skip tests and break this check)',
     ('tools/test_ci_dispatch_scope.py', 'README.md'): 'file created in a temporary git repo',
     ('tools/test_ci_dispatch_scope.py', 'docs/ci-queue-rollout.md'): 'path string fed to the Rust selector',
 }
@@ -179,6 +177,14 @@ class DecideScriptTests(unittest.TestCase):
 
     def test_claude_md_alone_runs_tests(self):
         self.assertEqual(self.run_tests_for(['CLAUDE.md']), 'true')
+
+    def test_nested_claude_md_alone_still_skips(self):
+        # The selector is anchored to the root file; docs/ keeps the docs-only skip.
+        self.assertEqual(self.run_tests_for(['docs/CLAUDE.md']), 'false')
+
+    def test_lowercase_claude_md_alone_still_skips(self):
+        # The match is case-sensitive, like the decide step's grep -E.
+        self.assertEqual(self.run_tests_for(['claude.md']), 'false')
 
     def test_plain_documentation_still_skips(self):
         self.assertEqual(self.run_tests_for(list(STILL_SKIPPED)), 'false')
