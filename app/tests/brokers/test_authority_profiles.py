@@ -35,7 +35,7 @@ from brokers.authority_profiles import (
 from brokers.gateway import GateOutcome, OrderGateway
 from brokers.paper_gateway import PaperOrderGateway
 from config.settings import Mode
-from core.clock import FrozenClock
+from core.clock import Clock, FrozenClock
 from tests.brokers.conftest import build_scenario
 
 APP = Path(__file__).resolve().parents[2]
@@ -2696,30 +2696,19 @@ def test_ambiguous_accept_then_timeout_is_checked_with_the_broker(st, tmp_path):
         now=now,
     )
     notional = Decimal(str(scenario.order.notional))
-    with pytest.raises(ProfileRefused) as exc:
-        handoff_to_gateway(
-            store, gateway, profile_id="profile-b", action="submit_paper",
-            client_order_id="ambiguous-1", notional=notional, actor="stop-owner",
-            now=now, submit_args=(scenario.order,),
-            submit_kwargs=_paper_submit_kwargs(scenario), **_PAPER_BINDINGS,
-        )
-    assert exc.value.code == "broker_accepted"
-    flags = _reservation_flags(store.path, "ambiguous-1")
-    assert (flags["handoff_state"], flags["handoff_done"], flags["reconciled"]) == (
-        "in_progress", 0, 0,
+    handoff_to_gateway(
+        store, gateway, profile_id="profile-b", action="submit_paper",
+        client_order_id="ambiguous-1", notional=notional, actor="stop-owner",
+        now=now, submit_args=(scenario.order,),
+        submit_kwargs=_paper_submit_kwargs(scenario), **_PAPER_BINDINGS,
     )
-    assert _refuse(
-        lambda: store.release_stop(
-            "profile-b", actor="stop-owner", now=now, reconciled=True,
-        )
-    ) == "not_reconciled"
-    assert _refuse(
-        lambda: store._reconcile_handoff(
-            "ambiguous-1", order_ref=str(scenario.order.id), now=now,
-            actor="recovery-owner", gateway=gateway, ladder=scenario.ladder,
-        )
-    ) == "broker_accepted"
-    assert _reservation_flags(store.path, "ambiguous-1")["reconciled"] == 0
+    flags = _reservation_flags(store.path, "ambiguous-1")
+    assert (flags["handoff_state"], int(flags["handoff_done"]), int(flags["reconciled"])) == (
+        "completed", 1, 1,
+    )
+    store.release_stop(
+        "profile-b", actor="stop-owner", now=now, reconciled=True,
+    )
     assert len(broker._client.submitted) == 1
 
 
@@ -3494,13 +3483,20 @@ def test_order_state_refusal_asks_the_broker(st, tmp_path, monkeypatch, visibili
         ) is False
         assert _handoff_row(store.path, "fence-1")["handoff_state"] == "failed"
         return
-    code = "broker_accepted" if visibility == "present" else "broker_unknown"
+    if visibility == "present":
+        assert _settle_failed(
+            store, scenario.gateway, "fence-1", order_ref, ticket.generation,
+            kwargs, now, outcome=outcome,
+        ) is True
+        flags = _reservation_flags(store.path, "fence-1")
+        assert (flags["handoff_state"], int(flags["reconciled"])) == ("completed", 1)
+        return
     assert _refuse(
         lambda: _settle_failed(
             store, scenario.gateway, "fence-1", order_ref, ticket.generation,
             kwargs, now, outcome=outcome,
         )
-    ) == code
+    ) == "broker_unknown"
     assert _handoff_row(store.path, "fence-1")["handoff_state"] == "in_progress"
 
 
@@ -3763,3 +3759,338 @@ def test_future_claimed_at_is_a_stale_claim(st, tmp_path):
         lambda: accept_transport_permit(permit, order_ref=order_ref)
     ) == "stale_claim"
     assert permit.nonce in store._live_permits
+
+
+def test_accept_then_timeout_completes_when_the_broker_has_the_order(st, tmp_path):
+    """4356858340: broker presence completes an accept-then-timeout reservation."""
+    broker = _CountingPaper()
+    real_submit = broker._client.submit_order
+
+    def ack_then_timeout(canonical):
+        real_submit(canonical)
+        raise TimeoutError("response lost after accept")
+
+    broker._client.submit_order = ack_then_timeout
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    store = _store(tmp_path, "present.sqlite")
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    notional = Decimal(str(scenario.order.notional))
+    handoff_to_gateway(
+        store, gateway, profile_id="profile-b", action="submit_paper",
+        client_order_id="present-1", notional=notional, actor="stop-owner",
+        now=now, submit_args=(scenario.order,),
+        submit_kwargs=_paper_submit_kwargs(scenario), **_PAPER_BINDINGS,
+    )
+    flags = _reservation_flags(store.path, "present-1")
+    assert (flags["handoff_state"], int(flags["handoff_done"]), int(flags["reconciled"])) == (
+        "completed", 1, 1,
+    )
+    store.release_stop(
+        "profile-b", actor="stop-owner", now=now, reconciled=True,
+    )
+    assert len(broker._client.submitted) == 1
+
+
+def test_distinct_default_clocks_do_not_strand_a_claim(st, tmp_path, monkeypatch):
+    """4357424112: two default clocks at the same time must not leave a claim owned."""
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    monkeypatch.setattr(Clock, "now", lambda self: scenario.clock.now())
+    store = AuthorityProfileStore.__new__(AuthorityProfileStore)
+    _REAL_STORE_INIT(store, tmp_path / "default-clocks.sqlite")
+    assert type(store._clock) is Clock
+    assert store._clock is not st.clock
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    call = dict(
+        profile_id="profile-b", action="submit_paper", client_order_id="clock-default",
+        notional=Decimal(str(scenario.order.notional)), actor="stop-owner", now=now,
+        submit_args=(scenario.order,), submit_kwargs=_paper_submit_kwargs(scenario),
+        **_PAPER_BINDINGS,
+    )
+    raised = None
+    try:
+        handoff_to_gateway(store, gateway, **call)
+    except ProfileRefused as exc:
+        raised = exc.code
+    row = _handoff_row(store.path, "clock-default")
+    assert raised != "clock"
+    assert row["handoff_state"] != "in_progress"
+    again = None
+    try:
+        handoff_to_gateway(store, gateway, **call)
+    except ProfileRefused as exc:
+        again = exc.code
+    assert again != "handoff_in_progress"
+
+
+def test_version_four_store_migrates_the_transport_column(tmp_path):
+    """4358444883: a populated version-4 store gains the transport column and opens."""
+    import sqlite3
+
+    from brokers.authority_profiles import STORE_USER_VERSION
+
+    path = tmp_path / "v4.sqlite"
+    store = AuthorityProfileStore(path)
+    _install(store)
+    store.authorize(
+        "profile-b", action="propose", client_order_id="v4-row",
+        notional=Decimal("10.00"), actor="stop-owner", now=NOW,
+    )
+    raw = sqlite3.connect(path)
+    columns = [row[1] for row in raw.execute("PRAGMA table_info(reservations)")]
+    for name in ("transport_client_hash", "transport_binding_hash"):
+        if name in columns:
+            raw.execute(f"ALTER TABLE reservations DROP COLUMN {name}")
+    raw.execute("PRAGMA user_version = 4")
+    raw.commit()
+    raw.close()
+    reopened = AuthorityProfileStore(path)
+    raw = sqlite3.connect(path)
+    version = raw.execute("PRAGMA user_version").fetchone()[0]
+    names = {row[1] for row in raw.execute("PRAGMA table_info(reservations)")}
+    kept = raw.execute(
+        "SELECT COUNT(*) FROM reservations WHERE client_order_id = 'v4-row'"
+    ).fetchone()[0]
+    raw.close()
+    assert version == STORE_USER_VERSION == 5
+    assert "transport_client_hash" in names
+    assert kept == 1
+    assert reopened.consumption("profile-b") == (Decimal("10.00"), 1)
+
+
+def test_restart_with_the_same_broker_key_can_reconcile(st, tmp_path):
+    """4358445004: a restarted client with the same broker key reconciles; a different key does not."""
+    from brokers.alpaca_paper import FakeAlpaca
+
+    scenario, store, ticket, broker = _claimed_paper_scenario(st, tmp_path)
+    broker._client.key_id = "paper-key-1"
+    order_ref = str(scenario.order.id)
+    _arm(scenario.gateway, store, "fence-1", ticket.generation)
+    scenario.gateway._profile_fence.bind_order(scenario.order)
+    scenario.gateway._profile_fence._local.producing_runtime = "claude"
+    scenario.gateway._profile_fence()
+    cockpit_id = f"cockpit-{order_ref}"[:128]
+    broker._client.submit_order({"client_order_id": cockpit_id})
+    scenario.clock._at = scenario.clock.now() + CLAIM_LEASE + timedelta(seconds=1)
+    restarted = AuthorityProfileStore(store.path)
+    same = FakeAlpaca()
+    same.key_id = "paper-key-1"
+    same._orders_by_client[cockpit_id] = {"broker_order_id": "alp-kept", "status": "accepted"}
+    same_gateway = PaperOrderGateway(AlpacaPaperBroker(client=same), st=st)
+    verdict = restarted._reconcile_handoff(
+        "fence-1", order_ref=order_ref, now=scenario.clock.now(),
+        actor="recovery-owner", gateway=same_gateway, ladder=scenario.ladder,
+    )
+    assert verdict == "completed"
+    flags = _reservation_flags(store.path, "fence-1")
+    assert (flags["handoff_state"], int(flags["reconciled"])) == ("completed", 1)
+    restarted.release_stop(
+        "profile-b", actor="stop-owner", now=scenario.clock.now(), reconciled=True,
+    )
+
+
+def test_restart_without_the_broker_key_stays_fail_closed(st, tmp_path):
+    """A restarted client that cannot prove the broker key cannot clear the stop."""
+    from brokers.alpaca_paper import FakeAlpaca
+
+    scenario, store, ticket, broker = _claimed_paper_scenario(st, tmp_path)
+    broker._client.key_id = "paper-key-1"
+    order_ref = str(scenario.order.id)
+    _arm(scenario.gateway, store, "fence-1", ticket.generation)
+    scenario.gateway._profile_fence.bind_order(scenario.order)
+    scenario.gateway._profile_fence._local.producing_runtime = "claude"
+    scenario.gateway._profile_fence()
+    scenario.clock._at = scenario.clock.now() + CLAIM_LEASE + timedelta(seconds=1)
+    restarted = AuthorityProfileStore(store.path)
+    other = FakeAlpaca()
+    other.key_id = "other-key"
+    other_gateway = PaperOrderGateway(AlpacaPaperBroker(client=other), st=st)
+    assert _refuse(
+        lambda: restarted._reconcile_handoff(
+            "fence-1", order_ref=order_ref, now=scenario.clock.now(),
+            actor="recovery-owner", gateway=other_gateway, ladder=scenario.ladder,
+        )
+    ) == "broker_unknown"
+    assert _reservation_flags(store.path, "fence-1")["reconciled"] == 0
+    assert _refuse(
+        lambda: restarted.release_stop(
+            "profile-b", actor="stop-owner", now=scenario.clock.now(), reconciled=True,
+        )
+    ) == "not_reconciled"
+
+
+def test_admission_timeout_closes_only_its_own_intent(st, tmp_path):
+    """4358445109: a lock timeout must not resolve an earlier order's open intent."""
+    scenario, store, ticket, broker = _claimed_paper_scenario(st, tmp_path)
+    prior = st.audit.intent(
+        "order_submit",
+        refs={"order_id": "earlier-order"},
+        payload={"symbol": "MSFT", "side": "buy"},
+    )
+    lock = threading.Lock()
+    lock.acquire()
+
+    class _Held:
+        def acquire(self, blocking=True, timeout=-1):
+            if timeout is None or timeout < 0:
+                return lock.acquire(blocking, timeout)
+            return False
+
+        def release(self):
+            if lock.locked():
+                lock.release()
+
+        def __enter__(self):
+            if not self.acquire():
+                raise RuntimeError("held")
+            return self
+
+        def __exit__(self, *_args):
+            self.release()
+            return False
+
+    scenario.st.safety_admission_lock = _Held()
+    _arm(scenario.gateway, store, "fence-1", ticket.generation)
+    outcome = scenario.gateway.submit(
+        scenario.order, **_paper_submit_kwargs(scenario),
+    )
+    assert (outcome.ok, outcome.stage) == (False, "admission_lock")
+    assert _sends(broker) == 0
+    assert st.audit.unresolved_intents() == [prior.seq]
+    lock.release()
+
+
+def test_timed_lock_swap_stays_under_the_state_lock(st, tmp_path, monkeypatch):
+    """4358445259: two paper submits must not leave the timed admission wrapper installed."""
+    from brokers.paper_gateway import _TimedAdmissionLock
+
+    scenario, store, ticket, _broker = _claimed_paper_scenario(st, tmp_path)
+    original = scenario.st.safety_admission_lock
+    other = PaperOrderGateway(_CountingPaper(), st=st)
+    now = scenario.clock.now()
+    store.authorize(
+        "profile-b", action="submit_paper", client_order_id="fence-2",
+        notional=Decimal("10.00"), actor="stop-owner", now=now, order_ref="order-b",
+    )
+    ticket_b = store.claim_handoff("fence-2", now=now, awaiting_submit=True)
+    assert isinstance(ticket_b, ClaimTicket)
+    entered = []
+    release = threading.Event()
+
+    def blocking_submit(self, order, **kwargs):
+        del self, order, kwargs
+        entered.append(threading.get_ident())
+        assert release.wait(3)
+        return GateOutcome(False, "broker_error", "stopped before transport")
+
+    monkeypatch.setattr(OrderGateway, "submit", blocking_submit)
+    order_b = type("OrderB", (), {})()
+    order_b.id = "order-b"
+    order_b.account = "paper"
+    order_b.notional = Decimal("10.00")
+    errors = []
+    outcomes = []
+
+    def run(gateway, order, client_id, generation):
+        try:
+            _arm(gateway, store, client_id, generation)
+            outcomes.append(gateway.submit(order, **_paper_submit_kwargs(scenario)))
+        except Exception as exc:
+            errors.append(repr(exc))
+
+    first = threading.Thread(
+        target=run, args=(scenario.gateway, scenario.order, "fence-1", ticket.generation),
+    )
+    second = threading.Thread(
+        target=run, args=(other, order_b, "fence-2", ticket_b.generation),
+    )
+    first.start()
+    deadline = threading.Event()
+    try:
+        for _ in range(50):
+            if entered:
+                break
+            deadline.wait(0.05)
+        assert entered, f"first submit did not reach the parent: {outcomes!r} {errors!r}"
+        second.start()
+        for _ in range(50):
+            if len(entered) >= 2:
+                break
+            deadline.wait(0.05)
+        assert len(entered) >= 2, f"second submit did not reach the parent: {outcomes!r} {errors!r}"
+    finally:
+        release.set()
+        first.join(5)
+        if second.ident is not None:
+            second.join(5)
+    assert not first.is_alive() and not second.is_alive()
+    assert errors == []
+    assert not isinstance(scenario.st.safety_admission_lock, _TimedAdmissionLock)
+    assert scenario.st.safety_admission_lock is original
+
+
+def test_two_reservations_for_one_order_cannot_submit(st, tmp_path):
+    """4357424253: a second live reservation for the same order cannot carry the send."""
+    scenario, store, ticket, broker = _claimed_paper_scenario(st, tmp_path)
+    fence = scenario.gateway._profile_fence
+    started = threading.Event()
+    release = threading.Event()
+    original = fence._order_ref
+
+    def blocking():
+        started.set()
+        assert release.wait(3)
+        return original()
+
+    fence._order_ref = blocking
+    result = {}
+
+    def submit_stale():
+        _arm(scenario.gateway, store, "fence-1", ticket.generation)
+        try:
+            result["outcome"] = scenario.gateway.submit(
+                scenario.order, **_paper_submit_kwargs(scenario),
+            )
+        except Exception as exc:
+            result["error"] = repr(exc)
+
+    worker = threading.Thread(target=submit_stale)
+    worker.start()
+    try:
+        assert started.wait(3)
+        now = scenario.clock.now()
+        store.authorize(
+            "profile-b", action="submit_paper", client_order_id="fence-2",
+            notional=Decimal(str(scenario.order.notional)), actor="stop-owner",
+            now=now, order_ref=str(scenario.order.id),
+        )
+        ticket_b = store.claim_handoff("fence-2", now=now, awaiting_submit=True)
+        assert isinstance(ticket_b, ClaimTicket)
+        scenario.gateway.arm_profile_claim(store, "fence-2", ticket_b.generation)
+        release.set()
+        worker.join(5)
+    finally:
+        release.set()
+        worker.join(5)
+    assert not worker.is_alive()
+    assert "error" not in result
+    assert result["outcome"].ok is False
+    assert _sends(broker) == 0

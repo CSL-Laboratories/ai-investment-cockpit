@@ -88,12 +88,16 @@ def _order_is_inflight(st, order) -> bool:
     return inflight is not None and order_id in inflight
 
 
-def _close_open_intents(st, reason: str) -> None:
+def _close_new_intents(st, already_open: set, reason: str) -> None:
+    """Resolve intents this submit opened. Leave every earlier intent alone."""
+
     class _Seq:
         def __init__(self, seq: int) -> None:
             self.seq = seq
 
     for seq in list(st.audit.unresolved_intents()):
+        if seq in already_open:
+            continue
         st.audit.result(
             _Seq(seq),
             "order_submit",
@@ -462,14 +466,22 @@ class PaperOrderGateway(OrderGateway):
                     stage, _event, reason = failure
                     return GateOutcome(False, stage, reason)
             st = self._st
-            original_lock = st.safety_admission_lock
-            st.safety_admission_lock = _TimedAdmissionLock(original_lock, _ADMISSION_BUDGET_S)
+            state_lock = st.lock
+            with state_lock:
+                original_lock = st.safety_admission_lock
+                while isinstance(original_lock, _TimedAdmissionLock):
+                    original_lock = original_lock._inner
+                wrapper = _TimedAdmissionLock(original_lock, _ADMISSION_BUDGET_S)
+                st.safety_admission_lock = wrapper
+            open_before = set(st.audit.unresolved_intents())
             try:
                 return super().submit(order, **kwargs)
             except _AdmissionTimeout:
-                _close_open_intents(st, _ADMISSION_TIMEOUT)
+                _close_new_intents(st, open_before, _ADMISSION_TIMEOUT)
                 return GateOutcome(False, "admission_lock", _ADMISSION_TIMEOUT)
             finally:
-                st.safety_admission_lock = original_lock
+                with state_lock:
+                    if st.safety_admission_lock is wrapper:
+                        st.safety_admission_lock = original_lock
         finally:
             self._paper_submit_open = False

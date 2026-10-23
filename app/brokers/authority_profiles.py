@@ -43,9 +43,12 @@ SCHEMA_VERSION = 1
 # flag. Version 4 adds the claim lease (claimed_at): an abandoned in_progress
 # claim can be re-owned only after its lease expires, so two reconcilers
 # racing the same crashed claim cannot both bump the generation and both reach
-# the gateway.
-STORE_USER_VERSION = 4
-ADMITTED_STORE_VERSIONS = frozenset({0, 1, 2, 3, STORE_USER_VERSION})
+# the gateway. Version 5 adds the process transport hash and the restart
+# binding hash. A version-4 store already has the stop capability and the
+# claim lease, so its rows migrate in place. Earlier versions that hold rows
+# still refuse.
+STORE_USER_VERSION = 5
+ADMITTED_STORE_VERSIONS = frozenset({0, 1, 2, 3, 4, STORE_USER_VERSION})
 ADMITTED_ENVIRONMENTS = frozenset({"paper", "dry_run"})
 _MODEL_OUTPUT_KEYS = frozenset({"provider", "model_version", "summary", "confidence"})
 _HANDOFF_STATES = frozenset({"pending", "in_progress", "failed", "completed"})
@@ -439,7 +442,8 @@ _SCHEMA = (
         claim_generation INTEGER NOT NULL DEFAULT 0,
         reconciled INTEGER NOT NULL DEFAULT 0,
         claimed_at TEXT,
-        transport_client_hash TEXT
+        transport_client_hash TEXT,
+        transport_binding_hash TEXT
     )
     """,
 )
@@ -459,6 +463,7 @@ class AuthorityProfileStore:
         self._lock = threading.Lock()
         # Authority time is this clock, read inside ``_txn`` after both locks.
         # A ``now`` argument on a public method is not that clock.
+        self._clock_default = clock is None
         self._clock = clock if clock is not None else Clock()
         self._authoritative_now: datetime | None = None
         self._live_permits: dict[str, tuple[str, int, str]] = {}
@@ -1122,7 +1127,17 @@ class AuthorityProfileStore:
                 return "failed"
             order_ref = row["order_ref"]
         # Broker I/O stays outside the store lock so kill and hold are not stalled.
-        self._require_broker_absent(gateway, order_ref)
+        # Presence completes the reservation. Absence continues. An unreadable
+        # broker stays unknown and does not release the stop.
+        if not order_ref:
+            visibility = "absent"
+        else:
+            visibility = _broker_order_visibility(gateway, order_ref, store=self)
+        if visibility == "unknown":
+            raise ProfileRefused(
+                "broker_unknown",
+                "broker must confirm the cockpit order is absent before release or retry",
+            )
         with self._txn() as conn:
             now = self._authoritative_now
             row = conn.execute(
@@ -1141,6 +1156,10 @@ class AuthorityProfileStore:
                     if not self._complete_reconciled(conn, client_id, state, generation):
                         raise ProfileRefused("store", "handoff reconcile was not admitted")
                     return "completed"
+            if visibility == "present":
+                if not self._complete_reconciled(conn, client_id, state, generation):
+                    raise ProfileRefused("store", "handoff reconcile was not admitted")
+                return "completed"
             if state == "failed":
                 if not self._fail_reconciled(conn, client_id, state, generation):
                     raise ProfileRefused("store", "handoff reconcile was not admitted")
@@ -1305,6 +1324,7 @@ class AuthorityProfileStore:
             order_ref = row["order_ref"]
             if type(order_ref) is not str or not order_ref:
                 raise ProfileRefused("order_ref", "paper submit requires an order id")
+            self._refuse_other_live_order(conn, order_ref, client_id)
         return self._issue_transport_permit(client_id, generation, order_ref)
 
     def _set_stop(
@@ -1354,16 +1374,15 @@ class AuthorityProfileStore:
             version = int(conn.execute("PRAGMA user_version").fetchone()[0])
             if version not in ADMITTED_STORE_VERSIONS:
                 raise ProfileRefused("store", "profile store version is not admitted")
-            if version != STORE_USER_VERSION:
-                # A pre-current store holding data cannot be upgraded: its
-                # profile rows predate the install-minted stop capability (and
-                # durable claim ownership), so there is no authenticated token
-                # to carry forward and no unauthenticated one may be minted or
-                # accepted. Refuse; the store must be recreated or its
-                # profiles re-installed through the normal install path.
-                # A store that is empty in EVERY table may be upgraded in
-                # place. (This module is new in this PR — no deployed store
-                # predates these versions.)
+            if version < 4:
+                # A pre-v4 store holding data cannot be upgraded: its profile
+                # rows predate the install-minted stop capability (and durable
+                # claim ownership), so there is no authenticated token to carry
+                # forward and no unauthenticated one may be minted or accepted.
+                # Refuse; the store must be recreated or its profiles
+                # re-installed through the normal install path. A store that is
+                # empty in EVERY table may be upgraded in place. Version 4
+                # already has that capability, so its rows migrate to version 5.
                 for table in ("profiles", "controls", "consumption", "reservations"):
                     try:
                         rows = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
@@ -1397,9 +1416,11 @@ class AuthorityProfileStore:
             profile_columns = {
                 row[1] for row in conn.execute("PRAGMA table_info(profiles)").fetchall()
             }
-            required_reservation_columns = {
+            v4_reservation_columns = {
                 "order_ref", "handoff_state", "claim_generation", "reconciled", "claimed_at",
-                "transport_client_hash",
+            }
+            required_reservation_columns = v4_reservation_columns | {
+                "transport_client_hash", "transport_binding_hash",
             }
             if version == STORE_USER_VERSION:
                 # A current-version store missing a column is corruption, not
@@ -1408,6 +1429,19 @@ class AuthorityProfileStore:
                     raise ProfileRefused("store", "reservations ledger is missing a column")
                 if "stop_capability_hash" not in profile_columns:
                     raise ProfileRefused("store", "profile ledger is missing a column")
+            elif version == 4:
+                if not v4_reservation_columns <= columns:
+                    raise ProfileRefused("store", "reservations ledger is missing a column")
+                if "stop_capability_hash" not in profile_columns:
+                    raise ProfileRefused("store", "profile ledger is missing a column")
+                if "transport_client_hash" not in columns:
+                    conn.execute(
+                        "ALTER TABLE reservations ADD COLUMN transport_client_hash TEXT"
+                    )
+                if "transport_binding_hash" not in columns:
+                    conn.execute(
+                        "ALTER TABLE reservations ADD COLUMN transport_binding_hash TEXT"
+                    )
             else:
                 # Empty pre-current store: add every missing column in place.
                 if "order_ref" not in columns:
@@ -1435,6 +1469,10 @@ class AuthorityProfileStore:
                 if "transport_client_hash" not in columns:
                     conn.execute(
                         "ALTER TABLE reservations ADD COLUMN transport_client_hash TEXT"
+                    )
+                if "transport_binding_hash" not in columns:
+                    conn.execute(
+                        "ALTER TABLE reservations ADD COLUMN transport_binding_hash TEXT"
                     )
                 if "stop_capability_hash" not in profile_columns:
                     conn.execute(
@@ -1555,18 +1593,20 @@ class AuthorityProfileStore:
         if not hmac.compare_digest(_capability_hash(token), stored):
             raise ProfileRefused("unauthenticated", "stop capability does not match")
 
-    def _require_broker_absent(self, gateway, order_ref: str | None) -> None:
-        """Refuse release or retry until the broker confirms the cockpit id is absent."""
-        if not order_ref:
-            return
-        visibility = _broker_order_visibility(gateway, order_ref, store=self)
-        if visibility == "absent":
-            return
-        code = "broker_accepted" if visibility == "present" else "broker_unknown"
-        raise ProfileRefused(
-            code,
-            "broker must confirm the cockpit order is absent before release or retry",
-        )
+    def _refuse_other_live_order(self, conn, order_ref: str, client_id: str) -> None:
+        """One live reservation owns an order. A second claim cannot send it."""
+        other = conn.execute(
+            """
+            SELECT client_order_id FROM reservations
+            WHERE order_ref = ? AND client_order_id != ?
+              AND handoff_state = 'in_progress' AND handoff_done = 0
+            """,
+            (order_ref, client_id),
+        ).fetchone()
+        if other is not None:
+            raise ProfileRefused(
+                "client_order_conflict", "another reservation owns this order"
+            )
 
     def _issue_transport_permit(
         self, client_order_id: str, generation: int, order_ref: str
@@ -1641,6 +1681,7 @@ class AuthorityProfileStore:
             )
         if getattr(order, "account", None) != row["account_id"]:
             raise ProfileRefused("account_mismatch", "order account is outside the profile")
+        self._refuse_other_live_order(conn, order_ref, client_id)
         order_notional = getattr(order, "notional", None)
         if order_notional is None or _parse_money(
             order_notional, code="notional"
@@ -1677,19 +1718,29 @@ class AuthorityProfileStore:
             )
             if client is not None:
                 digest = _remember_transport_client(client)
+                binding = _binding_digest(client)
                 stored_hash = row["transport_client_hash"]
-                if type(stored_hash) is str and stored_hash:
-                    if not hmac.compare_digest(digest, stored_hash):
-                        raise ProfileRefused(
-                            "broker_unknown", "broker client is not the admitted transport"
-                        )
-                else:
+                stored_binding = row["transport_binding_hash"]
+                token_ok = (
+                    type(stored_hash) is str and stored_hash
+                    and hmac.compare_digest(digest, stored_hash)
+                )
+                binding_ok = _binding_matches(stored_binding, binding)
+                if type(stored_hash) is str and stored_hash and not token_ok and not binding_ok:
+                    raise ProfileRefused(
+                        "broker_unknown", "broker client is not the admitted transport"
+                    )
+                if not token_ok or (
+                    binding is not None and not _binding_matches(stored_binding, binding)
+                ):
                     conn.execute(
                         """
-                        UPDATE reservations SET transport_client_hash = ?
+                        UPDATE reservations
+                        SET transport_client_hash = ?,
+                            transport_binding_hash = COALESCE(?, transport_binding_hash)
                         WHERE client_order_id = ?
                         """,
-                        (digest, client_id),
+                        (digest, binding, client_id),
                     )
                 self._admitted_clients[bound_order] = _unwrap_client(client)
             del self._live_permits[key]
@@ -1838,6 +1889,7 @@ def handoff_to_gateway(
     _validate_model_output(model_output)
     if model_output_grants_authority(model_output):
         raise ProfileRefused("model_authority", "model output cannot grant authority")
+    _adopt_state_clock(store, gateway)
     kwargs = dict(submit_kwargs or {})
     order_ref = None
     if action == "submit_paper":
@@ -1882,7 +1934,7 @@ def handoff_to_gateway(
     from brokers.paper_gateway import PaperOrderGateway
 
     kwargs.pop("claim_fence", None)
-    gateway.arm_profile_claim(store, reservation.client_order_id, claim.generation)
+    _arm_or_release(gateway, store, reservation.client_order_id, claim)
     outcome = PaperOrderGateway.submit(
         gateway,
         *submit_args,
@@ -1940,6 +1992,7 @@ def reconcile_handoff_to_gateway(
     gated by the claim lease, so a concurrent reconciler cannot also take
     over — and submitted exactly once.
     """
+    _adopt_state_clock(store, gateway)
     kwargs = dict(submit_kwargs or {})
     _require_paper_gateway(gateway)
     order = submit_args[0] if submit_args else kwargs.get("order")
@@ -1973,7 +2026,7 @@ def reconcile_handoff_to_gateway(
     from brokers.paper_gateway import PaperOrderGateway
 
     kwargs.pop("claim_fence", None)
-    gateway.arm_profile_claim(store, client_id, verdict.generation)
+    _arm_or_release(gateway, store, client_id, verdict)
     outcome = PaperOrderGateway.submit(
         gateway,
         *submit_args,
@@ -1991,6 +2044,45 @@ def reconcile_handoff_to_gateway(
         capability=capability,
     )
     return ProfiledHandoff(client_order_id, True, True, outcome)
+
+
+def _adopt_state_clock(store, gateway) -> None:
+    """A default store clock takes the state clock before a claim is written.
+
+    Two ``Clock()`` instances agree only by accident. Lease math needs the
+    gateway's clock. An explicitly supplied clock is left alone.
+    """
+    if not getattr(store, "_clock_default", False):
+        return
+    state = None if gateway is None else getattr(gateway, "_st", None)
+    state_clock = None if state is None else getattr(state, "clock", None)
+    if state_clock is None:
+        return
+    store._clock = state_clock
+    store._clock_default = False
+
+
+def _revert_unarmed_claim(store, client_id: str, generation: int, claim_state: str) -> None:
+    """Arm failed before transport. Put the reservation back so it is not stranded."""
+    previous = "failed" if claim_state == "retry" else "pending"
+    with store._txn() as conn:
+        conn.execute(
+            """
+            UPDATE reservations
+            SET handoff_state = ?, claimed_at = NULL, claim_generation = ?
+            WHERE client_order_id = ? AND handoff_state = 'in_progress'
+              AND handoff_done = 0 AND claim_generation = ?
+            """,
+            (previous, generation - 1, client_id, generation),
+        )
+
+
+def _arm_or_release(gateway, store, client_id: str, claim) -> None:
+    try:
+        gateway.arm_profile_claim(store, client_id, claim.generation)
+    except ProfileRefused:
+        _revert_unarmed_claim(store, client_id, claim.generation, claim.state)
+        raise
 
 
 def _fence_now(gateway, kwargs: Mapping):
@@ -2019,6 +2111,35 @@ def _unwrap_client(client):
     return client if real is None else real
 
 
+def _durable_transport_material(client) -> str | None:
+    """A restart-stable broker identity. The process token does not survive."""
+    real = _unwrap_client(client)
+    headers = getattr(real, "_headers", None)
+    if isinstance(headers, dict):
+        key_id = headers.get("APCA-API-KEY-ID")
+        if type(key_id) is str and key_id.strip():
+            return "alpaca-paper-key:" + key_id.strip()
+    key_id = getattr(real, "key_id", None)
+    if type(key_id) is str and key_id.strip():
+        return "alpaca-paper-key:" + key_id.strip()
+    return None
+
+
+def _binding_digest(client) -> str | None:
+    material = _durable_transport_material(client)
+    if material is None:
+        return None
+    return _capability_hash(material)
+
+
+def _binding_matches(stored, digest) -> bool:
+    return (
+        type(stored) is str and bool(stored)
+        and type(digest) is str and bool(digest)
+        and hmac.compare_digest(digest, stored)
+    )
+
+
 def _remember_transport_client(client) -> str:
     """Mint a process-local token and return only its hash for the store."""
     real = _unwrap_client(client)
@@ -2037,21 +2158,34 @@ def _remember_transport_client(client) -> str:
 def _transport_client_matches(store, order_ref: str, client) -> bool:
     with store._txn() as conn:
         rows = conn.execute(
-            "SELECT transport_client_hash FROM reservations WHERE order_ref = ?",
+            """
+            SELECT transport_client_hash, transport_binding_hash
+            FROM reservations WHERE order_ref = ?
+            """,
             (order_ref,),
         ).fetchall()
-    hashes = [
-        row["transport_client_hash"] for row in rows
-        if type(row["transport_client_hash"]) is str and row["transport_client_hash"]
-    ]
-    if not hashes:
+    bound = []
+    for row in rows:
+        token = row["transport_client_hash"]
+        binding = row["transport_binding_hash"]
+        if (type(token) is str and token) or (type(binding) is str and binding):
+            bound.append((token, binding))
+    if not bound:
         return True
     real = _unwrap_client(client)
     token = getattr(real, "_cockpit_transport_token", None)
-    if type(token) is not str:
+    token_digest = _capability_hash(token) if type(token) is str else None
+    binding_digest = _binding_digest(real)
+    for stored_token, stored_binding in bound:
+        token_ok = (
+            type(stored_token) is str and stored_token
+            and token_digest is not None
+            and hmac.compare_digest(token_digest, stored_token)
+        )
+        if token_ok or _binding_matches(stored_binding, binding_digest):
+            continue
         return False
-    digest = _capability_hash(token)
-    return all(hmac.compare_digest(digest, stored) for stored in hashes)
+    return True
 
 
 def _broker_order_visibility(gateway, order_ref: str, *, store=None) -> str:
@@ -2219,10 +2353,14 @@ def _settle_failed(
             "unknown" if not order_ref
             else _broker_order_visibility(gateway, order_ref, store=store)
         )
+        if visibility == "present":
+            _record_landed(
+                store, gateway, client_order_id, order_ref, kwargs, now, capability=capability,
+            )
+            return True
         if visibility != "absent":
-            code = "broker_accepted" if visibility == "present" else "broker_unknown"
             raise ProfileRefused(
-                code,
+                "broker_unknown",
                 "ambiguous broker acceptance must be reconciled before the profile stop is released",
             )
     store.fail_handoff(client_order_id, generation=generation)
