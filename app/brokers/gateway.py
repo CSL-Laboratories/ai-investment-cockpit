@@ -143,10 +143,14 @@ _ORDER_AUTHORITY_BY_SCOPE = {
     "live": frozenset({"review_live", "auto_veto", "auto_full"}),
 }
 _AUTO_MODES = frozenset({"auto_veto", "auto_full"})
-# Final admission may block; if it waits longer than this the claim is re-fenced (the lease is
-# far longer) and admission re-read, bounded so a stuck lock fails closed.
+# Final admission may block. A wait longer than the fence's remaining lease (or this
+# ceiling, when the fence reports no remainder) is re-fenced and admission re-read.
+# The ceiling also bounds a stuck lock so it fails closed.
 _ADMISSION_WAIT_BUDGET_S = 5.0
 _MAX_FENCE_ROUNDS = 3
+# Set of order ids with a submit inside this state. Shared by every gateway that
+# holds the state, so a second gateway cannot submit the same order.
+_INFLIGHT_ATTR = "_gateway_inflight_orders"
 
 # Defaults for the SEC-07 pending-exposure cap and approval time-to-live (Settings/limits
 # override via getattr; the gateway ctor overrides both for tests).
@@ -163,6 +167,26 @@ def _dec(x) -> Decimal:
 
 def _naive_utc(dt: datetime) -> datetime:
     return dt if dt.tzinfo is None else dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _lease_remaining_s(fence_result: object) -> float | None:
+    """Seconds of claim lease a fence reported, or None when it reported none.
+
+    A real number, or an object with a numeric ``remaining_s``, is the remainder at
+    the moment the fence returned. Anything else leaves the admission ceiling in charge.
+    """
+    if isinstance(fence_result, bool) or fence_result is None:
+        return None
+    if isinstance(fence_result, (int, float)):
+        remaining = fence_result
+    else:
+        remaining = getattr(fence_result, "remaining_s", None)
+        if isinstance(remaining, bool) or not isinstance(remaining, (int, float)):
+            return None
+    value = float(remaining)
+    if value != value or value in (float("inf"), float("-inf")) or value < 0:
+        return 0.0
+    return value
 
 
 @dataclass
@@ -203,6 +227,7 @@ class OrderGateway:
         approval_ttl_seconds: int | None = None,
         execution_scope: str = "live",
         require_analysis_generation: bool = False,
+        claim_fence: Callable[[], object] | None = None,
     ) -> None:
         # SEC-03: broker + registry are PRIVATE instance state — never module globals, never
         # dispatched by string name. ``st`` (the TRUST ROOT — the HMAC-signed audit chain + its DB)
@@ -222,8 +247,16 @@ class OrderGateway:
         # Production paper composition enables this.  Low-level gateway fixtures that test
         # unrelated gates may omit agent lineage, but the real proposal path may not.
         self._require_analysis_generation = bool(require_analysis_generation)
+        # Profile composition installs the fence here. submit() will not accept a different one.
+        if claim_fence is not None and not callable(claim_fence):
+            raise TypeError("claim_fence must be callable")
+        self._claim_fence = claim_fence
         # Same-thread re-entry (the state lock is an RLock). A fence must not submit again.
         self._submit_active = False
+        # Captured once at construction. A later replacement of the class attribute is not
+        # the implementation this gateway was trusted to call.
+        from brokers.alpaca_paper import AlpacaPaperBroker
+        self._admitted_paper_submit = AlpacaPaperBroker.submit_order
 
     @property
     def execution_scope(self) -> str:
@@ -400,21 +433,35 @@ class OrderGateway:
         return GateOutcome(False, stage, reason, order_tuple_hash=resolved_hash)
 
     @contextmanager
-    def _single_submit(self):
-        """One in-flight submit per gateway. A nested call is refused before it can consume a token."""
-        if self._submit_active:
+    def _single_submit(self, st, order_id):
+        """One in-flight submit per state and order.
+
+        A nested call on this gateway, or on another gateway sharing ``st``, is refused
+        before it can consume a token.
+        """
+        inflight = getattr(st, _INFLIGHT_ATTR, None)
+        if inflight is None:
+            inflight = set()
+            setattr(st, _INFLIGHT_ATTR, inflight)
+        if self._submit_active or order_id in inflight:
             yield False
             return
         self._submit_active = True
+        inflight.add(order_id)
         try:
             yield True
         finally:
             self._submit_active = False
+            inflight.discard(order_id)
 
     def _call_claim_fence(self, claim_fence, st, order, intent, actor, resolved_hash):
-        """Run the fence. An exception covers the open intent; BaseException is re-raised."""
+        """Run the fence. An exception covers the open intent; BaseException is re-raised.
+
+        Returns ``(refusal, fence_value)``. ``refusal`` is a ``GateOutcome`` when the
+        fence failed closed, and ``fence_value`` is what a successful fence returned.
+        """
         try:
-            claim_fence()
+            value = claim_fence()
         except BaseException as exc:  # noqa: BLE001 - cover the intent, then refuse or re-raise
             outcome = self._abort_after_intent(
                 st,
@@ -427,18 +474,49 @@ class OrderGateway:
             )
             if not isinstance(exc, Exception):
                 raise
+            return outcome, None
+        return None, value
+
+    def _cover_admission(self, st, order, intent, actor, resolved_hash, admit):
+        """Run one admission attempt. A raise records the open intent, then control flow re-raises."""
+        try:
+            stage, reason = admit()
+        except BaseException as exc:  # noqa: BLE001 - cover the intent, then refuse or re-raise
+            outcome = self._abort_after_intent(
+                st,
+                order,
+                intent,
+                stage="admission_lock",
+                reason=f"admission failed before transport: {exc}",
+                actor=actor,
+                resolved_hash=resolved_hash,
+            )
+            if not isinstance(exc, Exception):
+                raise
             return outcome
+        if stage is not None:
+            return self._abort_after_intent(
+                st,
+                order,
+                intent,
+                stage=stage,
+                reason=reason,
+                actor=actor,
+                resolved_hash=resolved_hash,
+            )
         return None
 
     def _time_sensitive_refusal(
         self, st, order, *, approval, risk_decision, breaker_engine, risk_recheck,
         positions, clock,
     ):
-        """Feed, risk re-run, and approval/risk-eval TTL. None when all three still pass.
+        """Feed, risk re-run, approval/risk-eval TTL, consumed approval, and order state.
 
         These are the checks a blocking claim fence can outlast. The post-fence refresh
-        uses the same rules as ``_precheck`` and does not record audit itself.
+        uses the same rules as ``_precheck`` and does not record audit itself. The
+        caller-supplied clock is not authority here: age and freshness use ``st.clock``.
         """
+        clock = st.clock
         market_data = getattr(st, "market_data", None)
         if market_data is not None:
             now = clock.now()
@@ -482,6 +560,12 @@ class OrderGateway:
                 None,
                 "approval is not covered by a valid adjudication AuditEntry (not persisted)",
             )
+        if db_appr.single_use_consumed or self._consumed_on_chain(st, db_appr.id):
+            return (
+                "approval",
+                BYPASS_RESUBMIT_AFTER_DENIED,
+                "approval already consumed (single-use replay)",
+            )
         if db_appr.risk_decision_id != getattr(risk_decision, "id", None):
             return (
                 "approval",
@@ -506,6 +590,17 @@ class OrderGateway:
                         None,
                         f"risk evaluation expired ({age:.0f}s > {ttl}s TTL)",
                     )
+        db_order = self._load_row(st, Order, getattr(order, "id", None))
+        if (
+            db_order is None
+            or db_order.state not in ("proposed", "approved")
+            or self._order_submitted_on_chain(st, getattr(order, "id", None))
+        ):
+            return (
+                "order_state",
+                None,
+                f"order state {getattr(db_order, 'state', None)!r} is not submittable",
+            )
         return None
 
     def _refresh_time_sensitive(
@@ -973,15 +1068,18 @@ class OrderGateway:
         the broker a second time. A raised exception aborts the same way as any other
         pre-broker safety refusal; the intent is already open and gets a covering result.
         ``CancelledError``, ``KeyboardInterrupt`` and ``SystemExit`` record that result
-        and then propagate. A profile gateway (``_admits_paper_profile``) requires a
-        callable fence. The fence must not call ``submit`` again. After it returns, the
-        feed, risk re-run and approval/risk-eval TTL are checked again."""
+        and then propagate. A profile gateway (``_admits_paper_profile``) uses only the
+        fence bound at construction. A different callable passed here is refused, and a
+        fence that returns None does not admit. The fence must not call ``submit`` again
+        on the same state and order. After it returns, the feed, risk re-run, approval
+        TTL, consumed approval and order state are checked again on the pinned state clock.
+        """
         st = self._resolve_state(ladder)
         clock = clock or st.clock
         resolved_hash = order_tuple_hash(self._resolve_tuple(order))
         canonical = self._resolve_tuple(order)
 
-        with st.lock, self._single_submit() as submit_open:
+        with st.lock, self._single_submit(st, getattr(order, "id", None)) as submit_open:
             if not submit_open:
                 reason = "re-entrant submit refused before the capability token is consumed"
                 self._record_refusal(
@@ -1103,8 +1201,8 @@ class OrderGateway:
 
             # Pin the transport before the potentially blocking, caller-supplied fence.
             # The callback cannot replace the adapter, its submit implementation, or the
-            # paper scope. Profile transport calls the admitted class function captured
-            # here, so a subclass override or a swapped instance method cannot run.
+            # paper scope. Profile transport calls the class function captured at init,
+            # so a subclass override or a swapped instance method cannot run.
             broker = self._broker
             broker_type = type(broker)
             execution_scope = self._execution_scope
@@ -1112,21 +1210,53 @@ class OrderGateway:
             # lives in its own module; this hook must not import it.
             paper_transport = bool(getattr(type(self), "_admits_paper_profile", False))
             from brokers.alpaca_paper import AlpacaPaperBroker
-            admitted_paper_submit = AlpacaPaperBroker.submit_order
-            if paper_transport and not callable(claim_fence):
-                return self._abort_after_intent(
-                    st,
-                    order,
-                    intent,
-                    stage="claim_fence",
-                    reason="paper profile submission requires a claim fence",
-                    actor=producing_runtime,
-                    resolved_hash=resolved_hash,
-                )
-            if claim_fence is not None:
-                refused = self._call_claim_fence(
+            admitted_paper_submit = self._admitted_paper_submit
+            if paper_transport:
+                if claim_fence is not None and claim_fence is not self._claim_fence:
+                    return self._abort_after_intent(
+                        st,
+                        order,
+                        intent,
+                        stage="claim_fence",
+                        reason="per-call claim fence is not the fence bound at setup",
+                        actor=producing_runtime,
+                        resolved_hash=resolved_hash,
+                    )
+                claim_fence = self._claim_fence
+                if not callable(claim_fence):
+                    return self._abort_after_intent(
+                        st,
+                        order,
+                        intent,
+                        stage="claim_fence",
+                        reason="paper profile submission requires a claim fence",
+                        actor=producing_runtime,
+                        resolved_hash=resolved_hash,
+                    )
+            lease_remaining_s: float | None = None
+
+            def _run_fence():
+                nonlocal lease_remaining_s
+                refused, value = self._call_claim_fence(
                     claim_fence, st, order, intent, producing_runtime, resolved_hash
                 )
+                if refused is not None:
+                    return refused
+                if paper_transport and value is None:
+                    return self._abort_after_intent(
+                        st,
+                        order,
+                        intent,
+                        stage="claim_fence",
+                        reason="claim fence returned no admission",
+                        actor=producing_runtime,
+                        resolved_hash=resolved_hash,
+                    )
+                lease_remaining_s = _lease_remaining_s(value)
+                return None
+
+            if claim_fence is not None:
+                refused = _run_fence()
                 if refused is not None:
                     return refused
 
@@ -1152,16 +1282,20 @@ class OrderGateway:
                     resolved_hash=resolved_hash,
                 )
 
-            def _refresh_after_fence():
-                if claim_fence is None:
-                    return None
+            def _refresh_validity():
+                # Caller ``clock`` is not authority for this refresh. ``st.clock`` is.
                 return self._refresh_time_sensitive(
                     st, order, intent,
                     approval=approval, risk_decision=risk_decision,
                     breaker_engine=breaker_engine, risk_recheck=risk_recheck,
-                    positions=positions, clock=clock, actor=producing_runtime,
+                    positions=positions, clock=st.clock, actor=producing_runtime,
                     resolved_hash=resolved_hash,
                 )
+
+            def _refresh_after_fence():
+                if claim_fence is None:
+                    return None
+                return _refresh_validity()
 
             refused = _refresh_after_fence()
             if refused is not None:
@@ -1204,17 +1338,11 @@ class OrderGateway:
                 finally:
                     lock.release()
 
-            final_stage, final_reason = _final_admission()
-            if final_stage is not None:
-                return self._abort_after_intent(
-                    st,
-                    order,
-                    intent,
-                    stage=final_stage,
-                    reason=final_reason,
-                    actor=producing_runtime,
-                    resolved_hash=resolved_hash,
-                )
+            refused = self._cover_admission(
+                st, order, intent, producing_runtime, resolved_hash, _final_admission
+            )
+            if refused is not None:
+                return refused
 
             # The admission read can block past the claim lease, letting a reconciler take
             # over. Re-run the fence (generation + unexpired lease CAS) and then re-read
@@ -1222,9 +1350,7 @@ class OrderGateway:
             # by a fresh fence, so no unchecked wait precedes transport.
             if claim_fence is not None:
                 for _round in range(_MAX_FENCE_ROUNDS):
-                    refused = self._call_claim_fence(
-                        claim_fence, st, order, intent, producing_runtime, resolved_hash
-                    )
+                    refused = _run_fence()
                     if refused is not None:
                         return refused
                     if _transport_changed():
@@ -1238,24 +1364,25 @@ class OrderGateway:
                             resolved_hash=resolved_hash,
                         )
                     # The post-fence risk refresh can block on broker HTTP too, so the
-                    # wait budget covers it as well as the admission read.
+                    # wait budget covers it as well as the admission read. The budget is
+                    # the lease remainder the fence just reported, capped at the ceiling.
                     started = time.monotonic()
                     refused = _refresh_after_fence()
                     if refused is not None:
                         return refused
-                    final_stage, final_reason = _final_admission()
+                    refused = self._cover_admission(
+                        st, order, intent, producing_runtime, resolved_hash, _final_admission
+                    )
+                    if refused is not None:
+                        return refused
                     waited = time.monotonic() - started
-                    if final_stage is not None:
-                        return self._abort_after_intent(
-                            st,
-                            order,
-                            intent,
-                            stage=final_stage,
-                            reason=final_reason,
-                            actor=producing_runtime,
-                            resolved_hash=resolved_hash,
-                        )
-                    if waited <= _ADMISSION_WAIT_BUDGET_S:
+                    refused = _refresh_validity()
+                    if refused is not None:
+                        return refused
+                    limit = _ADMISSION_WAIT_BUDGET_S
+                    if lease_remaining_s is not None:
+                        limit = min(limit, lease_remaining_s)
+                    if waited <= limit:
                         break
                 else:
                     return self._abort_after_intent(
