@@ -1342,6 +1342,172 @@ def test_authority_revoked_during_the_halt_probe_does_not_submit(st, monkeypatch
     assert scenario.st.audit.unresolved_intents() == []
 
 
+def test_halt_at_the_last_probe_with_a_failed_abort_write_returns(st, monkeypatch):
+    """A failed abort under the final probe must not stick the admission lock.
+
+    The kill switch takes that same lock. A hang here stalls shutdown too.
+    """
+    scenario, broker = _paper_gateway(st)
+    lock = scenario.st.safety_admission_lock
+
+    def halt(_path):
+        return lock.locked()
+
+    def result(*_args, **_kwargs):
+        raise RuntimeError("abort write failed")
+
+    monkeypatch.setattr("brokers.gateway._halt_active", halt)
+    monkeypatch.setattr(scenario.st.audit, "result", result)
+    box: dict = {}
+
+    def run():
+        try:
+            box["outcome"] = scenario.gateway.submit(
+                scenario.order,
+                claim_fence=lambda: None,
+                **scenario.submit_kwargs(),
+            )
+        except BaseException as exc:  # noqa: BLE001 - the bound is the assertion
+            box["exc"] = exc
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(2.0)
+    assert not worker.is_alive()
+    assert "exc" not in box
+    outcome = box["outcome"]
+    assert outcome.ok is False
+    assert outcome.stage == "halt"
+    assert broker.calls == 0
+
+    done = threading.Event()
+
+    def shutdown():
+        scenario.st.begin_safety_shutdown()
+        done.set()
+
+    killer = threading.Thread(target=shutdown, daemon=True)
+    killer.start()
+    assert done.wait(2.0)
+    killer.join(0.5)
+    assert not killer.is_alive()
+
+
+def test_failed_success_result_stays_visible_to_reconcile(st, monkeypatch):
+    """A landed send whose success result fails must not be closed as a halt."""
+    from orchestrator.reconcile import reconcile_startup
+
+    scenario, broker = _paper_gateway(st)
+    real_result = scenario.st.audit.result
+
+    def result(intent_entry, op, refs=None, payload=None):
+        refs = refs or {}
+        if refs.get("broker_order_id") and not refs.get("aborted"):
+            raise RuntimeError("success result write failed")
+        return real_result(intent_entry, op, refs=refs, payload=payload)
+
+    monkeypatch.setattr(scenario.st.audit, "result", result)
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=lambda: None, **scenario.submit_kwargs()
+    )
+    assert broker.calls == 1
+    assert outcome.ok is False
+    assert outcome.stage == "broker_error"
+    with scenario.st.session_factory() as session:
+        rows = session.execute(select(AuditEntry)).scalars().all()
+    assert not any(
+        (row.refs or {}).get("aborted") == "halt"
+        or "before transport" in str((row.payload or {}).get("aborted", ""))
+        for row in rows
+    )
+    alerts: list[str] = []
+    report = reconcile_startup(
+        scenario.st, broker_history_fn=lambda _oid: [], alerter=alerts.append
+    )
+    assert report.ok is False
+    assert report.ambiguous_aborts or any("NO covering" in alert for alert in alerts)
+
+
+def test_broker_exception_with_a_failed_result_write_does_not_stick_the_lock(st, monkeypatch):
+    """A broker failure after the send writes its record only once the lock is free."""
+    scenario, broker = _paper_gateway(st)
+    real_result = scenario.st.audit.result
+    calls = {"n": 0}
+
+    def submit_order(_canonical):
+        raise RuntimeError("broker down")
+
+    def result(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("broker error write failed")
+        return real_result(*args, **kwargs)
+
+    monkeypatch.setattr(broker, "submit_order", submit_order)
+    monkeypatch.setattr(scenario.st.audit, "result", result)
+    box: dict = {}
+
+    def run():
+        try:
+            box["outcome"] = scenario.gateway.submit(
+                scenario.order,
+                claim_fence=lambda: None,
+                **scenario.submit_kwargs(),
+            )
+        except BaseException as exc:  # noqa: BLE001 - the bound is the assertion
+            box["exc"] = exc
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(2.0)
+    assert not worker.is_alive()
+    assert isinstance(box.get("exc"), RuntimeError)
+    with scenario.st.session_factory() as session:
+        rows = session.execute(select(AuditEntry)).scalars().all()
+    assert not any(
+        (row.refs or {}).get("aborted") == "halt"
+        or "before transport" in str((row.payload or {}).get("aborted", ""))
+        for row in rows
+    )
+    broker_error = any((row.refs or {}).get("aborted") == "broker_error" for row in rows)
+    assert broker_error or scenario.st.audit.unresolved_intents()
+
+    done = threading.Event()
+
+    def shutdown():
+        scenario.st.begin_safety_shutdown()
+        done.set()
+
+    killer = threading.Thread(target=shutdown, daemon=True)
+    killer.start()
+    assert done.wait(2.0)
+    killer.join(0.5)
+    assert not killer.is_alive()
+
+
+def test_quote_stale_only_during_final_admission_enters_watch_only(st):
+    """A quote that expires on the locked re-read still trips watch-only."""
+    scenario, broker = _paper_gateway(st)
+    lock = scenario.st.safety_admission_lock
+
+    class Guard:
+        def stale_reason(self, symbol, *, now, limit_s):
+            if lock.locked():
+                return "quote expired during final admission"
+            return None
+
+    scenario.st.market_data = Guard()
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=lambda: None, **scenario.submit_kwargs()
+    )
+    assert outcome.ok is False
+    assert outcome.stage == "market_data"
+    assert "expired" in outcome.reason
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+    assert scenario.breaker.watch_only_reason() is not None
+
+
 def test_quote_that_expires_during_the_final_risk_refresh_does_not_submit(st):
     scenario, broker = _paper_gateway(st)
     calls = {"n": 0}

@@ -64,6 +64,7 @@ from schemas.models.approval_record import ApprovalRecord
 from schemas.models.audit_entry import AuditEntry
 from schemas.models.order import Order
 from schemas.models.risk_decision import RiskDecision
+from storage.audit import AuditIntegrityError
 
 log = logging.getLogger(__name__)
 
@@ -622,10 +623,10 @@ class OrderGateway:
         return ("market_data", None, reason)
 
     def _quote_age_refusal(self, st, order, clock):
-        """Stale quote, without taking the admission lock.
+        """Stale quote, without entering watch-only.
 
-        The final admission holds that lock through the send. Entering watch-only
-        from inside it would deadlock on the same lock.
+        The caller may be holding ``safety_admission_lock``. Publishing the denial
+        takes that same lock, so ``_publish_quote_watch_only`` runs after release.
         """
         market_data = getattr(st, "market_data", None)
         if market_data is None:
@@ -643,6 +644,71 @@ class OrderGateway:
         if reason is None:
             return None
         return ("market_data", None, reason)
+
+    def _publish_quote_watch_only(self, breaker_engine, clock, reason: str) -> None:
+        """Enter watch-only for a quote already judged stale, once the admission lock is free.
+
+        The market-hours rule matches ``_feed_refusal``. ``reason`` is the sample taken
+        under the lock; it is not read again.
+        """
+        if not reason:
+            return
+        try:
+            market_open = is_market_open(clock.now())
+        except Exception:  # noqa: BLE001 - a broken calendar must not grant authority
+            return
+        if market_open and breaker_engine.needs_watch_only_transition("market_data"):
+            breaker_engine.enter_watch_only(
+                "market_data", reason, clock=clock, actor="order_gateway"
+            )
+
+    def _record_ambiguous_transport(self, st, order, intent, exc, *, actor, reason=None) -> bool:
+        """Note a post-send failure as an ambiguous broker error when the ledger allows it.
+
+        Returns True when the covering result was written. A failed write leaves the
+        intent unresolved and admits an integrity failure. Restart reconcile alerts
+        either shape. This never labels the attempt as a halt.
+        """
+        if intent is None or intent.seq not in set(st.audit.unresolved_intents()):
+            return False
+        if reason is None:
+            reason = (
+                "broker outcome ambiguous after transport: "
+                f"{type(exc).__name__}: {exc}"
+            )
+        try:
+            st.audit.result(
+                intent,
+                "order_submit",
+                refs={"order_id": order.id, "aborted": "broker_error"},
+                payload={"aborted": str(reason)[:500]},
+            )
+        except BaseException as write_exc:  # noqa: BLE001 - keep the intent visible
+            st.admit_integrity_failure(
+                "ambiguous transport result failed: "
+                f"{type(write_exc).__name__}: {write_exc}"
+            )
+            return False
+        try:
+            self._record_refusal(
+                st,
+                order,
+                event=EVENT_ORDER_REFUSED,
+                stage="broker_error",
+                reason=str(reason),
+                actor=actor,
+            )
+        except BaseException as write_exc:  # noqa: BLE001 - the result already covers the intent
+            st.admit_integrity_failure(
+                "ambiguous transport refusal log failed: "
+                f"{type(write_exc).__name__}: {write_exc}"
+            )
+        return True
+
+    @staticmethod
+    def _transport_failure_propagates(exc: BaseException) -> bool:
+        """Integrity faults and interrupts still propagate after the send is noted."""
+        return not isinstance(exc, Exception) or isinstance(exc, AuditIntegrityError)
 
     def _cap(self, st: OrchestratorState) -> Decimal:
         if self._cap_override is not None:
@@ -1446,6 +1512,7 @@ class OrderGateway:
         resolved_hash = order_tuple_hash(self._resolve_tuple(order))
         canonical = self._resolve_tuple(order)
         intent_box: dict = {}
+        transport_entered = False
 
         try:
             with st.lock, self._single_submit(st, getattr(order, "id", None)) as submit_open:
@@ -1952,51 +2019,52 @@ class OrderGateway:
                             resolved_hash=resolved_hash,
                         )
 
-                admission_lock = st.safety_admission_lock
-                admission_lock_held = False
+                # Authority, mode, and pending scan the ledger. They stay outside
+                # safety_admission_lock: that lock is also the kill switch and the
+                # integrity-publication lock, and it is not reentrant. submit already
+                # holds st.lock, so another submit cannot change mode or pending.
+                # The admission lock covers the cheap re-read, the HALT probe, and
+                # the send. Abort and integrity records are written after release.
+                # A HALT callback can still change state; that change is re-read
+                # outside the lock before the final hold.
+                def _heavy_dispatch_refusal():
+                    if claim_fence is None:
+                        return None
+                    audit_ok, _audit_error = self._final_audit_authority(st)
+                    if not audit_ok:
+                        return ("audit_integrity", None, "final_audit_unverified")
+                    mode = ladder.current()
+                    mode_v = mode.value if hasattr(mode, "value") else str(mode)
+                    if mode_v not in self._allowed_modes:
+                        return (
+                            "mode",
+                            None,
+                            f"mode {mode_v!r} cannot use "
+                            f"{self._execution_scope!r} broker transport",
+                        )
+                    pending_ok, total, cap = self._pending_ok(st, order)
+                    if not pending_ok:
+                        return (
+                            "pending_exposure",
+                            None,
+                            "pending exposure "
+                            f"{total} + order would exceed cap {cap} (SEC-07)",
+                        )
+                    return None
 
-                def _release_admission_lock():
-                    nonlocal admission_lock_held
-                    if admission_lock_held:
-                        admission_lock.release()
-                        admission_lock_held = False
-
-                def _locked_dispatch_refusal():
-                    # No admission-lock acquire. The caller holds it through the send.
+                def _cheap_dispatch_refusal():
                     if paper_transport:
                         permit_reason = self._order_permit_refusal(
                             last_permit, order, resolved_hash
                         )
                         if permit_reason is not None:
                             return ("claim_fence", None, permit_reason)
-                    if claim_fence is not None:
-                        audit_ok, _audit_error = self._final_audit_authority(st)
-                        if not audit_ok:
-                            return ("audit_integrity", None, "final_audit_unverified")
                     quote = self._quote_age_refusal(st, order, st.clock)
                     if quote is not None:
                         return quote
                     denial = breaker_engine.watch_only_reason()
                     if denial is not None:
                         return ("mode", None, denial)
-                    if claim_fence is not None:
-                        mode = ladder.current()
-                        mode_v = mode.value if hasattr(mode, "value") else str(mode)
-                        if mode_v not in self._allowed_modes:
-                            return (
-                                "mode",
-                                None,
-                                f"mode {mode_v!r} cannot use "
-                                f"{self._execution_scope!r} broker transport",
-                            )
-                        pending_ok, total, cap = self._pending_ok(st, order)
-                        if not pending_ok:
-                            return (
-                                "pending_exposure",
-                                None,
-                                "pending exposure "
-                                f"{total} + order would exceed cap {cap} (SEC-07)",
-                            )
                     if (
                         self._require_analysis_generation
                         or analysis_vendor is not None
@@ -2012,15 +2080,14 @@ class OrderGateway:
                             return ("analysis_freshness", None, "stale_analysis")
                     return None
 
-                def _refuse_locked(found):
-                    if found is None:
-                        return None
+                def _finish_refusal(found):
                     stage, event, reason = found
                     if stage == "audit_integrity":
-                        _release_admission_lock()
                         st.admit_integrity_failure(
                             "final audit verification failed: final_audit_unverified"
                         )
+                    if stage == "market_data" and reason:
+                        self._publish_quote_watch_only(breaker_engine, st.clock, reason)
                     return self._abort_after_intent(
                         st, order, intent,
                         stage=stage,
@@ -2030,7 +2097,50 @@ class OrderGateway:
                         event=event,
                     )
 
-                if not admission_lock.acquire(timeout=_ADMISSION_WAIT_BUDGET_S):
+                admission_lock = st.safety_admission_lock
+                admission_lock_held = False
+
+                def _release_admission_lock():
+                    nonlocal admission_lock_held
+                    if admission_lock_held:
+                        admission_lock.release()
+                        admission_lock_held = False
+
+                def _acquire_admission_lock():
+                    nonlocal admission_lock_held
+                    if not admission_lock.acquire(timeout=_ADMISSION_WAIT_BUDGET_S):
+                        return False
+                    admission_lock_held = True
+                    return True
+
+                def _probe_under_lock():
+                    found = _cheap_dispatch_refusal()
+                    if found is not None:
+                        return found
+                    if _halt_active(default_halt_path()):
+                        return (
+                            "halt",
+                            None,
+                            "HALT set immediately before broker call (SEC-04)",
+                        )
+                    if _lease_expired():
+                        return (
+                            "claim_fence",
+                            None,
+                            "claim lease expired before transport",
+                        )
+                    found = _cheap_dispatch_refusal()
+                    if found is not None:
+                        return found
+                    if _lease_expired():
+                        return (
+                            "claim_fence",
+                            None,
+                            "claim lease expired before transport",
+                        )
+                    return None
+
+                def _admission_lock_abort():
                     return self._abort_after_intent(
                         st, order, intent,
                         stage="admission_lock",
@@ -2038,65 +2148,88 @@ class OrderGateway:
                         actor=producing_runtime,
                         resolved_hash=resolved_hash,
                     )
-                admission_lock_held = True
-                # The lock stays held through the broker call. HALT is probed after
-                # the state reads, then claim, mode, pending, quote and the lease
-                # are read once more. That re-read is the last check before send.
-                try:
-                    refused = _refuse_locked(_locked_dispatch_refusal())
-                    if refused is not None:
-                        return refused
-                    if _halt_active(default_halt_path()):
-                        return _halt_abort()
-                    if _lease_expired():
-                        return _lease_abort()
-                    refused = _refuse_locked(_locked_dispatch_refusal())
-                    if refused is not None:
-                        return refused
-                    if _lease_expired():
-                        return _lease_abort()
 
-                    # The private broker call (SEC-03: never a module global / string dispatch).
-                    # ``client_order_id`` is stable transport metadata and cannot change the
-                    # approved symbol/side/size/price/TIF tuple.
-                    try:
-                        if binding is not None:
-                            raw_result = binding["client_submit"](broker_request)
-                        else:
-                            raw_result = broker.submit_order(broker_request)
-                        result = _sanitize_broker_response(raw_result)
-                    except BaseException as exc:                                 # noqa: BLE001
-                        reason = f"broker submit failed: {exc}"
-                        st.broker_errors_since_sample += 1
-                        st.audit.result(
-                            intent, "order_submit",
-                            refs={"order_id": order.id, "aborted": "broker_error"},
-                            payload={"aborted": reason[:500]},
-                        )
-                        self._record_refusal(
-                            st, order, event=EVENT_ORDER_REFUSED,
-                            stage="broker_error", reason=reason,
-                            actor=producing_runtime,
-                        )
-                        if not isinstance(exc, Exception):
-                            raise
-                        return GateOutcome(
-                            False, "broker_error", reason, order_tuple_hash=resolved_hash
-                        )
+                heavy = _heavy_dispatch_refusal()
+                if heavy is not None:
+                    return _finish_refusal(heavy)
+
+                if not _acquire_admission_lock():
+                    return _admission_lock_abort()
+                try:
+                    early = _probe_under_lock()
+                finally:
+                    _release_admission_lock()
+                if early is not None:
+                    return _finish_refusal(early)
+
+                heavy = _heavy_dispatch_refusal()
+                if heavy is not None:
+                    return _finish_refusal(heavy)
+
+                if not _acquire_admission_lock():
+                    return _admission_lock_abort()
+                broker_failure = None
+                sent = None
+                final_refusal = None
+                try:
+                    final_refusal = _probe_under_lock()
+                    if final_refusal is None:
+                        # Before the call: a raise can still mean the order landed.
+                        transport_entered = True
+                        try:
+                            if binding is not None:
+                                raw_result = binding["client_submit"](broker_request)
+                            else:
+                                raw_result = broker.submit_order(broker_request)
+                            sent = _sanitize_broker_response(raw_result)
+                        except BaseException as exc:  # noqa: BLE001 - note the send, then re-raise
+                            broker_failure = exc
                 finally:
                     _release_admission_lock()
 
+                if final_refusal is not None:
+                    return _finish_refusal(final_refusal)
+                if broker_failure is not None:
+                    st.broker_errors_since_sample += 1
+                    reason = f"broker submit failed: {broker_failure}"
+                    recorded = self._record_ambiguous_transport(
+                        st, order, intent, broker_failure,
+                        actor=producing_runtime, reason=reason,
+                    )
+                    if self._transport_failure_propagates(broker_failure) or not recorded:
+                        raise broker_failure
+                    return GateOutcome(
+                        False, "broker_error", reason, order_tuple_hash=resolved_hash
+                    )
+                result = sent
+
                 # Result AFTER the broker call — the two-phase pair keyed on the intent seq.
-                # Every field below is sanitized JSON-native-or-None (F1).
-                st.audit.result(
-                    intent, "order_submit",
-                    refs={"order_id": order.id, "broker_order_id": result["broker_order_id"]},
-                    payload={"status": result["status"],
-                             "filled_qty": str(result["filled_qty"] if result["filled_qty"]
-                                               is not None else 0),
-                             "avg_fill_price": (None if result["avg_fill_price"] is None
-                                                else str(result["avg_fill_price"]))},
-                )
+                # Every field below is sanitized JSON-native-or-None (F1). A failed write
+                # is an ambiguous broker outcome: the send already happened, so this must
+                # not be closed as a pre-transport halt.
+                try:
+                    st.audit.result(
+                        intent, "order_submit",
+                        refs={"order_id": order.id, "broker_order_id": result["broker_order_id"]},
+                        payload={"status": result["status"],
+                                 "filled_qty": str(result["filled_qty"] if result["filled_qty"]
+                                                   is not None else 0),
+                                 "avg_fill_price": (None if result["avg_fill_price"] is None
+                                                    else str(result["avg_fill_price"]))},
+                    )
+                except BaseException as exc:  # noqa: BLE001 - the send already landed
+                    reason = (
+                        "broker outcome ambiguous after transport: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                    recorded = self._record_ambiguous_transport(
+                        st, order, intent, exc, actor=producing_runtime, reason=reason,
+                    )
+                    if self._transport_failure_propagates(exc) or not recorded:
+                        raise
+                    return GateOutcome(
+                        False, "broker_error", reason, order_tuple_hash=resolved_hash
+                    )
 
                 # Consume the single-use approval (audited state change).
                 approval.single_use_consumed = True
@@ -2190,6 +2323,17 @@ class OrderGateway:
                                broker_status=result["status"], order_tuple_hash=resolved_hash)
         except BaseException as exc:
             intent = intent_box.get("intent")
+            # Anything after the broker call is ambiguous. A halt label would hide a
+            # landed order from restart reconcile. Approval, the FSM, and the ack
+            # write sit on this same path: once the success result is durable the
+            # intent is already resolved, and a failed note leaves it unresolved.
+            if transport_entered:
+                if intent is not None:
+                    with st.lock:
+                        self._record_ambiguous_transport(
+                            st, order, intent, exc, actor=producing_runtime,
+                        )
+                raise
             unresolved = (
                 set() if intent is None else set(st.audit.unresolved_intents())
             )
