@@ -35,6 +35,7 @@ from brokers.authority_profiles import (
 from brokers.gateway import GateOutcome, OrderGateway
 from brokers.paper_gateway import PaperOrderGateway
 from config.settings import Mode
+from core.clock import FrozenClock
 from tests.brokers.conftest import build_scenario
 
 APP = Path(__file__).resolve().parents[2]
@@ -88,8 +89,10 @@ def _dry_run(**overrides):
     return base
 
 
-def _store(tmp_path, name="profiles.sqlite"):
-    return AuthorityProfileStore(tmp_path / name)
+def _store(tmp_path, name="profiles.sqlite", *, clock=None):
+    if clock is None:
+        return AuthorityProfileStore(tmp_path / name)
+    return AuthorityProfileStore(tmp_path / name, clock=clock)
 
 
 _CAPS: dict[tuple[str, str], object] = {}
@@ -173,6 +176,56 @@ AuthorityProfileStore.kill = _filling_stop(AuthorityProfileStore.kill)
 AuthorityProfileStore.hold = _filling_stop(AuthorityProfileStore.hold)
 AuthorityProfileStore.release_stop = _filling_stop(AuthorityProfileStore.release_stop)
 
+_RECONCILE = AuthorityProfileStore._reconcile_handoff
+_REAL_STORE_INIT = AuthorityProfileStore.__init__
+_CLOCK_BOX = {"clock": None}
+
+
+def _test_store_init(self, path, *, clock=None):
+    if clock is None:
+        shared = _CLOCK_BOX["clock"]
+        if shared is None:
+            clock = FrozenClock(NOW)
+        elif _CLOCK_BOX.get("share"):
+            clock = shared
+        else:
+            # A private clock. Mutating one store must not move the next.
+            clock = FrozenClock(shared.now())
+    _REAL_STORE_INIT(self, path, clock=clock)
+
+
+AuthorityProfileStore.__init__ = _test_store_init
+
+
+@pytest.fixture(autouse=True)
+def _bind_profile_clock(request):
+    """Scenario tests share the fixture clock. Other tests freeze at NOW."""
+    if "st" in request.fixturenames or "clock" in request.fixturenames:
+        _CLOCK_BOX["clock"] = request.getfixturevalue("clock")
+        _CLOCK_BOX["share"] = True
+    else:
+        _CLOCK_BOX["clock"] = FrozenClock(NOW)
+        _CLOCK_BOX["share"] = False
+    yield
+    _CLOCK_BOX["clock"] = None
+    _CLOCK_BOX["share"] = False
+
+
+def _filling_reconcile(self, client_order_id, **kwargs):
+    """Tests that already hold the stop capability keep using it for recovery."""
+    if kwargs.pop("enforce_capability", True) and kwargs.get("capability") is None:
+        with self._txn() as conn:
+            row = conn.execute(
+                "SELECT profile_id FROM reservations WHERE client_order_id = ?",
+                (client_order_id,),
+            ).fetchone()
+        if row is not None:
+            kwargs["capability"] = _CAPS[(str(self.path), row["profile_id"])]
+    return _RECONCILE(self, client_order_id, **kwargs)
+
+
+AuthorityProfileStore._reconcile_handoff = _filling_reconcile
+
 
 def _handoff_row(path, client_order_id):
     import sqlite3
@@ -247,10 +300,11 @@ def test_expired_and_revoked_profiles_are_refused(tmp_path):
     store = _store(tmp_path)
     _install(store)
     later = NOW + timedelta(days=2)
+    store._clock._at = later
     assert _refuse(
         lambda: store.authorize(
             "profile-b", action="propose", client_order_id="c-expired",
-            notional=Decimal("10.00"), actor="stop-owner", now=later,
+            notional=Decimal("10.00"), actor="stop-owner", now=NOW,
         )
     ) == "expired"
     fresh = _store(tmp_path, "revoked.sqlite")
@@ -270,9 +324,10 @@ def test_model_or_confidence_output_cannot_grant_authority(tmp_path):
     store = _store(tmp_path)
     _install(store)
     later = NOW + timedelta(days=2)
+    store._clock._at = later
     kwargs = dict(
         profile_id="profile-b", action="submit_paper", client_order_id="c-model",
-        notional=Decimal("10.00"), actor="stop-owner", now=later,
+        notional=Decimal("10.00"), actor="stop-owner", now=NOW,
     )
     plain = _refuse(lambda: store.authorize(**kwargs))
     valid = _refuse(lambda: store.authorize(**kwargs, model_output=_VALID_MODEL))
@@ -649,7 +704,7 @@ def test_paper_handoff_still_goes_through_the_gateway(st, tmp_path):
 def test_live_transport_and_dry_run_do_not_reach_a_broker(st, tmp_path):
     broker = _ProbeBroker()
     live = OrderGateway(broker, st=st, execution_scope="live")
-    store = _store(tmp_path)
+    store = _store(tmp_path, clock=FrozenClock(NOW))
     _install(
         store,
         _document(account_id="paper", notional_cap="5000.00", max_order_notional="5000.00"),
@@ -663,7 +718,7 @@ def test_live_transport_and_dry_run_do_not_reach_a_broker(st, tmp_path):
         )
     ) == "transport"
     assert broker.calls == 0
-    dry = _store(tmp_path, "dry.sqlite")
+    dry = _store(tmp_path, "dry.sqlite", clock=FrozenClock(NOW))
     _install(dry, _dry_run())
 
     class _Exploding:
@@ -683,7 +738,7 @@ def test_live_transport_and_dry_run_do_not_reach_a_broker(st, tmp_path):
 
 
 def test_duck_typed_gateway_is_refused_before_reservation(st, tmp_path):
-    store = _store(tmp_path)
+    store = _store(tmp_path, clock=FrozenClock(NOW))
     _install(store, _document(account_id="paper", notional_cap="5000.00", max_order_notional="5000.00"))
 
     class _Duck:
@@ -797,7 +852,8 @@ def test_claim_rechecks_revocation_and_expiry(tmp_path):
         notional=Decimal("10.00"), actor="stop-owner", now=NOW,
     )
     later = NOW + timedelta(days=2)
-    assert expiring.claim_handoff("c-expired", now=later, awaiting_submit=True) == "expired"
+    expiring._clock._at = later
+    assert expiring.claim_handoff("c-expired", now=NOW, awaiting_submit=True) == "expired"
     expired_row = _handoff_row(tmp_path / "expiry.sqlite", "c-expired")
     assert (expired_row["handoff_state"], expired_row["handoff_done"]) == ("pending", 0)
 
@@ -892,7 +948,7 @@ def test_caller_set_execution_scope_is_not_paper_authority(st, tmp_path):
     gateway = OrderGateway(broker, st=st, execution_scope="paper")
     assert gateway._execution_scope == "paper"
     assert type(gateway) is OrderGateway
-    store = _store(tmp_path)
+    store = _store(tmp_path, clock=FrozenClock(NOW))
     _install(
         store,
         _document(account_id="paper", notional_cap="5000.00", max_order_notional="5000.00"),
@@ -1063,7 +1119,13 @@ def test_reconcile_completes_a_landed_submit_without_a_second_one(st, tmp_path):
     )
     ticket = store.claim_handoff("landed-1", now=now, awaiting_submit=True)
     assert isinstance(ticket, ClaimTicket)
-    outcome = gateway.submit(scenario.order, **_paper_submit_kwargs(scenario))
+    outcome = gateway.submit(
+        scenario.order,
+        claim_fence=lambda: store._confirm_claim_before_broker_call(
+            "landed-1", ticket.generation, now=now,
+        ),
+        **_paper_submit_kwargs(scenario),
+    )
     assert outcome.ok is True
     assert broker.calls == 1
     # Crash between submit returning and complete_handoff: still in_progress.
@@ -1113,7 +1175,13 @@ def test_stale_claim_generation_is_a_noop_refusal(st, tmp_path):
     assert _refuse(
         lambda: store.fail_handoff("stale-1", generation=ticket.generation + 1)
     ) == "stale_claim"
-    outcome = gateway.submit(scenario.order, **_paper_submit_kwargs(scenario))
+    outcome = gateway.submit(
+        scenario.order,
+        claim_fence=lambda: store._confirm_claim_before_broker_call(
+            "stale-1", ticket.generation, now=now,
+        ),
+        **_paper_submit_kwargs(scenario),
+    )
     assert outcome.ok is True
     store.complete_handoff(
         "stale-1", generation=ticket.generation, gateway=gateway, ladder=scenario.ladder
@@ -1270,7 +1338,13 @@ def test_claim_ticket_cannot_complete_without_signed_submission(
     ticket = store.claim_handoff("completion-1", now=now, awaiting_submit=True)
     assert isinstance(ticket, ClaimTicket)
     if evidence in {"other-order", "invalid-signature"}:
-        assert gateway.submit(scenario.order, **_paper_submit_kwargs(scenario)).ok is True
+        assert gateway.submit(
+            scenario.order,
+            claim_fence=lambda: store._confirm_claim_before_broker_call(
+                "completion-1", ticket.generation, now=now,
+            ),
+            **_paper_submit_kwargs(scenario),
+        ).ok is True
     if evidence == "invalid-signature":
         with st.session_factory() as session:
             entries = session.execute(select(AuditEntry)).scalars().all()
@@ -1286,10 +1360,10 @@ def test_claim_ticket_cannot_complete_without_signed_submission(
         monkeypatch.setattr(gateway, "_order_submitted_on_chain", lambda *_args: True)
         monkeypatch.setattr(gateway, "_resolve_state", lambda *_args: st)
     if evidence == "unavailable-chain":
-        def unavailable(*_args):
+        def unavailable(*_args, **_kwargs):
             raise RuntimeError("signed chain unavailable")
 
-        monkeypatch.setattr(OrderGateway, "_order_submitted_on_chain", unavailable)
+        monkeypatch.setattr(st.audit, "verify_session", unavailable)
     kwargs = {}
     if evidence != "missing-gateway":
         kwargs["gateway"] = gateway
@@ -1306,7 +1380,11 @@ def test_claim_ticket_cannot_complete_without_signed_submission(
 
     # A tampered submitted entry fails the whole chain. That is not a clean
     # "not submitted" lookup, so completion refuses chain_unreadable.
-    expected = "chain_unreadable" if evidence == "invalid-signature" else "gateway_identity"
+    expected = (
+        "chain_unreadable"
+        if evidence in {"invalid-signature", "unavailable-chain"}
+        else "gateway_identity"
+    )
     assert _refuse(complete) == expected
     row = _handoff_row(store.path, "completion-1")
     assert (row["handoff_state"], row["handoff_done"]) == ("in_progress", 0)
@@ -1456,7 +1534,22 @@ def test_direct_caller_cannot_forge_a_submitted_verdict(st, tmp_path, monkeypatc
         assert isinstance(ticket, ClaimTicket)
         if state == "failed":
             store.fail_handoff("forge-1", generation=ticket.generation)
-    assert gateway.submit(scenario.order, **_paper_submit_kwargs(scenario)).ok is True
+    if state == "in_progress":
+        seeded = gateway.submit(
+            scenario.order,
+            claim_fence=lambda: store._confirm_claim_before_broker_call(
+                "forge-1", ticket.generation, now=now,
+            ),
+            **_paper_submit_kwargs(scenario),
+        )
+    else:
+        # Pending and failed rows are not a live claim. Seed the signed chain
+        # through the parent submit; PaperOrderGateway.submit itself is covered
+        # by the claim-required regression.
+        seeded = OrderGateway.submit(
+            gateway, scenario.order, **_paper_submit_kwargs(scenario),
+        )
+    assert seeded.ok is True
     assert gateway._order_submitted_on_chain(st, order_ref) is True
     store.kill("profile-b", actor="stop-owner", now=now, reason="operator kill")
 
@@ -1518,13 +1611,13 @@ def test_direct_caller_cannot_forge_a_submitted_verdict(st, tmp_path, monkeypatc
         assert store.reconcile_failed_handoff("forge-1") == "failed"
         assert_unresolved()
 
-    def unavailable_chain(*_args):
+    def unavailable_chain(*_args, **_kwargs):
         raise RuntimeError("signed chain unavailable")
 
     with monkeypatch.context() as patch:
-        patch.setattr(OrderGateway, "_order_submitted_on_chain", unavailable_chain)
+        patch.setattr(st.audit, "verify_session", unavailable_chain)
         for reconcile in reconcile_paths.values():
-            assert _refuse(reconcile) == "gateway_identity"
+            assert _refuse(reconcile) == "chain_unreadable"
             assert_unresolved()
 
     # With genuine chain evidence every entry point records completed, never
@@ -1739,6 +1832,7 @@ def test_expired_or_revoked_stop_owner_stays_blocked_pending_csl_280(tmp_path):
     _install(expired)
     expired.kill("profile-b", actor="stop-owner", now=NOW, reason="operator kill")
     after_expiry = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc)
+    expired._clock._at = after_expiry
     assert _refuse(
         lambda: expired.release_stop(
             "profile-b", actor="stop-owner", now=after_expiry, reconciled=True
@@ -1796,7 +1890,8 @@ def test_claim_fence_never_rewinds_lease_on_lagging_clock(tmp_path):
         notional=Decimal("10.00"), actor="stop-owner", now=NOW, order_ref="ord-mono",
     )
     claim_time = NOW + timedelta(seconds=90)
-    ticket = store.claim_handoff("mono-1", now=claim_time, awaiting_submit=True)
+    store._clock._at = claim_time
+    ticket = store.claim_handoff("mono-1", now=NOW, awaiting_submit=True)
     assert isinstance(ticket, ClaimTicket)
     import sqlite3
 
@@ -1811,8 +1906,10 @@ def test_claim_fence_never_rewinds_lease_on_lagging_clock(tmp_path):
             conn.close()
 
     before = claimed_at()
+    assert before == claim_time.isoformat()
+    store._clock._at = NOW
     with pytest.raises(ProfileRefused) as exc:
-        store._confirm_claim_before_broker_call("mono-1", ticket.generation, now=NOW)
+        store._confirm_claim_before_broker_call("mono-1", ticket.generation, now=claim_time)
     assert exc.value.code == "stale_claim"
     assert claimed_at() == before
 
@@ -1833,12 +1930,12 @@ def test_claim_fence_refreshes_lease_with_current_clock(tmp_path):
         def now(self):
             return NOW + timedelta(seconds=80)
 
-    fired = ap._fence_now(object(), {"clock": _Clock()})()
-    assert fired == NOW + timedelta(seconds=80)
-    store._confirm_claim_before_broker_call("clock-1", ticket.generation, now=fired)
+    fired = NOW + timedelta(seconds=80)
+    store._clock._at = fired
+    store._confirm_claim_before_broker_call("clock-1", ticket.generation, now=NOW)
     assert _handoff_row(store.path, "clock-1")["claimed_at"] == fired.isoformat()
     assert _refuse(
-        lambda: ap._fence_now(object(), {})()
+        lambda: ap._fence_now(object(), {"clock": _Clock()})()
     ) == "clock"
 
 
@@ -1900,10 +1997,12 @@ def test_claim_fence_cannot_renew_an_expired_or_future_lease(st, tmp_path, elaps
     """5558807159: a delayed owner must not revive its own dead lease."""
     scenario, store, ticket, broker = _claimed_paper_scenario(st, tmp_path)
     before = dict(_handoff_row(store.path, "fence-1"))
-    fence_time = scenario.clock.now() + elapsed
+    fresh = scenario.clock.now()
+    fence_time = fresh + elapsed
+    store._clock._at = fence_time
 
     def fence():
-        store._confirm_claim_before_broker_call("fence-1", ticket.generation, now=fence_time)
+        store._confirm_claim_before_broker_call("fence-1", ticket.generation, now=fresh)
 
     outcome = scenario.gateway.submit(
         scenario.order, claim_fence=fence, **_paper_submit_kwargs(scenario),
@@ -2008,8 +2107,6 @@ def test_owner_fenced_out_when_takeover_happens_after_final_admission(st, tmp_pa
 @pytest.mark.parametrize("failure", ["raises", "naive", "not-datetime", "missing"])
 def test_claim_fence_clock_failure_refuses_without_writing_lease(st, tmp_path, failure):
     """5558807159: a bad current clock cannot persist the old handoff timestamp."""
-    from brokers import authority_profiles as ap
-
     scenario, store, ticket, broker = _claimed_paper_scenario(st, tmp_path)
     before = dict(_handoff_row(store.path, "fence-1"))
 
@@ -2022,12 +2119,13 @@ def test_claim_fence_clock_failure_refuses_without_writing_lease(st, tmp_path, f
             return "not a timestamp"
 
     def fence():
-        # Use the same composition as both production handoff entry points.
-        # An unavailable state clock must also refuse, without a fallback.
-        gateway = object() if failure == "missing" else scenario.gateway
-        clock_kwargs = {} if failure == "missing" else {"clock": BrokenClock()}
+        # The caller clock stays valid. Only the store clock is authority.
+        if failure == "missing":
+            store._clock = None
+        else:
+            store._clock = BrokenClock()
         store._confirm_claim_before_broker_call(
-            "fence-1", ticket.generation, now=ap._fence_now(gateway, clock_kwargs)(),
+            "fence-1", ticket.generation, now=scenario.clock.now(),
         )
 
     outcome = scenario.gateway.submit(
@@ -2272,16 +2370,15 @@ def test_reconcile_refuses_an_actor_who_is_not_the_recovery_owner(st, tmp_path):
     store.claim_handoff("rec-1", now=now, awaiting_submit=True)
     later = now + CLAIM_LEASE + timedelta(seconds=1)
     scenario.clock._at = later
-    kwargs = _paper_submit_kwargs(scenario)
     assert _refuse(
-        lambda: reconcile_handoff_to_gateway(
-            store, gateway, client_order_id="rec-1", submit_args=(scenario.order,),
-            submit_kwargs=kwargs, now=later, actor="stop-owner",
+        lambda: _RECONCILE(
+            store, "rec-1", order_ref=str(scenario.order.id), now=later,
+            actor="recovery-owner", gateway=gateway, ladder=scenario.ladder,
         )
-    ) == "recovery_owner"
+    ) == "unauthenticated"
     assert _refuse(
         lambda: store.reconcile_non_gateway_handoff("rec-1", now=later, actor="stop-owner")
-    ) == "recovery_owner"
+    ) == "store"
     row = _handoff_row(path, "rec-1")
     assert (row["handoff_state"], row["handoff_done"]) == ("in_progress", 0)
     assert _refuse(
@@ -2340,3 +2437,339 @@ def test_reconcile_refuses_a_null_order_ref_on_submit_paper(tmp_path):
     ) == "order_ref"
     row = _handoff_row(store.path, "null-ref")
     assert (row["handoff_state"], row["handoff_done"]) == ("in_progress", 0)
+
+
+def _reservation_flags(path, client_order_id):
+    import sqlite3
+
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT handoff_state, handoff_done, reconciled, claim_generation "
+        "FROM reservations WHERE client_order_id = ?",
+        (client_order_id,),
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def test_store_clock_is_read_only_after_both_locks(tmp_path):
+    """A caller clock, and any sample taken before the SQLite lock, is not authority."""
+    box = []
+
+    class LockClock:
+        def __init__(self):
+            self.samples = []
+            self.fence = False
+
+        def now(self):
+            if not box:
+                return NOW
+            store = box[0]
+            locked = store._lock.locked() and store._conn.in_transaction
+            if self.fence:
+                self.samples.append(locked)
+            if self.fence and locked:
+                return NOW + timedelta(seconds=50)
+            return NOW
+
+    clock = LockClock()
+    store = AuthorityProfileStore(tmp_path / "lockclock.sqlite", clock=clock)
+    box.append(store)
+    _install(store)
+    store.authorize(
+        "profile-b", action="submit_paper", client_order_id="lock-1",
+        notional=Decimal("10.00"), actor="stop-owner", now=NOW, order_ref="ord-lock",
+    )
+    ticket = store.claim_handoff("lock-1", now=NOW, awaiting_submit=True)
+    clock.fence = True
+    store._confirm_claim_before_broker_call("lock-1", ticket.generation, now=NOW)
+    assert clock.samples
+    assert all(clock.samples)
+    assert _handoff_row(store.path, "lock-1")["claimed_at"] == (
+        NOW + timedelta(seconds=50)
+    ).isoformat()
+
+
+def test_caller_now_cannot_take_over_a_live_lease(st, tmp_path):
+    """A future ``now`` argument must not expire a lease the store clock still holds."""
+    scenario, store, ticket, broker = _claimed_paper_scenario(st, tmp_path)
+    lied = scenario.clock.now() + CLAIM_LEASE + timedelta(seconds=1)
+    assert _refuse(
+        lambda: _RECONCILE(
+            store, "fence-1", order_ref=str(scenario.order.id), now=lied,
+            actor="recovery-owner", gateway=scenario.gateway, ladder=scenario.ladder,
+            capability=_CAPS[(str(store.path), "profile-b")],
+        )
+    ) == "claim_leased"
+    assert broker.calls == 0
+    assert _handoff_row(store.path, "fence-1")["claim_generation"] == ticket.generation
+
+
+def test_recovery_uses_the_stop_capability_not_the_owner_name(st, tmp_path):
+    """4356344782 / 4303448120: the recovery-owner string is not a credential."""
+    scenario, store, ticket, broker = _claimed_paper_scenario(st, tmp_path)
+    order_ref = str(scenario.order.id)
+    now = scenario.clock.now()
+    assert _refuse(
+        lambda: _RECONCILE(
+            store, "fence-1", order_ref=order_ref, now=now, actor="recovery-owner",
+            gateway=scenario.gateway, ladder=scenario.ladder,
+        )
+    ) == "unauthenticated"
+    assert _refuse(
+        lambda: _RECONCILE(
+            store, "fence-1", order_ref=order_ref,
+            now=now + CLAIM_LEASE + timedelta(seconds=1),
+            actor="not-the-recovery-owner", gateway=scenario.gateway,
+            ladder=scenario.ladder, capability=_CAPS[(str(store.path), "profile-b")],
+        )
+    ) == "claim_leased"
+    assert broker.calls == 0
+    assert _handoff_row(store.path, "fence-1")["claim_generation"] == ticket.generation
+
+
+def test_submission_lookup_and_chain_check_share_one_audit_snapshot(st, monkeypatch):
+    """4356354255: a row appended between two sessions must not verify a stale negative."""
+    from sqlalchemy import delete, select
+
+    from brokers.authority_profiles import _gateway_submitted
+    from schemas.models.audit_entry import AuditEntry
+
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(
+        st, mode=Mode.paper, broker=broker, gateway=gateway, mint=False,
+    )
+    opens = {"n": 0}
+    real = st.audit._sf
+
+    def counting():
+        opens["n"] += 1
+        if opens["n"] >= 2:
+            with real() as session, session.begin():
+                last = session.execute(
+                    select(AuditEntry).order_by(AuditEntry.seq.desc()).limit(1)
+                ).scalar_one()
+                session.execute(delete(AuditEntry).where(AuditEntry.id == last.id))
+        return real()
+
+    monkeypatch.setattr(st.audit, "_sf", counting)
+    monkeypatch.setattr(st, "session_factory", counting)
+    assert _gateway_submitted(gateway, "not-on-chain", scenario.ladder) is False
+    assert opens["n"] == 1
+
+
+@pytest.mark.parametrize("stop", ["revoke", "kill", "hold", "expired"])
+def test_revocation_during_profile_handoff_does_not_reach_the_broker(st, tmp_path, stop):
+    """The final fence re-checks authority after risk_recheck and before transport."""
+    scenario, store, ticket, broker = _claimed_paper_scenario(st, tmp_path)
+
+    def risk_recheck(_positions):
+        if stop == "expired":
+            scenario.clock._at = datetime(2026, 7, 8, 14, 0, 1, tzinfo=timezone.utc)
+        elif stop == "revoke":
+            store.revoke(
+                "profile-b", actor="stop-owner", now=scenario.clock.now(),
+                reason="operator revoke",
+            )
+        elif stop == "kill":
+            store.kill(
+                "profile-b", actor="stop-owner", now=scenario.clock.now(),
+                reason="operator kill",
+            )
+        else:
+            store.hold(
+                "profile-b", actor="stop-owner", now=scenario.clock.now(),
+                reason="operator hold",
+            )
+        return {"decision": "approved", "failed_checks": []}
+
+    outcome = scenario.gateway.submit(
+        scenario.order,
+        claim_fence=lambda: store._confirm_claim_before_broker_call(
+            "fence-1", ticket.generation, now=scenario.clock.now(),
+        ),
+        **_paper_submit_kwargs(scenario, risk_recheck=risk_recheck),
+    )
+    assert outcome.ok is False
+    assert broker.calls == 0
+    assert broker._client.submitted == []
+
+
+def test_lost_claim_generation_during_risk_recheck_does_not_reach_the_broker(st, tmp_path):
+    """4356344702: a takeover between the first fence and transport must not send."""
+    scenario, store_a, ticket_a, broker = _claimed_paper_scenario(st, tmp_path)
+    store_b = AuthorityProfileStore(store_a.path)
+    initial = scenario.clock.now()
+
+    def risk_recheck(_positions):
+        scenario.clock._at = initial + timedelta(seconds=171)
+        ticket_b = store_b._reconcile_handoff(
+            "fence-1", order_ref=str(scenario.order.id), now=scenario.clock.now(),
+            actor="recovery-owner", gateway=scenario.gateway, ladder=scenario.ladder,
+        )
+        assert isinstance(ticket_b, ClaimTicket)
+        assert ticket_b.generation == ticket_a.generation + 1
+        return {"decision": "approved", "failed_checks": []}
+
+    outcome = scenario.gateway.submit(
+        scenario.order,
+        claim_fence=lambda: store_a._confirm_claim_before_broker_call(
+            "fence-1", ticket_a.generation, now=scenario.clock.now(),
+        ),
+        **_paper_submit_kwargs(scenario, risk_recheck=risk_recheck),
+    )
+    assert outcome.ok is False
+    assert broker.calls == 0
+    assert broker._client.submitted == []
+    assert _handoff_row(store_a.path, "fence-1")["claim_generation"] == (
+        ticket_a.generation + 1
+    )
+
+
+def test_ambiguous_accept_then_timeout_is_checked_with_the_broker(st, tmp_path):
+    """An accept followed by a timeout must not release the profile stop."""
+    class _AckThenTimeout(_CountingPaper):
+        def submit_order(self, canonical):
+            _CountingPaper.submit_order(self, canonical)
+            raise TimeoutError("response lost after accept")
+
+    broker = _AckThenTimeout()
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    store = _store(tmp_path)
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    notional = Decimal(str(scenario.order.notional))
+    with pytest.raises(ProfileRefused) as exc:
+        handoff_to_gateway(
+            store, gateway, profile_id="profile-b", action="submit_paper",
+            client_order_id="ambiguous-1", notional=notional, actor="stop-owner",
+            now=now, submit_args=(scenario.order,),
+            submit_kwargs=_paper_submit_kwargs(scenario), **_PAPER_BINDINGS,
+        )
+    assert exc.value.code == "broker_accepted"
+    flags = _reservation_flags(store.path, "ambiguous-1")
+    assert (flags["handoff_state"], flags["handoff_done"], flags["reconciled"]) == (
+        "in_progress", 0, 0,
+    )
+    assert _refuse(
+        lambda: store.release_stop(
+            "profile-b", actor="stop-owner", now=now, reconciled=True,
+        )
+    ) == "not_reconciled"
+    assert _refuse(
+        lambda: store._reconcile_handoff(
+            "ambiguous-1", order_ref=str(scenario.order.id), now=now,
+            actor="recovery-owner", gateway=gateway, ladder=scenario.ladder,
+        )
+    ) == "broker_accepted"
+    assert _reservation_flags(store.path, "ambiguous-1")["reconciled"] == 0
+    assert len(broker._client.submitted) == 1
+
+
+def test_unreadable_broker_status_does_not_release_the_profile_stop(st, tmp_path, monkeypatch):
+    """A status read that is not a clean miss stays unknown and keeps the stop."""
+    class _TimeoutNoAck(_CountingPaper):
+        def submit_order(self, canonical):
+            raise TimeoutError("response lost before ack")
+
+    def unreadable(*_args, **_kwargs):
+        raise RuntimeError("broker status unread")
+
+    monkeypatch.setattr(AlpacaPaperBroker, "find_order", unreadable)
+    broker = _TimeoutNoAck()
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    store = _store(tmp_path)
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    with pytest.raises(ProfileRefused) as exc:
+        handoff_to_gateway(
+            store, gateway, profile_id="profile-b", action="submit_paper",
+            client_order_id="unknown-1", notional=Decimal(str(scenario.order.notional)),
+            actor="stop-owner", now=now, submit_args=(scenario.order,),
+            submit_kwargs=_paper_submit_kwargs(scenario), **_PAPER_BINDINGS,
+        )
+    assert exc.value.code == "broker_unknown"
+    flags = _reservation_flags(store.path, "unknown-1")
+    assert (flags["handoff_state"], flags["reconciled"]) == ("in_progress", 0)
+    assert _refuse(
+        lambda: store._reconcile_handoff(
+            "unknown-1", order_ref=str(scenario.order.id), now=now,
+            actor="recovery-owner", gateway=gateway, ladder=scenario.ladder,
+        )
+    ) == "broker_unknown"
+    assert _reservation_flags(store.path, "unknown-1")["reconciled"] == 0
+
+
+def test_direct_paper_submit_requires_a_validated_claim(st, tmp_path):
+    scenario, _store, _ticket, broker = _claimed_paper_scenario(st, tmp_path)
+    missing = scenario.gateway.submit(
+        scenario.order, **_paper_submit_kwargs(scenario),
+    )
+    assert (missing.ok, missing.stage) == (False, "claim_required")
+    assert broker.calls == 0
+    noop = scenario.gateway.submit(
+        scenario.order, claim_fence=lambda: None, **_paper_submit_kwargs(scenario),
+    )
+    assert noop.ok is False
+    assert broker.calls == 0
+    assert broker._client.submitted == []
+
+
+def test_instance_precheck_cannot_skip_the_risk_gate(st, tmp_path):
+    """4303742543: assigning ``_precheck`` must not skip risk, mode, or approval."""
+    scenario, store, ticket, broker = _claimed_paper_scenario(st, tmp_path)
+    scenario.gateway._precheck = lambda *_args, **_kwargs: None
+
+    def rejected(_positions):
+        return {"decision": "rejected", "failed_checks": ["hard"]}
+
+    outcome = scenario.gateway.submit(
+        scenario.order,
+        claim_fence=lambda: store._confirm_claim_before_broker_call(
+            "fence-1", ticket.generation, now=scenario.clock.now(),
+        ),
+        **_paper_submit_kwargs(scenario, risk_recheck=rejected),
+    )
+    assert (outcome.ok, outcome.stage) == (False, "risk")
+    assert broker.calls == 0
+
+
+def test_instance_submit_order_cannot_replace_the_admitted_adapter(st, tmp_path):
+    """4303615310: an instance ``submit_order`` must not carry the paper order."""
+    scenario, store, ticket, broker = _claimed_paper_scenario(st, tmp_path)
+    called = []
+
+    def evil(canonical):
+        called.append(canonical)
+        raise AssertionError("replaced submit_order")
+
+    broker.submit_order = evil
+    outcome = scenario.gateway.submit(
+        scenario.order,
+        claim_fence=lambda: store._confirm_claim_before_broker_call(
+            "fence-1", ticket.generation, now=scenario.clock.now(),
+        ),
+        **_paper_submit_kwargs(scenario),
+    )
+    assert called == []
+    assert outcome.ok is True
+    assert broker.calls == 1
+    assert len(broker._client.submitted) == 1
