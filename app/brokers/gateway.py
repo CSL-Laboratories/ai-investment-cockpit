@@ -1740,6 +1740,20 @@ class OrderGateway:
                         resolved_hash=resolved_hash,
                     )
 
+            # After a fence, re-run the post-fence gates (including the pending-exposure
+            # cap) and re-read admission BEFORE the HALT probe, so no blocking risk or
+            # database work sits between the probe and transport. An unfenced submit
+            # does not take this second pass: its risk re-run already happened before
+            # the intent.
+            if claim_fence is not None:
+                refused = _refresh_validity()
+                if refused is not None:
+                    return refused
+                refused = self._cover_admission(
+                    st, order, intent, producing_runtime, resolved_hash, _final_admission
+                )
+                if refused is not None:
+                    return refused
             # HALT may arrive while the claim store blocks or during the final
             # admission checks. Probe after both, immediately before transport.
             if _halt_active(default_halt_path()):
@@ -1752,14 +1766,7 @@ class OrderGateway:
                     actor=producing_runtime,
                     resolved_hash=resolved_hash,
                 )
-            # The probe can block. After a fence, re-run the post-fence gates,
-            # including the pending-exposure cap, then measure the lease across
-            # that whole wait. An unfenced submit does not take this second pass:
-            # its risk re-run already happened before the intent.
-            if claim_fence is not None:
-                refused = _refresh_validity()
-                if refused is not None:
-                    return refused
+            # The lease is measured across the whole wait, including the probe.
             if round_started is not None and round_limit is not None:
                 now = time.monotonic()
                 lease_expired = now - round_started > round_limit or (
