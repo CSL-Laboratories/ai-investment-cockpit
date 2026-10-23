@@ -1,4 +1,5 @@
 name: rust
+run-name: ${{ inputs.candidate_id && format('candidate:{0}:rust:{1}', inputs.candidate_id, inputs.dispatch_nonce) || github.workflow }}
 
 # CSL-42: Rust book, costs, PnL, feed normalization, online estimators, and ingest admission. This job builds the crate, runs its tests,
 # installs the PyO3 extension, and re-runs the Python tests against that extension.
@@ -17,9 +18,9 @@ name: rust
 # Ordinary labeled/unlabeled events do not start this workflow, so they cannot
 # cancel an in-progress rust-book matrix. `ci:full` and `enhancement` re-trigger
 # via ci-label-retrigger.yml (workflow_dispatch). Draft PRs skip the test cells
-# until ready_for_review. `filter` is GitHub-hosted; rust-book stays on Blacksmith.
-# Windows cells use Blacksmith 2 vCPU (same as ci.yml).
-# Swatinem/rust-cache is redirected to Blacksmith's co-located cache.
+# until ready_for_review. Every job is GitHub-hosted and free on this public
+# repository (CSL-408): rust-book uses ubuntu-24.04 and windows-2025, like ci.yml.
+# Swatinem/rust-cache uses the GitHub Actions cache.
 #
 # This workflow does not replace linux-gates or the DEC-09 local matrix (native
 # Windows + Ubuntu/WSL2, each on Python 3.11 and 3.12). It does not touch
@@ -29,46 +30,13 @@ name: rust
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - "rust/**"
-      - "app/quant/book/**"
-      - "app/quant/costs.py"
-      - "app/quant/pnl.py"
-      - "app/quant/signals.py"
-      - "app/ingest/normalize.py"
-      - "app/ingest/dedup.py"
-      - "app/ingest/ratelimit.py"
-      - "app/tests/quant/book/**"
-      - "app/tests/quant/test_pnl.py"
-      - "app/tests/quant/test_costs_rust_parity.py"
-      - "app/tests/quant/test_signals.py"
-      - "app/tests/quant/test_signals_rust_parity.py"
-      - "app/tests/quant/test_w21_cost_model.py"
-      - "app/tests/ingest/test_normalize.py"
-      - "app/tests/ingest/test_normalize_rust_parity.py"
-      - "app/tests/ingest/test_admission_rust_parity.py"
-      - ".github/workflows/rust.yml"
+  # No `paths:` trigger filter: every PR and queue group must report rust-gates,
+  # so Rust path relevance is decided inside `filter` (RUST_PATHS below) and the
+  # aggregate records an explicit irrelevant-path noop instead of a missing check.
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
-    paths:
-      - "rust/**"
-      - "app/quant/book/**"
-      - "app/quant/costs.py"
-      - "app/quant/pnl.py"
-      - "app/quant/signals.py"
-      - "app/ingest/normalize.py"
-      - "app/ingest/dedup.py"
-      - "app/ingest/ratelimit.py"
-      - "app/tests/quant/book/**"
-      - "app/tests/quant/test_pnl.py"
-      - "app/tests/quant/test_costs_rust_parity.py"
-      - "app/tests/quant/test_signals.py"
-      - "app/tests/quant/test_signals_rust_parity.py"
-      - "app/tests/quant/test_w21_cost_model.py"
-      - "app/tests/ingest/test_normalize.py"
-      - "app/tests/ingest/test_normalize_rust_parity.py"
-      - "app/tests/ingest/test_admission_rust_parity.py"
-      - ".github/workflows/rust.yml"
   workflow_dispatch:
     inputs:
       scope:
@@ -89,6 +57,22 @@ on:
         description: Immutable PR merge candidate for a label retrigger
         type: string
         default: ""
+      pr_base_sha:
+        description: Exact approved candidate base (candidate dispatch only)
+        type: string
+        default: ""
+      merge_tree_sha:
+        description: Exact approved candidate merge tree (candidate dispatch only)
+        type: string
+        default: ""
+      dispatch_nonce:
+        description: Coordinator delivery nonce (32 hexadecimal characters)
+        type: string
+        default: ""
+      candidate_id:
+        description: Verified candidate identity digest (requires full scope)
+        type: string
+        default: ""
 
 # Manual/API dispatch defaults to full; enhancement-only label reruns request
 # scope=linux without changing Linux gates or ordinary PR platform selection.
@@ -99,9 +83,9 @@ concurrency:
   # Ordinary PR heads share a queue without arrival-order cancellation.
   # The trusted companion cancels only verified ancestors of the live head.
   # Label expected-head/scope, manual, draft and queue isolation is retained.
-  group: rust-${{ github.workflow }}-${{ inputs.pr_number || github.event.pull_request.number || github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.pr_number && format('label-{0}-{1}', inputs.pr_head_sha, inputs.scope || 'full') || github.event_name == 'workflow_dispatch' && format('manual-{0}', inputs.scope || 'full') || github.event_name == 'merge_group' && 'queue' || (github.event_name == 'pull_request' && github.event.pull_request.draft && 'draft') || 'default' }}
-  cancel-in-progress: ${{ github.event_name != 'pull_request' }}
-  queue: ${{ github.event_name == 'pull_request' && 'max' || 'single' }}
+  group: rust-${{ github.workflow }}-${{ inputs.pr_number || github.event.pull_request.number || github.ref }}-${{ (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '') && format('candidate-{0}', inputs.candidate_id || github.run_id) || github.event_name == 'workflow_dispatch' && inputs.pr_number && format('label-{0}-{1}', inputs.pr_head_sha, inputs.scope || 'full') || github.event_name == 'workflow_dispatch' && format('manual-{0}', inputs.scope || 'full') || github.event_name == 'merge_group' && 'queue' || (github.event_name == 'pull_request' && github.event.pull_request.draft && 'draft') || 'default' }}
+  cancel-in-progress: ${{ github.event_name != 'pull_request' && inputs.candidate_id == '' && inputs.pr_base_sha == '' && inputs.merge_tree_sha == '' && inputs.dispatch_nonce == '' }}
+  queue: ${{ (github.event_name == 'pull_request' || inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '') && 'max' || 'single' }}
 
 jobs:
   filter:
@@ -111,13 +95,92 @@ jobs:
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.gate.outputs.matrix }}
+      has-cells: ${{ steps.gate.outputs.has-cells }}
     steps:
+      # Candidate dispatches arrive on the default branch, so github.sha is the
+      # trusted policy commit, not the candidate head. Check out that exact
+      # commit first and stage its validator outside the workspace before any
+      # candidate file exists on this runner. Ordinary events skip this step.
+      - uses: actions/checkout@v4
+        if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      # Install the interpreter before candidate validation (see ci.yml): Windows
+      # cells expose `python`, not a dependable `python3`, and the trusted action
+      # reads no candidate files when no pip cache is requested.
+      - uses: actions/setup-python@v5
+        if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
+        with:
+          python-version: "3.12"
+      - name: Stage trusted candidate validator
+        if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Policy witness: checked-out commit, github.sha and workflow_sha agree.
+          head="$(git rev-parse HEAD)"
+          [ "$head" = "$GITHUB_SHA" ]
+          [ "$head" = "$GITHUB_WORKFLOW_SHA" ]
+          [ -n "$DEFAULT_BRANCH" ]
+          [ "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH" ]
+          [ "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH" ]
+          helper=scripts/ci/merge_candidate.py
+          if [ -L "$helper" ] || [ ! -f "$helper" ]; then
+            echo "::error::Trusted candidate validator is absent from policy commit ${head}; the candidate copy is never substituted."
+            exit 1
+          fi
+          stage="${RUNNER_TEMP}/codex-policy"
+          rm -rf "$stage"
+          mkdir -p "$stage"
+          cp "$helper" "$stage/merge_candidate.py"
+          # Stage every control file this trusted YAML executes after the
+          # candidate checkout (local action, installer, pins, aggregate helper,
+          # workflows). Validation refuses candidate copies that differ.
+          python -I -X utf8 -B "$stage/merge_candidate.py" stage-policy "$stage"
+          [ -f "$stage/manifest.json" ]
+          {
+            echo "CODEX_POLICY_SHA=$head"
+            echo "CODEX_POLICY_BRANCH=$DEFAULT_BRANCH"
+            echo "CODEX_POLICY_VALIDATOR=$stage/merge_candidate.py"
+          } >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.merge_sha || github.sha }}
           fetch-depth: 2
+      - name: Validate exact full candidate
+        if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PR_HEAD_SHA: ${{ inputs.pr_head_sha }}
+          PR_BASE_SHA: ${{ inputs.pr_base_sha }}
+          MERGE_SHA: ${{ inputs.merge_sha }}
+          MERGE_TREE_SHA: ${{ inputs.merge_tree_sha }}
+          CANDIDATE_ID: ${{ inputs.candidate_id }}
+          DISPATCH_NONCE: ${{ inputs.dispatch_nonce }}
+          CANDIDATE_SCOPE: ${{ inputs.scope }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$CANDIDATE_SCOPE" = "full" ]
+          # The staged policy validator, never scripts/ci/merge_candidate.py from
+          # the candidate workspace; -I keeps candidate paths off sys.path.
+          [ -n "${CODEX_POLICY_SHA:-}" ]
+          [ -n "${CODEX_POLICY_VALIDATOR:-}" ]
+          [ "$GITHUB_SHA" = "$CODEX_POLICY_SHA" ]
+          [ "$GITHUB_WORKFLOW_SHA" = "$CODEX_POLICY_SHA" ]
+          [ ! -L "$CODEX_POLICY_VALIDATOR" ]
+          [ -f "$CODEX_POLICY_VALIDATOR" ]
+          [ -f "${CODEX_POLICY_VALIDATOR%/*}/manifest.json" ]
+          python -I -X utf8 -B "$CODEX_POLICY_VALIDATOR" validate-dispatch
+      # Skipped only for a complete candidate tuple, whose independent validator
+      # above fails closed on partial or invalid inputs. Partial tuples run both.
       - name: Validate label dispatch context
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id == '' || inputs.pr_base_sha == '' || inputs.merge_tree_sha == '' || inputs.dispatch_nonce == '')
         env:
           PR_NUMBER: ${{ inputs.pr_number }}
           PR_HEAD_SHA: ${{ inputs.pr_head_sha }}
@@ -138,28 +201,101 @@ jobs:
       - name: Choose hosted cells
         id: gate
         env:
-          RUN_WINDOWS: ${{ (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
+          SKIP_CELLS: "false"
+          CHECK_PATHS: ${{ github.event_name != 'workflow_dispatch' }}
+          RUN_WINDOWS: ${{ (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') || (github.event_name == 'merge_group') || (github.event_name == 'push') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
           RUN_MACOS: ${{ (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          MERGE_CANDIDATE: ${{ github.sha }}
+          DIFF_BASE: ${{ github.event.merge_group.base_sha || github.event.before }}
+          DIFF_HEAD: ${{ github.event.merge_group.head_sha || github.sha }}
         run: |
+          set -euo pipefail
+          if [ "${CHECK_PATHS}" = "true" ] && [ -z "${DIFF_FILES+x}" ]; then
+            if [ "$EVENT_NAME" = "pull_request" ]; then
+              # Diff the exact tested merge tree against its first parent. A raw
+              # base-tip -> PR-head diff mistakes base-only additions for PR deletions.
+              # A missing/stale/non-merge checkout must select tests, never a noop.
+              if [[ "$MERGE_CANDIDATE" =~ ^[0-9a-f]{40}$ ]] &&
+                 [[ "$EXPECTED_PR_HEAD" =~ ^[0-9a-f]{40}$ ]] &&
+                 [ "$(git rev-parse HEAD)" = "$MERGE_CANDIDATE" ] &&
+                 [ "$(git rev-parse HEAD^2)" = "$EXPECTED_PR_HEAD" ] &&
+                 base="$(git rev-parse HEAD^1)"; then
+                DIFF_FILES="$(git diff --name-only "$base" "$MERGE_CANDIDATE" || printf 'rust/\n')"
+              else
+                DIFF_FILES='rust/'
+              fi
+            else
+              # Push and queue events retain their explicit before/base -> head range.
+              git fetch --depth=1 origin "$DIFF_BASE" "$DIFF_HEAD" || true
+              DIFF_FILES="$(git diff --name-only "$DIFF_BASE" "$DIFF_HEAD" || printf 'rust/\n')"
+            fi
+            export DIFF_FILES
+          fi
           python3 - <<'PY'
           import json, os
-          include = [
-              {"runner": "blacksmith-2vcpu-ubuntu-2404", "python-version": "3.11", "os-name": "linux"},
-              {"runner": "blacksmith-2vcpu-ubuntu-2404", "python-version": "3.12", "os-name": "linux"},
-          ]
-          if os.environ["RUN_WINDOWS"] == "true":
-              include.extend([
-                  {"runner": "blacksmith-2vcpu-windows-2025", "python-version": "3.11", "os-name": "windows"},
-                  {"runner": "blacksmith-2vcpu-windows-2025", "python-version": "3.12", "os-name": "windows"},
-              ])
-          if os.environ["RUN_MACOS"] == "true":
-              include.append(
-                  {"runner": "macos-latest", "python-version": "3.12", "os-name": "macos"}
-              )
+
+          # Keep in step with the Rust regex in ci-label-retrigger.yml and the
+          # pytest list in rust-book below; tools/test_ci_dispatch_scope.py
+          # executes both selectors against the same paths.
+          RUST_PATHS = (
+              "rust/",
+              "app/quant/book/",
+              "app/quant/costs.py",
+              "app/quant/pnl.py",
+              "app/quant/signals.py",
+              "app/ingest/normalize.py",
+              "app/ingest/dedup.py",
+              "app/ingest/ratelimit.py",
+              "app/tests/quant/book/",
+              "app/tests/quant/test_pnl.py",
+              "app/tests/quant/test_costs_rust_parity.py",
+              "app/tests/quant/test_signals.py",
+              "app/tests/quant/test_signals_rust_parity.py",
+              "app/tests/quant/test_w21_cost_model.py",
+              "app/tests/ingest/test_normalize.py",
+              "app/tests/ingest/test_normalize_rust_parity.py",
+              "app/tests/ingest/test_admission_rust_parity.py",
+              ".github/",
+              "tools/required_ci_gate.py",
+              "tools/test_queue_gates.py",
+          )
+
+          def relevant(files):
+              for raw in files.splitlines():
+                  f = raw.strip()
+                  if not f:
+                      continue
+                  for prefix in RUST_PATHS:
+                      if prefix.endswith("/"):
+                          if f.startswith(prefix) or f == prefix.rstrip("/"):
+                              return True
+                      elif f == prefix:
+                          return True
+              return False
+
+          include = []
+          if os.environ.get("SKIP_CELLS") != "true" and (
+                  os.environ.get("CHECK_PATHS") != "true" or relevant(os.environ.get("DIFF_FILES", "rust/"))):
+              include = [
+                  {"runner": "ubuntu-24.04", "python-version": "3.11", "os-name": "linux"},
+                  {"runner": "ubuntu-24.04", "python-version": "3.12", "os-name": "linux"},
+              ]
+              if os.environ["RUN_WINDOWS"] == "true":
+                  include.extend([
+                      {"runner": "windows-2025", "python-version": "3.11", "os-name": "windows"},
+                      {"runner": "windows-2025", "python-version": "3.12", "os-name": "windows"},
+                  ])
+              if os.environ["RUN_MACOS"] == "true":
+                  include.append(
+                      {"runner": "macos-latest", "python-version": "3.12", "os-name": "macos"}
+                  )
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
               fh.write("matrix<<EOF\n")
               fh.write(json.dumps({"include": include}))
               fh.write("\nEOF\n")
+              fh.write(f"has-cells={'true' if include else 'false'}\n")
           PY
 
   # GitHub-hosted debounce; requires corrected #157 cross-head PR concurrency.
@@ -184,16 +320,91 @@ jobs:
         needs.settle.result == 'success' ||
         (needs.settle.result == 'skipped' &&
           (github.event_name != 'pull_request' || github.event.action != 'synchronize' || github.event.pull_request.draft == true))
-      )
+      ) && needs.filter.outputs.has-cells == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.filter.outputs.matrix) }}
     steps:
+      # Trusted policy commit first (github.sha on the default-branch dispatch),
+      # validator staged outside the workspace, then the exact candidate merge.
+      - uses: actions/checkout@v4
+        if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      # The cell interpreter is installed before candidate validation and reused
+      # by the extension build and Python tests below. Windows cells expose
+      # `python`, not a dependable `python3`.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Stage trusted candidate validator
+        if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Policy witness: checked-out commit, github.sha and workflow_sha agree.
+          head="$(git rev-parse HEAD)"
+          [ "$head" = "$GITHUB_SHA" ]
+          [ "$head" = "$GITHUB_WORKFLOW_SHA" ]
+          [ -n "$DEFAULT_BRANCH" ]
+          [ "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH" ]
+          [ "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH" ]
+          helper=scripts/ci/merge_candidate.py
+          if [ -L "$helper" ] || [ ! -f "$helper" ]; then
+            echo "::error::Trusted candidate validator is absent from policy commit ${head}; the candidate copy is never substituted."
+            exit 1
+          fi
+          stage="${RUNNER_TEMP}/codex-policy"
+          rm -rf "$stage"
+          mkdir -p "$stage"
+          cp "$helper" "$stage/merge_candidate.py"
+          # Stage every control file this trusted YAML executes after the
+          # candidate checkout (local action, installer, pins, aggregate helper,
+          # workflows). Validation refuses candidate copies that differ.
+          python -I -X utf8 -B "$stage/merge_candidate.py" stage-policy "$stage"
+          [ -f "$stage/manifest.json" ]
+          {
+            echo "CODEX_POLICY_SHA=$head"
+            echo "CODEX_POLICY_BRANCH=$DEFAULT_BRANCH"
+            echo "CODEX_POLICY_VALIDATOR=$stage/merge_candidate.py"
+          } >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.merge_sha || github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Validate exact full candidate
+        if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PR_HEAD_SHA: ${{ inputs.pr_head_sha }}
+          PR_BASE_SHA: ${{ inputs.pr_base_sha }}
+          MERGE_SHA: ${{ inputs.merge_sha }}
+          MERGE_TREE_SHA: ${{ inputs.merge_tree_sha }}
+          CANDIDATE_ID: ${{ inputs.candidate_id }}
+          DISPATCH_NONCE: ${{ inputs.dispatch_nonce }}
+          CANDIDATE_SCOPE: ${{ inputs.scope }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$CANDIDATE_SCOPE" = "full" ]
+          # The staged policy validator, never scripts/ci/merge_candidate.py from
+          # the candidate workspace; -I keeps candidate paths off sys.path.
+          [ -n "${CODEX_POLICY_SHA:-}" ]
+          [ -n "${CODEX_POLICY_VALIDATOR:-}" ]
+          [ "$GITHUB_SHA" = "$CODEX_POLICY_SHA" ]
+          [ "$GITHUB_WORKFLOW_SHA" = "$CODEX_POLICY_SHA" ]
+          [ ! -L "$CODEX_POLICY_VALIDATOR" ]
+          [ -f "$CODEX_POLICY_VALIDATOR" ]
+          [ -f "${CODEX_POLICY_VALIDATOR%/*}/manifest.json" ]
+          python -I -X utf8 -B "$CODEX_POLICY_VALIDATOR" validate-dispatch
       - uses: dtolnay/rust-toolchain@master
         with:
           # Same channel as rust/rust-toolchain.toml. Passing `stable` as well
@@ -202,9 +413,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
       - name: Rust tests
         working-directory: rust
         run: cargo test --workspace
@@ -227,3 +435,34 @@ jobs:
           python rust/bench_normalize.py
           python rust/bench_signals.py
           python rust/bench_admission.py
+
+  rust-gates:
+    name: rust-gates
+    needs: [filter, settle, rust-book]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merge_sha || github.sha }}
+          persist-credentials: false
+      - name: Require all selected Rust cells or an explicit path noop
+        env:
+          FILTER_RESULT: ${{ needs.filter.result }}
+          REQUIRED: ${{ needs.filter.outputs.has-cells }}
+          RESULTS: ${{ toJSON(needs.rust-book.result) }}
+          SETTLE_RESULT: ${{ needs.settle.result }}
+          SETTLE_EXPECTED: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' && github.event.pull_request.draft != true }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from tools.required_ci_gate import gate, settled
+          passed = (settled(os.environ['SETTLE_RESULT'], os.environ['SETTLE_EXPECTED'])
+                    and gate(os.environ['FILTER_RESULT'], os.environ['REQUIRED'],
+                             [json.loads(os.environ['RESULTS'])]))
+          raise SystemExit(0 if passed else 'Required Rust gate failed closed')
+          PY
+      - name: Reject workflow cancellation
+        if: cancelled()
+        run: exit 1

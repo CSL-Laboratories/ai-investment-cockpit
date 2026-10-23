@@ -1,0 +1,13 @@
+{
+  "kind": "negative_command",
+  "control": "unscoped_intervention",
+  "body": {
+    "api_version": "o7.operator.v0",
+    "candidate_maturity": "researched",
+    "surface": "cli",
+    "command": "operator.interventions.request_stop",
+    "request_id": "req_cmd_unscoped_stop",
+    "arguments": {},
+    "confirmation": "explicit"
+  }
+}

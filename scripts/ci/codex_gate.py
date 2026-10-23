@@ -48,6 +48,10 @@ def ready_comments(comments, sha):
             and (not checked or type(c.get("id")) is not int or c["id"] <= checked))]
 
 CODEX_BOT = "chatgpt-codex-connector[bot]"
+# Same App id as merge_candidate.CODEX_ID (verified from genuine #147 reviews).
+CODEX_ID = 199175422
+# Bot classification only: the bare alias is an ordinary user login on this
+# public repo, so it never authorizes a verdict (see is_codex_reviewer).
 CODEX_BOTS = frozenset({CODEX_BOT, "chatgpt-codex-connector"})
 MARKER_RE = re.compile(r"<!--\s*codex-gate:([0-9a-f]{40}|[0-9a-f]{64})\s*-->")
 ACTION_RE = re.compile(
@@ -509,12 +513,24 @@ def fixer_runs_on_day(comments: list[dict[str, Any]], day: str) -> int:
     return count
 
 
+def is_codex_reviewer(user: dict[str, Any] | None) -> bool:
+    """Only the Codex App may author an actionable gate verdict.
+
+    The ``[bot]`` login is reserved to that App; REST type/id, when present,
+    must also match so a look-alike account can never pass.
+    """
+    user = user if isinstance(user, dict) else {}
+    if str(user.get("login") or "") != CODEX_BOT:
+        return False
+    if "type" in user and str(user.get("type") or "") != "Bot":
+        return False
+    return "id" not in user or (type(user.get("id")) is int and user["id"] == CODEX_ID)
+
+
 def verdict_from_reviews(reviews: list[dict[str, Any]], sha: str) -> str:
     found = ""
     for review in reviews:
-        user = (review or {}).get("user") or {}
-        login = str(user.get("login") or "")
-        if login not in CODEX_BOTS:
+        if not is_codex_reviewer((review or {}).get("user")):
             continue
         commit = safe_sha(review.get("commit_id") or review.get("commitId"))
         if sha and commit != sha:
@@ -775,7 +791,7 @@ def merge_mediate_description(
             body = block
     marker = stuck_pr_marker(repository, pr_number)
     if not any(_key_matches_pr(key, repository, pr_number) for key in stuck_pr_keys_in(body)):
-        body = f"{marker}\n{body.lstrip('\n')}"
+        body = marker + "\n" + body.lstrip("\n")
     return body if body.endswith("\n") else f"{body}\n"
 
 
@@ -1002,6 +1018,19 @@ def run(
             return 0
     gh = gh or GitHub(os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN", ""), pat)
 
+    # CSL-259: the trusted workflow supplies one PR under the existing shared
+    # fixer lock. Legacy pure functions remain for mediation and compatibility;
+    # production readiness uses exact candidate identity, never head-only READY.
+    candidate_number = os.environ.get("CODEX_CANDIDATE_PR", "")
+    if candidate_number:
+        import candidate_gate
+        try:
+            print(candidate_gate.run(__import__(__name__), gh, repository, candidate_number))
+            return 0
+        except (OSError, ValueError, subprocess.CalledProcessError):
+            notice("candidate reconciliation failed closed; inspect reservations before retry")
+            return 1
+
     logs: list[str] = []
     try:
         if event_name == "pull_request":
@@ -1187,7 +1216,7 @@ def _handle_review(
 ) -> list[str]:
     review = event.get("review") if isinstance(event.get("review"), dict) else {}
     login = str((review.get("user") or {}).get("login") or "")
-    if login not in CODEX_BOTS:
+    if not is_codex_reviewer(review.get("user")):
         return [f"codex-gate: skip=not-codex login={login or '-'}"]
     pr = event.get("pull_request") if isinstance(event.get("pull_request"), dict) else {}
     number = safe_pr(pr.get("number"))
@@ -1283,7 +1312,8 @@ def _act(
     gh: GitHub,
     reviews: list[dict[str, Any]] | None = None,
 ) -> list[str]:
-    get_pages = lambda path: strict_items(gh, path)
+    def get_pages(path):
+        return strict_items(gh, path)
     def revoke():
         return FIXER_RECEIPTS.revoke_owned_ci(repository, number, sha, get_pages,
             lambda repo, num: gh.delete_read_token(f"repos/{repo}/issues/{num}/labels/{CI_FULL_LABEL}"),

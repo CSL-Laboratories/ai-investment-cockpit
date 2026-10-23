@@ -11,24 +11,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
+from core.numeric import decimal_or_nan
 from orchestrator.state import EVENT_ORDER_FILL_PROGRESS, EVENT_ORDER_TRANSITION
 from schemas.models.audit_entry import AuditEntry
 
 EASTERN = ZoneInfo("America/New_York")
 EVENT_PORTFOLIO_SNAPSHOT = "portfolio_snapshot"
-
-
-def _dec(value) -> Decimal:
-    try:
-        result = value if isinstance(value, Decimal) else Decimal(str(value))
-    except (InvalidOperation, TypeError, ValueError):
-        return Decimal("NaN")
-    return result
 
 
 def _utc_datetime(value: str | None) -> datetime | None:
@@ -154,7 +147,7 @@ def reconstruct_paper_performance(state, *, now=None) -> PaperPerformance:
         if (row.event_type == EVENT_PORTFOLIO_SNAPSHOT
                 and row.actor == "alpaca_paper" and payload.get("kind") == "positions"):
             at = _utc_datetime(payload.get("_ts"))
-            equity = _dec(payload.get("equity"))
+            equity = decimal_or_nan(payload.get("equity"))
             if at is not None and at > now:
                 return PaperPerformance(False, trading_day, reason="future signed equity snapshot")
             if (at is not None and at.astimezone(EASTERN).date().isoformat() == trading_day
@@ -172,7 +165,7 @@ def reconstruct_paper_performance(state, *, now=None) -> PaperPerformance:
                 "order_id": order_id,
                 "symbol": str(payload.get("symbol") or "").upper(),
                 "side": str(payload.get("side") or "").lower(),
-                "qty": _dec(payload.get("qty")),
+                "qty": decimal_or_nan(payload.get("qty")),
             }
             intents[row.seq] = metadata
             if order_id:
@@ -229,8 +222,8 @@ def reconstruct_paper_performance(state, *, now=None) -> PaperPerformance:
         else:
             continue
 
-        qty = _dec(filled_qty)
-        price = _dec(avg_price)
+        qty = decimal_or_nan(filled_qty)
+        price = decimal_or_nan(avg_price)
         if not qty.is_finite() or qty <= 0:
             if fill_claimed:
                 incomplete_fill = True
@@ -240,7 +233,7 @@ def reconstruct_paper_performance(state, *, now=None) -> PaperPerformance:
             continue
         symbol = str(metadata.get("symbol") or "").upper()
         side = str(metadata.get("side") or "").lower()
-        intended_qty = _dec(metadata.get("qty"))
+        intended_qty = decimal_or_nan(metadata.get("qty"))
         if not symbol or side not in {"buy", "sell"}:
             incomplete_fill = True
             continue

@@ -551,6 +551,19 @@ class LimitOrderBook:
             if o.is_ours and (owner is None or o.owner == owner)
         ]
 
+    def resting_at(self, index: int) -> RestingOrder:
+        """The resting order at ``index`` in insertion order.
+
+        The same order ``_index`` yields. A caller that wants one order uses this
+        instead of copying the index.
+        """
+        if type(index) is not int or index < 0:
+            raise IndexError(index)
+        for seen, order in enumerate(self._index.values()):
+            if seen == index:
+                return order
+        raise IndexError(index)
+
     def snapshot(self, *, levels: int = 5, seq: int | None = None, ts: int | None = None) -> BookSnapshot:
         return BookSnapshot(
             symbol=self.symbol,
