@@ -94,11 +94,11 @@ _STAMP_LOCK = threading.Lock()
 
 
 class _StampedIntent:
-    """Stamp only the intent ``OrderGateway.submit`` itself appends.
+    """Stamp the intent that carries this submission's approval binding.
 
-    A callback can open another ``order_submit`` for the same order id before
-    or during the admission wait. The timeout closer matches this token, not
-    the order id.
+    A callback can open another ``order_submit`` for the same order id. The
+    timeout closer matches this token. The stamp does not read the call stack,
+    so it does not depend on ``OrderGateway.submit`` living in ``gateway.py``.
     """
 
     def __init__(self, real) -> None:
@@ -108,29 +108,41 @@ class _StampedIntent:
     def __call__(self, op, refs=None, payload=None):
         token = getattr(self._local, "token", None)
         order_id = getattr(self._local, "order_id", None)
-        if token and op == "order_submit" and (refs or {}).get("order_id") == order_id:
-            frame = inspect.currentframe()
-            caller = None if frame is None else frame.f_back
-            code = None if caller is None else caller.f_code
-            filename = "" if code is None else code.co_filename.replace("\\", "/")
-            if (
-                code is not None
-                and code.co_name == "submit"
-                and filename.endswith("/brokers/gateway.py")
-            ):
-                payload = dict(payload or {})
-                payload[_SUBMISSION_TOKEN] = token
+        approval_id = getattr(self._local, "approval_id", None)
+        risk_id = getattr(self._local, "risk_decision_id", None)
+        bound = refs or {}
+        if (
+            token
+            and op == "order_submit"
+            and approval_id
+            and risk_id
+            and bound.get("order_id") == order_id
+            and bound.get("approval_id") == approval_id
+            and bound.get("risk_decision_id") == risk_id
+        ):
+            payload = dict(payload or {})
+            payload[_SUBMISSION_TOKEN] = token
         return self._real(op, refs=refs, payload=payload)
 
 
-def _arm_submission_token(st, token: str, order_id) -> None:
+def _arm_submission_token(st, token: str, order_or_id) -> None:
     with _STAMP_LOCK:
         current = st.audit.intent
         if not isinstance(current, _StampedIntent):
             current = _StampedIntent(current)
             st.audit.intent = current
+    if hasattr(order_or_id, "id") and hasattr(order_or_id, "approval_id"):
+        order_id = order_or_id.id
+        approval_id = order_or_id.approval_id
+        risk_id = getattr(order_or_id, "risk_decision_id", None)
+    else:
+        order_id = order_or_id
+        approval_id = None
+        risk_id = None
     current._local.token = token
     current._local.order_id = order_id
+    current._local.approval_id = approval_id
+    current._local.risk_decision_id = risk_id
 
 
 def _clear_submission_token(st) -> None:
@@ -138,6 +150,8 @@ def _clear_submission_token(st) -> None:
     if isinstance(current, _StampedIntent):
         current._local.token = None
         current._local.order_id = None
+        current._local.approval_id = None
+        current._local.risk_decision_id = None
 
 
 def _close_submission_intent(st, order, already_open: set, reason: str, token: str) -> None:
@@ -231,9 +245,14 @@ def _guarded_submit(gateway, captured):
             generation,
             order_ref,
         )
+        from brokers.authority_profiles import _state_quote
+
+        market, quote_now = _state_quote(gateway)
         authority_kwargs = {
             "order": getattr(fence._local, "order", None),
             "producing_runtime": getattr(fence._local, "producing_runtime", None),
+            "market": market,
+            "now_quote": quote_now,
         }
         store._recheck_transport_authority(*authority, **authority_kwargs)
         failure = _safety_failure(gateway)
@@ -279,46 +298,48 @@ class _AdmittedPaperClient:
         setattr(object.__getattribute__(self, "_real"), name, value)
 
 
-class _PinnedTransport:
-    """The transport object captured at init. Closing it does not close the caller's."""
+def _owned_transport(http):
+    """A new transport. The caller's transport object is not reused."""
+    import httpx
 
-    def __init__(self, inner) -> None:
-        self._inner = inner
-
-    def handle_request(self, request):
-        return self._inner.handle_request(request)
-
-    def close(self) -> None:
+    handler = getattr(http._transport, "handler", None)
+    if callable(handler):
+        return httpx.MockTransport(handler)
+    try:
+        return httpx.HTTPTransport()
+    except Exception:
         return None
 
 
 def _owned_http_session(http):
     """A private HTTP session for this gateway.
 
-    The caller's ``httpx.Client`` stays shared with them. Event hooks, proxy
-    env, and a later replacement of their client cannot move this session.
-    The secret is not copied into the profile store.
+    The caller's ``httpx.Client`` stays shared with them. This session gets
+    its own transport, built at init from the handler or a fresh connection
+    pool. Event hooks, proxy env, and a later mutation of the caller's
+    transport cannot move this session. The secret is not copied into the
+    profile store.
     """
     import httpx
 
     if not isinstance(http, httpx.Client):
         return None, None
     pinned_timeout = http.timeout
-    # The caller's transport object, as it existed at init. A later hook on
-    # either client does not run: this path never enters ``Client.request``.
-    handle = http._transport.handle_request
+    owned_transport = _owned_transport(http)
+    if owned_transport is None:
+        return None, None
     owned = httpx.Client(
         timeout=pinned_timeout,
         follow_redirects=False,
         trust_env=False,
         event_hooks={},
-        transport=_PinnedTransport(http._transport),
+        transport=owned_transport,
     )
 
     def request(method, url, *, headers=None, json=None, params=None, **_ignored):
         outgoing = httpx.Request(method, url, headers=headers, json=json, params=params)
         outgoing.extensions = dict(outgoing.extensions, timeout=pinned_timeout.as_dict())
-        response = handle(outgoing)
+        response = owned_transport.handle_request(outgoing)
         response.read()
         return response
 
@@ -501,12 +522,17 @@ class BoundClaimFence:
         if order_ref is None:
             raise ProfileRefused("order_required", "paper submit requires an order id")
         client = object.__getattribute__(self._gateway, "_admitted_client")
+        from brokers.authority_profiles import _state_quote
+
+        market, quote_now = _state_quote(self._gateway)
         self._local.binding = accept_transport_permit(
             value,
             order_ref=order_ref,
             client=client,
             order=getattr(self._local, "order", None),
             producing_runtime=getattr(self._local, "producing_runtime", None),
+            market=market,
+            now_quote=quote_now,
         )
         return value
 
@@ -565,12 +591,17 @@ class _BoundPaperTransport(AlpacaPaperBroker):
         return AlpacaPaperBroker.submit_order(self, canonical)
 
 
-def _tuple_exposure_notional(order):
-    """Exposure for a priced order is qty times limit price.
+def _tuple_exposure_notional(order, gateway=None):
+    """Exposure is qty times limit price, or qty times a buffered fresh touch.
 
     ``OrderGateway._order_notional`` prefers a detached ``order.notional``.
-    A birth row signed at $1 would then pass a cap the limit order exceeds.
+    A birth row signed at $1 would then pass a cap the order exceeds. A
+    market order has no limit price; without a fresh quote the cap fails
+    closed instead of reading ``order.notional``.
     """
+    from decimal import Decimal
+
+    from brokers.authority_profiles import _tuple_notional
     from brokers.gateway import _dec
 
     limit = getattr(order, "limit_price", None)
@@ -579,7 +610,15 @@ def _tuple_exposure_notional(order):
         product = _dec(qty) * _dec(limit)
         if product.is_finite() and product > 0:
             return product
-    return OrderGateway._order_notional(order)
+    if gateway is None:
+        return Decimal("Infinity")
+    try:
+        st = object.__getattribute__(gateway, "_st")
+        market = getattr(st, "market_data", None)
+        now = st.clock.now()
+        return _tuple_notional(order, market=market, now=now)
+    except Exception:  # noqa: BLE001 - a missing quote must not fall through to order.notional
+        return Decimal("Infinity")
 
 
 class PaperExecutionGateway(OrderGateway):
@@ -591,7 +630,10 @@ class PaperExecutionGateway(OrderGateway):
 
     def __getattribute__(self, name):
         if name == "_order_notional":
-            return _tuple_exposure_notional
+            def _notional(order, _gateway=self):
+                return _tuple_exposure_notional(order, _gateway)
+
+            return _notional
         return super().__getattribute__(name)
 
 
@@ -759,7 +801,7 @@ class PaperOrderGateway(PaperExecutionGateway):
                 st.safety_admission_lock = wrapper
             open_before = set(st.audit.unresolved_intents())
             token = secrets.token_urlsafe(16)
-            _arm_submission_token(st, token, getattr(order, "id", None))
+            _arm_submission_token(st, token, order)
             try:
                 try:
                     return super().submit(order, **kwargs)

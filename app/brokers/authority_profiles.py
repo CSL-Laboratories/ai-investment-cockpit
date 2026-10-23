@@ -64,6 +64,9 @@ CLAIM_LEASE = timedelta(seconds=90)
 # and does not match any client until an authenticated startup transport binds one.
 _MIGRATED_UNBOUND = "migrated-unauthenticated"
 _MONEY = Decimal("0.01")
+# Market exposure is the touch inflated by this fraction. Buys use the ask and
+# sells use the bid, so a cap cannot be understated by order.notional.
+MARKET_REFERENCE_BUFFER = Decimal("0.05")
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$")
 _MONEY_TEXT = re.compile(r"^[0-9]{1,15}(?:\.[0-9]{1,2})?$")
 
@@ -469,6 +472,7 @@ class AuthorityProfileStore:
         # A ``now`` argument on a public method is not that clock.
         self._clock_default = clock is None
         self._clock = clock if clock is not None else Clock()
+        self._clock_high_water: datetime | None = None
         self._authoritative_now: datetime | None = None
         self._live_permits: dict[str, tuple[str, int, str]] = {}
         # order id -> client that consumed the permit. A different client cannot
@@ -1410,9 +1414,10 @@ class AuthorityProfileStore:
                             "pre-current profile store holds rows; recreate the store "
                             "or re-install profiles through the authenticated install path",
                         )
-            if version == STORE_USER_VERSION:
+            if version in {4, STORE_USER_VERSION}:
                 # CREATE TABLE IF NOT EXISTS would silently rebuild a ledger
-                # lost in a damaged restore. Refuse before any recreation.
+                # lost in a damaged restore, including an admitted version-4
+                # file. Refuse before any recreation or column migration.
                 names = {
                     row[0]
                     for row in conn.execute(
@@ -1424,6 +1429,32 @@ class AuthorityProfileStore:
                     raise ProfileRefused(
                         "store", "current profile store is missing a ledger table"
                     )
+                pre_columns = {
+                    row[1] for row in conn.execute("PRAGMA table_info(reservations)").fetchall()
+                }
+                pre_profile_columns = {
+                    row[1] for row in conn.execute("PRAGMA table_info(profiles)").fetchall()
+                }
+                v4_reservation_columns = {
+                    "order_ref",
+                    "handoff_state",
+                    "claim_generation",
+                    "reconciled",
+                    "claimed_at",
+                }
+                if version == STORE_USER_VERSION:
+                    required_reservation_columns = v4_reservation_columns | {
+                        "transport_client_hash",
+                        "transport_binding_hash",
+                    }
+                    if not required_reservation_columns <= pre_columns:
+                        raise ProfileRefused(
+                            "store", "reservations ledger is missing a column"
+                        )
+                elif not v4_reservation_columns <= pre_columns:
+                    raise ProfileRefused("store", "reservations ledger is missing a column")
+                if "stop_capability_hash" not in pre_profile_columns:
+                    raise ProfileRefused("store", "profile ledger is missing a column")
             for statement in _SCHEMA:
                 conn.execute(statement)
             columns = {
@@ -1659,7 +1690,7 @@ class AuthorityProfileStore:
 
     def _assert_live_claim(
         self, conn, client_id: str, generation: int, order_ref: str, now,
-        *, order=None, producing_runtime=None,
+        *, order=None, producing_runtime=None, market=None, now_quote=None,
     ):
         """Authority, generation, lease, and the reservation bindings, inside ``_txn``."""
         row = conn.execute(
@@ -1710,7 +1741,9 @@ class AuthorityProfileStore:
         if getattr(order, "account", None) != row["account_id"]:
             raise ProfileRefused("account_mismatch", "order account is outside the profile")
         self._refuse_other_live_order(conn, order_ref, client_id)
-        if _tuple_notional(order) != _parse_money(row["notional"], code="notional"):
+        if _tuple_notional(order, market=market, now=now_quote) != _parse_money(
+            row["notional"], code="notional"
+        ):
             raise ProfileRefused(
                 "notional_mismatch", "order notional does not match the reservation"
             )
@@ -1718,7 +1751,7 @@ class AuthorityProfileStore:
 
     def _consume_transport_permit(
         self, nonce: str, *, order_ref: str, client: object = None,
-        order=None, producing_runtime=None,
+        order=None, producing_runtime=None, market=None, now_quote=None,
     ) -> tuple[object, str, int, str]:
         """Re-check the live claim, then burn the nonce. Returns the binding."""
         if type(nonce) is not str or type(order_ref) is not str or not order_ref:
@@ -1740,6 +1773,7 @@ class AuthorityProfileStore:
             row = self._assert_live_claim(
                 conn, client_id, generation, bound_order, now,
                 order=order, producing_runtime=producing_runtime,
+                market=market, now_quote=now_quote,
             )
             if client is not None:
                 digest = _remember_transport_client(client)
@@ -1779,7 +1813,7 @@ class AuthorityProfileStore:
 
     def _recheck_transport_authority(
         self, client_order_id: str, generation: int, order_ref: str,
-        *, order=None, producing_runtime=None,
+        *, order=None, producing_runtime=None, market=None, now_quote=None,
     ) -> None:
         """The transport call re-reads authority and the reservation bindings."""
         client_id = _ident(client_order_id, code="client_order_id")
@@ -1791,6 +1825,7 @@ class AuthorityProfileStore:
             self._assert_live_claim(
                 conn, client_id, generation, order_ref, self._authoritative_now,
                 order=order, producing_runtime=producing_runtime,
+                market=market, now_quote=now_quote,
             )
 
     def _read_store_clock(self) -> datetime:
@@ -1805,6 +1840,9 @@ class AuthorityProfileStore:
         except Exception as exc:
             raise ProfileRefused("clock", "store clock is unavailable or invalid") from exc
         _require_now(stamp)
+        high = self._clock_high_water
+        if high is None or stamp > high:
+            self._clock_high_water = stamp
         return stamp
 
     @contextmanager
@@ -1839,11 +1877,59 @@ class _Stored:
         return getattr(self.profile, name)
 
 
-def _tuple_notional(order) -> Decimal:
-    """The reserved size is the canonical tuple's qty times limit price.
+def _fresh_reference_price(order, *, market, now) -> Decimal:
+    """Ask for a buy and bid for a sell, from a fresh trusted quote.
+
+    ``order.notional`` is not a reference price.
+    """
+    if market is None or now is None:
+        raise ProfileRefused("quote_unavailable", "market order requires a fresh quote")
+    symbol = getattr(order, "symbol", None)
+    limit_s = getattr(market, "max_age_s", None)
+    if limit_s is None:
+        from orchestrator.breakers import BreakerThresholds
+
+        limit_s = BreakerThresholds().data_staleness_s
+    try:
+        reason = market.stale_reason(symbol, now=now, limit_s=float(limit_s))
+    except ProfileRefused:
+        raise
+    except Exception as exc:
+        raise ProfileRefused(
+            "quote_unavailable", "market order quote could not be read"
+        ) from exc
+    if reason:
+        raise ProfileRefused("stale_quote", "market order quote is not fresh")
+    try:
+        quote = market.quote(symbol)
+    except ProfileRefused:
+        raise
+    except Exception as exc:
+        raise ProfileRefused(
+            "quote_unavailable", "market order quote could not be read"
+        ) from exc
+    side = str(getattr(order, "side", "") or "").strip().lower()
+    field = "ask" if side == "buy" else "bid" if side == "sell" else None
+    if field is None or not isinstance(quote, dict):
+        raise ProfileRefused("quote_unavailable", "market order reference price is missing")
+    try:
+        price = Decimal(str(quote.get(field)))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ProfileRefused(
+            "quote_unavailable", "market order reference price is missing"
+        ) from exc
+    if not price.is_finite() or price <= 0:
+        raise ProfileRefused("quote_unavailable", "market order reference price is missing")
+    return price
+
+
+def _tuple_notional(order, *, market=None, now=None) -> Decimal:
+    """Reserved size is qty times limit price, or qty times a buffered touch.
 
     ``order.notional`` is a detached attribute. A caller can lower it without
-    changing the order the gateway will send.
+    changing the order the gateway will send. A market order has no limit
+    price; its exposure is qty times the fresh ask (buy) or bid (sell),
+    inflated by ``MARKET_REFERENCE_BUFFER``. No fresh quote refuses.
     """
     from brokers.order_tuple import canonical_order_tuple
 
@@ -1861,11 +1947,28 @@ def _tuple_notional(order) -> Decimal:
             "notional_mismatch", "order notional does not match the reservation"
         ) from exc
     if canon["limit_price"] is None:
-        raise ProfileRefused(
-            "notional_mismatch", "reserved notional requires qty times limit price"
-        )
-    product = (Decimal(canon["qty"]) * Decimal(canon["limit_price"])).quantize(_MONEY)
+        price = _fresh_reference_price(order, market=market, now=now)
+        product = (
+            Decimal(canon["qty"]) * price * (Decimal("1") + MARKET_REFERENCE_BUFFER)
+        ).quantize(_MONEY)
+    else:
+        product = (Decimal(canon["qty"]) * Decimal(canon["limit_price"])).quantize(_MONEY)
     return _parse_money(product, code="notional")
+
+
+def _state_quote(gateway):
+    """The gateway state's trusted quote source and the state clock's now."""
+    st = None if gateway is None else getattr(gateway, "_st", None)
+    if st is None:
+        return None, None
+    clock = getattr(st, "clock", None)
+    now = None
+    if clock is not None:
+        try:
+            now = clock.now()
+        except Exception:
+            now = None
+    return getattr(st, "market_data", None), now
 
 
 def _check_paper_submit_binding(
@@ -1876,6 +1979,8 @@ def _check_paper_submit_binding(
     order: object,
     notional: Decimal | str,
     producing_runtime: object,
+    market=None,
+    now=None,
 ) -> str:
     """The account/notional/provider/action checks a paper submit must pass.
 
@@ -1908,7 +2013,7 @@ def _check_paper_submit_binding(
     order_account = getattr(order, "account", None)
     if order_account != profile.account_id:
         raise ProfileRefused("account_mismatch", "order account is outside the profile")
-    if _tuple_notional(order) != _parse_money(notional, code="notional"):
+    if _tuple_notional(order, market=market, now=now) != _parse_money(notional, code="notional"):
         raise ProfileRefused(
             "notional_mismatch", "order notional does not match the reservation"
         )
@@ -1954,9 +2059,11 @@ def handoff_to_gateway(
     if action == "submit_paper":
         _require_paper_gateway(gateway)
         order = submit_args[0] if submit_args else kwargs.get("order")
+        market, quote_now = _state_quote(gateway)
         order_ref = _check_paper_submit_binding(
             store, profile_id, action=action, order=order, notional=notional,
             producing_runtime=kwargs.get("producing_runtime"),
+            market=market, now=quote_now,
         )
     elif action not in {"propose", "submit_dry_run"}:
         raise ProfileRefused("action_refused", "action is outside the profile handoff")
@@ -2063,9 +2170,11 @@ def reconcile_handoff_to_gateway(
         ).fetchone()
     if row is None:
         raise ProfileRefused("unknown_reservation", "reservation is missing")
+    market, quote_now = _state_quote(gateway)
     order_ref = _check_paper_submit_binding(
         store, row["profile_id"], action=row["action"], order=order,
         notional=Decimal(row["notional"]), producing_runtime=kwargs.get("producing_runtime"),
+        market=market, now=quote_now,
     )
     verdict = store._reconcile_handoff(
         client_id,
@@ -2106,12 +2215,42 @@ def reconcile_handoff_to_gateway(
 
 
 def _adopt_state_clock(store, gateway) -> None:
-    """The store clock is fixed when the application is composed.
+    """Share the state clock when the store was built without one.
 
-    Do not take authority time from the gateway being submitted to. A later
-    gateway clock must not replace a clock that already refused expiry.
+    Identity is shared. A reading is not copied into a new clock. An explicit
+    clock stays where it is, so a distinct clock still refuses at arm. A
+    default clock is not replaced when the state clock would rewind a time
+    that clock already shows, which is what kept an expired profile expired.
+    Once this binds, the clock is no longer a default and a later gateway
+    cannot replace it.
     """
-    del store, gateway
+    state = None if gateway is None else getattr(gateway, "_st", None)
+    state_clock = None if state is None else getattr(state, "clock", None)
+    store_clock = getattr(store, "_clock", None)
+    if state_clock is None or store_clock is None or store_clock is state_clock:
+        return
+    if not getattr(store, "_clock_default", False):
+        return
+    try:
+        store_now = store_clock.now()
+        state_now = state_clock.now()
+    except Exception:
+        return
+    if (
+        not isinstance(store_now, datetime)
+        or not isinstance(state_now, datetime)
+        or store_now.tzinfo is None
+        or store_now.utcoffset() is None
+        or state_now.tzinfo is None
+        or state_now.utcoffset() is None
+        or state_now < store_now
+    ):
+        return
+    high = getattr(store, "_clock_high_water", None)
+    if high is not None and state_now < high:
+        return
+    store._clock = state_clock
+    store._clock_default = False
 
 
 def _revert_unarmed_claim(
@@ -2151,7 +2290,7 @@ def _fence_now(gateway, kwargs: Mapping):
 
 def accept_transport_permit(
     permit: object, *, order_ref: str, client: object = None,
-    order=None, producing_runtime=None,
+    order=None, producing_runtime=None, market=None, now_quote=None,
 ) -> tuple[object, str, int, str]:
     """Consume a permit only if it still matches this order and the live claim."""
     if type(permit) is not TransportPermit or type(permit.store) is not AuthorityProfileStore:
@@ -2161,6 +2300,7 @@ def accept_transport_permit(
     return permit.store._consume_transport_permit(
         permit.nonce, order_ref=order_ref, client=client,
         order=order, producing_runtime=producing_runtime,
+        market=market, now_quote=now_quote,
     )
 
 
@@ -2316,6 +2456,32 @@ def _transport_client_matches(store, order_ref: str, client) -> bool:
     return True
 
 
+def _signed_submit_intent(st, order_ref: str) -> bool:
+    """True when this order has a verified ``order_submit`` intent on the chain.
+
+    A resolved intent still counts: accept-then-timeout writes the intent
+    before the response is lost. Broker presence without that signed row is
+    not a submission this process can adopt.
+    """
+    audit = None if st is None else getattr(st, "audit", None)
+    verify = None if audit is None else getattr(audit, "verify_entry", None)
+    if audit is None or not callable(verify) or not order_ref:
+        return False
+    for row in audit._rows():
+        payload = row.payload or {}
+        if payload.get("_phase") != "intent" or payload.get("_op") != "order_submit":
+            continue
+        if (row.refs or {}).get("order_id") != order_ref:
+            continue
+        try:
+            signed = verify(row)
+        except Exception:
+            signed = False
+        if signed:
+            return True
+    return False
+
+
 def _open_submit_intent(gateway, order_ref: str) -> bool:
     st = None if gateway is None else getattr(gateway, "_st", None)
     audit = None if st is None else getattr(st, "audit", None)
@@ -2419,6 +2585,10 @@ def _resolve_landed_submission(gateway, order_ref: str) -> None:
         ) from exc
     if not isinstance(found, dict) or not found.get("broker_order_id"):
         raise ProfileRefused("broker_unknown", "landed paper order cannot be resolved")
+    if not _signed_submit_intent(st, order_ref):
+        raise ProfileRefused(
+            "intent", "broker presence requires a signed order_submit intent"
+        )
 
     class _Seq:
         def __init__(self, seq: int) -> None:

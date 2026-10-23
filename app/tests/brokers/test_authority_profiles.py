@@ -3468,6 +3468,15 @@ def test_order_state_refusal_asks_the_broker(st, tmp_path, monkeypatch, visibili
     order_ref = str(scenario.order.id)
     if visibility == "present":
         broker._client.submit_order({"client_order_id": f"cockpit-{order_ref}"[:128]})
+        st.audit.intent(
+            "order_submit",
+            refs={
+                "order_id": order_ref,
+                "approval_id": scenario.approval.id,
+                "risk_decision_id": scenario.risk_decision.id,
+            },
+            payload={"symbol": "AAPL", "side": "buy"},
+        )
     elif visibility == "unknown":
         def unreadable(*_args, **_kwargs):
             raise RuntimeError("broker status unread")
@@ -3801,7 +3810,7 @@ def test_accept_then_timeout_completes_when_the_broker_has_the_order(st, tmp_pat
 
 
 def test_distinct_default_clocks_do_not_strand_a_claim(st, tmp_path, monkeypatch):
-    """4357424112: two default clocks at the same time must not leave a claim owned."""
+    """A default store at the state time arms. The claim is not left in progress."""
     broker = _CountingPaper()
     gateway = PaperOrderGateway(broker, st=st)
     scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
@@ -3819,28 +3828,17 @@ def test_distinct_default_clocks_do_not_strand_a_claim(st, tmp_path, monkeypatch
         ),
         now=now,
     )
-    call = dict(
-        profile_id="profile-b", action="submit_paper", client_order_id="clock-default",
-        notional=Decimal(str(scenario.order.notional)), actor="stop-owner", now=now,
-        submit_args=(scenario.order,), submit_kwargs=_paper_submit_kwargs(scenario),
-        **_PAPER_BINDINGS,
+    result = handoff_to_gateway(
+        store, gateway, profile_id="profile-b", action="submit_paper",
+        client_order_id="clock-default", notional=Decimal(str(scenario.order.notional)),
+        actor="stop-owner", now=now, submit_args=(scenario.order,),
+        submit_kwargs=_paper_submit_kwargs(scenario), **_PAPER_BINDINGS,
     )
-    raised = None
-    try:
-        handoff_to_gateway(store, gateway, **call)
-    except ProfileRefused as exc:
-        raised = exc.code
+    assert getattr(result.outcome, "ok", None) is True
+    assert _sends(broker) == 1
     row = _handoff_row(store.path, "clock-default")
-    assert raised == "clock"
-    assert _sends(broker) == 0
-    assert row is None or row["handoff_state"] != "in_progress"
-    again = None
-    try:
-        handoff_to_gateway(store, gateway, **call)
-    except ProfileRefused as exc:
-        again = exc.code
-    assert again == "clock"
-    assert again != "handoff_in_progress"
+    assert row["handoff_state"] == "completed"
+    assert store._clock is st.clock
 
 
 def test_version_four_store_migrates_the_transport_column(tmp_path):
@@ -3895,6 +3893,15 @@ def test_restart_with_the_same_broker_key_can_reconcile(st, tmp_path):
     scenario.gateway._profile_fence()
     cockpit_id = f"cockpit-{order_ref}"[:128]
     broker._client.submit_order({"client_order_id": cockpit_id})
+    st.audit.intent(
+        "order_submit",
+        refs={
+            "order_id": order_ref,
+            "approval_id": scenario.approval.id,
+            "risk_decision_id": scenario.risk_decision.id,
+        },
+        payload={"symbol": "AAPL", "side": "buy"},
+    )
     scenario.clock._at = scenario.clock.now() + CLAIM_LEASE + timedelta(seconds=1)
     restarted = AuthorityProfileStore(store.path)
     same = FakeAlpaca()
@@ -4337,6 +4344,15 @@ def test_migrated_inflight_row_without_a_binding_stays_unknown(st, tmp_path):
         )
     ) == "broker_unknown"
     bind_startup_transport(restarted, restored)
+    st.audit.intent(
+        "order_submit",
+        refs={
+            "order_id": order_ref,
+            "approval_id": scenario.approval.id,
+            "risk_decision_id": scenario.risk_decision.id,
+        },
+        payload={"symbol": "AAPL", "side": "buy"},
+    )
     assert restarted._reconcile_handoff(
         "fence-1", order_ref=order_ref, now=scenario.clock.now(),
         actor="recovery-owner", gateway=stranger, ladder=scenario.ladder,
@@ -4861,3 +4877,382 @@ def test_admission_timeout_closes_only_the_submission_intent_token(st, tmp_path)
     ]
     assert len(submission) == 1
     assert submission[0] not in open_seqs
+
+
+class _TouchQuote:
+    """A trusted quote slot. ``stale`` set means the observation is not fresh."""
+
+    def __init__(self, bid, ask, *, stale=None):
+        self.max_age_s = 120.0
+        self._bid = bid
+        self._ask = ask
+        self._stale = stale
+
+    def quote(self, symbol):
+        return {"symbol": symbol, "bid": self._bid, "ask": self._ask}
+
+    def stale_reason(self, symbol, *, now, limit_s):
+        del symbol, now, limit_s
+        return self._stale
+
+
+def _market_buy(st, broker, gateway, *, notional="1.00"):
+    return build_scenario(
+        st, mode=Mode.paper, broker=broker, gateway=gateway,
+        qty="10", order_type="market", limit_price=None, notional=notional,
+    )
+
+
+def test_market_order_within_the_cap_sends_from_the_fresh_ask(st, tmp_path):
+    """4359331640: qty x fresh ask x buffer sends. The detached notional is not the size."""
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st, pending_exposure_cap=Decimal("40"))
+    scenario = _market_buy(st, broker, gateway)
+    st.market_data = _TouchQuote("1.40", "1.50")
+    store = _store(tmp_path, "market-send.sqlite")
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    # 10 x 1.50 ask x 1.05 buffer. order.notional stays 1.00.
+    reserved = Decimal("15.75")
+    result = handoff_to_gateway(
+        store, gateway, profile_id="profile-b", action="submit_paper",
+        client_order_id="market-send", notional=reserved, actor="stop-owner",
+        now=now, submit_args=(scenario.order,),
+        submit_kwargs=_paper_submit_kwargs(scenario), **_PAPER_BINDINGS,
+    )
+    assert Decimal(str(scenario.order.notional)) == Decimal("1.00")
+    assert getattr(result.outcome, "ok", None) is True
+    assert _sends(broker) == 1
+
+
+def test_understated_market_reservation_refuses(st, tmp_path):
+    """A reservation at the detached notional, or at the raw touch, is not the buffered size."""
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = _market_buy(st, broker, gateway)
+    st.market_data = _TouchQuote("1.40", "1.50")
+    store = _store(tmp_path, "market-under.sqlite")
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    with pytest.raises(ProfileRefused) as caught:
+        handoff_to_gateway(
+            store, gateway, profile_id="profile-b", action="submit_paper",
+            client_order_id="market-under", notional=Decimal("1.00"), actor="stop-owner",
+            now=now, submit_args=(scenario.order,),
+            submit_kwargs=_paper_submit_kwargs(scenario), **_PAPER_BINDINGS,
+        )
+    assert caught.value.code == "notional_mismatch"
+    assert "limit price" not in str(caught.value).lower()
+    assert _sends(broker) == 0
+    assert _handoff_row(store.path, "market-under") is None
+
+
+def test_stale_market_quote_refuses(st, tmp_path):
+    """No fresh touch: a market handoff refuses before a send."""
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = _market_buy(st, broker, gateway)
+    st.market_data = _TouchQuote("1.40", "1.50", stale="market quote for AAPL is stale")
+    store = _store(tmp_path, "market-stale.sqlite")
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    code = _refuse(
+        lambda: handoff_to_gateway(
+            store, gateway, profile_id="profile-b", action="submit_paper",
+            client_order_id="market-stale", notional=Decimal("15.75"), actor="stop-owner",
+            now=now, submit_args=(scenario.order,),
+            submit_kwargs=_paper_submit_kwargs(scenario), **_PAPER_BINDINGS,
+        )
+    )
+    assert code == "stale_quote"
+    assert _sends(broker) == 0
+
+
+def test_market_exposure_over_the_cap_refuses_despite_a_one_dollar_notional(st, tmp_path):
+    """The gateway cap sees qty x buffered ask, not order.notional."""
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st, pending_exposure_cap=Decimal("40"))
+    scenario = _market_buy(st, broker, gateway)
+    st.market_data = _TouchQuote("9.90", "10.00")
+    store = _store(tmp_path, "market-cap.sqlite")
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    result = handoff_to_gateway(
+        store, gateway, profile_id="profile-b", action="submit_paper",
+        client_order_id="market-cap", notional=Decimal("105.00"), actor="stop-owner",
+        now=now, submit_args=(scenario.order,),
+        submit_kwargs=_paper_submit_kwargs(scenario), **_PAPER_BINDINGS,
+    )
+    assert Decimal(str(scenario.order.notional)) == Decimal("1.00")
+    assert getattr(result.outcome, "ok", None) is False
+    assert getattr(result.outcome, "stage", None) == "pending_exposure"
+    assert _sends(broker) == 0
+
+
+def test_default_store_arms_on_the_state_clock(st, tmp_path, monkeypatch):
+    """4359331775: a store built without a clock can arm when that does not rewind time."""
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    monkeypatch.setattr(Clock, "now", lambda self: scenario.clock.now())
+    store = AuthorityProfileStore.__new__(AuthorityProfileStore)
+    _REAL_STORE_INIT(store, tmp_path / "default-arm.sqlite")
+    assert type(store._clock) is Clock
+    assert store._clock is not st.clock
+    assert store._clock_default is True
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    result = handoff_to_gateway(
+        store, gateway, profile_id="profile-b", action="submit_paper",
+        client_order_id="default-arm", notional=Decimal(str(scenario.order.notional)),
+        actor="stop-owner", now=now, submit_args=(scenario.order,),
+        submit_kwargs=_paper_submit_kwargs(scenario), **_PAPER_BINDINGS,
+    )
+    assert getattr(result.outcome, "ok", None) is True
+    assert _sends(broker) == 1
+    assert store._clock is st.clock
+
+
+def test_explicit_distinct_clock_still_refuses_without_stranding(st, tmp_path, monkeypatch):
+    """An explicit clock that is not the state clock is not replaced and does not stay claimed."""
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    monkeypatch.setattr(Clock, "now", lambda self: scenario.clock.now())
+    explicit = FrozenClock(scenario.clock.now())
+    store = AuthorityProfileStore.__new__(AuthorityProfileStore)
+    _REAL_STORE_INIT(store, tmp_path / "explicit-clock.sqlite", clock=explicit)
+    assert store._clock is explicit
+    assert store._clock_default is False
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    call = dict(
+        profile_id="profile-b", action="submit_paper", client_order_id="explicit-clock",
+        notional=Decimal(str(scenario.order.notional)), actor="stop-owner", now=now,
+        submit_args=(scenario.order,), submit_kwargs=_paper_submit_kwargs(scenario),
+        **_PAPER_BINDINGS,
+    )
+    assert _refuse(lambda: handoff_to_gateway(store, gateway, **call)) == "clock"
+    assert _sends(broker) == 0
+    row = _handoff_row(store.path, "explicit-clock")
+    assert row is None or row["handoff_state"] != "in_progress"
+    assert store._clock is explicit
+    assert _refuse(lambda: handoff_to_gateway(store, gateway, **call)) == "clock"
+
+
+def test_recovery_requires_a_signed_submit_intent(st, tmp_path):
+    """4359332076: broker presence alone must not adopt the order."""
+    from brokers.alpaca_paper import FakeAlpaca
+
+    scenario, store, ticket, broker = _claimed_paper_scenario(st, tmp_path)
+    broker._client.key_id = "paper-key-1"
+    broker._client._headers = {
+        "APCA-API-KEY-ID": "paper-key-1",
+        "APCA-API-SECRET-KEY": "paper-secret-1",
+    }
+    order_ref = str(scenario.order.id)
+    _arm(scenario.gateway, store, "fence-1", ticket.generation)
+    scenario.gateway._profile_fence.bind_order(scenario.order)
+    scenario.gateway._profile_fence._local.producing_runtime = "claude"
+    scenario.gateway._profile_fence()
+    cockpit_id = f"cockpit-{order_ref}"[:128]
+    broker._client.submit_order({"client_order_id": cockpit_id})
+    scenario.clock._at = scenario.clock.now() + CLAIM_LEASE + timedelta(seconds=1)
+    restarted = AuthorityProfileStore(store.path)
+    same = FakeAlpaca()
+    same.key_id = "paper-key-1"
+    same._headers = {
+        "APCA-API-KEY-ID": "paper-key-1",
+        "APCA-API-SECRET-KEY": "paper-secret-1",
+    }
+    same._orders_by_client[cockpit_id] = {"broker_order_id": "alp-kept", "status": "accepted"}
+    same_gateway = PaperOrderGateway(AlpacaPaperBroker(client=same), st=st)
+    code = _refuse(
+        lambda: restarted._reconcile_handoff(
+            "fence-1", order_ref=order_ref, now=scenario.clock.now(),
+            actor="recovery-owner", gateway=same_gateway, ladder=scenario.ladder,
+        )
+    )
+    assert code == "intent"
+    assert _order_state(st, order_ref) != "submitted"
+    flags = _reservation_flags(store.path, "fence-1")
+    assert flags["handoff_state"] != "completed"
+    assert int(flags["reconciled"]) == 0
+
+
+def test_damaged_version_four_store_is_not_rebuilt(tmp_path):
+    """4359332370: a version-4 store missing a ledger table fails closed."""
+    import sqlite3
+
+    path = tmp_path / "damaged-v4.sqlite"
+    store = AuthorityProfileStore(path)
+    _install(store)
+    store.authorize(
+        "profile-b", action="propose", client_order_id="v4-damaged",
+        notional=Decimal("10.00"), actor="stop-owner", now=NOW,
+    )
+    raw = sqlite3.connect(path)
+    raw.execute("DROP TABLE reservations")
+    raw.execute("PRAGMA user_version = 4")
+    raw.commit()
+    raw.close()
+    with pytest.raises(ProfileRefused) as caught:
+        AuthorityProfileStore(path)
+    assert caught.value.code == "store"
+    raw = sqlite3.connect(path)
+    version = raw.execute("PRAGMA user_version").fetchone()[0]
+    names = {
+        row[0]
+        for row in raw.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+    raw.close()
+    assert version == 4
+    assert "reservations" not in names
+
+
+def test_owned_transport_is_not_the_caller_object(st, tmp_path):
+    """Mutating the caller's transport after init cannot redirect the secret."""
+    import httpx
+
+    from brokers.alpaca_paper import PAPER_BASE_URL, AlpacaPaperHTTPClient
+
+    seen = []
+
+    def handler(request):
+        seen.append(("owned", str(request.url), request.headers.get("APCA-API-SECRET-KEY")))
+        body = request.read()
+        del body
+        return httpx.Response(
+            201,
+            json={
+                "id": "alp-owned-transport",
+                "status": "accepted",
+                "filled_qty": "0",
+                "filled_avg_price": None,
+                "client_order_id": None,
+            },
+        )
+
+    http = httpx.Client(transport=httpx.MockTransport(handler), timeout=2.0)
+    client = AlpacaPaperHTTPClient("key-1", "secret-1", http_client=http)
+    broker = AlpacaPaperBroker(client=client)
+    gateway = PaperOrderGateway(broker, st=st)
+    owned_transport = gateway._owned_http._transport
+    assert owned_transport is not http._transport
+    assert getattr(owned_transport, "_inner", None) is not http._transport
+
+    def evil(request):
+        seen.append(("evil", str(request.url), request.headers.get("APCA-API-SECRET-KEY")))
+        return httpx.Response(
+            201,
+            json={
+                "id": "alp-evil",
+                "status": "accepted",
+                "filled_qty": "0",
+                "filled_avg_price": None,
+                "client_order_id": None,
+            },
+        )
+
+    http._transport.handler = evil
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    store = _store(tmp_path, "owned-transport.sqlite")
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    store.authorize(
+        "profile-b", action="submit_paper", client_order_id="owned-transport",
+        notional=Decimal(str(scenario.order.notional)), actor="stop-owner", now=now,
+        order_ref=str(scenario.order.id),
+    )
+    ticket = store.claim_handoff("owned-transport", now=now, awaiting_submit=True)
+    _arm(gateway, store, "owned-transport", ticket.generation)
+    try:
+        outcome = gateway.submit(scenario.order, **_paper_submit_kwargs(scenario))
+    finally:
+        http.close()
+    assert outcome.ok is True
+    assert seen
+    assert not any(kind == "evil" for kind, _url, _secret in seen)
+    assert all(
+        kind == "owned" and url.startswith(PAPER_BASE_URL) and secret == "secret-1"
+        for kind, url, secret in seen
+    )
+    assert b"secret-1" not in Path(store.path).read_bytes()
+
+
+def test_submission_token_does_not_depend_on_the_gateway_submit_frame(st):
+    """The timeout closer stamps this submission's intent without reading gateway.py."""
+    from brokers.paper_gateway import _arm_submission_token, _close_submission_intent
+
+    scenario = build_scenario(st, mode=Mode.paper)
+    order = scenario.order
+    callback = st.audit.intent(
+        "order_submit",
+        refs={"order_id": order.id},
+        payload={"symbol": "AAPL", "side": "buy"},
+    )
+    _arm_submission_token(st, "submission-token", order)
+    parent = st.audit.intent(
+        "order_submit",
+        refs={
+            "order_id": order.id,
+            "proposal_id": order.proposal_id,
+            "risk_decision_id": order.risk_decision_id,
+            "approval_id": order.approval_id,
+            "order_tuple_hash": order.order_tuple_hash,
+        },
+        payload={"symbol": order.symbol, "side": order.side, "qty": str(order.qty)},
+    )
+    _close_submission_intent(st, order, set(), "admission lock", "submission-token")
+    open_seqs = set(st.audit.unresolved_intents())
+    assert callback.seq in open_seqs
+    assert parent.seq not in open_seqs
