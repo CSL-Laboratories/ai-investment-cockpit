@@ -112,19 +112,28 @@ A control that reads as satisfied without a run fails the packet.
 
 The matched baseline is cash on the same population and the same clock. Cash
 flows are retained and matched to that baseline. Their values are unmeasured.
-Transaction, latency, data, and model costs are retained and unmeasured. A
-dropped or missing cost is a failed packet. A zero that was actually measured
-would have to be stored as `retained_measured` — and while the experiment is
-`not_run`, a `retained_measured` cost is asserted measurement evidence the
-checker rejects. This packet has no such measurement.
+The cash benchmark definition is declared and unmeasured: `instrument`,
+`rate_source`, `as_of`, `compounding`, `horizon`, and `capital_flow_schedule`
+are required, and each value in this packet is `null`. A later measurement
+must set `as_of` to a `YYYY-MM-DD` date and `compounding` to one of `simple`,
+`daily`, `monthly`, `quarterly`, `annual`, or `continuous`. This packet does
+not choose those values.
+
+Transaction, latency, data, model, venue-fee, spread/slippage,
+funding/collateral, and tax/accounting costs are declared and unmeasured.
+Each is a required component with status `retained_unmeasured` and a null
+amount. A dropped or missing cost is a failed packet. A zero that was actually
+measured would have to be stored as `retained_measured` — and while the
+experiment is `not_run`, a `retained_measured` cost is asserted measurement
+evidence the checker rejects. This packet has no such measurement.
 
 Hypothesis under test, once a later authorized measurement exists: the family
-beats matched cash after those four costs, measured on net yield against the
-matched-cash baseline and capital use together with the statistical registry
-below, with the recorded empty outcome still visible. The null is that it
-does not beat matched cash. A net result that does not beat matched cash
-retains the null and rejects the strategy hypothesis; only a net result that
-beats matched cash rejects the null. This packet does not compute that
+beats matched cash after those retained costs, measured on net yield against
+the matched-cash baseline and capital use together with the statistical
+registry below, with the recorded empty outcome still visible. The null is
+that it does not beat matched cash. A net result that does not beat matched
+cash retains the null and rejects the strategy hypothesis; only a net result
+that beats matched cash rejects the null. This packet does not compute that
 comparison.
 
 Alternatives: equity leg only, event leg only, and the awareness-only fallback

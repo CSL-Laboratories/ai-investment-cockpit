@@ -62,7 +62,16 @@ DECISION_OWNER_ROLES = {
     "live": "owner",
     "thresholds": "owner",
 }
-COST_KEYS = ("transaction", "latency", "data", "model")
+COST_KEYS = (
+    "transaction",
+    "latency",
+    "data",
+    "model",
+    "venue_fees",
+    "spread_slippage",
+    "funding_collateral",
+    "tax_accounting",
+)
 METRIC_IDS = (
     "deflated_sharpe_ratio",
     "probability_of_backtest_overfitting",

@@ -165,6 +165,29 @@ def test_o4_protocol_keeps_research_and_owner_decisions() -> None:
         assert len(variant["configuration_sha256"]) == 64
 
 
+def test_o4_requires_declared_costs_and_cash_benchmark() -> None:
+    packet = json.loads((O4 / "fixtures/candidate-packet.json").read_text(encoding="utf-8"))
+    schema = json.loads((O4 / "schemas/experiment.schema.json").read_text(encoding="utf-8"))
+    validator = jsonschema.Draft202012Validator(schema)
+    experiment = packet["experiment"]
+    assert validator.is_valid(experiment)
+    unmeasured = {"amount": None, "status": "retained_unmeasured", "unit": "owner_unset"}
+    for key in ("venue_fees", "spread_slippage", "funding_collateral", "tax_accounting"):
+        assert experiment["costs"][key] == unmeasured
+    baseline = experiment["matched_baseline"]
+    for key in ("instrument", "rate_source", "as_of", "compounding", "horizon", "capital_flow_schedule"):
+        assert baseline[key] is None
+    assert baseline["value"] is None
+
+    missing_fee = deepcopy(experiment)
+    del missing_fee["costs"]["venue_fees"]
+    assert not validator.is_valid(missing_fee)
+
+    missing_rate = deepcopy(experiment)
+    del missing_rate["matched_baseline"]["rate_source"]
+    assert not validator.is_valid(missing_rate)
+
+
 def test_o4_leaves_accepted_csl212_digests_unchanged() -> None:
     program = json.loads((ROOT / "docs" / "replacement" / "program.json").read_text(encoding="utf-8"))
     recorded = {item["path"]: item["sha256"] for item in program["contracts"]}

@@ -108,6 +108,11 @@
         "status": "retained_unmeasured",
         "unit": "owner_unset"
       },
+      "funding_collateral": {
+        "amount": null,
+        "status": "retained_unmeasured",
+        "unit": "owner_unset"
+      },
       "latency": {
         "amount": null,
         "status": "retained_unmeasured",
@@ -118,7 +123,22 @@
         "status": "retained_unmeasured",
         "unit": "owner_unset"
       },
+      "spread_slippage": {
+        "amount": null,
+        "status": "retained_unmeasured",
+        "unit": "owner_unset"
+      },
+      "tax_accounting": {
+        "amount": null,
+        "status": "retained_unmeasured",
+        "unit": "owner_unset"
+      },
       "transaction": {
+        "amount": null,
+        "status": "retained_unmeasured",
+        "unit": "owner_unset"
+      },
+      "venue_fees": {
         "amount": null,
         "status": "retained_unmeasured",
         "unit": "owner_unset"
@@ -154,7 +174,13 @@
       "kalshi_demo_event"
     ],
     "matched_baseline": {
+      "as_of": null,
+      "capital_flow_schedule": null,
+      "compounding": null,
+      "horizon": null,
+      "instrument": null,
       "kind": "cash",
+      "rate_source": null,
       "same_clock": true,
       "same_population": true,
       "value": null
