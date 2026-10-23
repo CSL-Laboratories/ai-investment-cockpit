@@ -113,6 +113,11 @@ def _normalize_order_body(body: Any) -> dict:
     }
 
 
+# Paper HTTP and the profile-store busy wait share this budget. A stop blocked
+# on the dispatch write lock must not sit on a longer timeout than the send.
+PAPER_HTTP_TIMEOUT_S = 10.0
+
+
 class AlpacaPaperHTTPClient:
     """Minimal synchronous client for Alpaca's fixed PAPER trading endpoint.
 
@@ -123,7 +128,7 @@ class AlpacaPaperHTTPClient:
     """
 
     def __init__(self, key_id: str, secret_key: str, *, http_client=None,
-                 timeout_seconds: float = 10.0, clock=None) -> None:
+                 timeout_seconds: float = PAPER_HTTP_TIMEOUT_S, clock=None) -> None:
         if not str(key_id).strip() or not str(secret_key).strip():
             raise AlpacaPaperError("both Alpaca paper credentials are required")
         self._headers = {

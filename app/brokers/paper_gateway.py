@@ -259,11 +259,23 @@ def _risk_snapshot(order, positions):
     )
 
 
+def _bound_fence(gateway):
+    """The fence stored at construction. Instance assignment does not replace it."""
+    from brokers.authority_profiles import ProfileRefused
+
+    try:
+        return object.__getattribute__(gateway, "_profile_fence_pin")
+    except AttributeError as exc:
+        raise ProfileRefused(
+            "claim_required", "paper submit requires a validated profile claim"
+        ) from exc
+
+
 def _refuse_changed_risk_inputs(gateway) -> None:
     """Refuse when the callback edited the order or the positions it was shown."""
     from brokers.authority_profiles import ProfileRefused
 
-    fence = object.__getattribute__(gateway, "_profile_fence")
+    fence = _bound_fence(gateway)
     snapshot = getattr(fence._local, "risk_snapshot", None)
     if snapshot is None:
         return
@@ -281,7 +293,7 @@ def _refuse_risk_ceiling(gateway) -> None:
     from brokers.authority_profiles import ProfileRefused
     from schemas.models.risk_decision import RiskDecision
 
-    fence = object.__getattribute__(gateway, "_profile_fence")
+    fence = _bound_fence(gateway)
     safety = getattr(fence._local, "safety", None)
     order = getattr(fence._local, "order", None)
     if not isinstance(safety, dict) or order is None:
@@ -308,7 +320,7 @@ def _safety_failure(gateway, *, risk_recheck=None):
     from brokers.authority_profiles import ProfileRefused
     from brokers.order_tuple import order_tuple_hash
 
-    fence = object.__getattribute__(gateway, "_profile_fence")
+    fence = _bound_fence(gateway)
     safety = getattr(fence._local, "safety", None)
     order = getattr(fence._local, "order", None)
     if safety is None or order is None:
@@ -336,13 +348,18 @@ def _safety_failure(gateway, *, risk_recheck=None):
     )
 
 
-def _guarded_submit(gateway, captured):
-    """The send both the fallback and #252's captured adapter actually call."""
+def _guarded_submit(gateway, captured, bound_fence):
+    """The send both the fallback and #252's captured adapter actually call.
+
+    ``bound_fence`` is the object built in ``PaperOrderGateway.__init__``.
+    A later assignment, including ``object.__setattr__`` of the pin, is not
+    the fence this send checks.
+    """
 
     def submit_order(canonical):
         from brokers.authority_profiles import ProfileRefused
 
-        fence = object.__getattribute__(gateway, "_profile_fence")
+        fence = bound_fence
         binding = getattr(fence._local, "binding", None)
         if binding is None:
             raise ProfileRefused(
@@ -533,6 +550,31 @@ def _owned_transport(http):
         return None
 
 
+def _bounded_http_timeout(timeout, budget: float):
+    """No owned paper call waits longer than the profile-store busy timeout."""
+    import httpx
+
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float, httpx.Timeout)):
+        return httpx.Timeout(budget)
+    if isinstance(timeout, (int, float)):
+        seconds = float(timeout)
+        if not seconds > 0 or seconds > budget:
+            return httpx.Timeout(budget)
+        return httpx.Timeout(seconds)
+
+    def phase(value):
+        if value is None or value > budget:
+            return budget
+        return value
+
+    return httpx.Timeout(
+        connect=phase(timeout.connect),
+        read=phase(timeout.read),
+        write=phase(timeout.write),
+        pool=phase(timeout.pool),
+    )
+
+
 def _owned_http_session(http):
     """A private HTTP session for this gateway.
 
@@ -547,7 +589,9 @@ def _owned_http_session(http):
 
     if not isinstance(http, httpx.Client):
         return None, None
-    pinned_timeout = http.timeout
+    from brokers.alpaca_paper import PAPER_HTTP_TIMEOUT_S
+
+    pinned_timeout = _bounded_http_timeout(http.timeout, PAPER_HTTP_TIMEOUT_S)
     owned_transport = _owned_transport(http)
     if owned_transport is None:
         return None, None
@@ -900,7 +944,9 @@ def _sized_exposure(st, order, chain_notional, *, current=False, gateway=None):
 
     The signed chain notional is a floor. A detached ``order.notional`` of $1
     must not shrink a sibling whose limit says $30. The order being submitted
-    has not frozen a market size yet, so its own size is the fresh touch.
+    has not frozen a market size yet, so its own size is the fresh touch. A
+    market sibling with no signed exposure uses that chain notional, and fails
+    closed only when the chain notional is missing too.
     """
     from decimal import Decimal
 
@@ -919,7 +965,14 @@ def _sized_exposure(st, order, chain_notional, *, current=False, gateway=None):
     elif current:
         sizes.append(_tuple_exposure_notional(order, gateway))
     else:
-        sizes.append(_frozen_market_exposure(st, order))
+        frozen = _frozen_market_exposure(st, order)
+        # A profile handoff signs the exposure. The production gateway does
+        # not. Use the verified chain notional when that signature is absent,
+        # and fail closed only when neither size exists.
+        if isinstance(frozen, Decimal) and frozen.is_finite() and frozen > 0:
+            sizes.append(frozen)
+        elif not sizes:
+            return Decimal("Infinity")
     if not sizes:
         return Decimal("Infinity")
     return max(sizes)
@@ -1074,6 +1127,8 @@ class PaperOrderGateway(PaperExecutionGateway):
         # Instance assignment of ``_precheck`` must not skip risk, mode, or approval.
         if name == "_precheck":
             return OrderGateway._precheck.__get__(self, PaperOrderGateway)
+        if name == "_profile_fence":
+            return _bound_fence(self)
         # Transport is the object bound at init. Assignment does not redirect it.
         if name == "_broker":
             try:
@@ -1083,6 +1138,11 @@ class PaperOrderGateway(PaperExecutionGateway):
             if transport is not None:
                 return transport
         return super().__getattribute__(name)
+
+    def __setattr__(self, name, value) -> None:
+        if name in {"_profile_fence", "_profile_fence_pin"}:
+            raise AttributeError("paper profile fence is bound at construction")
+        super().__setattr__(name, value)
 
     def __init__(self, broker, **kwargs):
         if not isinstance(broker, AlpacaPaperBroker):
@@ -1094,14 +1154,16 @@ class PaperOrderGateway(PaperExecutionGateway):
         kwargs["execution_scope"] = "paper"
         kwargs["require_analysis_generation"] = True
         kwargs.pop("claim_fence", None)
-        self._profile_fence = BoundClaimFence(self)
+        fence = BoundClaimFence(self)
+        object.__setattr__(self, "_profile_fence_pin", fence)
         if _parent_init_accepts_claim_fence():
-            kwargs["claim_fence"] = self._profile_fence
+            kwargs["claim_fence"] = fence
         super().__init__(broker, **kwargs)
         # The parent already owns the pool. This wrapper is the guarded send.
+        # The fence object is the one built above, not a later attribute write.
         client = _AdmittedPaperClient(
             self._admitted_client,
-            _guarded_submit(self, self._captured_submit),
+            _guarded_submit(self, self._captured_submit, fence),
             order_info=self._frozen_order_info,
         )
         self._transport = _BoundPaperTransport(broker, self._admitted_paper_submit, client)

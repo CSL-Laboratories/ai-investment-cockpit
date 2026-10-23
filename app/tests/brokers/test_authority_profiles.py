@@ -6939,3 +6939,328 @@ def test_missing_clock_mark_is_not_recreated(tmp_path):
     }
     raw.close()
     assert "clock_mark" not in names
+
+
+def test_open_store_reloads_the_persisted_clock_mark(tmp_path):
+    """4362164700: a store already open must honor another connection's clock mark."""
+    early_clock = FrozenClock(NOW)
+    later_clock = FrozenClock(NOW)
+    path = tmp_path / "reload-clock.sqlite"
+    early = AuthorityProfileStore(path, clock=early_clock)
+    later = AuthorityProfileStore(path, clock=later_clock)
+    _install(
+        early,
+        _document(expires_at=(NOW + timedelta(hours=3)).isoformat()),
+        now=NOW,
+    )
+    later_clock._at = NOW + timedelta(hours=1)
+    later.authorize(
+        "profile-b", action="propose", client_order_id="later-forward",
+        notional=Decimal("10.00"), actor="stop-owner", now=later_clock.now(),
+    )
+    with pytest.raises(ProfileRefused) as caught:
+        early.authorize(
+            "profile-b", action="propose", client_order_id="early-behind",
+            notional=Decimal("10.00"), actor="stop-owner", now=early_clock.now(),
+        )
+    assert caught.value.code == "stale_claim"
+    assert _reservation_flags(path, "early-behind") is None
+    early.kill(
+        "profile-b", actor="stop-owner", now=early_clock.now(),
+        reason="stop behind another connection's mark",
+    )
+
+
+def test_swapped_profile_fence_cannot_send(st, tmp_path):
+    """4362164709: replacing the construction-time fence must not reach the broker."""
+    scenario, _store, _ticket, broker = _claimed_paper_scenario(st, tmp_path)
+    gateway = scenario.gateway
+    real = gateway._profile_fence
+
+    class _FakeStore:
+        def _recheck_transport_authority(self, *_args, **_kwargs):
+            return 1
+
+        def _arm_inflight(self, *_args, **_kwargs):
+            return None
+
+        def _clear_inflight(self, *_args, **_kwargs):
+            return None
+
+        def _require_authority_generation(self, _seen):
+            return None
+
+        def _dispatch_under_stop_lock(self, *_args, **kwargs):
+            return kwargs["send"]()
+
+    class _Forged:
+        def __init__(self):
+            self._local = threading.local()
+
+        def bind_order(self, order):
+            self._local.order = order
+            self._local.order_ref = str(order.id)
+
+        def __call__(self):
+            self._local.binding = (
+                _FakeStore(), "forged-client", 1, str(scenario.order.id),
+            )
+            return object()
+
+    forged = _Forged()
+    try:
+        gateway._profile_fence = forged
+    except AttributeError:
+        pass
+    outcome = gateway.submit(scenario.order, **_paper_submit_kwargs(scenario))
+    assert _sends(broker) == 0
+    assert outcome.ok is not True
+    assert gateway._profile_fence is real
+    object.__setattr__(gateway, "_profile_fence_pin", forged)
+    gateway.mint_submit_token(
+        nonce="n-pin", proposal_id=scenario.order.proposal_id,
+        risk_decision_id=scenario.risk_decision.id, order_tuple_hash=scenario.tuple_hash,
+    )
+    pinned = gateway.submit(
+        scenario.order, **_paper_submit_kwargs(scenario, token_nonce="n-pin"),
+    )
+    assert pinned.ok is not True
+    assert _sends(broker) == 0
+    assert getattr(real._local, "binding", None) is None
+
+
+def test_recovery_during_safety_cannot_send_the_original(st, tmp_path, monkeypatch):
+    """4361840471: a retry minted during safety must not let the original send too."""
+    from brokers.paper_gateway import _safety_failure
+
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st)
+    other_gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    store = _store(tmp_path, "safety-race.sqlite", clock=scenario.clock)
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    ahead = FrozenClock(now + CLAIM_LEASE + timedelta(seconds=2))
+    box = {"calls": 0, "verdict": None}
+
+    def during_safety(gateway_arg, *, risk_recheck=None):
+        box["calls"] += 1
+        if box["calls"] == 2 and box["verdict"] is None:
+            # Open here. An ahead clock opened earlier would flush its mark
+            # and refuse the original authorize before this window.
+            try:
+                other = AuthorityProfileStore(store.path, clock=ahead)
+                box["verdict"] = other._reconcile_handoff(
+                    "safety-race", order_ref=str(scenario.order.id),
+                    now=ahead.now(), actor="recovery-owner", gateway=other_gateway,
+                    ladder=scenario.ladder,
+                )
+            except ProfileRefused as exc:
+                box["verdict"] = exc.code
+        return _safety_failure(gateway_arg, risk_recheck=risk_recheck)
+
+    monkeypatch.setattr("brokers.paper_gateway._safety_failure", during_safety)
+    try:
+        handoff_to_gateway(
+            store, gateway, profile_id="profile-b", action="submit_paper",
+            client_order_id="safety-race",
+            notional=Decimal(str(scenario.order.notional)), actor="stop-owner",
+            now=now, submit_args=(scenario.order,),
+            submit_kwargs=_paper_submit_kwargs(scenario), **_PAPER_BINDINGS,
+        )
+    except ProfileRefused:
+        pass
+    assert isinstance(box["verdict"], ClaimTicket)
+    assert _sends(broker) == 0
+
+
+def test_unsigned_terminal_column_does_not_hide_a_chain_open_sibling(st, tmp_path):
+    """4361841002: a terminal column with an open chain must not drop the sibling."""
+    from schemas.models.order import Order
+
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st, pending_exposure_cap=Decimal("40"))
+    first = build_scenario(
+        st, mode=Mode.paper, broker=broker, gateway=gateway,
+        qty="3", limit_price="10", notional="1.00",
+    )
+    store = _store(tmp_path, "terminal-sibling.sqlite")
+    now = first.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    opened = handoff_to_gateway(
+        store, gateway, profile_id="profile-b", action="submit_paper",
+        client_order_id="term-1", notional=Decimal("30.00"), actor="stop-owner",
+        now=now, submit_args=(first.order,),
+        submit_kwargs=_paper_submit_kwargs(first), **_PAPER_BINDINGS,
+    )
+    assert getattr(opened.outcome, "ok", None) is True
+    with st.session_factory() as session:
+        row = session.get(Order, first.order.id)
+        row.state = "cancelled"
+        session.commit()
+    second = _limit_sibling(st, broker, gateway, nonce="n-term-2")
+    from brokers.paper_gateway import _paper_pending_ok
+
+    ok, _total, _cap = _paper_pending_ok(gateway, st, second.order)
+    assert ok is False
+    gateway.mint_submit_token(
+        nonce="n-term-2", proposal_id=second.order.proposal_id,
+        risk_decision_id=second.risk_decision.id, order_tuple_hash=second.tuple_hash,
+    )
+    blocked = handoff_to_gateway(
+        store, gateway, profile_id="profile-b", action="submit_paper",
+        client_order_id="term-2", notional=Decimal("30.00"), actor="stop-owner",
+        now=now, submit_args=(second.order,),
+        submit_kwargs=_paper_submit_kwargs(second, token_nonce="n-term-2"),
+        **_PAPER_BINDINGS,
+    )
+    assert getattr(blocked.outcome, "ok", None) is not True
+    assert _sends(broker) == 1
+
+
+def test_execution_gateway_market_sibling_uses_chain_notional_when_unfrozen(st):
+    """4361840718: a market sibling without a frozen exposure is not an infinite block."""
+    from brokers.capability import TokenRegistry
+    from brokers.paper_gateway import PaperExecutionGateway
+
+    broker = _CountingPaper()
+    gateway = PaperExecutionGateway(
+        broker, st=st, token_registry=TokenRegistry(),
+        pending_exposure_cap=Decimal("40"), execution_scope="paper",
+        require_analysis_generation=True,
+    )
+    st.market_data = _TouchQuote("1.40", "1.50")
+    first = _market_buy(st, broker, gateway)
+    assert gateway.submit(first.order, **_paper_submit_kwargs(first)).ok is True
+    second = build_scenario(
+        st, mode=Mode.paper, broker=broker, gateway=gateway, mint=False,
+        qty="1", limit_price="1", notional="1.00",
+    )
+    gateway.mint_submit_token(
+        nonce="n-mkt-sib", proposal_id=second.order.proposal_id,
+        risk_decision_id=second.risk_decision.id, order_tuple_hash=second.tuple_hash,
+    )
+    followed = gateway.submit(
+        second.order, **_paper_submit_kwargs(second, token_nonce="n-mkt-sib"),
+    )
+    assert followed.ok is True
+    assert followed.stage != "pending_exposure"
+    assert _sends(broker) == 2
+
+
+def test_profile_market_sibling_keeps_its_frozen_exposure(st, tmp_path):
+    """A signed market exposure stays a floor. The $1 chain notional must not replace it."""
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st, pending_exposure_cap=Decimal("40"))
+    st.market_data = _TouchQuote("1.40", "1.50")
+    first = _market_buy(st, broker, gateway)
+    store = _store(tmp_path, "frozen-sibling.sqlite")
+    now = first.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    opened = handoff_to_gateway(
+        store, gateway, profile_id="profile-b", action="submit_paper",
+        client_order_id="frozen-sib", notional=Decimal("15.75"), actor="stop-owner",
+        now=now, submit_args=(first.order,),
+        submit_kwargs=_paper_submit_kwargs(first), **_PAPER_BINDINGS,
+    )
+    assert getattr(opened.outcome, "ok", None) is True
+    second = _limit_sibling(st, broker, gateway, nonce="n-frozen-sib")
+    gateway.mint_submit_token(
+        nonce="n-frozen-sib", proposal_id=second.order.proposal_id,
+        risk_decision_id=second.risk_decision.id, order_tuple_hash=second.tuple_hash,
+    )
+    blocked = handoff_to_gateway(
+        store, gateway, profile_id="profile-b", action="submit_paper",
+        client_order_id="frozen-sib-2", notional=Decimal("30.00"), actor="stop-owner",
+        now=now, submit_args=(second.order,),
+        submit_kwargs=_paper_submit_kwargs(second, token_nonce="n-frozen-sib"),
+        **_PAPER_BINDINGS,
+    )
+    assert getattr(blocked.outcome, "stage", None) == "pending_exposure"
+    assert _sends(broker) == 1
+
+
+def test_open_store_refuses_a_dropped_clock_ledger(tmp_path):
+    """4362176633: dropping clock_mark on a live store refuses the next reservation."""
+    import sqlite3
+
+    path = tmp_path / "dropped-clock.sqlite"
+    clock = FrozenClock(NOW)
+    store = AuthorityProfileStore(path, clock=clock)
+    _install(
+        store, _document(expires_at=(NOW + timedelta(hours=1)).isoformat()), now=NOW,
+    )
+    store.authorize(
+        "profile-b", action="propose", client_order_id="kept",
+        notional=Decimal("10.00"), actor="stop-owner", now=NOW,
+    )
+    raw = sqlite3.connect(path)
+    raw.execute("DROP TABLE clock_mark")
+    raw.commit()
+    raw.close()
+    with pytest.raises(ProfileRefused) as caught:
+        store.authorize(
+            "profile-b", action="propose", client_order_id="after-drop",
+            notional=Decimal("10.00"), actor="stop-owner", now=NOW,
+        )
+    assert caught.value.code == "store"
+    assert _reservation_flags(path, "after-drop") is None
+    raw = sqlite3.connect(path)
+    names = {
+        row[0]
+        for row in raw.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+    raw.close()
+    assert "clock_mark" not in names
+
+
+def test_store_lock_wait_matches_the_paper_http_timeout(tmp_path):
+    """A stop blocked on the dispatch write lock waits the paper HTTP budget, not 30s."""
+    import inspect
+
+    import httpx
+
+    from brokers.alpaca_paper import PAPER_HTTP_TIMEOUT_S, AlpacaPaperHTTPClient
+    from brokers.paper_gateway import _owned_http_session
+
+    http_default = inspect.signature(
+        AlpacaPaperHTTPClient.__init__
+    ).parameters["timeout_seconds"].default
+    assert float(http_default) == float(PAPER_HTTP_TIMEOUT_S)
+    store = _store(tmp_path, "lock-budget.sqlite")
+    busy = store._conn.execute("PRAGMA busy_timeout").fetchone()[0]
+    assert int(busy) == int(float(PAPER_HTTP_TIMEOUT_S) * 1000)
+    http = httpx.Client(timeout=60.0, trust_env=False)
+    try:
+        _session, owned = _owned_http_session(http)
+    finally:
+        http.close()
+    assert owned is not None
+    try:
+        assert owned.timeout.read <= float(PAPER_HTTP_TIMEOUT_S)
+        assert owned.timeout.connect <= float(PAPER_HTTP_TIMEOUT_S)
+        assert owned.timeout.write <= float(PAPER_HTTP_TIMEOUT_S)
+        assert owned.timeout.pool <= float(PAPER_HTTP_TIMEOUT_S)
+    finally:
+        owned.close()

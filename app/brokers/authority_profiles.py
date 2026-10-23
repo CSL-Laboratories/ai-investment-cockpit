@@ -482,6 +482,10 @@ class AuthorityProfileStore:
         self._clock = clock if clock is not None else Clock()
         self._clock_high_water: datetime | None = None
         self._clock_mark_dirty = False
+        # The open transaction may sample a clock behind the persisted mark.
+        # That open must succeed so a stop can still be issued; the next claim
+        # refuses the rewind.
+        self._schema_ready = False
         self._inflight: dict[str, str] = {}
         self._authority_generation = 0
         self._authoritative_now: datetime | None = None
@@ -490,14 +494,20 @@ class AuthorityProfileStore:
         # prove that cockpit order absent.
         self._admitted_clients: dict[str, object] = {}
         try:
+            # The same budget as the paper HTTP client. A stop waiting on the
+            # dispatch write transaction is not queued for longer than that send.
+            from brokers.alpaca_paper import PAPER_HTTP_TIMEOUT_S
+
             self._conn = sqlite3.connect(
-                str(file_path), check_same_thread=False, isolation_level=None, timeout=30
+                str(file_path), check_same_thread=False, isolation_level=None,
+                timeout=PAPER_HTTP_TIMEOUT_S,
             )
         except sqlite3.Error as exc:
             raise ProfileRefused("store", "profile store is unreadable") from exc
         self._conn.row_factory = sqlite3.Row
         self._ensure_schema()
         self._load_clock_mark()
+        self._schema_ready = True
 
     def install(
         self, document: Mapping, *, actor: str, now: datetime, capability: object = None
@@ -1886,9 +1896,14 @@ class AuthorityProfileStore:
         except Exception as exc:
             raise ProfileRefused("clock", "store clock is unavailable or invalid") from exc
         _require_now(stamp)
+        # Another open store may have flushed a later mark. Adopt it before
+        # comparing. Never move the in-memory mark backward.
+        self._adopt_persisted_clock_mark()
         high = self._clock_high_water
         if high is not None and stamp < high:
-            if allow_rewind:
+            # Opening adopts the mark and does not fail the constructor. A
+            # claim on this store still refuses. A stop clamps to the mark.
+            if allow_rewind or not self._schema_ready:
                 return high
             raise ProfileRefused(
                 "stale_claim",
@@ -1899,8 +1914,35 @@ class AuthorityProfileStore:
             self._clock_mark_dirty = True
         return stamp
 
-    def _load_clock_mark(self) -> None:
-        """The high-water mark survives a new store object on the same file."""
+    def _clock_mark_present(self) -> bool:
+        try:
+            row = self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'clock_mark'"
+            ).fetchone()
+        except sqlite3.Error as exc:
+            raise ProfileRefused("store", "profile store is unreadable") from exc
+        return row is not None
+
+    def _require_current_clock_ledger(self) -> None:
+        """A current store with no clock table is damaged. Do not recreate it."""
+        try:
+            version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
+        except sqlite3.Error as exc:
+            raise ProfileRefused("store", "profile store is unreadable") from exc
+        if version == STORE_USER_VERSION and not self._clock_mark_present():
+            raise ProfileRefused(
+                "store", "current profile store is missing a ledger table"
+            )
+
+    def _adopt_persisted_clock_mark(self) -> None:
+        """Advance this process's mark to a stamp another connection flushed.
+
+        The in-memory mark only moves forward. A missing table on a store that
+        is not yet at the current version is the first migration, not damage.
+        """
+        self._require_current_clock_ledger()
+        if not self._clock_mark_present():
+            return
         try:
             row = self._conn.execute(
                 "SELECT stamp FROM clock_mark WHERE id = 1"
@@ -1913,23 +1955,21 @@ class AuthorityProfileStore:
         if self._clock_high_water is None or stamp > self._clock_high_water:
             self._clock_high_water = stamp
 
+    def _load_clock_mark(self) -> None:
+        """The high-water mark survives a new store object on the same file."""
+        self._adopt_persisted_clock_mark()
+
     def _flush_clock_mark(self) -> None:
         """Persist the mark after the reservation transaction ends.
 
         An expired authorize rolls that transaction back. The mark is written
         on the autocommit connection afterwards so a restart still refuses a
-        rewind.
+        rewind. A missing ledger is corruption and is not recreated empty.
         """
         if not self._clock_mark_dirty or self._clock_high_water is None:
             return
-        try:
-            exists = self._conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'clock_mark'"
-            ).fetchone()
-        except sqlite3.Error as exc:
-            raise ProfileRefused("store", "profile store is unreadable") from exc
-        if exists is None:
-            # A missing ledger is corruption. Do not recreate it empty.
+        self._require_current_clock_ledger()
+        if not self._clock_mark_present():
             return
         stamp = self._clock_high_water.astimezone(timezone.utc).isoformat()
         self._conn.execute(
@@ -1968,6 +2008,9 @@ class AuthorityProfileStore:
         ``kill``, ``hold``, and ``revoke`` take this same lock and a SQLite
         write transaction. Both stay held until ``send`` returns, so another
         connection cannot commit a stop or a new claim generation in between.
+        The connection busy wait is the paper HTTP budget, and the owned
+        session clamps its timeout to that same budget, so a stop is not
+        queued past the send.
         """
         with self._lock:
             began = False
@@ -2010,7 +2053,14 @@ class AuthorityProfileStore:
                 raise
             else:
                 try:
+                    # Refuse before commit so a reservation cannot land on a
+                    # store whose clock ledger was dropped.
+                    self._require_current_clock_ledger()
                     self._conn.commit()
+                except ProfileRefused:
+                    if self._conn.in_transaction:
+                        self._conn.rollback()
+                    raise
                 except sqlite3.Error as exc:
                     self._conn.rollback()
                     self._flush_clock_mark()
