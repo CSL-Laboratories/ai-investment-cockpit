@@ -27,6 +27,7 @@ from sqlalchemy import select
 
 from config.settings import Mode
 from core.ids import new_id
+from core.numeric import decimal_or_nan
 from schemas.models.audit_entry import AuditEntry
 from schemas.models.breaker_state import BreakerState
 from storage.audit import AuditIntegrityError
@@ -51,13 +52,6 @@ BRK_INJECTION = "injection_anomaly"
 
 class StaleAnalysisError(Exception):
     """SEC-23 — analysis minted before a usage-window generation bump is refused."""
-
-
-def _dec(x) -> Decimal:
-    try:
-        return x if isinstance(x, Decimal) else Decimal(str(x))
-    except (InvalidOperation, ValueError, TypeError):
-        return Decimal("NaN")
 
 
 @dataclass(frozen=True)
@@ -111,7 +105,7 @@ def _breach_unreadable(value) -> bool:
 def breach_daily_equity_drawdown(drawdown, limit) -> bool:
     if _breach_unreadable(drawdown) or _breach_unreadable(limit):
         return True
-    return _dec(drawdown) > _dec(limit)
+    return decimal_or_nan(drawdown) > decimal_or_nan(limit)
 
 
 def breach_consecutive_losses(n: int, limit: int) -> bool:
