@@ -8,6 +8,8 @@ import keyring
 import pytest
 from keyring.backend import KeyringBackend
 
+from tests.o7_contract_report import O7_NEGATIVE_LINES
+
 
 class InMemoryKeyring(KeyringBackend):
     priority = 1  # type: ignore[assignment]
@@ -61,3 +63,17 @@ def _isolate_audit_head(tmp_path, monkeypatch):
     test its own witness mirror; tests that need a specific path may still override this env value.
     """
     monkeypatch.setenv("COCKPIT_AUDIT_HEAD_FILE", str(tmp_path / "audit-head.json"))
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
+    """Show O7 negative-control failures under ``pytest -q``.
+
+    Passing tests hide captured stdout. The candidate command is green only
+    when those controls fail as designed, so the CI log has to print the lines.
+    """
+    lines = config.stash.get(O7_NEGATIVE_LINES, [])
+    if not lines:
+        return
+    terminalreporter.write_sep("-", "O7 negative controls (fail as designed)")
+    for line in lines:
+        terminalreporter.write_line(line)

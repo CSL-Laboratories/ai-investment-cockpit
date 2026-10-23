@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "O7 operator event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "api_version",
+    "candidate_maturity",
+    "event_type",
+    "command",
+    "request_id",
+    "visibility",
+    "status_code"
+  ],
+  "properties": {
+    "api_version": {"const": "o7.operator.v0"},
+    "candidate_maturity": {"const": "researched"},
+    "event_type": {
+      "enum": [
+        "evidence_viewed",
+        "refusal_visible",
+        "uncertainty_visible",
+        "stale_visible",
+        "unreconciled_visible",
+        "intervention_recorded",
+        "export_recorded"
+      ]
+    },
+    "command": {
+      "type": "string",
+      "enum": [
+        "operator.audit.export",
+        "operator.budgets.inspect",
+        "operator.decisions.inspect",
+        "operator.evidence.inspect",
+        "operator.export.bundle",
+        "operator.health.inspect",
+        "operator.interventions.request_reconciliation",
+        "operator.interventions.request_revocation",
+        "operator.interventions.request_stop",
+        "operator.positions.inspect",
+        "operator.profiles.inspect",
+        "operator.recovery.inspect",
+        "operator.strategies.inspect",
+        "operator.uncertainty.inspect"
+      ]
+    },
+    "request_id": {"type": "string", "pattern": "^req_[a-z0-9_.:-]{1,80}$"},
+    "visibility": {"enum": ["visible", "absent_not_hidden", "unreconciled_visible"]},
+    "status_code": {"enum": ["ok", "usage", "refused", "stale_or_unreconciled", "unavailable"]}
+  },
+  "allOf": [
+    {"if": {"properties": {"event_type": {"const": "evidence_viewed"}}, "required": ["event_type"]}, "then": {"properties": {"command": {"const": "operator.evidence.inspect"}, "visibility": {"const": "visible"}, "status_code": {"enum": ["ok", "stale_or_unreconciled", "unavailable"]}}}},
+    {"if": {"properties": {"event_type": {"const": "refusal_visible"}}, "required": ["event_type"]}, "then": {"properties": {"visibility": {"const": "visible"}, "status_code": {"enum": ["refused", "stale_or_unreconciled", "unavailable"]}}}},
+    {"if": {"properties": {"event_type": {"const": "uncertainty_visible"}}, "required": ["event_type"]}, "then": {"properties": {"visibility": {"const": "visible"}, "status_code": {"enum": ["ok", "refused", "stale_or_unreconciled", "unavailable"]}}}},
+    {"if": {"properties": {"event_type": {"const": "stale_visible"}}, "required": ["event_type"]}, "then": {"properties": {"visibility": {"const": "visible"}, "status_code": {"enum": ["stale_or_unreconciled", "unavailable"]}}}},
+    {"if": {"properties": {"event_type": {"const": "unreconciled_visible"}}, "required": ["event_type"]}, "then": {"properties": {"visibility": {"const": "unreconciled_visible"}, "status_code": {"enum": ["stale_or_unreconciled", "unavailable"]}}}},
+    {"if": {"properties": {"event_type": {"const": "intervention_recorded"}}, "required": ["event_type"]}, "then": {"properties": {"command": {"enum": ["operator.interventions.request_reconciliation", "operator.interventions.request_revocation", "operator.interventions.request_stop"]}, "visibility": {"const": "visible"}, "status_code": {"enum": ["ok", "stale_or_unreconciled", "unavailable"]}}}},
+    {"if": {"properties": {"event_type": {"const": "export_recorded"}}, "required": ["event_type"]}, "then": {"properties": {"command": {"enum": ["operator.audit.export", "operator.export.bundle"]}, "visibility": {"const": "visible"}, "status_code": {"enum": ["ok", "stale_or_unreconciled", "unavailable"]}}}}
+  ]
+}

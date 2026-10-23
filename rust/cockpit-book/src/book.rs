@@ -649,6 +649,25 @@ impl Book {
         out
     }
 
+    /// One resting order in the same insertion order as [`Book::orders`].
+    ///
+    /// Callers that need a single id (a synthetic cancel picks one at random)
+    /// must not clone the whole index across the interpreter to get it.
+    pub fn order_at(&self, index: usize) -> Option<Order> {
+        let mut seen = 0usize;
+        for entry in self.index.iter() {
+            // `get` clones the order. Skipped ids only need the level check.
+            if !self.on_level(entry) {
+                continue;
+            }
+            if seen == index {
+                return self.get(entry);
+            }
+            seen += 1;
+        }
+        None
+    }
+
     pub fn check_integrity(&self) -> Result<(), BookError> {
         let mut seen: Vec<String> = Vec::new();
         for side in [Side::Buy, Side::Sell] {
@@ -756,6 +775,42 @@ mod tests {
         book.add("ours", Side::Buy, 100, 200, 0, 0, Some("mm".into()))
             .unwrap();
         book.add("behind", Side::Buy, 100, 300, 0, 0, None).unwrap();
+    }
+
+    #[test]
+    fn order_at_follows_insertion_order_and_skips_cancels() {
+        let mut book = fresh();
+        queue(&mut book);
+        assert_eq!(book.order_at(0).unwrap().order_id, "ahead");
+        assert_eq!(book.order_at(1).unwrap().order_id, "ours");
+        assert_eq!(book.order_at(2).unwrap().order_id, "behind");
+        assert!(book.order_at(3).is_none());
+        book.cancel("ours").unwrap();
+        assert_eq!(book.order_at(0).unwrap().order_id, "ahead");
+        assert_eq!(book.order_at(1).unwrap().order_id, "behind");
+        assert!(book.order_at(2).is_none());
+    }
+
+    #[test]
+    fn order_at_keeps_insertion_order_through_reduce_and_replace() {
+        let mut book = fresh();
+        queue(&mut book);
+        book.reduce("ours", 50).unwrap();
+        assert_eq!(book.order_at(0).unwrap().order_id, "ahead");
+        assert_eq!(book.order_at(1).unwrap().order_id, "ours");
+        assert_eq!(book.order_at(1).unwrap().qty, 150);
+        assert_eq!(book.order_at(2).unwrap().order_id, "behind");
+
+        book.reduce("ahead", 500).unwrap();
+        assert_eq!(book.order_at(0).unwrap().order_id, "ours");
+        assert_eq!(book.order_at(1).unwrap().order_id, "behind");
+        assert!(book.order_at(2).is_none());
+
+        book.replace("ours", None, Some(150), 1, 1).unwrap();
+        assert_eq!(book.order_at(0).unwrap().order_id, "behind");
+        assert_eq!(book.order_at(1).unwrap().order_id, "ours");
+        assert_eq!(book.order_at(1).unwrap().qty, 150);
+        assert!(book.order_at(2).is_none());
     }
 
     #[test]

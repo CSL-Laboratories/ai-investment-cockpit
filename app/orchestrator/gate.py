@@ -21,11 +21,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 
 from sqlalchemy import select
 
 from config.settings import Mode, Settings
+from core.numeric import decimal_or_nan
 from schemas.models.audit_entry import AuditEntry
 
 from .state import (
@@ -80,17 +81,6 @@ def _to_naive_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         return dt
     return dt.astimezone(timezone.utc).replace(tzinfo=None)
-
-
-def _dec(x) -> Decimal:
-    """Parse a gate metric. BUG-129: garbage used to read as Decimal("0") — a malformed
-    drawdown payload then read as ZERO drawdown against the max-drawdown ceiling (fail
-    open). Unparseable input now reads as NaN, and every consumer treats NaN as
-    fail-closed (refuse), never as a passing zero."""
-    try:
-        return x if isinstance(x, Decimal) else Decimal(str(x))
-    except (InvalidOperation, ValueError, TypeError):
-        return Decimal("NaN")
 
 
 def _weeks_in_modes(mode_events: list[tuple[datetime, str]], now: datetime, modes: set[str]) -> float:
@@ -194,7 +184,7 @@ def compute_gate(st: OrchestratorState, target, *, now: datetime | None = None,
     for r in rows:
         if r.event_type != EVENT_DRAWDOWN_MARK:
             continue
-        dd = _dec((r.payload or {}).get("drawdown", 0))
+        dd = decimal_or_nan((r.payload or {}).get("drawdown", 0))
         if not dd.is_finite():
             return GateResult(False, tgt,
                               ["malformed drawdown payload on the verified chain "
