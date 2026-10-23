@@ -2724,3 +2724,190 @@ def _void_then_fill(void_sequence: int, reserve_sequence: int, fill_sequence: in
 def test_o3_void_release_cannot_precede_the_collateral() -> None:
     assert "balance_mismatch" in _evaluate(_void_then_fill(1, 2, 2))
     assert _evaluate(_void_then_fill(2, 1, 1)) == set()
+
+
+def _append_settlement_correction(
+    fixture: dict,
+    *,
+    admits_fill_id: str,
+    mirror_strategy: str | None = None,
+) -> None:
+    """Exact reversal and replacement of the fixture's settlement."""
+    settle = next(entry for entry in fixture["journal"] if entry["entry_id"] == "j-settle")
+    mirror = _reversal_of(settle, "j-reverse")
+    if mirror_strategy is not None:
+        mirror["strategy_id"] = mirror_strategy
+    replacement = json.loads(json.dumps(settle))
+    replacement["entry_id"] = "j-corrected"
+    replacement["sequence"] = settle["sequence"] + 2
+    replacement["idempotency_key"] = "settle-corrected"
+    fixture["journal"].append(mirror)
+    fixture["journal"].append(replacement)
+    fixture["corrections"].append({
+        "correction_id": "c-settle",
+        "admits_fill_id": admits_fill_id,
+        "reverses_entry_id": "j-settle",
+        "reason": "reverse settlement",
+        "instrument_id": settle["lines"][0]["instrument_id"],
+        "cause": "settlement_payout",
+    })
+
+
+def test_o3_settlement_reversal_requires_a_real_fill() -> None:
+    for name in ("event_yes_settlement", "event_no_settlement"):
+        path = VALIDATOR.parent / "fixtures" / f"{name}.json"
+        posted = json.loads(path.read_text(encoding="utf-8"))
+        fill_id = posted["fills"][0]["fill_id"]
+        _append_settlement_correction(posted, admits_fill_id=fill_id)
+        assert _evaluate(posted) == set()
+        ghost = json.loads(path.read_text(encoding="utf-8"))
+        _append_settlement_correction(ghost, admits_fill_id="ghost")
+        assert "settlement_unreconciled" in _evaluate(ghost)
+
+
+def test_o3_settlement_reversal_keeps_the_original_strategy() -> None:
+    winning = json.loads(
+        (VALIDATOR.parent / "fixtures" / "event_yes_settlement.json").read_text(encoding="utf-8")
+    )
+    _append_settlement_correction(winning, admits_fill_id="f-yes", mirror_strategy="s-other")
+    winning["reported"]["attribution"] = [
+        {"strategy_id": "s-event", "realized_pnl_minor": 12000000, "fees_minor": 70000},
+        {"strategy_id": "s-other", "realized_pnl_minor": -6000000, "fees_minor": 0},
+    ]
+    assert "settlement_unreconciled" in _evaluate(winning)
+    losing = json.loads(
+        (VALIDATOR.parent / "fixtures" / "event_no_settlement.json").read_text(encoding="utf-8")
+    )
+    _append_settlement_correction(losing, admits_fill_id="f-no", mirror_strategy="s-other")
+    losing["reported"]["attribution"] = [
+        {"strategy_id": "s-event", "realized_pnl_minor": -12000000, "fees_minor": 70000},
+        {"strategy_id": "s-other", "realized_pnl_minor": 6000000, "fees_minor": 0},
+    ]
+    assert "settlement_unreconciled" in _evaluate(losing)
+
+
+def _corrected_order_reserve(*, admit: str = "f-yes", reversal_strategy: str = "s-event") -> dict:
+    """Order reserve of 800000, reversed, then replaced with 830000 before the fill."""
+    path = VALIDATOR.parent / "fixtures" / "event_resting_order_reservation.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["orders"] = [{
+        "order_id": "ord-yes",
+        "instrument_id": "ev-yes",
+        "family": "event",
+        "side": "buy",
+        "qty": 1,
+        "state": "filled",
+    }]
+    fixture["fills"] = [{
+        "fill_id": "f-yes",
+        "order_id": "ord-yes",
+        "instrument_id": "ev-yes",
+        "sequence": 6,
+        "qty": 1,
+        "price_minor": 830000,
+        "fee_minor": 0,
+        "side": "buy",
+    }]
+    fixture["markets"] = [{"instrument_id": "ev-yes", "state": "open"}]
+    fixture["evidence"] = []
+    fixture["journal"] = [
+        {
+            "entry_id": "j-orig",
+            "sequence": 3,
+            "idempotency_key": "reserve-orig",
+            "order_id": "ord-yes",
+            "strategy_id": "s-event",
+            "reason": "reserve_collateral",
+            "lines": [
+                {
+                    "account": "collateral_reserved",
+                    "side": "dr",
+                    "amount_minor": 800000,
+                    "instrument_id": "ev-yes",
+                },
+                {
+                    "account": "cash_available",
+                    "side": "cr",
+                    "amount_minor": 800000,
+                    "instrument_id": "ev-yes",
+                },
+            ],
+        },
+        {
+            "entry_id": "j-rev",
+            "sequence": 4,
+            "idempotency_key": "reserve-rev",
+            "order_id": "ord-yes",
+            "strategy_id": reversal_strategy,
+            "reason": "reserve_collateral",
+            "lines": [
+                {
+                    "account": "collateral_reserved",
+                    "side": "cr",
+                    "amount_minor": 800000,
+                    "instrument_id": "ev-yes",
+                },
+                {
+                    "account": "cash_available",
+                    "side": "dr",
+                    "amount_minor": 800000,
+                    "instrument_id": "ev-yes",
+                },
+            ],
+        },
+        {
+            "entry_id": "j-rep",
+            "sequence": 5,
+            "idempotency_key": "reserve-rep",
+            "order_id": "ord-yes",
+            "strategy_id": "s-event",
+            "reason": "reserve_collateral",
+            "lines": [
+                {
+                    "account": "collateral_reserved",
+                    "side": "dr",
+                    "amount_minor": 830000,
+                    "instrument_id": "ev-yes",
+                },
+                {
+                    "account": "cash_available",
+                    "side": "cr",
+                    "amount_minor": 830000,
+                    "instrument_id": "ev-yes",
+                },
+            ],
+        },
+    ]
+    fixture["corrections"] = [{
+        "correction_id": "c-reserve",
+        "admits_fill_id": admit,
+        "reverses_entry_id": "j-orig",
+        "reason": "correct the reserve",
+        "instrument_id": "ev-yes",
+        "cause": "reserve_collateral",
+    }]
+    fixture["checkpoint"]["cash_available"] = 10000000000
+    fixture["checkpoint"]["collateral_reserved"] = 0
+    fixture["checkpoint"]["positions"] = []
+    fixture["checkpoint"]["open_reservations"] = []
+    fixture["reported"] = {
+        "cash_available": 9999170000,
+        "collateral_reserved": 830000,
+        "positions": [{"instrument_id": "ev-yes", "qty": 1}],
+        "open_reservations": [{
+            "reservation_id": "reserve-yes",
+            "order_id": "ord-yes",
+            "instrument_id": "ev-yes",
+            "amount_minor": 830000,
+        }],
+        "attribution": [],
+    }
+    return fixture
+
+
+def test_o3_corrected_order_reserve_is_not_double_counted() -> None:
+    assert _evaluate(_corrected_order_reserve()) == set()
+    assert "balance_mismatch" in _evaluate(_corrected_order_reserve(admit="ghost"))
+    assert "balance_mismatch" in _evaluate(
+        _corrected_order_reserve(reversal_strategy="s-other")
+    )

@@ -293,11 +293,13 @@ def _linked_reversal_ids(fixture: dict, repeated_ids: set[str]) -> tuple[set[str
 
     The original is an ordinary positive ``settlement_payout``: collateral is
     credited, not debited. The mirror is a positive ``settlement_payout`` on
-    the same instrument with the sides swapped, the amounts unchanged, and a
-    sequence strictly after the original. The correction names that
-    settlement, with ``cause`` ``settlement_payout``. A reused entry id, a
-    backward original, an earlier or tied mirror, a zero pair, a partial
-    swap, or a correction that names a missing entry does not qualify.
+    the same instrument and the same strategy, with the sides swapped, the
+    amounts unchanged, and a sequence strictly after the original. The
+    correction names that settlement, with ``cause`` ``settlement_payout``,
+    and ``admits_fill_id`` names a fill of that instrument. A reused entry
+    id, a backward original, an earlier or tied mirror, a zero pair, a
+    partial swap, a missing fill, another strategy, or a correction that
+    names a missing entry does not qualify.
 
     The first set is the pair, dropped from the gain/loss identity. The
     second set is the mirror only, which may debit collateral.
@@ -314,6 +316,8 @@ def _linked_reversal_ids(fixture: dict, repeated_ids: set[str]) -> tuple[set[str
         if not isinstance(original_id, str) or original_id in used or original_id in repeated_ids:
             continue
         if not isinstance(instrument_id, str):
+            continue
+        if not _admitted_fill_matches(fixture, item, instrument_id):
             continue
         original = next(
             (entry for entry in journal if entry.get("entry_id") == original_id),
@@ -348,6 +352,8 @@ def _linked_reversal_ids(fixture: dict, repeated_ids: set[str]) -> tuple[set[str
             partner_sequence = entry.get("sequence")
             if type(partner_sequence) is not int or partner_sequence <= original_sequence:
                 continue
+            if entry.get("strategy_id") != original.get("strategy_id"):
+                continue
             if _line_signature(entry, reverse=False) == wanted:
                 partner_id = entry_id
                 break
@@ -361,8 +367,19 @@ def _linked_reversal_ids(fixture: dict, repeated_ids: set[str]) -> tuple[set[str
     return paired, mirrors
 
 
-def _posted_correction_facts(fixture: dict) -> tuple[set[str], set[str]]:
-    """Instruments with a posted correction, and the reversal entry ids.
+def _order_level_reserve(entry: dict) -> bool:
+    """An order's own reserve: ``order_id`` set and no ``fill_id``."""
+    order_id = entry.get("order_id")
+    return (
+        entry.get("reason") == "reserve_collateral"
+        and isinstance(order_id, str)
+        and bool(order_id)
+        and not entry.get("fill_id")
+    )
+
+
+def _posted_correction_facts(fixture: dict) -> tuple[set[str], set[str], set[str]]:
+    """Supported instruments, reversal ids, and reversed order-reserve ids.
 
     Support is three journal entries on that instrument, in sequence order:
     the original, a later exact reversal, and a still later replacement.
@@ -370,10 +387,14 @@ def _posted_correction_facts(fixture: dict) -> tuple[set[str], set[str]]:
     ``strategy_id``. Lines on the original post only that instrument, so a
     bare checkpoint id does not qualify. The reversal id is exempted only
     after that replacement is present, and then it may post the swapped
-    sides of a reserve, fill, or fee.
+    sides of a reserve, fill, or fee. When the original, the reversal, and
+    the replacement are all reserves for one order, the original id is
+    returned so its debit is not counted again as collateral created for
+    the fill.
     """
     supported: set[str] = set()
     mirrors: set[str] = set()
+    reversed_order_reserves: set[str] = set()
     journal = fixture.get("journal", ())
     repeated = _repeated_entry_ids(journal)
     by_id: dict[str, dict] = {}
@@ -433,7 +454,7 @@ def _posted_correction_facts(fixture: dict) -> tuple[set[str], set[str]]:
         reversal_id = reversal.get("entry_id")
         if not isinstance(reversal_id, str):
             continue
-        replaced = False
+        replacement = None
         for entry in journal:
             if not isinstance(entry, dict):
                 continue
@@ -452,13 +473,20 @@ def _posted_correction_facts(fixture: dict) -> tuple[set[str], set[str]]:
             signature = _line_signature(entry, reverse=False)
             if not _signature_positive(signature) or signature == wanted:
                 continue
-            replaced = True
+            replacement = entry
             break
-        if not replaced:
+        if replacement is None:
             continue
         mirrors.add(reversal_id)
         supported.add(instrument_id)
-    return supported, mirrors
+        if (
+            _order_level_reserve(original)
+            and _order_level_reserve(reversal)
+            and _order_level_reserve(replacement)
+            and original.get("order_id") == reversal.get("order_id") == replacement.get("order_id")
+        ):
+            reversed_order_reserves.add(original_id)
+    return supported, mirrors, reversed_order_reserves
 
 
 def _reject_void_unwind_shape(fixture: dict, failures: set[str]) -> None:
@@ -771,7 +799,9 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             failures.add("position_divergence")
 
     pre_settlement = dict(derived)
-    corrected_instruments, correction_mirrors = _posted_correction_facts(fixture)
+    corrected_instruments, correction_mirrors, reversed_order_reserves = (
+        _posted_correction_facts(fixture)
+    )
     seen_market_instruments: set[str] = set()
     for market in fixture["markets"]:
         if market["instrument_id"] in seen_market_instruments:
@@ -1112,7 +1142,14 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                     order_reserve_total[order_ref] = (
                         order_reserve_total.get(order_ref, 0) + collateral_delta
                     )
-                    if entry["reason"] == "reserve_collateral" and collateral_delta > 0:
+                    if (
+                        entry["reason"] == "reserve_collateral"
+                        and collateral_delta > 0
+                        and entry.get("entry_id") not in reversed_order_reserves
+                    ):
+                        # A validated correction already replaced this debit.
+                        # Counting it again with the replacement doubles the
+                        # reserve that funded the fill.
                         order_created[order_ref] = (
                             order_created.get(order_ref, 0) + collateral_delta
                         )

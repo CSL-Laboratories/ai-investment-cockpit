@@ -287,8 +287,14 @@ only when the reservation is created (`reserve_collateral` with an
 reservation, and it is not rejected for coming after the fill or the
 terminal. Before
 any fill, that hold is not compared with a fill total of zero, unless
-the order is already in a cancel, expire, or reject terminal. A dead
-order that still carries the hold fails `balance_mismatch`. A release
+the order is already in a cancel, expire, or reject terminal. The
+created total is the collateral reserved for the fills. Releases do not
+reduce it. A validated correction does: when the original reserve, its
+reversal, and the replacement all name that order, the reversed debit
+drops out and the replacement is the amount that funded the fill. A
+reversal that is not that correction leaves the original debit in the
+total. A dead order that still carries the hold fails
+`balance_mismatch`. A release
 that does not name the order leaves the hold in place. A `void_unwind`
 or `settlement_payout` that credits `collateral_reserved` has to name
 the order when that credit is against an owned hold. The collateral
@@ -508,7 +514,9 @@ only when the correction's `cause` is `settlement_payout`,
 `instrument_id` is that settlement's instrument, and `reverses_entry_id`
 names the original entry, and another journal entry is the exact mirror:
 same instrument, same accounts and amounts, debit and credit swapped, and
-the amounts positive. The original has to be an ordinary settlement
+the amounts positive. The mirror keeps the original entry's
+`strategy_id`. `admits_fill_id` names a fill of that instrument. The
+original has to be an ordinary settlement
 before it can be paired: it may credit `collateral_reserved` and debit
 `fees_expense`, and it may not debit collateral or credit fees. The
 mirror is the only entry that may debit `collateral_reserved` (and
@@ -521,8 +529,9 @@ collateral-release, fee, and gain/loss identity the original and the
 mirror cancel as a pair and drop out. The settlement that remains has to
 match the evidence on its own. A zero-value pair, a partial swap, a
 backward original, a mirror that is not strictly later, a reused entry
-id, or a reversal whose correction names a missing entry does not cancel
-a settlement and does not permit the collateral debit.
+id, a missing fill, a mirror on another strategy, or a reversal whose
+correction names a missing entry does not cancel a settlement and does
+not permit the collateral debit.
 
 `market_void` evidence on an instrument that also has settlement evidence,
 a `settled` market row, or a `settlement_payout` fails `void_unreconciled`.
@@ -537,8 +546,9 @@ be a positive `settlement_payout` on that instrument, and every positive
 `settlement_payout` on that instrument needs its own reversal partner.
 One partner covers one posting. The partner is a reversal the settlement
 check accepts: the reversed entry is an ordinary settlement, the mirror
-is a `settlement_payout` sequenced strictly after it, and a reused
-`entry_id` does not pair. An earlier mirror, a tie, or a backward
+is a `settlement_payout` sequenced strictly after it on the same
+`strategy_id`, `admits_fill_id` names a fill of that instrument, and a
+reused `entry_id` does not pair. An earlier mirror, a tie, or a backward
 posting does not supersede the void. A zero-value pair reverses itself and
 does not hide an unreversed settlement. `admits_fill_id` has to name a
 fill of the voided instrument; a missing fill does not supersede the
