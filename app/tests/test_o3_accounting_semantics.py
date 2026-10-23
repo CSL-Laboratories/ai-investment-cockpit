@@ -1475,3 +1475,246 @@ def test_o3_duplicate_attribution_row_rejected() -> None:
         "fees_minor": 1,
     })
     assert "attribution_mismatch" in _evaluate(fixture)
+
+
+def _collateral_pair(
+    entry_id: str,
+    sequence: int,
+    key: str,
+    reason: str,
+    debit: str,
+    credit: str,
+    amount: int,
+    *,
+    order_id: str | None = None,
+    fill_id: str | None = None,
+) -> dict:
+    entry = {
+        "entry_id": entry_id,
+        "sequence": sequence,
+        "idempotency_key": key,
+        "strategy_id": "s-event",
+        "reason": reason,
+        "lines": [
+            {"account": debit, "side": "dr", "amount_minor": amount, "instrument_id": "ev-yes"},
+            {"account": credit, "side": "cr", "amount_minor": amount, "instrument_id": "ev-yes"},
+        ],
+    }
+    if order_id is not None:
+        entry["order_id"] = order_id
+    if fill_id is not None:
+        entry["fill_id"] = fill_id
+    return entry
+
+
+def _two_fill_partial_refund(first: int, second: int) -> dict:
+    """Two premiums share one partial hold. The second fill sees the remainder."""
+    path = VALIDATOR.parent / "fixtures" / "event_resting_order_reservation.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["orders"] = [{
+        "order_id": "ord-two",
+        "instrument_id": "ev-yes",
+        "family": "event",
+        "side": "buy",
+        "qty": 2,
+        "state": "filled",
+    }]
+    fixture["fills"] = [
+        {
+            "fill_id": "f1",
+            "order_id": "ord-two",
+            "instrument_id": "ev-yes",
+            "sequence": 3,
+            "qty": 1,
+            "price_minor": 400000,
+            "fee_minor": 15000,
+            "side": "buy",
+        },
+        {
+            "fill_id": "f2",
+            "order_id": "ord-two",
+            "instrument_id": "ev-yes",
+            "sequence": 5,
+            "qty": 1,
+            "price_minor": 400000,
+            "fee_minor": 15000,
+            "side": "buy",
+        },
+    ]
+    fixture["journal"] = [
+        _collateral_pair(
+            "j-reserve", 1, "reserve-two", "reserve_collateral",
+            "collateral_reserved", "cash_available", 830000, order_id="ord-two",
+        ),
+        _collateral_pair(
+            "j-release", 2, "release-two", "void_unwind",
+            "cash_available", "collateral_reserved", 500000, order_id="ord-two",
+        ),
+        _collateral_pair(
+            "j-f1", 3, "premium-f1", "reserve_collateral",
+            "collateral_reserved", "cash_available", first, fill_id="f1",
+        ),
+        _collateral_pair(
+            "j-fee-f1", 4, "fee-f1", "trade_fee",
+            "fees_expense", "cash_available", 15000, fill_id="f1",
+        ),
+        _collateral_pair(
+            "j-f2", 5, "premium-f2", "reserve_collateral",
+            "collateral_reserved", "cash_available", second, fill_id="f2",
+        ),
+        _collateral_pair(
+            "j-fee-f2", 6, "fee-f2", "trade_fee",
+            "fees_expense", "cash_available", 15000, fill_id="f2",
+        ),
+    ]
+    collateral = 330000 + first + second
+    fixture["reported"] = {
+        "cash_available": 9999640000 - first - second,
+        "collateral_reserved": collateral,
+        "positions": [{"instrument_id": "ev-yes", "qty": 2}],
+        "open_reservations": [
+            {
+                "reservation_id": "reserve-left",
+                "order_id": "ord-two",
+                "instrument_id": "ev-yes",
+                "amount_minor": 330000,
+            },
+            {"reservation_id": "reserve-f1", "instrument_id": "ev-yes", "amount_minor": first},
+            {"reservation_id": "reserve-f2", "instrument_id": "ev-yes", "amount_minor": second},
+        ],
+        "attribution": [{
+            "strategy_id": "s-event",
+            "realized_pnl_minor": 0,
+            "fees_minor": 30000,
+        }],
+    }
+    return fixture
+
+
+def test_o3_partial_refund_hold_is_consumed_across_fills() -> None:
+    consumed = _two_fill_partial_refund(70000, 400000)
+    assert _evaluate(consumed) == set()
+    shared = _two_fill_partial_refund(70000, 70000)
+    assert "balance_mismatch" in _evaluate(shared)
+
+
+def test_o3_unnamed_release_of_owned_hold_is_rejected() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_void_reconciled.json"
+    owned = json.loads(path.read_text(encoding="utf-8"))
+    owned["checkpoint"]["open_reservations"][0]["order_id"] = "ord-void"
+    assert "balance_mismatch" in _evaluate(owned)
+
+    payout = json.loads(path.read_text(encoding="utf-8"))
+    payout["checkpoint"]["open_reservations"][0]["order_id"] = "ord-void"
+    payout["journal"][0]["reason"] = "settlement_payout"
+    assert "balance_mismatch" in _evaluate(payout)
+
+    # A credit sequenced before the reserve still has to leave the hold covered.
+    early = json.loads(path.read_text(encoding="utf-8"))
+    early["orders"] = [{
+        "order_id": "ord-void",
+        "instrument_id": "ev-void",
+        "family": "event",
+        "side": "buy",
+        "qty": 1,
+        "state": "resting",
+    }]
+    early["checkpoint"]["collateral_reserved"] = 0
+    early["checkpoint"]["cash_available"] = 10000000000
+    early["checkpoint"]["positions"] = []
+    early["checkpoint"]["open_reservations"] = []
+    early["checkpoint"]["applied_entry_ids"] = []
+    early["journal"] = [
+        {
+            "entry_id": "j-credit",
+            "sequence": 2,
+            "idempotency_key": "credit-1",
+            "strategy_id": "s-event",
+            "reason": "void_unwind",
+            "lines": [
+                {
+                    "account": "cash_available",
+                    "side": "dr",
+                    "amount_minor": 100,
+                    "instrument_id": "ev-void",
+                },
+                {
+                    "account": "collateral_reserved",
+                    "side": "cr",
+                    "amount_minor": 100,
+                    "instrument_id": "ev-void",
+                },
+            ],
+        },
+        {
+            "entry_id": "j-reserve-new",
+            "sequence": 3,
+            "idempotency_key": "reserve-new",
+            "order_id": "ord-void",
+            "strategy_id": "s-event",
+            "reason": "reserve_collateral",
+            "lines": [
+                {
+                    "account": "collateral_reserved",
+                    "side": "dr",
+                    "amount_minor": 100,
+                    "instrument_id": "ev-void",
+                },
+                {
+                    "account": "cash_available",
+                    "side": "cr",
+                    "amount_minor": 100,
+                    "instrument_id": "ev-void",
+                },
+            ],
+        },
+    ]
+    early["reported"] = {
+        "cash_available": 10000000000,
+        "collateral_reserved": 0,
+        "positions": [{"instrument_id": "ev-void", "qty": 0}],
+        "open_reservations": [],
+        "attribution": [],
+    }
+    assert "balance_mismatch" in _evaluate(early)
+
+
+def _void_supersession(sequence: int, reverses: str, entry_id: str) -> dict:
+    path = VALIDATOR.parent / "fixtures" / "event_no_settlement.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["evidence"].append({
+        "kind": "market_void",
+        "instrument_id": "ev-no",
+        "source_id": "void-no-1",
+    })
+    settle = next(entry for entry in fixture["journal"] if entry["entry_id"] == "j-settle")
+    mirror = _reversal_of(settle, entry_id)
+    mirror["sequence"] = sequence
+    fixture["journal"].append(mirror)
+    fixture["corrections"].append({
+        "correction_id": "c-void",
+        "admits_fill_id": "f-no",
+        "reverses_entry_id": reverses,
+        "reason": "supersede void",
+        "supersedes_source_id": "void-no-1",
+        "instrument_id": "ev-no",
+        "cause": "settlement_payout",
+    })
+    return fixture
+
+
+def test_o3_void_supersession_requires_a_strictly_later_reversal() -> None:
+    early = _void_supersession(2, "j-settle", "j-reverse")
+    assert "void_unreconciled" in _evaluate(early)
+    tied = _void_supersession(3, "j-settle", "j-reverse")
+    assert "void_unreconciled" in _evaluate(tied)
+    # An earlier collateral debit is not the settlement being reversed.
+    backward = _void_supersession(2, "j-backward", "j-backward")
+    assert "void_unreconciled" in _evaluate(backward)
+    reused = _void_supersession(4, "j-settle", "j-reverse")
+    settle = next(entry for entry in reused["journal"] if entry["entry_id"] == "j-settle")
+    copy = json.loads(json.dumps(settle))
+    copy["sequence"] = 5
+    copy["idempotency_key"] = "settle-copy"
+    reused["journal"].append(copy)
+    assert "void_unreconciled" in _evaluate(reused)

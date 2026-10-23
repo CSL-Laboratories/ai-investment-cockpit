@@ -170,32 +170,6 @@ def _only_instrument(entry: dict, instrument_id: str) -> bool:
     return bool(lines) and all(line.get("instrument_id") == instrument_id for line in lines)
 
 
-def _paired_settlement_ids(fixture: dict, settlements: list[dict]) -> set[str]:
-    """One reversal covers one settlement. A second copy stays unpaired."""
-    paired: set[str] = set()
-    used: set[str] = set()
-    for entry in settlements:
-        entry_id = entry.get("entry_id")
-        if not isinstance(entry_id, str) or entry_id in used:
-            continue
-        wanted = _line_signature(entry, reverse=True)
-        partner_id = None
-        for other in fixture["journal"]:
-            other_id = other.get("entry_id")
-            if not isinstance(other_id, str) or other_id == entry_id or other_id in used:
-                continue
-            if _line_signature(other, reverse=False) == wanted:
-                partner_id = other_id
-                break
-        if partner_id is None:
-            continue
-        paired.add(entry_id)
-        paired.add(partner_id)
-        used.add(entry_id)
-        used.add(partner_id)
-    return paired
-
-
 def _admitted_fill_matches(fixture: dict, item: dict, instrument_id: str) -> bool:
     fill_id = item.get("admits_fill_id")
     if not isinstance(fill_id, str) or not fill_id:
@@ -246,7 +220,12 @@ def _correction_supersedes_void(
             settlements.append(entry)
     if not settlements:
         return False
-    paired = _paired_settlement_ids(fixture, settlements)
+    # The same pairs the settlement identity accepts. A loose signature match
+    # is not enough: the original is ordinary, the mirror is strictly later,
+    # and a reused entry id does not pair.
+    paired, _mirrors = _linked_reversal_ids(
+        fixture, _repeated_entry_ids(fixture.get("journal", ()))
+    )
     settlement_ids = {entry.get("entry_id") for entry in settlements}
     if not settlement_ids <= paired or original.get("entry_id") not in settlement_ids:
         return False
@@ -999,7 +978,22 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             posted_premium[fill_ref] = posted_premium.get(fill_ref, 0) + premium_delta
             posted_fees[fill_ref] = posted_fees.get(fill_ref, 0) + fee_delta
 
+    # An unnamed credit does not reduce an owned hold. The collateral still
+    # reserved has to cover every positive hold, including one created later.
+    owned_end: dict[str, int] = {}
+    for oid, hold in order_hold.items():
+        if hold <= 0:
+            continue
+        instrument = (orders.get(oid) or {}).get("instrument_id")
+        if not isinstance(instrument, str):
+            continue
+        owned_end[instrument] = owned_end.get(instrument, 0) + hold
+    for instrument, owned in owned_end.items():
+        if owned > reserved_end.get(instrument, 0):
+            failures.add("balance_mismatch")
+
     if not (failures & FILL_DEFECTS):
+        hold_used: dict[str, int] = {}
         for fill in accepted_fills:
             posted = posted_premium.get(fill["fill_id"], 0)
             premium = fill["qty"] * fill["price_minor"]
@@ -1008,11 +1002,15 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             for seq, delta in order_collateral_events.get(fill["order_id"], ()):
                 if seq <= fill["sequence"]:
                     available += delta
-            # A partial release leaves a hold that still covers part of the
-            # premium. The fill posts only the uncovered remainder.
-            covered = min(premium, max(available, 0))
+            # An earlier fill already consumed its coverage. The next fill
+            # sees only what is left, in sequence order.
+            remaining = max(available, 0) - hold_used.get(fill["order_id"], 0)
+            if remaining < 0:
+                remaining = 0
+            covered = min(premium, remaining)
             if posted != premium - covered:
                 failures.add("balance_mismatch")
+            hold_used[fill["order_id"]] = hold_used.get(fill["order_id"], 0) + covered
             if posted_fees.get(fill["fill_id"], 0) != fill["fee_minor"]:
                 failures.add("fee_mismatch")
 

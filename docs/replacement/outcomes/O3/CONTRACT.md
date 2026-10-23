@@ -262,7 +262,13 @@ reservation, and it is not rejected for coming after the fill. Before
 any fill, that hold is not compared with a fill total of zero, unless
 the order is already in a cancel, expire, or reject terminal. A dead
 order that still carries the hold fails `balance_mismatch`. A release
-that does not name the order leaves the hold in place. A checkpoint
+that does not name the order leaves the hold in place. A `void_unwind`
+or `settlement_payout` that credits `collateral_reserved` has to name
+the order when that credit is against an owned hold. The collateral
+still reserved for an instrument must cover the positive holds of every
+order on it. An unnamed credit, including one sequenced before the
+reserve, that leaves those holds larger than the reserved collateral
+fails `balance_mismatch`. A checkpoint
 open reservation may name its owning `order_id`. That optional id is
 this candidate's proposal for which order owns the checkpoint hold.
 The reservation's `instrument_id` has to be that order's instrument. A
@@ -301,7 +307,11 @@ not fund a later fill. When that balance still covers the fill's
 `qty * price_minor`, the fill does not re-post premium, and a second
 premium posting fails `balance_mismatch`. When a partial release leaves
 a hold below that premium, the fill posts only the uncovered part:
-`qty * price_minor` minus the hold still in place. Posting the full
+`qty * price_minor` minus the hold still in place. That remaining hold
+is consumed across the order's accepted fills in sequence order.
+Collateral an earlier fill already counted as covered is not available
+to a later fill. Two fills that each post only the shortfall against
+the same remaining hold fail `balance_mismatch`. Posting the full
 premium charges the held part twice and fails `balance_mismatch`. A
 full refund leaves no hold, so the fill posts `qty * price_minor`
 itself. Fees still
@@ -454,7 +464,11 @@ Another journal entry posts the reversal: the same accounts, amounts,
 and instrument, with debit and credit swapped. The reversed entry has to
 be a positive `settlement_payout` on that instrument, and every positive
 `settlement_payout` on that instrument needs its own reversal partner.
-One partner covers one posting. A zero-value pair reverses itself and
+One partner covers one posting. The partner is a reversal the settlement
+check accepts: the reversed entry is an ordinary settlement, the mirror
+is a `settlement_payout` sequenced strictly after it, and a reused
+`entry_id` does not pair. An earlier mirror, a tie, or a backward
+posting does not supersede the void. A zero-value pair reverses itself and
 does not hide an unreversed settlement. `admits_fill_id` has to name a
 fill of the voided instrument; a missing fill does not supersede the
 void. Naming a live settlement,
