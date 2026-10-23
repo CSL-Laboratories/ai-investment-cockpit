@@ -90,15 +90,18 @@ def _order_is_inflight(st, order) -> bool:
 
 
 _SUBMISSION_TOKEN = "_submission_token"
+_SUBMISSION_NONCE = "_submission_nonce"
 _STAMP_LOCK = threading.Lock()
 
 
 class _StampedIntent:
-    """Stamp the intent that carries this submission's approval binding.
+    """Stamp the gateway submit intent for this submission.
 
-    A callback can open another ``order_submit`` for the same order id. The
-    timeout closer matches this token. The stamp does not read the call stack,
-    so it does not depend on ``OrderGateway.submit`` living in ``gateway.py``.
+    The stamp matches the approval binding and the gateway payload shape, and
+    it adds a per-submission nonce the caller cannot supply. A callback that
+    copies the order, approval, and risk ids does not receive the nonce. The
+    closer does not read the call stack, so it does not depend on
+    ``OrderGateway.submit`` living in ``gateway.py``.
     """
 
     def __init__(self, real) -> None:
@@ -107,21 +110,29 @@ class _StampedIntent:
 
     def __call__(self, op, refs=None, payload=None):
         token = getattr(self._local, "token", None)
+        nonce = getattr(self._local, "nonce", None)
         order_id = getattr(self._local, "order_id", None)
         approval_id = getattr(self._local, "approval_id", None)
         risk_id = getattr(self._local, "risk_decision_id", None)
         bound = refs or {}
+        body = payload or {}
         if (
             token
+            and nonce
             and op == "order_submit"
             and approval_id
             and risk_id
             and bound.get("order_id") == order_id
             and bound.get("approval_id") == approval_id
             and bound.get("risk_decision_id") == risk_id
+            and "execution_scope" in body
+            and "mode" in body
+            and _SUBMISSION_TOKEN not in body
+            and _SUBMISSION_NONCE not in body
         ):
-            payload = dict(payload or {})
+            payload = dict(body)
             payload[_SUBMISSION_TOKEN] = token
+            payload[_SUBMISSION_NONCE] = nonce
         return self._real(op, refs=refs, payload=payload)
 
 
@@ -143,6 +154,7 @@ def _arm_submission_token(st, token: str, order_or_id, *, approval_id=None) -> N
         approval_id = None
         risk_id = None
     current._local.token = token
+    current._local.nonce = secrets.token_urlsafe(16)
     current._local.order_id = order_id
     current._local.approval_id = approval_id
     current._local.risk_decision_id = risk_id
@@ -152,6 +164,7 @@ def _clear_submission_token(st) -> None:
     current = getattr(getattr(st, "audit", None), "intent", None)
     if isinstance(current, _StampedIntent):
         current._local.token = None
+        current._local.nonce = None
         current._local.order_id = None
         current._local.approval_id = None
         current._local.risk_decision_id = None
@@ -166,8 +179,13 @@ def _close_submission_intent(st, order, already_open: set, reason: str, token: s
 
     if type(token) is not str or not token:
         return
+    current = getattr(getattr(st, "audit", None), "intent", None)
+    nonce = getattr(getattr(current, "_local", None), "nonce", None)
+    if type(nonce) is not str or not nonce:
+        return
     order_id = getattr(order, "id", None)
     rows = {row.seq: row for row in st.audit._rows()}
+    matched: list[int] = []
     for seq in list(st.audit.unresolved_intents()):
         if seq in already_open:
             continue
@@ -177,15 +195,17 @@ def _close_submission_intent(st, order, already_open: set, reason: str, token: s
         payload = row.payload or {}
         if payload.get("_phase") != "intent" or payload.get("_op") != "order_submit":
             continue
-        if payload.get(_SUBMISSION_TOKEN) != token:
+        if payload.get(_SUBMISSION_TOKEN) != token or payload.get(_SUBMISSION_NONCE) != nonce:
             continue
-        st.audit.result(
-            _Seq(seq),
-            "order_submit",
-            refs={"order_id": order_id, "aborted": "admission_lock"},
-            payload={"aborted": reason[:500]},
-        )
+        matched.append(seq)
+    if not matched:
         return
+    st.audit.result(
+        _Seq(max(matched)),
+        "order_submit",
+        refs={"order_id": order_id, "aborted": "admission_lock"},
+        payload={"aborted": reason[:500]},
+    )
 
 
 def _noop_risk(_positions):
@@ -264,7 +284,7 @@ def _guarded_submit(gateway, captured):
             raise ProfileRefused(stage, reason)
         # The risk callback above can revoke, halt, or stale the feed after the
         # checks that already ran. This pass has no callback.
-        store._recheck_transport_authority(*authority, **authority_kwargs)
+        seen = store._recheck_transport_authority(*authority, **authority_kwargs)
         failure = _safety_failure(gateway, risk_recheck=_noop_risk)
         if failure is not None:
             stage, _event, reason = failure
@@ -291,6 +311,17 @@ def _guarded_submit(gateway, captured):
             _bind_sent_protective_limit(
                 store, gateway, client_id, order, canonical.get("limit_price"),
             )
+        from brokers.authority_profiles import _bind_sent_submission
+
+        safety = getattr(fence._local, "safety", None)
+        approval = safety.get("approval") if isinstance(safety, dict) else None
+        _bind_sent_submission(
+            gateway,
+            client_id,
+            authority_kwargs["order"],
+            getattr(approval, "id", None),
+        )
+        store._require_authority_generation(seen)
         return captured(canonical)
 
     return submit_order
@@ -323,12 +354,53 @@ class _AdmittedPaperClient:
         setattr(object.__getattribute__(self, "_real"), name, value)
 
 
-def _owned_transport(_http):
-    """A fresh pool. The caller's transport and its handler are never reused."""
+class _ProxyCopyError(Exception):
+    """The caller's explicit proxy cannot be copied onto a fresh transport."""
+
+
+def _explicit_proxy(http):
+    """The caller's ``proxy=`` URL, or None when no explicit proxy is set.
+
+    Env proxies are per-scheme mounts and are not copied. An ``all://`` proxy
+    with credentials, or one whose URL cannot be read, refuses: the send must
+    not fall through to a direct connection or the caller's handler.
+    """
+    mounts = getattr(http, "_mounts", None)
+    if not isinstance(mounts, dict):
+        return None
+    found = None
+    for pattern, transport in mounts.items():
+        if getattr(pattern, "pattern", None) != "all://":
+            continue
+        pool = None if transport is None else getattr(transport, "_pool", None)
+        proxy_url = None if pool is None else getattr(pool, "_proxy_url", None)
+        headers = () if pool is None else (getattr(pool, "_proxy_headers", ()) or ())
+        if proxy_url is None or headers:
+            raise _ProxyCopyError("explicit proxy cannot be copied")
+        scheme = proxy_url.scheme.decode("ascii") if isinstance(proxy_url.scheme, bytes) else proxy_url.scheme
+        host = proxy_url.host.decode("ascii") if isinstance(proxy_url.host, bytes) else proxy_url.host
+        port = proxy_url.port
+        if scheme not in {"http", "https"} or type(host) is not str or not host or type(port) is not int:
+            raise _ProxyCopyError("explicit proxy cannot be copied")
+        rendered = f"{scheme}://{host}:{port}"
+        if found is not None and found != rendered:
+            raise _ProxyCopyError("explicit proxy cannot be copied")
+        found = rendered
+    return found
+
+
+def _owned_transport(http):
+    """A fresh pool. The caller's transport and its handler are never reused.
+
+    An explicit proxy is applied to that new pool. Env proxies are not.
+    """
     import httpx
 
     try:
-        return httpx.HTTPTransport()
+        proxy = _explicit_proxy(http)
+        if proxy is None:
+            return httpx.HTTPTransport()
+        return httpx.HTTPTransport(proxy=proxy)
     except Exception:
         return None
 
@@ -337,9 +409,11 @@ def _owned_http_session(http):
     """A private HTTP session for this gateway.
 
     The caller's ``httpx.Client`` stays shared with them. This session gets
-    its own connection pool. The caller's handler, event hooks, and proxy env
-    are not copied. If the pool cannot be built, the caller is not a fallback.
-    The secret is not copied into the profile store.
+    its own connection pool. The caller's handler and event hooks are not
+    copied. An explicit ``proxy=`` is copied onto the new pool; env proxies
+    are not. A proxy that cannot be copied, including one with credentials,
+    refuses instead of dialing directly. If the pool cannot be built, the
+    caller is not a fallback. The secret is not copied into the profile store.
     """
     import httpx
 

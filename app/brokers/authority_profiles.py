@@ -475,6 +475,7 @@ class AuthorityProfileStore:
         self._clock_default = clock is None
         self._clock = clock if clock is not None else Clock()
         self._clock_high_water: datetime | None = None
+        self._authority_generation = 0
         self._authoritative_now: datetime | None = None
         self._live_permits: dict[str, tuple[str, int, str]] = {}
         # order id -> client that consumed the permit. A different client cannot
@@ -621,6 +622,7 @@ class AuthorityProfileStore:
                 """,
                 (actor, now.astimezone(timezone.utc).isoformat(), reason, profile_id),
             )
+            self._authority_generation += 1
 
     def kill(
         self, profile_id: str, *, actor: str, now: datetime, reason: str, capability: object = None
@@ -1390,6 +1392,7 @@ class AuthorityProfileStore:
                 )
             if updated.rowcount != 1:
                 raise ProfileRefused("store", "stop ledger is missing")
+            self._authority_generation += 1
 
     def _ensure_schema(self) -> None:
         with self._txn() as conn:
@@ -1838,9 +1841,23 @@ class AuthorityProfileStore:
                 order=order, producing_runtime=producing_runtime,
                 market=market, now_quote=now_quote,
             )
+            return self._authority_generation
+
+    def _require_authority_generation(self, seen: int) -> None:
+        """Refuse when kill, hold, or revoke committed after this generation."""
+        if type(seen) is not int:
+            raise ProfileRefused("authority", "authority changed before the send")
+        with self._txn() as conn:
+            del conn
+            if self._authority_generation != seen:
+                raise ProfileRefused("authority", "authority changed before the send")
 
     def _read_store_clock(self) -> datetime:
-        """The authority clock, and only after both the Python and SQLite locks."""
+        """The authority clock, and only after both the Python and SQLite locks.
+
+        A reading behind the high-water mark is a rewind and is refused.
+        The mark only moves forward.
+        """
         clock = self._clock
         if clock is None or not self._lock.locked() or not self._conn.in_transaction:
             raise ProfileRefused("clock", "store clock is read only after both locks")
@@ -1852,6 +1869,11 @@ class AuthorityProfileStore:
             raise ProfileRefused("clock", "store clock is unavailable or invalid") from exc
         _require_now(stamp)
         high = self._clock_high_water
+        if high is not None and stamp < high:
+            raise ProfileRefused(
+                "stale_claim",
+                "store clock rewound; handoff claim lease is stale",
+            )
         if high is None or stamp > high:
             self._clock_high_water = stamp
         return stamp
@@ -2012,8 +2034,10 @@ def _collar_market_submission(order, canonical, *, market, now, reserved: Decima
 
     Exposure sizing stays qty times the touch inflated by the buffer. The
     broker payload is a limit: ask times the buffer rounded down for a buy,
-    bid times one minus the buffer rounded up for a sell. The local order
-    tuple, its hash, and the approval stay a market order. The sent limit
+    bid times one minus the buffer rounded up for a sell. Alpaca paper
+    accepts ``ioc`` on equity limit orders, so this limit is immediate-or-cancel.
+    An unfilled remainder does not rest. The local order tuple, its hash, its
+    day time-in-force, and the approval stay a market order. The sent limit
     is recorded beside this copy. One quote read supplies both the exposure
     check and the limit. A quote that no longer matches the reservation
     refuses before the send.
@@ -2055,6 +2079,7 @@ def _collar_market_submission(order, canonical, *, market, now, reserved: Decima
     collared = dict(canonical)
     collared["order_type"] = "limit"
     collared["limit_price"] = _canonical_decimal_str(unit)
+    collared["tif"] = "ioc"
     return collared
 
 
@@ -2690,33 +2715,134 @@ def _approval_consumed_on_chain(st, approval_id: str) -> bool:
     return False
 
 
-def _signed_submit_approval_ids(st, order_ref: str) -> list[str]:
-    """Approval ids on verified ``order_submit`` intents for this order.
+def _verified_audit_row(audit, row) -> bool:
+    try:
+        return bool(audit.verify_entry(row))
+    except Exception:
+        return False
 
-    The order row stays empty until the broker ack. Recovery must not read it.
+
+def _aborted_intent_seqs(rows) -> set[int]:
+    """Intent seqs whose result is an abort. A timeout abort is still an abort."""
+    seqs: set[int] = set()
+    for row in rows:
+        payload = row.payload or {}
+        refs = row.refs or {}
+        if payload.get("_phase") != "result":
+            continue
+        if not payload.get("aborted") and not refs.get("aborted"):
+            continue
+        seq = refs.get("intent_seq")
+        if type(seq) is int:
+            seqs.add(seq)
+    return seqs
+
+
+def _bind_sent_submission(gateway, client_order_id: str, order, approval_id) -> None:
+    """Sign the approval this send is about to hand to the broker.
+
+    The broker client order id is ``cockpit-<order id>`` for every retry.
+    The reservation id distinguishes the attempt. Recovery reads this row
+    and ignores aborted submit intents.
     """
+    if (
+        type(client_order_id) is not str
+        or not client_order_id
+        or type(approval_id) is not str
+        or not approval_id
+        or getattr(order, "id", None) is None
+    ):
+        raise ProfileRefused("approval", "submission approval is missing")
+    order_ref = str(order.id)
+    st = None if gateway is None else object.__getattribute__(gateway, "_st")
     audit = None if st is None else getattr(st, "audit", None)
-    verify = None if audit is None else getattr(audit, "verify_entry", None)
-    if audit is None or not callable(verify) or not order_ref:
+    if audit is None or not callable(getattr(audit, "append", None)):
+        raise ProfileRefused("intent", "submission approval was not signed")
+    audit.append(
+        "paper_submission",
+        actor="paper-gateway",
+        refs={
+            "order_id": order_ref,
+            "approval_id": approval_id,
+            "client_order_id": client_order_id,
+            "broker_client_order_id": f"cockpit-{order_ref}"[:128],
+        },
+        payload={"status": "sent"},
+    )
+
+
+def _mark_submission_absent(gateway, client_order_id: str, order_ref: str) -> None:
+    """The broker confirmed this reservation's order is absent."""
+    if type(client_order_id) is not str or not client_order_id or not order_ref:
+        raise ProfileRefused("intent", "absent submission was not signed")
+    st = None if gateway is None else getattr(gateway, "_st", None)
+    audit = None if st is None else getattr(st, "audit", None)
+    if audit is None or not callable(getattr(audit, "append", None)):
+        raise ProfileRefused("intent", "absent submission was not signed")
+    audit.append(
+        "paper_submission_absent",
+        actor="paper-gateway",
+        refs={"order_id": str(order_ref), "client_order_id": client_order_id},
+        payload={"absent": True},
+    )
+
+
+def _landed_approval_ids(st, order) -> list[str]:
+    """The approval whose live submission matches this broker order.
+
+    Aborted submit intents are not candidates. A signed submission is live
+    when its reservation was not confirmed absent and its broker client order
+    id is the cockpit id of this order. Two live approvals refuse.
+    """
+    order_ref = "" if getattr(order, "id", None) is None else str(order.id)
+    broker_client_order_id = f"cockpit-{order_ref}"[:128]
+    audit = None if st is None else getattr(st, "audit", None)
+    if audit is None or not callable(getattr(audit, "verify_entry", None)) or not order_ref:
         return []
+    rows = list(audit._rows())
+    aborted = _aborted_intent_seqs(rows)
+    absent: set[str] = set()
+    submissions: list[tuple[str, str]] = []
     found: list[str] = []
-    for row in audit._rows():
+
+    def add(approval_id) -> None:
+        if type(approval_id) is not str or not approval_id or approval_id in found:
+            return
+        found.append(approval_id)
+
+    for row in rows:
+        if not _verified_audit_row(audit, row):
+            continue
+        refs = row.refs or {}
+        if refs.get("order_id") != order_ref and str(refs.get("order_id") or "") != order_ref:
+            continue
+        event = getattr(row, "event_type", None)
+        if event == "paper_submission_absent":
+            client_id = refs.get("client_order_id")
+            if type(client_id) is str and client_id:
+                absent.add(client_id)
+            continue
+        if event == "paper_submission":
+            if refs.get("broker_client_order_id") != broker_client_order_id:
+                continue
+            client_id = refs.get("client_order_id")
+            approval_id = refs.get("approval_id")
+            if type(client_id) is not str or type(approval_id) is not str:
+                continue
+            submissions.append((client_id, approval_id))
+            continue
         payload = row.payload or {}
         if payload.get("_phase") != "intent" or payload.get("_op") != "order_submit":
             continue
-        refs = row.refs or {}
         if refs.get("order_id") != order_ref:
             continue
-        try:
-            signed = verify(row)
-        except Exception:
-            signed = False
-        if not signed:
+        if row.seq in aborted:
             continue
-        approval_id = refs.get("approval_id")
-        if type(approval_id) is not str or not approval_id or approval_id in found:
+        add(refs.get("approval_id"))
+    for client_id, approval_id in submissions:
+        if client_id in absent:
             continue
-        found.append(approval_id)
+        add(approval_id)
     return found
 
 
@@ -2755,21 +2881,19 @@ def _signed_approval_binds(st, approval_id: str, order) -> bool:
 
 
 def _consume_landed_approval(st, order) -> None:
-    """Burn the approval named by the verified submit intent.
+    """Burn the approval bound to the submission that matches the broker order.
 
     Accept-then-timeout returns before ``OrderGateway`` writes
-    ``order.approval_id``. That column is empty for a production birth, so
-    recovery reads the signed intent instead. A row value that disagrees is
-    refused before either approval is consumed. A second recovery that finds
-    the signed consumption does not append another one.
+    ``order.approval_id``. Recovery reads the signed submission for this
+    broker client order id and ignores aborted intents and reservations the
+    broker confirmed absent. Two live approvals refuse before either is
+    consumed. A second recovery that finds the signed consumption does not
+    append another one.
     """
     from orchestrator.state import EVENT_ADJUDICATION
     from schemas.models.approval_record import ApprovalRecord
 
-    order_ref = getattr(order, "id", None)
-    approval_ids = _signed_submit_approval_ids(
-        st, "" if order_ref is None else str(order_ref)
-    )
+    approval_ids = _landed_approval_ids(st, order)
     if len(approval_ids) != 1:
         raise ProfileRefused(
             "approval", "landed order has no single signed approval to consume"
@@ -3105,6 +3229,7 @@ def _settle_failed(
                 "broker_unknown",
                 "ambiguous broker acceptance must be reconciled before the profile stop is released",
             )
+        _mark_submission_absent(gateway, client_order_id, order_ref)
     store.fail_handoff(client_order_id, generation=generation)
     return False
 
