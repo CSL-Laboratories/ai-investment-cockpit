@@ -617,7 +617,7 @@ class AuthorityProfileStore:
     ) -> None:
         _require_now(now)
         _reason(reason)
-        with self._txn() as conn:
+        with self._txn(allow_clock_rewind=True) as conn:
             profile = self._profile_row(conn, profile_id)
             self._require_actor(actor, expected=profile.stop_owner)
             self._require_capability(conn, profile_id, capability)
@@ -1378,7 +1378,7 @@ class AuthorityProfileStore:
         _reason(reason)
         if column not in {"kill", "hold"}:
             raise ProfileRefused("store", "unknown stop column")
-        with self._txn() as conn:
+        with self._txn(allow_clock_rewind=True) as conn:
             now = self._authoritative_now
             stored = self._profile_row(conn, profile_id)
             self._require_actor(actor, expected=stored.profile.stop_owner)
@@ -1443,6 +1443,10 @@ class AuthorityProfileStore:
                     ).fetchall()
                 }
                 required_tables = {"profiles", "controls", "consumption", "reservations"}
+                if version == STORE_USER_VERSION:
+                    # A current store that lost its clock ledger must not be
+                    # rebuilt empty. Older versions gain the table below.
+                    required_tables = required_tables | {"clock_mark"}
                 if not required_tables <= names:
                     raise ProfileRefused(
                         "store", "current profile store is missing a ledger table"
@@ -1865,11 +1869,12 @@ class AuthorityProfileStore:
             if self._authority_generation != seen:
                 raise ProfileRefused("authority", "authority changed before the send")
 
-    def _read_store_clock(self) -> datetime:
+    def _read_store_clock(self, *, allow_rewind: bool = False) -> datetime:
         """The authority clock, and only after both the Python and SQLite locks.
 
-        A reading behind the high-water mark is a rewind and is refused.
-        The mark only moves forward.
+        A reading behind the high-water mark is a rewind. Claim and expiry
+        decisions refuse it. Kill, hold, and revoke clamp to the mark so a
+        step backward cannot block a stop. The mark only moves forward.
         """
         clock = self._clock
         if clock is None or not self._lock.locked() or not self._conn.in_transaction:
@@ -1883,6 +1888,8 @@ class AuthorityProfileStore:
         _require_now(stamp)
         high = self._clock_high_water
         if high is not None and stamp < high:
+            if allow_rewind:
+                return high
             raise ProfileRefused(
                 "stale_claim",
                 "store clock rewound; handoff claim lease is stale",
@@ -1915,6 +1922,15 @@ class AuthorityProfileStore:
         """
         if not self._clock_mark_dirty or self._clock_high_water is None:
             return
+        try:
+            exists = self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'clock_mark'"
+            ).fetchone()
+        except sqlite3.Error as exc:
+            raise ProfileRefused("store", "profile store is unreadable") from exc
+        if exists is None:
+            # A missing ledger is corruption. Do not recreate it empty.
+            return
         stamp = self._clock_high_water.astimezone(timezone.utc).isoformat()
         self._conn.execute(
             """
@@ -1943,15 +1959,50 @@ class AuthorityProfileStore:
         with self._lock:
             return client_order_id in self._inflight
 
+    def _dispatch_under_stop_lock(
+        self, client_id: str, generation: int, order_ref: str, *,
+        order, producing_runtime, market, now_quote, send,
+    ):
+        """Re-read the persisted claim and stop, then send before either changes.
+
+        ``kill``, ``hold``, and ``revoke`` take this same lock and a SQLite
+        write transaction. Both stay held until ``send`` returns, so another
+        connection cannot commit a stop or a new claim generation in between.
+        """
+        with self._lock:
+            began = False
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                began = True
+                self._authoritative_now = self._read_store_clock()
+                self._assert_live_claim(
+                    self._conn, client_id, generation, order_ref, self._authoritative_now,
+                    order=order, producing_runtime=producing_runtime,
+                    market=market, now_quote=now_quote,
+                )
+                try:
+                    return send()
+                finally:
+                    if self._conn.in_transaction:
+                        self._conn.rollback()
+                    self._flush_clock_mark()
+            except Exception:
+                if began and self._conn.in_transaction:
+                    self._conn.rollback()
+                self._flush_clock_mark()
+                raise
+            finally:
+                self._authoritative_now = None
+
     @contextmanager
-    def _txn(self) -> Iterator[sqlite3.Connection]:
+    def _txn(self, *, allow_clock_rewind: bool = False) -> Iterator[sqlite3.Connection]:
         with self._lock:
             try:
                 self._conn.execute("BEGIN IMMEDIATE")
             except sqlite3.Error as exc:
                 raise ProfileRefused("store", "profile store transaction failed") from exc
             try:
-                self._authoritative_now = self._read_store_clock()
+                self._authoritative_now = self._read_store_clock(allow_rewind=allow_clock_rewind)
                 yield self._conn
             except Exception:
                 self._conn.rollback()
@@ -2952,8 +3003,36 @@ def _approval_attempt_blocked(gateway, approval_id: str, *, except_client_id: st
     verify = None if audit is None else getattr(audit, "verify_entry", None)
     if audit is None or not callable(verify):
         return False
-    absent: set[str] = set()
-    live: list[str] = []
+    closed, legacy_clients, submissions = _verified_submission_attempts(audit, verify)
+    return any(
+        not _attempt_is_closed(client_id, attempt, closed, legacy_clients)
+        and client_id != except_client_id
+        and approval == approval_id
+        for client_id, approval, attempt in submissions
+    )
+
+
+def _row_attempt_id(row) -> str | None:
+    """The attempt id on a submission row. Absence evidence is keyed by it."""
+    for source in (getattr(row, "refs", None) or {}, getattr(row, "payload", None) or {}):
+        attempt = source.get("attempt_id")
+        if type(attempt) is str and attempt:
+            return attempt
+    return None
+
+
+def _verified_submission_attempts(audit, verify) -> tuple[set[str], set[str], list[tuple[str, str, str | None]]]:
+    """Closed attempt ids, legacy client ids, and verified submissions.
+
+    An absent row with an attempt id closes only that attempt. An absent row
+    from before attempt ids existed closes only submissions that also have
+    no attempt id.
+    """
+    closed: set[str] = set()
+    legacy_clients: set[str] = set()
+    submissions: list[tuple[str, str, str | None]] = []
+    if audit is None or not callable(verify):
+        return closed, legacy_clients, submissions
     for row in audit._rows():
         try:
             signed = bool(verify(row))
@@ -2962,30 +3041,71 @@ def _approval_attempt_blocked(gateway, approval_id: str, *, except_client_id: st
         if not signed:
             continue
         refs = row.refs or {}
-        if refs.get("approval_id") != approval_id:
-            continue
         event = getattr(row, "event_type", None)
         client_id = refs.get("client_order_id")
-        if event == "paper_submission_absent" and type(client_id) is str:
-            absent.add(client_id)
+        attempt = _row_attempt_id(row)
+        if event == "paper_submission_absent":
+            if attempt is not None:
+                closed.add(attempt)
+            elif type(client_id) is str and client_id:
+                legacy_clients.add(client_id)
         elif event == "paper_submission" and type(client_id) is str:
-            live.append(client_id)
-    return any(client_id not in absent and client_id != except_client_id for client_id in live)
+            approval_id = refs.get("approval_id")
+            if type(approval_id) is str:
+                submissions.append((client_id, approval_id, attempt))
+    return closed, legacy_clients, submissions
+
+
+def _attempt_is_closed(client_id, attempt, closed: set[str], legacy_clients: set[str]) -> bool:
+    if attempt is not None:
+        return attempt in closed
+    return type(client_id) is str and client_id in legacy_clients
 
 
 def _mark_submission_absent(gateway, client_order_id: str, order_ref: str) -> None:
-    """The broker confirmed this reservation's order is absent."""
+    """The broker confirmed this attempt's order is absent.
+
+    The marker names the attempt that was checked. A later retry on the same
+    client id keeps its own submission.
+    """
     if type(client_order_id) is not str or not client_order_id or not order_ref:
         raise ProfileRefused("intent", "absent submission was not signed")
     st = None if gateway is None else getattr(gateway, "_st", None)
     audit = None if st is None else getattr(st, "audit", None)
     if audit is None or not callable(getattr(audit, "append", None)):
         raise ProfileRefused("intent", "absent submission was not signed")
+    verify = getattr(audit, "verify_entry", None)
+    attempt_id = None
+    if callable(verify):
+        closed: set[str] = set()
+        candidates: list[str] = []
+        for row in audit._rows():
+            if not _verified_audit_row(audit, row):
+                continue
+            refs = row.refs or {}
+            if str(refs.get("order_id") or "") != str(order_ref):
+                continue
+            if refs.get("client_order_id") != client_order_id:
+                continue
+            event = getattr(row, "event_type", None)
+            attempt = _row_attempt_id(row)
+            if event == "paper_submission_absent" and attempt is not None:
+                closed.add(attempt)
+            elif event == "paper_submission" and attempt is not None:
+                candidates.append(attempt)
+        open_attempts = [attempt for attempt in candidates if attempt not in closed]
+        if open_attempts:
+            attempt_id = open_attempts[-1]
+    refs = {"order_id": str(order_ref), "client_order_id": client_order_id}
+    payload: dict[str, object] = {"absent": True}
+    if attempt_id is not None:
+        refs["attempt_id"] = attempt_id
+        payload["attempt_id"] = attempt_id
     audit.append(
         "paper_submission_absent",
         actor="paper-gateway",
-        refs={"order_id": str(order_ref), "client_order_id": client_order_id},
-        payload={"absent": True},
+        refs=refs,
+        payload=payload,
     )
 
 
@@ -3003,8 +3123,9 @@ def _landed_approval_ids(st, order) -> list[str]:
         return []
     rows = list(audit._rows())
     aborted = _aborted_intent_seqs(rows)
-    absent: set[str] = set()
-    submissions: list[tuple[str, str]] = []
+    closed, legacy_clients, _all_submissions = _verified_submission_attempts(
+        audit, audit.verify_entry,
+    )
     found: list[str] = []
 
     def add(approval_id) -> None:
@@ -3020,9 +3141,6 @@ def _landed_approval_ids(st, order) -> list[str]:
             continue
         event = getattr(row, "event_type", None)
         if event == "paper_submission_absent":
-            client_id = refs.get("client_order_id")
-            if type(client_id) is str and client_id:
-                absent.add(client_id)
             continue
         if event == "paper_submission":
             if refs.get("broker_client_order_id") != broker_client_order_id:
@@ -3031,7 +3149,9 @@ def _landed_approval_ids(st, order) -> list[str]:
             approval_id = refs.get("approval_id")
             if type(client_id) is not str or type(approval_id) is not str:
                 continue
-            submissions.append((client_id, approval_id))
+            if _attempt_is_closed(client_id, _row_attempt_id(row), closed, legacy_clients):
+                continue
+            add(approval_id)
             continue
         payload = row.payload or {}
         if payload.get("_phase") != "intent" or payload.get("_op") != "order_submit":
@@ -3041,10 +3161,6 @@ def _landed_approval_ids(st, order) -> list[str]:
         if row.seq in aborted:
             continue
         add(refs.get("approval_id"))
-    for client_id, approval_id in submissions:
-        if client_id in absent:
-            continue
-        add(approval_id)
     return found
 
 

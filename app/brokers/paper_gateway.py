@@ -428,7 +428,16 @@ def _guarded_submit(gateway, captured):
                 attempt_id=attempt_id,
             )
             store._require_authority_generation(seen)
-            return captured(canonical)
+            return store._dispatch_under_stop_lock(
+                client_id,
+                generation,
+                order_ref,
+                order=authority_kwargs["order"],
+                producing_runtime=authority_kwargs["producing_runtime"],
+                market=authority_kwargs["market"],
+                now_quote=authority_kwargs["now_quote"],
+                send=lambda: captured(canonical),
+            )
         finally:
             store._clear_inflight(client_id)
 
@@ -466,6 +475,17 @@ class _ProxyCopyError(Exception):
     """The caller's explicit proxy cannot be copied onto a fresh transport."""
 
 
+def _bracket_ipv6(host: str) -> str:
+    """Render an IPv6 literal with brackets. Hostnames and IPv4 stay as they are."""
+    import ipaddress
+
+    try:
+        ipaddress.IPv6Address(host)
+    except ValueError:
+        return host
+    return f"[{host}]"
+
+
 def _explicit_proxy(http):
     """The caller's ``proxy=`` URL, or None when no explicit proxy is set.
 
@@ -490,7 +510,7 @@ def _explicit_proxy(http):
         port = proxy_url.port
         if scheme not in {"http", "https"} or type(host) is not str or not host or type(port) is not int:
             raise _ProxyCopyError("explicit proxy cannot be copied")
-        rendered = f"{scheme}://{host}:{port}"
+        rendered = f"{scheme}://{_bracket_ipv6(host)}:{port}"
         if found is not None and found != rendered:
             raise _ProxyCopyError("explicit proxy cannot be copied")
         found = rendered

@@ -6258,9 +6258,11 @@ def test_recovery_racing_submit_does_not_send_twice(st, tmp_path):
     gateway = PaperOrderGateway(broker, st=st, pending_exposure_cap=Decimal("5000"))
     other = PaperOrderGateway(broker, st=st, pending_exposure_cap=Decimal("5000"))
     scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
-    store = _store(tmp_path, "race-recovery.sqlite")
+    store = _store(tmp_path, "race-recovery.sqlite", clock=scenario.clock)
+    other_store = AuthorityProfileStore(store.path, clock=scenario.clock)
+    other_store._conn.execute("PRAGMA busy_timeout = 0")
     now = scenario.clock.now()
-    scenario_box.update(scenario=scenario, store=store, other=other, now=now)
+    scenario_box.update(scenario=scenario, store=other_store, other=other, now=now)
     _install(
         store,
         _document(
@@ -6667,3 +6669,273 @@ def test_final_risk_pass_refuses_when_the_callback_changes_inputs(st, tmp_path):
     assert _sends(broker) == 0
     assert getattr(result.outcome, "ok", None) is not True
     assert "risk" in str(getattr(result.outcome, "reason", "")).lower()
+
+
+def test_absent_marker_does_not_hide_a_later_attempt_on_the_same_client_id(st, tmp_path):
+    """4361296312 / 4361297341: absence is per attempt, so a landed retry is recorded."""
+    from schemas.models.approval_record import ApprovalRecord
+
+    broker = _CountingPaper()
+    real_submit = broker._client.submit_order
+    calls = {"n": 0}
+
+    def reject_then_land(canonical):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("broker rejected the order")
+        real_submit(canonical)
+        raise TimeoutError("response lost after accept")
+
+    broker._client.submit_order = reject_then_land
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(
+        st, mode=Mode.paper, broker=broker, gateway=gateway, bind_approval=False,
+    )
+    store = _store(tmp_path, "attempt-absent.sqlite")
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    notional = Decimal(str(scenario.order.notional))
+    client_order_id = "same-client"
+    first = handoff_to_gateway(
+        store, gateway, profile_id="profile-b", action="submit_paper",
+        client_order_id=client_order_id, notional=notional, actor="stop-owner",
+        now=now, submit_args=(scenario.order,),
+        submit_kwargs=_paper_submit_kwargs(scenario), **_PAPER_BINDINGS,
+    )
+    assert getattr(first.outcome, "ok", None) is not True
+    assert _sends(broker) == 0
+    assert _reservation_flags(store.path, client_order_id)["handoff_state"] == "failed"
+    retry = _second_approval(st, scenario)
+    gateway.mint_submit_token(
+        nonce="n-same-b", proposal_id=scenario.order.proposal_id,
+        risk_decision_id=scenario.risk_decision.id, order_tuple_hash=scenario.tuple_hash,
+    )
+    second = handoff_to_gateway(
+        store, gateway, profile_id="profile-b", action="submit_paper",
+        client_order_id=client_order_id, notional=notional, actor="stop-owner",
+        now=now, submit_args=(scenario.order,),
+        submit_kwargs=_paper_submit_kwargs(scenario, token_nonce="n-same-b", approval=retry),
+        **_PAPER_BINDINGS,
+    )
+    assert _reservation_flags(store.path, client_order_id)["handoff_state"] == "completed"
+    assert getattr(second.outcome, "ok", None) is not True
+    with st.session_factory() as session:
+        first_approval = session.get(ApprovalRecord, scenario.approval.id)
+        landed_approval = session.get(ApprovalRecord, retry.id)
+    assert bool(first_approval.single_use_consumed) is False
+    assert bool(landed_approval.single_use_consumed) is True
+    assert _sends(broker) == 1
+    submissions = [
+        row for row in st.audit._rows()
+        if getattr(row, "event_type", None) == "paper_submission"
+    ]
+    absences = [
+        row for row in st.audit._rows()
+        if getattr(row, "event_type", None) == "paper_submission_absent"
+    ]
+    assert len(submissions) == 2
+    assert len(absences) == 1
+    absent_attempt = (absences[0].refs or {}).get("attempt_id")
+    live_attempts = {(row.refs or {}).get("attempt_id") for row in submissions}
+    assert type(absent_attempt) is str and absent_attempt
+    assert absent_attempt in live_attempts
+    assert len(live_attempts - {absent_attempt}) == 1
+
+
+def _other_store_stop_after_the_memory_check_does_not_send(st, tmp_path, writer):
+    """4361823736 / 4360299867: a durable stop or claim change after the memory check wins."""
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    store = _store(tmp_path, f"durable-{writer}.sqlite", clock=scenario.clock)
+    other = AuthorityProfileStore(store.path, clock=scenario.clock)
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    real = store._require_authority_generation
+
+    def after_memory_check(seen):
+        result = real(seen)
+        if writer == "takeover":
+            other_clock = FrozenClock(scenario.clock.now() + CLAIM_LEASE + timedelta(seconds=2))
+            taker = AuthorityProfileStore(store.path, clock=other_clock)
+            ticket = taker._reconcile_handoff(
+                "durable-takeover", order_ref=str(scenario.order.id),
+                now=other_clock.now(), actor="recovery-owner", gateway=gateway,
+                ladder=scenario.ladder,
+            )
+            assert isinstance(ticket, ClaimTicket)
+        else:
+            getattr(other, writer)(
+                "profile-b", actor="stop-owner", now=now, reason=f"{writer} before send",
+            )
+        return result
+
+    store._require_authority_generation = after_memory_check
+    client_order_id = f"durable-{writer}"
+    try:
+        result = handoff_to_gateway(
+            store, gateway, profile_id="profile-b", action="submit_paper",
+            client_order_id=client_order_id,
+            notional=Decimal(str(scenario.order.notional)), actor="stop-owner",
+            now=now, submit_args=(scenario.order,),
+            submit_kwargs=_paper_submit_kwargs(scenario), **_PAPER_BINDINGS,
+        )
+    except ProfileRefused:
+        result = None
+    assert _sends(broker) == 0
+    assert broker._client.submitted == []
+    if result is not None:
+        assert getattr(result.outcome, "ok", None) is not True
+    flags = _reservation_flags(store.path, client_order_id)
+    assert flags["handoff_state"] != "completed"
+
+
+@pytest.mark.parametrize("writer", ["kill", "hold", "revoke", "takeover"])
+def test_durable_dispatch_rechecks_claim_and_stop(st, tmp_path, writer):
+    """4361823736 / 4360299867: the final read sees another store's stop or claim."""
+    _other_store_stop_after_the_memory_check_does_not_send(st, tmp_path, writer)
+
+
+def test_stop_cannot_commit_during_the_locked_dispatch(st, tmp_path):
+    """A stop on another connection cannot commit between the final read and the send."""
+    broker = _CountingPaper()
+    real_submit = broker._client.submit_order
+    box = {"code": None, "kill": None}
+
+    def send_while_locked(canonical):
+        other = box["other"]
+        other._conn.execute("PRAGMA busy_timeout = 0")
+        try:
+            other.kill(
+                "profile-b", actor="stop-owner", now=box["now"], reason="kill during send",
+            )
+            box["code"] = "committed"
+        except ProfileRefused as exc:
+            box["code"] = exc.code
+        return real_submit(canonical)
+
+    broker._client.submit_order = send_while_locked
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    store = _store(tmp_path, "locked-dispatch.sqlite", clock=scenario.clock)
+    now = scenario.clock.now()
+    box["now"] = now
+    box["other"] = AuthorityProfileStore(store.path, clock=scenario.clock)
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    result = handoff_to_gateway(
+        store, gateway, profile_id="profile-b", action="submit_paper",
+        client_order_id="locked-dispatch",
+        notional=Decimal(str(scenario.order.notional)), actor="stop-owner",
+        now=now, submit_args=(scenario.order,),
+        submit_kwargs=_paper_submit_kwargs(scenario), **_PAPER_BINDINGS,
+    )
+    assert box["code"] == "store"
+    assert getattr(result.outcome, "ok", None) is True
+    assert _sends(broker) == 1
+    import sqlite3
+
+    raw = sqlite3.connect(store.path)
+    kill = raw.execute("SELECT kill FROM controls").fetchone()[0]
+    raw.close()
+    assert int(kill) == 0
+    store.kill("profile-b", actor="stop-owner", now=now, reason="kill after send")
+    raw = sqlite3.connect(store.path)
+    kill = raw.execute("SELECT kill FROM controls").fetchone()[0]
+    raw.close()
+    assert int(kill) == 1
+
+
+@pytest.mark.parametrize("writer", ["kill", "hold", "revoke"])
+def test_clock_step_back_does_not_block_stops(tmp_path, writer):
+    """4361296709: a rewound clock still lets kill, hold, and revoke commit."""
+    clock = FrozenClock(NOW)
+    store = _store(tmp_path, f"rewind-stop-{writer}.sqlite", clock=clock)
+    _install(
+        store,
+        _document(expires_at=(NOW + timedelta(hours=2)).isoformat()),
+        now=NOW,
+    )
+    clock._at = NOW + timedelta(minutes=5)
+    store.authorize(
+        "profile-b", action="propose", client_order_id=f"forward-{writer}",
+        notional=Decimal("10.00"), actor="stop-owner", now=clock.now(),
+    )
+    clock._at = NOW
+    assert _refuse(
+        lambda: store.authorize(
+            "profile-b", action="propose", client_order_id=f"rewound-{writer}",
+            notional=Decimal("10.00"), actor="stop-owner", now=clock.now(),
+        )
+    ) == "stale_claim"
+    getattr(store, writer)(
+        "profile-b", actor="stop-owner", now=clock.now(), reason=f"{writer} on a rewound clock",
+    )
+    raw_now = clock.now()
+    assert raw_now < NOW + timedelta(minutes=5)
+
+
+def test_ipv6_proxy_host_is_bracketed():
+    """4361296538: an IPv6 proxy literal keeps its brackets on the owned transport."""
+    import httpx
+
+    from brokers.paper_gateway import _explicit_proxy, _owned_transport
+
+    http = httpx.Client(proxy="http://[::1]:8080", trust_env=False, timeout=2.0)
+    try:
+        rendered = _explicit_proxy(http)
+        owned = _owned_transport(http)
+    finally:
+        http.close()
+    assert rendered == "http://[::1]:8080"
+    assert owned is not None
+
+
+def test_missing_clock_mark_is_not_recreated(tmp_path):
+    """4361823746: a current store that lost clock_mark fails closed."""
+    import sqlite3
+
+    path = tmp_path / "missing-clock.sqlite"
+    clock = FrozenClock(NOW)
+    store = AuthorityProfileStore(path, clock=clock)
+    _install(store, _document(expires_at=(NOW + timedelta(hours=1)).isoformat()), now=NOW)
+    del store
+    raw = sqlite3.connect(path)
+    raw.execute("DROP TABLE clock_mark")
+    raw.commit()
+    names = {
+        row[0]
+        for row in raw.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+    raw.close()
+    assert "clock_mark" not in names
+    with pytest.raises(ProfileRefused) as caught:
+        AuthorityProfileStore(path, clock=FrozenClock(NOW + timedelta(minutes=1)))
+    assert caught.value.code == "store"
+    raw = sqlite3.connect(path)
+    names = {
+        row[0]
+        for row in raw.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+    raw.close()
+    assert "clock_mark" not in names
