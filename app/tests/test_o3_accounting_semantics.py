@@ -2192,13 +2192,241 @@ def test_o3_corrected_market_requires_a_correction() -> None:
         "instrument_id": "ev-yes",
     })
     assert "settlement_unreconciled" in _evaluate(missing)
-    good = json.loads(path.read_text(encoding="utf-8"))
-    good["markets"][0]["state"] = "corrected"
-    good["corrections"].append({
+    metadata = json.loads(path.read_text(encoding="utf-8"))
+    _mark_corrected(metadata)
+    assert "settlement_unreconciled" in _evaluate(metadata)
+
+
+def _resting_book() -> dict:
+    path = VALIDATOR.parent / "fixtures" / "event_resting_order_reservation.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _post_correction_of(
+    fixture: dict,
+    reversal_sequence: int,
+    replacement_sequence: int,
+) -> None:
+    """Append an exact reversal of j-reserve and a replacement posting."""
+    original = next(entry for entry in fixture["journal"] if entry["entry_id"] == "j-reserve")
+    flipped = {"dr": "cr", "cr": "dr"}
+
+    def lines(reverse: bool) -> list[dict]:
+        return [
+            {
+                "account": line["account"],
+                "side": flipped[line["side"]] if reverse else line["side"],
+                "amount_minor": line["amount_minor"],
+                "instrument_id": line["instrument_id"],
+            }
+            for line in original["lines"]
+        ]
+
+    fixture["journal"].append({
+        "entry_id": "j-rev-yes",
+        "sequence": reversal_sequence,
+        "idempotency_key": "reverse-yes",
+        "fill_id": "f-yes",
+        "strategy_id": original["strategy_id"],
+        "reason": original["reason"],
+        "lines": lines(True),
+    })
+    fixture["journal"].append({
+        "entry_id": "j-replace-yes",
+        "sequence": replacement_sequence,
+        "idempotency_key": "replace-yes",
+        "fill_id": "f-yes",
+        "strategy_id": original["strategy_id"],
+        "reason": original["reason"],
+        "lines": lines(False),
+    })
+
+
+def _mark_corrected(fixture: dict, **extra: object) -> None:
+    fixture["markets"][0]["state"] = "corrected"
+    correction = {
         "correction_id": "c-yes",
         "admits_fill_id": "f-yes",
         "reverses_entry_id": "j-reserve",
         "reason": "append-only correction",
         "instrument_id": "ev-yes",
+        "cause": "reserve_collateral",
+    }
+    correction.update(extra)
+    fixture["corrections"].append(correction)
+
+
+def _other_instrument_reserve(fixture: dict) -> None:
+    """A resting reservation that posts only to ev-other."""
+    fixture["instruments"].append({
+        "instrument_id": "ev-other",
+        "family": "event_contract",
+        "venue_id": "venue-event-candidate",
+        "venue_symbol": "OTHER-23DEC31",
+        "currency": "USD",
+        "unit": "contract",
+        "contract_style": "binary",
+        "outcome_side": "yes",
+        "collateral_model": "fully_collateralized",
     })
-    assert _evaluate(good) == set()
+    fixture["orders"].append({
+        "order_id": "ord-other",
+        "instrument_id": "ev-other",
+        "family": "event",
+        "side": "buy",
+        "qty": 1,
+        "state": "resting",
+    })
+    fixture["markets"].append({"instrument_id": "ev-other", "state": "open"})
+    fixture["journal"].append({
+        "entry_id": "j-other",
+        "sequence": 8,
+        "idempotency_key": "reserve-other",
+        "order_id": "ord-other",
+        "strategy_id": "s-event",
+        "reason": "reserve_collateral",
+        "lines": [
+            {
+                "account": "collateral_reserved",
+                "side": "dr",
+                "amount_minor": 100000,
+                "instrument_id": "ev-other",
+            },
+            {
+                "account": "cash_available",
+                "side": "cr",
+                "amount_minor": 100000,
+                "instrument_id": "ev-other",
+            },
+        ],
+    })
+    fixture["reported"]["cash_available"] -= 100000
+    fixture["reported"]["collateral_reserved"] += 100000
+    fixture["reported"]["open_reservations"].append({
+        "reservation_id": "reserve-other",
+        "instrument_id": "ev-other",
+        "amount_minor": 100000,
+    })
+
+
+def test_o3_corrected_market_requires_posted_reversal_and_replacement() -> None:
+    posted = _resting_book()
+    _post_correction_of(posted, 6, 7)
+    _mark_corrected(posted)
+    assert _evaluate(posted) == set()
+    false_cause = _resting_book()
+    _post_correction_of(false_cause, 6, 7)
+    _mark_corrected(false_cause, cause="settlement_payout")
+    assert "settlement_unreconciled" in _evaluate(false_cause)
+    reversed_only = _resting_book()
+    _post_correction_of(reversed_only, 6, 7)
+    reversed_only["journal"] = [
+        entry for entry in reversed_only["journal"] if entry["entry_id"] != "j-replace-yes"
+    ]
+    _mark_corrected(reversed_only)
+    assert "settlement_unreconciled" in _evaluate(reversed_only)
+    swapped = _resting_book()
+    _post_correction_of(swapped, 7, 6)
+    _mark_corrected(swapped)
+    assert "settlement_unreconciled" in _evaluate(swapped)
+    partial_mirror = _resting_book()
+    _post_correction_of(partial_mirror, 6, 7)
+    for entry in partial_mirror["journal"]:
+        if entry["entry_id"] == "j-rev-yes":
+            for line in entry["lines"]:
+                line["amount_minor"] //= 2
+    _mark_corrected(partial_mirror)
+    assert "settlement_unreconciled" in _evaluate(partial_mirror)
+    bare_swap = _resting_book()
+    reserve = next(entry for entry in bare_swap["journal"] if entry["entry_id"] == "j-reserve")
+    flipped = {"dr": "cr", "cr": "dr"}
+    for line in reserve["lines"]:
+        line["side"] = flipped[line["side"]]
+    assert "balance_mismatch" in _evaluate(bare_swap)
+
+
+def test_o3_corrected_reversal_must_post_the_market_instrument() -> None:
+    crossed = _resting_book()
+    _other_instrument_reserve(crossed)
+    _mark_corrected(crossed, reverses_entry_id="j-other")
+    assert "settlement_unreconciled" in _evaluate(crossed)
+    checkpoint = _resting_book()
+    checkpoint["checkpoint"]["applied_entry_ids"] = ["j-untyped"]
+    _mark_corrected(checkpoint, reverses_entry_id="j-untyped")
+    assert "settlement_unreconciled" in _evaluate(checkpoint)
+
+
+def test_o3_either_order_field_requires_terminal_sequence() -> None:
+    masked = _dead_order_activity("cancelled", 6, 7, 2)
+    masked["orders"][-1]["terminal_state"] = "resting"
+    del masked["orders"][-1]["terminal_sequence"]
+    assert "schema_invalid" in _evaluate(masked)
+    partial = _resting_book()
+    rest = next(order for order in partial["orders"] if order["order_id"] == "ord-rest")
+    rest["state"] = "cancelled"
+    rest["terminal_state"] = "partially_filled"
+    assert "schema_invalid" in _evaluate(partial)
+    rest["terminal_sequence"] = 4
+    assert _evaluate(partial) == set()
+    rest["terminal_sequence"] = 3
+    assert "late_fill_divergence" in _evaluate(partial)
+    late = _resting_book()
+    late["orders"].append({
+        "order_id": "ord-late",
+        "instrument_id": "ev-yes",
+        "family": "event",
+        "side": "buy",
+        "qty": 1,
+        "state": "cancelled",
+        "terminal_state": "resting",
+        "terminal_sequence": 2,
+    })
+    late["fills"].append({
+        "fill_id": "f-late",
+        "order_id": "ord-late",
+        "instrument_id": "ev-yes",
+        "sequence": 8,
+        "qty": 1,
+        "price_minor": 400000,
+        "fee_minor": 0,
+        "side": "buy",
+    })
+    assert "late_fill_divergence" in _evaluate(late)
+    held = _dead_order_activity("cancelled", 6, 7, 7)
+    held["orders"][-1]["terminal_state"] = "resting"
+    held["journal"] = [
+        entry for entry in held["journal"] if entry["entry_id"] != "j-dead-release"
+    ]
+    held["reported"]["cash_available"] -= 100000
+    held["reported"]["collateral_reserved"] += 100000
+    held["reported"]["open_reservations"].append({
+        "reservation_id": "reserve-dead",
+        "instrument_id": "ev-yes",
+        "amount_minor": 100000,
+    })
+    assert "balance_mismatch" in _evaluate(held)
+    released = _dead_order_activity("cancelled", 6, 8, 7)
+    released["orders"][-1]["terminal_state"] = "resting"
+    assert _evaluate(released) == set()
+    path = VALIDATOR.parent / "fixtures" / "equity_partial_then_dividend.json"
+    equity = json.loads(path.read_text(encoding="utf-8"))
+    equity["orders"] = [{
+        "order_id": "ord-eq-1",
+        "instrument_id": "eq-aapl",
+        "family": "equity",
+        "side": "buy",
+        "qty": 1,
+        "state": "cancelled",
+        "terminal_state": "partially_filled",
+    }]
+    equity["fills"] = []
+    equity["journal"] = []
+    equity["corporate_actions"] = []
+    equity["reported"] = {
+        "cash_available": equity["checkpoint"]["cash_available"],
+        "collateral_reserved": 0,
+        "positions": [],
+        "open_reservations": [],
+        "attribution": [],
+    }
+    assert "schema_invalid" in _evaluate(equity)

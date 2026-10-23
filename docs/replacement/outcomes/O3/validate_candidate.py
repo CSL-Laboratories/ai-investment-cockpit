@@ -180,6 +180,25 @@ def _admitted_fill_matches(fixture: dict, item: dict, instrument_id: str) -> boo
     return False
 
 
+def _order_is_cancel_like(order: dict) -> bool:
+    """Cancel-like when ``state`` or ``terminal_state`` is in LATE_TERMINALS.
+
+    Both fields count. The order then needs an integer ``terminal_sequence``,
+    and a fill after that sequence is late.
+    """
+    terminal = order.get("terminal_state")
+    return order.get("state") in LATE_TERMINALS or (
+        terminal is not None and terminal in LATE_TERMINALS
+    )
+
+
+def _entry_sequence(entry: dict) -> int | None:
+    sequence = entry.get("sequence")
+    if type(sequence) is int:
+        return sequence
+    return None
+
+
 def _correction_supersedes_void(
     fixture: dict,
     item: dict,
@@ -342,6 +361,97 @@ def _linked_reversal_ids(fixture: dict, repeated_ids: set[str]) -> tuple[set[str
     return paired, mirrors
 
 
+def _posted_correction_facts(fixture: dict) -> tuple[set[str], set[str]]:
+    """Instruments with a posted correction, and the reversal entry ids.
+
+    Support is three journal entries on that instrument, in sequence order:
+    the original, a later exact reversal, and a still later replacement.
+    ``cause`` is the original reason. Lines on the original post only that
+    instrument, so a bare checkpoint id does not qualify. The reversal ids
+    may post the swapped sides of a reserve, fill, or fee.
+    """
+    supported: set[str] = set()
+    mirrors: set[str] = set()
+    journal = fixture.get("journal", ())
+    repeated = _repeated_entry_ids(journal)
+    by_id: dict[str, dict] = {}
+    for entry in journal:
+        if not isinstance(entry, dict):
+            continue
+        entry_id = entry.get("entry_id")
+        if isinstance(entry_id, str) and entry_id not in repeated and entry_id not in by_id:
+            by_id[entry_id] = entry
+    for item in fixture.get("corrections", ()):
+        instrument_id = item.get("instrument_id")
+        cause = item.get("cause")
+        original_id = item.get("reverses_entry_id")
+        if not isinstance(instrument_id, str) or not isinstance(cause, str):
+            continue
+        if not isinstance(original_id, str) or original_id in repeated:
+            continue
+        if not _admitted_fill_matches(fixture, item, instrument_id):
+            continue
+        original = by_id.get(original_id)
+        if original is None or original.get("reason") != cause:
+            continue
+        if not _only_instrument(original, instrument_id):
+            continue
+        if not _signature_positive(_line_signature(original, reverse=False)):
+            continue
+        original_sequence = _entry_sequence(original)
+        if original_sequence is None:
+            continue
+        wanted = _line_signature(original, reverse=True)
+        reversal = None
+        reversal_sequence = None
+        for entry in journal:
+            if not isinstance(entry, dict):
+                continue
+            entry_id = entry.get("entry_id")
+            if (
+                not isinstance(entry_id, str)
+                or entry_id == original_id
+                or entry_id in repeated
+                or entry.get("reason") != cause
+                or not _only_instrument(entry, instrument_id)
+            ):
+                continue
+            sequence = _entry_sequence(entry)
+            if sequence is None or sequence <= original_sequence:
+                continue
+            if _line_signature(entry, reverse=False) != wanted:
+                continue
+            if reversal_sequence is None or sequence < reversal_sequence:
+                reversal = entry
+                reversal_sequence = sequence
+        if reversal is None or reversal_sequence is None:
+            continue
+        reversal_id = reversal.get("entry_id")
+        if isinstance(reversal_id, str):
+            mirrors.add(reversal_id)
+        for entry in journal:
+            if not isinstance(entry, dict):
+                continue
+            entry_id = entry.get("entry_id")
+            if (
+                not isinstance(entry_id, str)
+                or entry_id in {original_id, reversal_id}
+                or entry_id in repeated
+                or entry.get("reason") != cause
+                or not _only_instrument(entry, instrument_id)
+            ):
+                continue
+            sequence = _entry_sequence(entry)
+            if sequence is None or sequence <= reversal_sequence:
+                continue
+            signature = _line_signature(entry, reverse=False)
+            if not _signature_positive(signature) or signature == wanted:
+                continue
+            supported.add(instrument_id)
+            break
+    return supported, mirrors
+
+
 def _reject_void_unwind_shape(fixture: dict, failures: set[str]) -> None:
     """Direction and cause of a void_unwind, without reading market-state rows."""
     void_evidence = {
@@ -446,8 +556,7 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         terminal = order.get("terminal_state")
         if terminal is not None and terminal not in allowed:
             failures.add("family_crossed")
-        effective = terminal or order["state"]
-        if effective in LATE_TERMINALS and type(order.get("terminal_sequence")) is not int:
+        if _order_is_cancel_like(order) and type(order.get("terminal_sequence")) is not int:
             # Without this sequence a later reserve has no clock to precede.
             failures.add("schema_invalid")
 
@@ -563,13 +672,13 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             defect_instruments.add(fill["instrument_id"])
             continue
         seen_fills.add(fill["fill_id"])
-        terminal = order.get("terminal_state") or order["state"]
         terminal_sequence = order.get("terminal_sequence")
-        if terminal in LATE_TERMINALS and terminal_sequence is None:
+        cancel_like = _order_is_cancel_like(order)
+        if cancel_like and type(terminal_sequence) is not int:
             failures.add("schema_invalid")
         late = (
-            terminal in LATE_TERMINALS
-            and terminal_sequence is not None
+            cancel_like
+            and type(terminal_sequence) is int
             and fill["sequence"] > terminal_sequence
             and fill["fill_id"] not in admitted
         )
@@ -653,6 +762,7 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             failures.add("position_divergence")
 
     pre_settlement = dict(derived)
+    corrected_instruments, correction_mirrors = _posted_correction_facts(fixture)
     seen_market_instruments: set[str] = set()
     for market in fixture["markets"]:
         if market["instrument_id"] in seen_market_instruments:
@@ -660,24 +770,10 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         seen_market_instruments.add(market["instrument_id"])
         if market["instrument_id"] not in known_instruments:
             failures.add("unknown_instrument")
-        if market["state"] == "corrected":
-            instrument_id = market["instrument_id"]
-            entry_ids = {entry.get("entry_id") for entry in fixture["journal"]}
-            entry_ids |= applied_entry_ids
-            fills_for_market = {
-                fill.get("fill_id")
-                for fill in fixture["fills"]
-                if fill.get("instrument_id") == instrument_id
-            }
-            supported = any(
-                item.get("instrument_id") == instrument_id
-                and item.get("reverses_entry_id") in entry_ids
-                and item.get("admits_fill_id") in fills_for_market
-                for item in fixture["corrections"]
-            )
-            if not supported:
-                # The state says a later correction exists. The record has to name it.
-                failures.add("settlement_unreconciled")
+        if market["state"] == "corrected" and market["instrument_id"] not in corrected_instruments:
+            # The state says a later correction was posted. Metadata that only
+            # names an entry does not post the reversal or the replacement.
+            failures.add("settlement_unreconciled")
         if market["state"] != "settled":
             continue
         instrument_id = market["instrument_id"]
@@ -903,7 +999,10 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             failures.add("balance_mismatch")
         if entry["reason"] == "trade_fee" and fill_ref is None:
             failures.add("balance_mismatch")
-        if entry["reason"] in {"fill", "reserve_collateral", "trade_fee"}:
+        if (
+            entry["reason"] in {"fill", "reserve_collateral", "trade_fee"}
+            and entry.get("entry_id") not in correction_mirrors
+        ):
             allowed = {
                 "fill": {("position_cost", "dr"), ("fees_expense", "dr"), ("cash_available", "cr")},
                 "reserve_collateral": {("collateral_reserved", "dr"), ("cash_available", "cr")},
@@ -1128,7 +1227,6 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             ending = order_hold.get(order_id, opening)
             filled_notional = order_fills_total.get(order_id, 0)
             checkpoint_qty = order.get("checkpoint_filled_qty", 0)
-            terminal = order.get("terminal_state") or order["state"]
             if filled_notional > 0:
                 if pre_release != filled_notional:
                     failures.add("balance_mismatch")
@@ -1138,7 +1236,7 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                 # are compared with premium plus fees.
                 if pre_release != opening:
                     failures.add("balance_mismatch")
-            elif terminal in LATE_TERMINALS and ending != 0:
+            elif _order_is_cancel_like(order) and ending != 0:
                 failures.add("balance_mismatch")
             key = (order_id, order["instrument_id"])
             if key in named_keys and reported_by_key.get(key, 0) != ending:

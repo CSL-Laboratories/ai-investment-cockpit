@@ -202,10 +202,16 @@ result on that row. That result is not a `market_settlement` record,
 and this candidate has no separate determination-evidence kind.
 `market_settlement` evidence belongs only on `settled`, and `market_void`
 evidence only on `voided`. `voided` is not a yes or no result. A
-`corrected` row requires a correction for that instrument:
-`instrument_id` is the market, `reverses_entry_id` names a journal or
-checkpoint entry, and `admits_fill_id` names a fill of that instrument.
-Without that record the row fails `settlement_unreconciled`.
+`corrected` row requires the append-only correction to be posted for
+that instrument. `instrument_id` is the market and `admits_fill_id` names a
+fill of that instrument. `cause` equals the reason on the original
+journal entry, and that entry's lines post only this instrument.
+`reverses_entry_id` names that journal entry. A bare id in
+`applied_entry_ids` has no lines, so it does not show an instrument.
+The journal then has a later entry that reverses those lines and a
+still later entry that replaces them, both with that same reason and
+only this instrument. Without those postings the row fails
+`settlement_unreconciled`.
 
 This candidate's examples are long buys. Short stock, margin, and options
 stay outside it, matching the issue's non-goals.
@@ -418,10 +424,12 @@ not change quantity.
   `rejected_insufficient_collateral`, `expired_unfilled`,
   `trade_cancelled`, `void_ab_initio`) fails `late_fill_divergence`
   unless a correction record admits that fill id. The original entry stays
-  in the journal either way. That order's `state` or `terminal_state`
-  requires an integer `terminal_sequence`. Omitting it fails
-  `schema_invalid`, including when the order has no fill and the book
-  is only a checkpoint.
+  in the journal either way. The order is cancel-like when `state` is
+  one of those values or when `terminal_state` is one of those values.
+  Either field requires an integer `terminal_sequence`, and a fill after
+  that sequence is late on the same either-field rule. Omitting the
+  sequence fails `schema_invalid`, including when the order has no fill
+  and the book is only a checkpoint.
 
 ## Corporate actions
 
@@ -556,7 +564,10 @@ disagrees with itself fails `collateral_double_count` before replay
 starts. Checkpoint instruments must also be declared. A correction may
 reverse a checkpointed entry: `reverses_entry_id` matches either a
 replayed journal entry or an id in the checkpoint's applied history,
-and either match admits the fill it names. An applied entry id protects
+and either match admits the fill it names. Admitting that fill is
+separate from a `corrected` market. Supporting `corrected` still
+requires the original journal lines on that instrument, as the
+lifecycle section says. An applied entry id protects
 against replay too: a journal entry whose `entry_id` appears in
 `applied_entry_ids` is not posted again. Replay applies only entries
 with a higher sequence and a new idempotency key. Reapplying a key, or an
