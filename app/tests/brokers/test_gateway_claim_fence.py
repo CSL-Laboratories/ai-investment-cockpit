@@ -1508,6 +1508,110 @@ def test_quote_stale_only_during_final_admission_enters_watch_only(st):
     assert scenario.breaker.watch_only_reason() is not None
 
 
+def test_mode_changed_at_the_final_halt_probe_does_not_submit(st, monkeypatch):
+    """A mode change at the last HALT probe is re-read before the send hold."""
+    scenario, broker = _paper_gateway(st)
+    calls = {"n": 0}
+
+    def halt(_path):
+        calls["n"] += 1
+        if calls["n"] == 6:
+            scenario.ladder.set_mode(Mode.review_live, actor="op")
+        return False
+
+    monkeypatch.setattr("brokers.gateway._halt_active", halt)
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=lambda: None, **scenario.submit_kwargs()
+    )
+    assert calls["n"] >= 6
+    assert outcome.ok is False
+    assert outcome.stage == "mode"
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_sibling_approved_at_the_final_halt_probe_does_not_submit(st, monkeypatch):
+    """An approved sibling at the last HALT probe is inside the cap check before send."""
+    scenario, broker = _capped_paper(st)
+    calls = {"n": 0}
+
+    def halt(_path):
+        calls["n"] += 1
+        if calls["n"] == 6:
+            _approved_sibling(st)
+        return False
+
+    monkeypatch.setattr("brokers.gateway._halt_active", halt)
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=lambda: None, **scenario.submit_kwargs()
+    )
+    assert calls["n"] >= 6
+    assert outcome.ok is False
+    assert outcome.stage == "pending_exposure"
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+@pytest.mark.parametrize("target", ["approval", "order"])
+def test_post_send_local_write_failure_stays_counted_and_visible(st, monkeypatch, target):
+    """A failed approval or order-state write after a landed send stays visible.
+
+    Reconcile must flag it, and pending exposure must still count the order.
+    """
+    from orchestrator.reconcile import reconcile_startup
+    from orchestrator.state import EVENT_ORDER_TRANSITION
+
+    scenario, broker = _paper_gateway(st)
+    real = scenario.st.audit.record_state_change
+    seen = {"n": 0}
+
+    def record(obj, event_type, *args, **kwargs):
+        hit = broker.calls >= 1 and (
+            (
+                target == "approval"
+                and event_type == EVENT_ADJUDICATION
+                and obj.__class__.__name__ == "ApprovalRecord"
+            )
+            or (target == "order" and event_type == EVENT_ORDER_TRANSITION)
+        )
+        if hit:
+            seen["n"] += 1
+            if seen["n"] == 1:
+                raise OSError(f"{target} write failed")
+        return real(obj, event_type, *args, **kwargs)
+
+    monkeypatch.setattr(scenario.st.audit, "record_state_change", record)
+    outcome = scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+    assert broker.calls == 1
+    assert outcome.ok is False
+    assert outcome.stage == "broker_error"
+    with scenario.st.session_factory() as session:
+        row = session.get(Order, scenario.order.id)
+        assert row.state in {"approved", "submitted", "partially_filled"}
+        rows = session.execute(select(AuditEntry)).scalars().all()
+    assert not any(
+        (entry.refs or {}).get("aborted") == "halt"
+        or "before transport" in str((entry.payload or {}).get("aborted", ""))
+        for entry in rows
+    )
+    probe = create_order(
+        scenario.st, proposal_id=new_id("p"), risk_decision_id=new_id("rd"),
+        account="paper", symbol="MSFT", side="buy", qty="1",
+        order_type="limit", limit_price="1", tif="day",
+        notional="1", order_tuple_hash=new_id("h"), actor="claude",
+    )
+    _ok, total, _cap = scenario.gateway._pending_ok(scenario.st, probe)
+    assert total >= Decimal("1500")
+    alerts: list[str] = []
+    report = reconcile_startup(
+        scenario.st, broker_history_fn=lambda _oid: [], alerter=alerts.append
+    )
+    assert report.ok is False
+    assert report.ambiguous_aborts or report.alerted or any(
+        "AMBIGUOUS" in alert or "NO covering" in alert for alert in alerts
+    )
+
+
 def test_quote_that_expires_during_the_final_risk_refresh_does_not_submit(st):
     scenario, broker = _paper_gateway(st)
     calls = {"n": 0}
