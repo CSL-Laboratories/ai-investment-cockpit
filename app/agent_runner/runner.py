@@ -19,7 +19,9 @@ import jsonschema
 
 from agent_runner.account_guard import CredentialGuardError
 from agent_runner.detect import looks_like_limit
-from agent_runner.result import AgentResult, LIMIT_HIT, NEEDS_HUMAN, OK, TIMEOUT
+from agent_runner.result import (
+    LIMIT_HIT, NEEDS_HUMAN, OK, TIMEOUT, AgentResult, mark_agent_dispatched,
+)
 from agent_runner.spec import AgentSpec
 from agent_runner.tool_inspector import assert_decision_cwd, inspect_argv
 from agent_runner.transport import SubprocessTransport
@@ -439,6 +441,7 @@ def run_agent(spec: AgentSpec, transport=None, usage=None, secret_values=None,
     _assert_no_secret(argv, spec.prompt, secret_values)
 
     proc = transport.run(argv, spec.prompt, spec.timeout_s, spec.cwd)
+    mark_agent_dispatched()
     fault, parsed, session_id, body = _checked_response(
         spec, proc, usage, health_fault=health_fault
     )
@@ -490,6 +493,7 @@ def _repair(spec: AgentSpec, reason, transport, usage, session_id, secret_values
         assert_decision_cwd(rspec.cwd, pinned_cwd=pinned_cwd)
     _assert_no_secret(argv, rspec.prompt, secret_values)
     proc = transport.run(argv, rspec.prompt, rspec.timeout_s, rspec.cwd)
+    mark_agent_dispatched()
     fault, parsed, sid2, body2 = _checked_response(
         rspec, proc, usage, repaired=True, health_fault=health_fault
     )

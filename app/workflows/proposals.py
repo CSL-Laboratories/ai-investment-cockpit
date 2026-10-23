@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation, ROUND_DOWN
+from decimal import Decimal, ROUND_DOWN
 
 from sqlalchemy import select
 
@@ -28,8 +28,9 @@ from agent_runner.result import LIMIT_HIT, OK, TIMEOUT
 from brokers.order_state_machine import create_order
 from brokers.order_tuple import canonical_order_tuple, order_tuple_hash
 from brokers.sell_reservations import pending_sell_reservations
-from bridge.embeds import render_proposal_embed
+from bridge.embeds import render_proposal_embed, render_size_pending_embed
 from core.ids import new_id
+from core.numeric import decimal_or_nan
 from core.proposal_authority import proposal_payload_hash
 from ingest.normalize import escape_untrusted
 from orchestrator.halt import default_halt_path, halt_is_set
@@ -74,13 +75,6 @@ class ProposalOutcome:
     reasons: tuple[str, ...]
 
 
-def _dec(x) -> Decimal:
-    try:
-        return x if isinstance(x, Decimal) else Decimal(str(x))
-    except (InvalidOperation, ValueError, TypeError):
-        return Decimal("NaN")
-
-
 def _latest_snapshot(state) -> PortfolioSnapshot | None:
     with state.session_factory() as s:
         snap = s.execute(
@@ -111,8 +105,8 @@ def build_risk_context(state, *, quote, watchlist: frozenset[str],
     quote_age_s=inf, price 0 -> quote_sane hard-fails)."""
     limits = current_limits(state)
     snap = snapshot if snapshot is not None else _latest_snapshot(state)
-    cash = _dec(snap.cash) if snap is not None else Decimal("0")
-    buying_power = _dec(snap.buying_power) if snap is not None else Decimal("0")
+    cash = decimal_or_nan(snap.cash) if snap is not None else Decimal("0")
+    buying_power = decimal_or_nan(snap.buying_power) if snap is not None else Decimal("0")
     holdings: dict = {}
     for h in (snap.holdings if snap is not None else []) or []:
         if isinstance(h, dict) and h.get("symbol"):
@@ -122,11 +116,11 @@ def build_risk_context(state, *, quote, watchlist: frozenset[str],
                 holdings[symbol]["qty"] = Decimal("NaN")
                 continue
             holdings[symbol] = {
-                "market_value": _dec(h.get("market_value", 0)), "qty": _dec(h.get("qty")),
+                "market_value": decimal_or_nan(h.get("market_value", 0)), "qty": decimal_or_nan(h.get("qty")),
                 "side": h.get("side"),
             }
             if "qty_available" in h:
-                holdings[symbol]["qty_available"] = _dec(h["qty_available"])
+                holdings[symbol]["qty_available"] = decimal_or_nan(h["qty_available"])
     try:
         reserved_sells, unsubmitted_sells = pending_sell_reservations(
             state, exclude_order_id=exclude_order_id,
@@ -135,9 +129,9 @@ def build_risk_context(state, *, quote, watchlist: frozenset[str],
         reserved_sells = None
         unsubmitted_sells = None
     q = quote or {}
-    quote_price = _dec(q.get("price")) if q.get("price") is not None else Decimal("0")
+    quote_price = decimal_or_nan(q.get("price")) if q.get("price") is not None else Decimal("0")
     quote_age_s = float(q["age_s"]) if q.get("age_s") is not None else float("inf")
-    quote_spread = _dec(q.get("spread_pct", 0)) if q else Decimal("0")
+    quote_spread = decimal_or_nan(q.get("spread_pct", 0)) if q else Decimal("0")
     performance = getattr(state, "paper_performance", None)
     performance_fresh = False
     if performance is not None and getattr(performance, "ok", False):
@@ -151,19 +145,19 @@ def build_risk_context(state, *, quote, watchlist: frozenset[str],
             and performance.trading_day == now.astimezone(EASTERN).date().isoformat()
         )
     if performance_fresh:
-        equity_drawdown = _dec(getattr(performance, "equity_drawdown_today", None))
+        equity_drawdown = decimal_or_nan(getattr(performance, "equity_drawdown_today", None))
     elif getattr(state, "paper_performance_required", False):
         equity_drawdown = Decimal("NaN")
     else:
         equity_drawdown = Decimal("0")
     return RiskContext(
-        max_notional=_dec(limits["max_notional"]),
+        max_notional=decimal_or_nan(limits["max_notional"]),
         max_positions=int(limits["max_positions"]),
-        concentration_pct=_dec(limits["concentration_pct"]),
-        daily_loss_limit=_dec(limits["daily_loss_limit"]),
+        concentration_pct=decimal_or_nan(limits["concentration_pct"]),
+        daily_loss_limit=decimal_or_nan(limits["daily_loss_limit"]),
         quote_staleness_s=120.0,
         max_spread_pct=Decimal("1"),
-        pending_exposure_cap=_dec(getattr(state.settings, "pending_exposure_cap", "10000")),
+        pending_exposure_cap=decimal_or_nan(getattr(state.settings, "pending_exposure_cap", "10000")),
         cash=cash,
         buying_power=buying_power,
         holdings=holdings,
@@ -200,10 +194,10 @@ def _market_impact_inputs(metric, *, symbol: str, now) -> MarketImpactInputs | N
     return MarketImpactInputs(
         symbol=str(getattr(metric, "symbol", symbol)).upper(),
         as_of=as_of,
-        median_daily_dollar_volume=_dec(
+        median_daily_dollar_volume=decimal_or_nan(
             getattr(metric, "median_daily_dollar_volume", None)
         ),
-        annualized_realized_volatility=_dec(
+        annualized_realized_volatility=decimal_or_nan(
             getattr(metric, "realized_volatility", None)
         ),
         observations=int(getattr(metric, "observations", 0)),
@@ -256,7 +250,7 @@ def build_execution_verdict(
                 raise ValueError("market observation symbol mismatch")
             book = market_observation.book
             quote = dict(market_observation.quote)
-            if _dec(quote.get("price")) != quote_price:
+            if decimal_or_nan(quote.get("price")) != quote_price:
                 raise ValueError("quote price diverges from the atomic market observation")
         else:
             book = book_fn(symbol)
@@ -281,7 +275,7 @@ def build_execution_verdict(
         inputs = _market_impact_inputs(metric, symbol=symbol, now=now)
         effect = position_effect
         if proposal.get("side") == "sell" and effect in (None, PositionEffect.CLOSE_LONG):
-            available = _dec(sell_available_qty)
+            available = decimal_or_nan(sell_available_qty)
             if (resolved_qty is None or not available.is_finite()
                     or not 0 < resolved_qty <= available):
                 return None, book.seq, resolved_qty, ("sell quantity lacks reconciled backing",)
@@ -402,7 +396,9 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
                    borrow_quote: BorrowQuote | None = None,
                    holdings_symbols: frozenset[str] = frozenset(),
                    watchlist: frozenset[str] = frozenset(),
-                   account: str = "paper") -> ProposalOutcome:
+                   account: str = "paper",
+                   decision_weight=None,
+                   jev_client=None) -> ProposalOutcome:
     """Draft ONE trade proposal for ``event`` over the dispatched ``packet``.
 
     ``quote_fn(symbol) -> {"price", "age_s", "spread_pct"} | None`` is the injected quote
@@ -436,6 +432,10 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
         input_refs={"event_id": event.id, "raw_refs": sorted(packet.dispatched_refs),
                     "context_dropped": len(fit.dropped)},
         transport=transport,
+        decision_weight=decision_weight,
+        jev_packet=packet,
+        jev_symbol=event.symbol,
+        jev_client=jev_client,
     )
     if result.status in (LIMIT_HIT, TIMEOUT):
         return ProposalOutcome("degraded", None, None, None, None, None,
@@ -463,13 +463,6 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
         return ProposalOutcome("quarantined", proposal, record, None, None, None,
                                ("outbound scrub blocked (SEC-09)",))
 
-    # BUG-149: incomplete sizing is still persisted model output. Scrub it first.
-    if proposal.get("quantity") is None and proposal.get("notional") is None:
-        record = _persist_record(state, clock, proposal=proposal, status="needs_human",
-                                 flagged=False, job_id=job.id)
-        return ProposalOutcome("needs_human", proposal, record, None, None, None,
-                               ("neither quantity nor notional present",))
-
     # ---- SEC-14: fail-closed grounding (flag-only; NEVER clears) -------------------------
     def _resolver(ref: str) -> dict:
         return resolve_raw(parquet_root, ref, state=state)
@@ -477,6 +470,28 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
     grounding = evaluate_grounding(state, proposal, packet.dispatched_refs, _resolver,
                                    transport=transport,
                                    symbol_universe=holdings_symbols | watchlist)
+
+    # BUG-149: incomplete sizing is persisted model output, already scrubbed.
+    # Grounding runs first so a size-pending card cannot skip SEC-14. No risk
+    # decision and no order.
+    if proposal.get("quantity") is None and proposal.get("notional") is None:
+        flagged = grounding.flagged
+        if flagged:
+            reasons.extend(grounding.reasons)
+        status = "flagged" if flagged else "needs_human"
+        record = _persist_record(state, clock, proposal=proposal, status=status,
+                                 flagged=flagged, job_id=job.id)
+
+        def _excerpt(ref) -> str:
+            item = resolve_raw(parquet_root, str(ref), state=state)
+            return escape_untrusted(str(item.get("headline", "")))[:200]
+
+        embed = render_size_pending_embed(
+            record.payload, raw_excerpt_fn=_excerpt, flagged=flagged,
+            reasons=grounding.reasons,
+        )
+        return ProposalOutcome(status, proposal, record, None, None, embed,
+                               tuple(reasons) or ("neither quantity nor notional present",))
     flagged = grounding.flagged
     if flagged:
         reasons.extend(grounding.reasons)
@@ -500,7 +515,7 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
             log.warning("market quote unavailable for %s: %s: %s",
                         symbol, type(exc).__name__, exc)
             reasons.append("market quote unavailable; deterministic risk fails closed")
-    raw_quote_price = _dec((quote or {}).get("price"))
+    raw_quote_price = decimal_or_nan((quote or {}).get("price"))
     quote_price = raw_quote_price if raw_quote_price.is_finite() else Decimal("0")
     ctx = build_risk_context(
         state, quote=quote, watchlist=watchlist,
@@ -538,7 +553,7 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
         failed_checks=rd["failed_checks"], warnings=rd["warnings"],
         # BUG-136: sign and persist identical cents; a rounded-up display must never
         # advertise more headroom than the deterministic risk calculation allowed.
-        max_allowed_notional=_dec(rd["max_allowed_notional"]).quantize(
+        max_allowed_notional=decimal_or_nan(rd["max_allowed_notional"]).quantize(
             Decimal("0.01"), rounding=ROUND_DOWN
         ),
         human_required=bool(rd["human_required"]), evaluated_at=now, created_at=now,

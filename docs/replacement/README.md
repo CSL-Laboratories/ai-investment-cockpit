@@ -19,6 +19,7 @@ Read in this order:
    the reconciled A/B/C authority research, owner direction and unresolved gaps.
 5. [MONTH-PROGRAM.md](MONTH-PROGRAM.md) for outcome order and checkpoints.
 6. [program.json](program.json) for the accepted-document receipts and pending outcome registry.
+7. [outcomes/O7/CONTRACT.md](outcomes/O7/CONTRACT.md) for the CSL-219 researched GUI/CLI candidate. It is not an accepted contract, and it does not change the registry maturity.
 
 The human receipt accepts the exact governing/research documents, not additional
 approval of every registry annotation. Outcome titles and dependencies are checked

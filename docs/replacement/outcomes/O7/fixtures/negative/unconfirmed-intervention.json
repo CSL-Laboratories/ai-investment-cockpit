@@ -1,0 +1,15 @@
+{
+  "kind": "negative_command",
+  "control": "unconfirmed_intervention",
+  "body": {
+    "api_version": "o7.operator.v0",
+    "candidate_maturity": "researched",
+    "surface": "cli",
+    "command": "operator.interventions.request_stop",
+    "request_id": "req_cmd_unconfirmed_stop",
+    "arguments": {
+      "scope": "operator_session"
+    },
+    "confirmation": "not_required"
+  }
+}

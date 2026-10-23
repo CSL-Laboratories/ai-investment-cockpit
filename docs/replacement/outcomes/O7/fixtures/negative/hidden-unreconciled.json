@@ -1,0 +1,42 @@
+{
+  "kind": "negative_response",
+  "control": "hidden_unreconciled",
+  "body": {
+    "api_version": "o7.operator.v0",
+    "candidate_maturity": "researched",
+    "surface": "cli",
+    "command": "operator.recovery.inspect",
+    "request_id": "req_recovery_open",
+    "profile": {
+      "profile_id": "illustrative_profile_a",
+      "profile_class": "A",
+      "digest": "sha256:abababababababababababababababababababababababababababababababab",
+      "signature_state": "illustrative_unsigned_fixture"
+    },
+    "enforcement_route": "risk_pass_mode_approval_order_gateway",
+    "authority_effect": "none",
+    "order_path": "none",
+    "status_code": "ok",
+    "visibility": {
+      "uncertainty": "absent_not_hidden",
+      "refusal": "absent_not_hidden",
+      "stale_data": "absent_not_hidden",
+      "reconciliation": "reconciled"
+    },
+    "result": {
+      "reconciliation": "unreconciled",
+      "unknown_orders": 1,
+      "restart_allowed": true,
+      "restart_requires_reconciliation": true
+    },
+    "errors": [],
+    "presentation": {
+      "exit_code": 0,
+      "machine_readable": true,
+      "ansi_in_machine_output": false,
+      "color_only_signal": false,
+      "text_status": "ok",
+      "rendered": "status=ok reconciled"
+    }
+  }
+}
