@@ -16,6 +16,7 @@ the parent's safety checks and then calls the parent.
 from __future__ import annotations
 
 import inspect
+import secrets
 import threading
 
 from brokers.alpaca_paper import AlpacaPaperBroker
@@ -88,25 +89,43 @@ def _order_is_inflight(st, order) -> bool:
     return inflight is not None and order_id in inflight
 
 
-def _close_new_intents(st, already_open: set, reason: str) -> None:
-    """Resolve intents this submit opened. Leave every earlier intent alone."""
+def _close_submission_intent(st, order, already_open: set, reason: str) -> None:
+    """Resolve this submission's own intent. Leave every other intent open."""
 
     class _Seq:
         def __init__(self, seq: int) -> None:
             self.seq = seq
 
+    order_id = getattr(order, "id", None)
+    if type(order_id) is not str or not order_id:
+        return
+    rows = {row.seq: row for row in st.audit._rows()}
     for seq in list(st.audit.unresolved_intents()):
         if seq in already_open:
+            continue
+        row = rows.get(seq)
+        if row is None:
+            continue
+        payload = row.payload or {}
+        if payload.get("_phase") != "intent" or payload.get("_op") != "order_submit":
+            continue
+        if (row.refs or {}).get("order_id") != order_id:
             continue
         st.audit.result(
             _Seq(seq),
             "order_submit",
-            refs={"aborted": "admission_lock"},
+            refs={"order_id": order_id, "aborted": "admission_lock"},
             payload={"aborted": reason[:500]},
         )
+        return
 
 
-def _safety_failure(gateway):
+def _noop_risk(_positions):
+    """Final admission must not call back into the caller."""
+    return {"decision": "approved", "failed_checks": []}
+
+
+def _safety_failure(gateway, *, risk_recheck=None):
     """Re-run the gateway gates on the state clock. ``None`` means they passed."""
     from brokers.authority_profiles import ProfileRefused
     from brokers.order_tuple import order_tuple_hash
@@ -120,6 +139,7 @@ def _safety_failure(gateway):
         )
     st = object.__getattribute__(gateway, "_st")
     resolved_hash = order_tuple_hash(gateway._resolve_tuple(order))
+    recheck = safety["risk_recheck"] if risk_recheck is None else risk_recheck
     return OrderGateway._precheck(
         gateway,
         st,
@@ -128,7 +148,7 @@ def _safety_failure(gateway):
         risk_decision=safety["risk_decision"],
         ladder=safety["ladder"],
         breaker_engine=safety["breaker_engine"],
-        risk_recheck=safety["risk_recheck"],
+        risk_recheck=recheck,
         positions=safety["positions"],
         producing_runtime=safety["producing_runtime"],
         analysis_vendor=safety.get("analysis_vendor"),
@@ -155,14 +175,24 @@ def _guarded_submit(gateway, captured):
             raise ProfileRefused(
                 "client_order_conflict", "permit is bound to a different order"
             )
-        store._recheck_transport_authority(
+        authority = (
             client_id,
             generation,
             order_ref,
-            order=getattr(fence._local, "order", None),
-            producing_runtime=getattr(fence._local, "producing_runtime", None),
         )
+        authority_kwargs = {
+            "order": getattr(fence._local, "order", None),
+            "producing_runtime": getattr(fence._local, "producing_runtime", None),
+        }
+        store._recheck_transport_authority(*authority, **authority_kwargs)
         failure = _safety_failure(gateway)
+        if failure is not None:
+            stage, _event, reason = failure
+            raise ProfileRefused(stage, reason)
+        # The risk callback above can revoke, halt, or stale the feed after the
+        # checks that already ran. This pass has no callback.
+        store._recheck_transport_authority(*authority, **authority_kwargs)
+        failure = _safety_failure(gateway, risk_recheck=_noop_risk)
         if failure is not None:
             stage, _event, reason = failure
             raise ProfileRefused(stage, reason)
@@ -174,23 +204,122 @@ def _guarded_submit(gateway, captured):
 class _AdmittedPaperClient:
     """Client captured at init. ``submit_order`` stays the guarded send."""
 
-    def __init__(self, real, submit) -> None:
+    def __init__(self, real, submit, order_info=None) -> None:
         object.__setattr__(self, "_real", real)
         object.__setattr__(self, "_submit", submit)
+        object.__setattr__(self, "_order_info", order_info)
 
     def __getattribute__(self, name):
         if name == "submit_order":
             return object.__getattribute__(self, "_submit")
+        if name == "order_info":
+            info = object.__getattribute__(self, "_order_info")
+            if info is not None:
+                return info
         if name == "_real_client":
             return object.__getattribute__(self, "_real")
-        if name in {"_real", "_submit"}:
+        if name in {"_real", "_submit", "_order_info"}:
             return object.__getattribute__(self, name)
         return getattr(object.__getattribute__(self, "_real"), name)
 
     def __setattr__(self, name, value) -> None:
-        if name == "submit_order":
+        if name in {"submit_order", "_request", "_headers", "_endpoint", "_client"}:
             return
         setattr(object.__getattribute__(self, "_real"), name, value)
+
+
+def _capture_send(client):
+    """Pin the request function, credential snapshot, and paper endpoint.
+
+    A later assignment on the live client cannot redirect this send. The
+    secret stays in the captured headers and is not written to the profile store.
+    """
+    request = getattr(client, "_request", None)
+    headers = getattr(client, "_headers", None)
+    if not callable(request) or not isinstance(headers, dict):
+        send = getattr(client, "submit_order")
+        info = getattr(client, "order_info", None)
+
+        def frozen(canonical, _send=send):
+            return _send(canonical)
+
+        if not callable(info):
+            return frozen, None
+
+        def frozen_info(*args, _info=info, **kwargs):
+            return _info(*args, **kwargs)
+
+        return frozen, frozen_info
+
+    from brokers.alpaca_paper import (
+        DATA_BASE_URL,
+        PAPER_BASE_URL,
+        _decimal_text,
+        _normalize_order_body,
+    )
+
+    raw = request.__func__
+    snap_headers = {
+        key: value
+        for key, value in headers.items()
+        if type(key) is str and type(value) is str
+    }
+    http = getattr(client, "_client", None)
+
+    class _Pin:
+        pass
+
+    pin = _Pin()
+    pin._headers = dict(snap_headers)
+    pin._client = http
+
+    def call(method, base_url, path, *, json=None, params=None):
+        if isinstance(base_url, str) and "data.alpaca.markets" in base_url:
+            base = DATA_BASE_URL
+        else:
+            base = PAPER_BASE_URL
+        return raw(pin, method, base, path, json=json, params=params)
+
+    def submit(canonical):
+        payload = {
+            "symbol": canonical["symbol"],
+            "qty": _decimal_text(canonical["qty"]),
+            "side": canonical["side"],
+            "type": canonical["order_type"],
+            "time_in_force": canonical["tif"],
+        }
+        if canonical.get("limit_price") is not None:
+            payload["limit_price"] = _decimal_text(canonical["limit_price"])
+        if canonical.get("client_order_id"):
+            payload["client_order_id"] = str(canonical["client_order_id"])[:128]
+        body = call("POST", PAPER_BASE_URL, "/v2/orders", json=payload)
+        return _normalize_order_body(body)
+
+    def order_info(*, broker_order_id=None, client_order_id=None):
+        from brokers.alpaca_paper import AlpacaPaperError, _clean_order_lookup_id
+
+        if (broker_order_id is None) == (client_order_id is None):
+            raise AlpacaPaperError("exactly one paper-order lookup id is required")
+        if broker_order_id is not None:
+            lookup = _clean_order_lookup_id(broker_order_id, field="broker_order_id")
+            body = call("GET", PAPER_BASE_URL, f"/v2/orders/{lookup}")
+            if not isinstance(body, dict) or str(body.get("id") or "") != lookup:
+                raise AlpacaPaperError("Alpaca paper order response did not match broker id")
+        else:
+            lookup = _clean_order_lookup_id(client_order_id, field="client_order_id")
+            body = call(
+                "GET",
+                PAPER_BASE_URL,
+                "/v2/orders:by_client_order_id",
+                params={"client_order_id": lookup},
+            )
+            if not isinstance(body, dict) or str(body.get("client_order_id") or "") != lookup:
+                raise AlpacaPaperError(
+                    "Alpaca paper order response did not match client id"
+                )
+        return _normalize_order_body(body)
+
+    return submit, order_info
 
 
 class BoundClaimFence:
@@ -370,16 +499,28 @@ class PaperOrderGateway(OrderGateway):
         self._profile_fence = BoundClaimFence(self)
         self._admitted_broker = broker
         self._admitted_client = broker._client
+        startup_key = getattr(self._admitted_client, "_cockpit_startup_mac_key", None)
+        if type(startup_key) is not str or len(startup_key) < 32:
+            try:
+                setattr(
+                    self._admitted_client,
+                    "_cockpit_startup_mac_key",
+                    secrets.token_urlsafe(32),
+                )
+            except Exception:
+                pass
         # Same capture #252 takes in ``OrderGateway.__init__``. A later
         # replacement of the class attribute is not this gateway's transport.
         self._admitted_paper_submit = AlpacaPaperBroker.submit_order
-        self._captured_submit = broker._client.submit_order
+        self._captured_submit, frozen_info = _capture_send(self._admitted_client)
         self._paper_submit_open = False
         if _parent_init_accepts_claim_fence():
             kwargs["claim_fence"] = self._profile_fence
         super().__init__(broker, **kwargs)
         client = _AdmittedPaperClient(
-            self._admitted_client, _guarded_submit(self, self._captured_submit)
+            self._admitted_client,
+            _guarded_submit(self, self._captured_submit),
+            order_info=frozen_info,
         )
         self._transport = _BoundPaperTransport(broker, self._admitted_paper_submit, client)
 
@@ -477,7 +618,7 @@ class PaperOrderGateway(OrderGateway):
             try:
                 return super().submit(order, **kwargs)
             except _AdmissionTimeout:
-                _close_new_intents(st, open_before, _ADMISSION_TIMEOUT)
+                _close_submission_intent(st, order, open_before, _ADMISSION_TIMEOUT)
                 return GateOutcome(False, "admission_lock", _ADMISSION_TIMEOUT)
             finally:
                 with state_lock:
