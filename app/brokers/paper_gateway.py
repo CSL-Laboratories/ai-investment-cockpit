@@ -116,6 +116,7 @@ class _StampedIntent:
         risk_id = getattr(self._local, "risk_decision_id", None)
         bound = refs or {}
         body = payload or {}
+        stamped = False
         if (
             token
             and nonce
@@ -133,7 +134,13 @@ class _StampedIntent:
             payload = dict(body)
             payload[_SUBMISSION_TOKEN] = token
             payload[_SUBMISSION_NONCE] = nonce
-        return self._real(op, refs=refs, payload=payload)
+            stamped = True
+        entry = self._real(op, refs=refs, payload=payload)
+        # The timeout path closes this object, not whichever later intent copies
+        # the nonce. A callback that reads the thread-local cannot replace it.
+        if stamped:
+            self._local.handle = entry
+        return entry
 
 
 def _arm_submission_token(st, token: str, order_or_id, *, approval_id=None) -> None:
@@ -168,6 +175,7 @@ def _clear_submission_token(st) -> None:
         current._local.order_id = None
         current._local.approval_id = None
         current._local.risk_decision_id = None
+        current._local.handle = None
 
 
 def _close_submission_intent(st, order, already_open: set, reason: str, token: str) -> None:
@@ -180,11 +188,30 @@ def _close_submission_intent(st, order, already_open: set, reason: str, token: s
     if type(token) is not str or not token:
         return
     current = getattr(getattr(st, "audit", None), "intent", None)
-    nonce = getattr(getattr(current, "_local", None), "nonce", None)
+    local = getattr(current, "_local", None)
+    nonce = getattr(local, "nonce", None)
     if type(nonce) is not str or not nonce:
         return
     order_id = getattr(order, "id", None)
     rows = {row.seq: row for row in st.audit._rows()}
+    handle = getattr(local, "handle", None)
+    handle_seq = getattr(handle, "seq", None)
+    if type(handle_seq) is int and handle_seq not in already_open:
+        row = rows.get(handle_seq)
+        payload = {} if row is None else (row.payload or {})
+        if (
+            payload.get("_phase") == "intent"
+            and payload.get("_op") == "order_submit"
+            and payload.get(_SUBMISSION_TOKEN) == token
+            and payload.get(_SUBMISSION_NONCE) == nonce
+        ):
+            st.audit.result(
+                _Seq(handle_seq),
+                "order_submit",
+                refs={"order_id": order_id, "aborted": "admission_lock"},
+                payload={"aborted": reason[:500]},
+            )
+            return
     matched: list[int] = []
     for seq in list(st.audit.unresolved_intents()):
         if seq in already_open:
@@ -209,8 +236,71 @@ def _close_submission_intent(st, order, already_open: set, reason: str, token: s
 
 
 def _noop_risk(_positions):
-    """Final admission must not call back into the caller."""
+    """Final admission must not call back into the caller.
+
+    The callback-bearing pass already ran. This stand-in keeps that second
+    pass from re-entering the caller. ``_refuse_changed_risk_inputs`` and
+    ``_refuse_risk_ceiling`` are the deterministic check over the snapshot
+    taken before the callback.
+    """
     return {"decision": "approved", "failed_checks": []}
+
+
+def _risk_snapshot(order, positions):
+    """A copy of the inputs the final risk pass compares."""
+    import copy
+
+    body = copy.deepcopy(positions) if isinstance(positions, dict) else positions
+    return (
+        str(getattr(order, "qty", None)),
+        str(getattr(order, "limit_price", None)),
+        str(getattr(order, "notional", None)),
+        body,
+    )
+
+
+def _refuse_changed_risk_inputs(gateway) -> None:
+    """Refuse when the callback edited the order or the positions it was shown."""
+    from brokers.authority_profiles import ProfileRefused
+
+    fence = object.__getattribute__(gateway, "_profile_fence")
+    snapshot = getattr(fence._local, "risk_snapshot", None)
+    if snapshot is None:
+        return
+    safety = getattr(fence._local, "safety", None)
+    order = getattr(fence._local, "order", None)
+    positions = safety.get("positions") if isinstance(safety, dict) else None
+    if _risk_snapshot(order, positions) != snapshot:
+        raise ProfileRefused("risk", "risk inputs changed during admission")
+
+
+def _refuse_risk_ceiling(gateway) -> None:
+    """The persisted risk decision's ceiling, not the callback's verdict."""
+    from decimal import Decimal
+
+    from brokers.authority_profiles import ProfileRefused
+    from schemas.models.risk_decision import RiskDecision
+
+    fence = object.__getattribute__(gateway, "_profile_fence")
+    safety = getattr(fence._local, "safety", None)
+    order = getattr(fence._local, "order", None)
+    if not isinstance(safety, dict) or order is None:
+        raise ProfileRefused("risk", "persisted risk decision is not approved")
+    risk = safety.get("risk_decision")
+    risk_id = getattr(risk, "id", None)
+    st = object.__getattribute__(gateway, "_st")
+    with st.session_factory() as session:
+        row = session.get(RiskDecision, risk_id)
+        if row is not None:
+            session.expunge(row)
+    if row is None or row.decision != "approved":
+        raise ProfileRefused("risk", "persisted risk decision is not approved")
+    ceiling = row.max_allowed_notional
+    if ceiling is None:
+        raise ProfileRefused("risk", "persisted risk decision is not approved")
+    exposure = _tuple_exposure_notional(order, gateway)
+    if not isinstance(exposure, Decimal) or not exposure.is_finite() or exposure > ceiling:
+        raise ProfileRefused("risk", "order exposure exceeds the persisted risk ceiling")
 
 
 def _safety_failure(gateway, *, risk_recheck=None):
@@ -278,17 +368,23 @@ def _guarded_submit(gateway, captured):
             "now_quote": quote_now,
         }
         store._recheck_transport_authority(*authority, **authority_kwargs)
+        # The parent precheck already ran the callback. If that call edited the
+        # inputs and returned the old approval, do not send.
+        _refuse_changed_risk_inputs(gateway)
         failure = _safety_failure(gateway)
         if failure is not None:
             stage, _event, reason = failure
             raise ProfileRefused(stage, reason)
+        _refuse_changed_risk_inputs(gateway)
         # The risk callback above can revoke, halt, or stale the feed after the
-        # checks that already ran. This pass has no callback.
+        # checks that already ran. This pass has no callback. The ceiling is
+        # the persisted risk decision, not the callback's verdict.
         seen = store._recheck_transport_authority(*authority, **authority_kwargs)
         failure = _safety_failure(gateway, risk_recheck=_noop_risk)
         if failure is not None:
             stage, _event, reason = failure
             raise ProfileRefused(stage, reason)
+        _refuse_risk_ceiling(gateway)
         if (
             isinstance(canonical, dict)
             and str(canonical.get("order_type") or "").strip().lower() == "market"
@@ -311,18 +407,30 @@ def _guarded_submit(gateway, captured):
             _bind_sent_protective_limit(
                 store, gateway, client_id, order, canonical.get("limit_price"),
             )
-        from brokers.authority_profiles import _bind_sent_submission
+        from brokers.authority_profiles import (
+            _approval_attempt_blocked,
+            _bind_sent_submission,
+        )
 
         safety = getattr(fence._local, "safety", None)
         approval = safety.get("approval") if isinstance(safety, dict) else None
-        _bind_sent_submission(
-            gateway,
-            client_id,
-            authority_kwargs["order"],
-            getattr(approval, "id", None),
-        )
-        store._require_authority_generation(seen)
-        return captured(canonical)
+        approval_id = getattr(approval, "id", None)
+        if _approval_attempt_blocked(gateway, approval_id, except_client_id=client_id):
+            raise ProfileRefused("approval", "approval is bound to an open attempt")
+        attempt_id = secrets.token_urlsafe(16)
+        store._arm_inflight(client_id, attempt_id)
+        try:
+            _bind_sent_submission(
+                gateway,
+                client_id,
+                authority_kwargs["order"],
+                approval_id,
+                attempt_id=attempt_id,
+            )
+            store._require_authority_generation(seen)
+            return captured(canonical)
+        finally:
+            store._clear_inflight(client_id)
 
     return submit_order
 
@@ -705,6 +813,139 @@ class _BoundPaperTransport(AlpacaPaperBroker):
         return AlpacaPaperBroker.submit_order(self, canonical)
 
 
+def _chain_notionals(st) -> dict:
+    """MAX verified transition notional per order. Missing chain data is absent."""
+    from sqlalchemy import select
+
+    from orchestrator.state import EVENT_ORDER_TRANSITION
+    from schemas.models.audit_entry import AuditEntry
+
+    found: dict = {}
+    if st is None or getattr(st, "audit", None) is None:
+        return found
+    with st.session_factory() as session:
+        entries = session.execute(
+            select(AuditEntry)
+            .where(AuditEntry.event_type == EVENT_ORDER_TRANSITION)
+            .order_by(AuditEntry.seq)
+        ).scalars().all()
+    for entry in entries:
+        if not st.audit.verify_entry(entry):
+            continue
+        row_id = (entry.refs or {}).get("row_id")
+        if not row_id or "notional" not in (entry.payload or {}):
+            continue
+        from brokers.gateway import _dec
+
+        amount = _dec((entry.payload or {}).get("notional"))
+        if not amount.is_finite():
+            continue
+        previous = found.get(row_id)
+        found[row_id] = amount if previous is None else max(previous, amount)
+    return found
+
+
+def _frozen_market_exposure(st, order):
+    """The exposure signed when a market order was sent, or Infinity."""
+    from decimal import Decimal
+
+    order_ref = "" if getattr(order, "id", None) is None else str(order.id)
+    audit = None if st is None else getattr(st, "audit", None)
+    if audit is None or not order_ref:
+        return Decimal("Infinity")
+    found = None
+    for row in audit._rows():
+        if not getattr(audit, "verify_entry", lambda _row: False)(row):
+            continue
+        if getattr(row, "event_type", None) not in {
+            "paper_protective_limit", "paper_submission",
+        }:
+            continue
+        refs = row.refs or {}
+        if str(refs.get("order_id") or "") != order_ref:
+            continue
+        text = (row.payload or {}).get("exposure")
+        if type(text) is not str or not text:
+            continue
+        from brokers.gateway import _dec
+
+        amount = _dec(text)
+        if amount.is_finite() and amount > 0:
+            found = amount if found is None else max(found, amount)
+    return Decimal("Infinity") if found is None else found
+
+
+def _sized_exposure(st, order, chain_notional, *, current=False, gateway=None):
+    """qty x limit, or the exposure frozen at send for a market order.
+
+    The signed chain notional is a floor. A detached ``order.notional`` of $1
+    must not shrink a sibling whose limit says $30. The order being submitted
+    has not frozen a market size yet, so its own size is the fresh touch.
+    """
+    from decimal import Decimal
+
+    from brokers.gateway import _dec
+
+    sizes = []
+    if chain_notional is not None and chain_notional.is_finite() and chain_notional > 0:
+        sizes.append(chain_notional)
+    limit = getattr(order, "limit_price", None)
+    qty = getattr(order, "qty", None)
+    if limit is not None and qty is not None:
+        product = _dec(qty) * _dec(limit)
+        if not product.is_finite() or product <= 0:
+            return Decimal("Infinity")
+        sizes.append(product)
+    elif current:
+        sizes.append(_tuple_exposure_notional(order, gateway))
+    else:
+        sizes.append(_frozen_market_exposure(st, order))
+    if not sizes:
+        return Decimal("Infinity")
+    return max(sizes)
+
+
+def _paper_pending_ok(self, st, order):
+    """Parent tamper checks, then qty x limit (or frozen market size) for every open order.
+
+    ``OrderGateway._pending_ok`` adds each sibling's chain notional. A birth
+    signed at $1 understates a $30 limit. This sum replaces that total when
+    the parent would have allowed the order. A parent refusal is kept.
+    """
+    from decimal import Decimal
+
+    from sqlalchemy import select
+
+    from schemas.models.order import Order
+
+    parent_ok, parent_total, cap = OrderGateway._pending_ok(self, st, order)
+    if not parent_ok:
+        return parent_ok, parent_total, cap
+    chain = _chain_notionals(st)
+    open_states = {"approved", "submitted", "partially_filled"}
+    with st.session_factory() as session:
+        rows = list(session.execute(select(Order)).scalars().all())
+        for row in rows:
+            session.expunge(row)
+    total = Decimal("0")
+    for row in rows:
+        if row.id == order.id:
+            continue
+        if row.state not in open_states:
+            continue
+        sized = _sized_exposure(st, row, chain.get(row.id))
+        if not sized.is_finite():
+            return False, sized, cap
+        total += sized
+    current = _sized_exposure(
+        st, order, chain.get(order.id), current=True, gateway=self,
+    )
+    if not current.is_finite():
+        return False, current, cap
+    total += current
+    return total <= cap, total, cap
+
+
 def _tuple_exposure_notional(order, gateway=None):
     """Exposure is qty times limit price, or qty times a buffered fresh touch.
 
@@ -738,8 +979,9 @@ def _tuple_exposure_notional(order, gateway=None):
 class PaperExecutionGateway(OrderGateway):
     """The paper composition gateway ``build_paper_execution`` constructs.
 
-    Pending exposure uses qty times limit price. A raw ``OrderGateway`` still
-    prefers ``order.notional`` until that method changes in the gateway split.
+    Pending exposure uses qty times limit price for every open order. The
+    HTTP pool is owned here, the same way ``PaperOrderGateway`` owns it, so
+    the production builder does not send on the caller's transport.
     """
 
     def __getattribute__(self, name):
@@ -748,7 +990,54 @@ class PaperExecutionGateway(OrderGateway):
                 return _tuple_exposure_notional(order, _gateway)
 
             return _notional
+        if name == "_pending_ok":
+            return _paper_pending_ok.__get__(self, type(self))
+        if name == "_broker":
+            try:
+                transport = object.__getattribute__(self, "_transport")
+            except AttributeError:
+                transport = None
+            if transport is not None:
+                return transport
         return super().__getattribute__(name)
+
+    def __init__(self, broker, **kwargs):
+        if not isinstance(broker, AlpacaPaperBroker):
+            raise ValueError("paper gateway requires the admitted paper adapter")
+        self._admitted_broker = broker
+        self._admitted_client = broker._client
+        startup_key = getattr(self._admitted_client, "_cockpit_startup_mac_key", None)
+        if type(startup_key) is not str or len(startup_key) < 32:
+            try:
+                setattr(
+                    self._admitted_client,
+                    "_cockpit_startup_mac_key",
+                    secrets.token_urlsafe(32),
+                )
+            except Exception:
+                pass
+        self._admitted_paper_submit = AlpacaPaperBroker.submit_order
+        self._captured_submit, self._frozen_order_info, self._owned_http = _capture_send(
+            self._admitted_client
+        )
+        self._paper_submit_open = False
+        super().__init__(broker, **kwargs)
+        client = _AdmittedPaperClient(
+            self._admitted_client,
+            self._captured_submit,
+            order_info=self._frozen_order_info,
+        )
+        self._transport = _BoundPaperTransport(
+            broker, self._admitted_paper_submit, client,
+        )
+
+    def __del__(self) -> None:
+        owned = getattr(self, "_owned_http", None)
+        if owned is not None:
+            try:
+                owned.close()
+            except Exception:
+                pass
 
 
 class PaperOrderGateway(PaperExecutionGateway):
@@ -786,42 +1075,16 @@ class PaperOrderGateway(PaperExecutionGateway):
         kwargs["require_analysis_generation"] = True
         kwargs.pop("claim_fence", None)
         self._profile_fence = BoundClaimFence(self)
-        self._admitted_broker = broker
-        self._admitted_client = broker._client
-        startup_key = getattr(self._admitted_client, "_cockpit_startup_mac_key", None)
-        if type(startup_key) is not str or len(startup_key) < 32:
-            try:
-                setattr(
-                    self._admitted_client,
-                    "_cockpit_startup_mac_key",
-                    secrets.token_urlsafe(32),
-                )
-            except Exception:
-                pass
-        # Same capture #252 takes in ``OrderGateway.__init__``. A later
-        # replacement of the class attribute is not this gateway's transport.
-        self._admitted_paper_submit = AlpacaPaperBroker.submit_order
-        self._captured_submit, frozen_info, self._owned_http = _capture_send(
-            self._admitted_client
-        )
-        self._paper_submit_open = False
         if _parent_init_accepts_claim_fence():
             kwargs["claim_fence"] = self._profile_fence
         super().__init__(broker, **kwargs)
+        # The parent already owns the pool. This wrapper is the guarded send.
         client = _AdmittedPaperClient(
             self._admitted_client,
             _guarded_submit(self, self._captured_submit),
-            order_info=frozen_info,
+            order_info=self._frozen_order_info,
         )
         self._transport = _BoundPaperTransport(broker, self._admitted_paper_submit, client)
-
-    def __del__(self) -> None:
-        owned = getattr(self, "_owned_http", None)
-        if owned is not None:
-            try:
-                owned.close()
-            except Exception:
-                pass
 
     def arm_profile_claim(self, store, client_order_id: str, generation: int) -> None:
         """Arm the bound fence with the claim ``submit`` will confirm."""
@@ -848,6 +1111,9 @@ class PaperOrderGateway(PaperExecutionGateway):
                 False, "transport_scope", "paper gateway pin does not match its type"
             )
         self._bind_submission(order, kwargs)
+        self._profile_fence._local.risk_snapshot = _risk_snapshot(
+            order, kwargs.get("positions"),
+        )
         supplied = kwargs.get("claim_fence", _MISSING)
         if _parent_accepts_claim_fence():
             # The parent calls the fence bound at init, after its re-entry guard.

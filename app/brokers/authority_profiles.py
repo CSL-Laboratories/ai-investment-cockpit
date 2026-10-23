@@ -455,6 +455,12 @@ _SCHEMA = (
         protective_limit TEXT
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS clock_mark (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        stamp TEXT NOT NULL
+    )
+    """,
 )
 
 
@@ -475,6 +481,8 @@ class AuthorityProfileStore:
         self._clock_default = clock is None
         self._clock = clock if clock is not None else Clock()
         self._clock_high_water: datetime | None = None
+        self._clock_mark_dirty = False
+        self._inflight: dict[str, str] = {}
         self._authority_generation = 0
         self._authoritative_now: datetime | None = None
         self._live_permits: dict[str, tuple[str, int, str]] = {}
@@ -489,6 +497,7 @@ class AuthorityProfileStore:
             raise ProfileRefused("store", "profile store is unreadable") from exc
         self._conn.row_factory = sqlite3.Row
         self._ensure_schema()
+        self._load_clock_mark()
 
     def install(
         self, document: Mapping, *, actor: str, now: datetime, capability: object = None
@@ -1141,6 +1150,10 @@ class AuthorityProfileStore:
                     raise ProfileRefused("store", "handoff reconcile was not admitted")
                 return "failed"
             order_ref = row["order_ref"]
+        # The send arms this under the same lock before it touches the broker.
+        # Recovery must not mint a retry while that attempt is still in flight.
+        if self._attempt_inflight(client_id):
+            raise ProfileRefused("claim_leased", "handoff attempt is in flight")
         # Broker I/O stays outside the store lock so kill and hold are not stalled.
         # Presence completes the reservation. Absence continues. An unreadable
         # broker stays unknown and does not release the stop.
@@ -1876,7 +1889,59 @@ class AuthorityProfileStore:
             )
         if high is None or stamp > high:
             self._clock_high_water = stamp
+            self._clock_mark_dirty = True
         return stamp
+
+    def _load_clock_mark(self) -> None:
+        """The high-water mark survives a new store object on the same file."""
+        try:
+            row = self._conn.execute(
+                "SELECT stamp FROM clock_mark WHERE id = 1"
+            ).fetchone()
+        except sqlite3.Error as exc:
+            raise ProfileRefused("store", "profile store is unreadable") from exc
+        if row is None or not row["stamp"]:
+            return
+        stamp = _parse_claimed_at(row["stamp"])
+        if self._clock_high_water is None or stamp > self._clock_high_water:
+            self._clock_high_water = stamp
+
+    def _flush_clock_mark(self) -> None:
+        """Persist the mark after the reservation transaction ends.
+
+        An expired authorize rolls that transaction back. The mark is written
+        on the autocommit connection afterwards so a restart still refuses a
+        rewind.
+        """
+        if not self._clock_mark_dirty or self._clock_high_water is None:
+            return
+        stamp = self._clock_high_water.astimezone(timezone.utc).isoformat()
+        self._conn.execute(
+            """
+            INSERT INTO clock_mark (id, stamp) VALUES (1, ?)
+            ON CONFLICT(id) DO UPDATE SET stamp = excluded.stamp
+            WHERE excluded.stamp > clock_mark.stamp
+            """,
+            (stamp,),
+        )
+        self._clock_mark_dirty = False
+
+    def _arm_inflight(self, client_order_id: str, attempt_id: str) -> None:
+        """Record the attempt that is about to send. Recovery reads this lock."""
+        if type(client_order_id) is not str or type(attempt_id) is not str:
+            raise ProfileRefused("approval", "submission attempt is missing")
+        with self._lock:
+            self._inflight[client_order_id] = attempt_id
+
+    def _clear_inflight(self, client_order_id: str) -> None:
+        with self._lock:
+            self._inflight.pop(client_order_id, None)
+
+    def _attempt_inflight(self, client_order_id: str) -> bool:
+        if type(client_order_id) is not str:
+            return False
+        with self._lock:
+            return client_order_id in self._inflight
 
     @contextmanager
     def _txn(self) -> Iterator[sqlite3.Connection]:
@@ -1890,13 +1955,16 @@ class AuthorityProfileStore:
                 yield self._conn
             except Exception:
                 self._conn.rollback()
+                self._flush_clock_mark()
                 raise
             else:
                 try:
                     self._conn.commit()
                 except sqlite3.Error as exc:
                     self._conn.rollback()
+                    self._flush_clock_mark()
                     raise ProfileRefused("store", "profile store commit failed") from exc
+                self._flush_clock_mark()
             finally:
                 self._authoritative_now = None
 
@@ -2121,6 +2189,7 @@ def _bind_sent_protective_limit(store, gateway, client_order_id: str, order, lim
             "broker_order_type": "limit",
             "local_order_type": "market",
             "side": str(getattr(order, "side", "") or "").strip().lower(),
+            "exposure": str(_reserved_notional(store, client_order_id)),
         },
     )
 
@@ -2165,6 +2234,72 @@ def _state_quote(gateway):
     return getattr(st, "market_data", None), now
 
 
+def _order_matches_book(gateway, order) -> bool:
+    """The presented order is the booked row, not a substitute with the same id."""
+    from schemas.models.order import Order
+
+    st = None if gateway is None else getattr(gateway, "_st", None)
+    order_id = getattr(order, "id", None)
+    if st is None or order_id is None:
+        return False
+    with st.session_factory() as session:
+        row = session.get(Order, order_id)
+        if row is None:
+            row = session.get(Order, str(order_id))
+        if row is None:
+            return False
+        session.expunge(row)
+    if row.limit_price is None or getattr(order, "limit_price", None) is None:
+        limit_ok = row.limit_price is None and getattr(order, "limit_price", None) is None
+    else:
+        limit_ok = Decimal(str(row.limit_price)) == Decimal(str(order.limit_price))
+    try:
+        qty_ok = Decimal(str(row.qty)) == Decimal(str(getattr(order, "qty", None)))
+    except (InvalidOperation, ValueError, TypeError):
+        qty_ok = False
+    return bool(
+        qty_ok
+        and limit_ok
+        and str(row.symbol) == str(getattr(order, "symbol", None))
+        and str(row.side) == str(getattr(order, "side", None))
+        and str(row.order_type) == str(getattr(order, "order_type", None))
+        and str(row.tif or "day") == str(getattr(order, "tif", None) or "day")
+    )
+
+
+def _recovery_sized_notional(order, notional, *, gateway, market, now) -> Decimal:
+    """Size a recovery against the reservation when the quote has moved.
+
+    A limit order is still qty times its limit. A market order that is the
+    booked row keeps the notional frozen at send; the live quote is not read.
+    An object that does not canonicalize, or a market order that is not the
+    booked row, fails closed.
+    """
+    from brokers.order_tuple import canonical_order_tuple
+
+    try:
+        canon = canonical_order_tuple(
+            symbol=getattr(order, "symbol", None),
+            side=getattr(order, "side", None),
+            qty=getattr(order, "qty", None),
+            order_type=getattr(order, "order_type", None),
+            limit_price=getattr(order, "limit_price", None),
+            tif=getattr(order, "tif", None) or "day",
+        )
+    except (TypeError, ValueError) as exc:
+        raise ProfileRefused(
+            "notional_mismatch", "order notional does not match the reservation"
+        ) from exc
+    if canon["limit_price"] is not None:
+        product = (Decimal(canon["qty"]) * Decimal(canon["limit_price"])).quantize(_MONEY)
+        return _parse_money(product, code="notional")
+    if not _order_matches_book(gateway, order):
+        raise ProfileRefused(
+            "notional_mismatch", "order notional does not match the reservation"
+        )
+    return _parse_money(notional, code="notional")
+
+
 def _check_paper_submit_binding(
     store: AuthorityProfileStore,
     profile_id: str,
@@ -2175,6 +2310,8 @@ def _check_paper_submit_binding(
     producing_runtime: object,
     market=None,
     now=None,
+    frozen: bool = False,
+    gateway=None,
 ) -> str:
     """The account/notional/provider/action checks a paper submit must pass.
 
@@ -2207,7 +2344,13 @@ def _check_paper_submit_binding(
     order_account = getattr(order, "account", None)
     if order_account != profile.account_id:
         raise ProfileRefused("account_mismatch", "order account is outside the profile")
-    if _tuple_notional(order, market=market, now=now) != _parse_money(notional, code="notional"):
+    if frozen:
+        sized = _recovery_sized_notional(
+            order, notional, gateway=gateway, market=market, now=now,
+        )
+    else:
+        sized = _tuple_notional(order, market=market, now=now)
+    if sized != _parse_money(notional, code="notional"):
         raise ProfileRefused(
             "notional_mismatch", "order notional does not match the reservation"
         )
@@ -2368,7 +2511,7 @@ def reconcile_handoff_to_gateway(
     order_ref = _check_paper_submit_binding(
         store, row["profile_id"], action=row["action"], order=order,
         notional=Decimal(row["notional"]), producing_runtime=kwargs.get("producing_runtime"),
-        market=market, now=quote_now,
+        market=market, now=quote_now, frozen=True, gateway=gateway,
     )
     verdict = store._reconcile_handoff(
         client_id,
@@ -2650,22 +2793,37 @@ def _transport_client_matches(store, order_ref: str, client) -> bool:
     return True
 
 
-def _signed_submit_intent(st, order_ref: str) -> bool:
-    """True when this order has a verified ``order_submit`` intent on the chain.
+def _intent_binds_order(refs, order) -> bool:
+    """The submit intent must name this order's proposal, risk, and tuple."""
+    if order is None or getattr(order, "id", None) is None:
+        return False
+    return (
+        str((refs or {}).get("order_id") or "") == str(order.id)
+        and (refs or {}).get("proposal_id") == getattr(order, "proposal_id", None)
+        and (refs or {}).get("risk_decision_id") == getattr(order, "risk_decision_id", None)
+        and (refs or {}).get("order_tuple_hash") == getattr(order, "order_tuple_hash", None)
+    )
+
+
+def _signed_submit_intent(st, order) -> bool:
+    """True when a verified ``order_submit`` intent binds this order.
 
     A resolved intent still counts: accept-then-timeout writes the intent
-    before the response is lost. Broker presence without that signed row is
+    before the response is lost. An intent that only copies the order id,
+    or that names a different proposal, risk decision, or tuple, does not
+    adopt the order. Broker presence without a fully bound signed row is
     not a submission this process can adopt.
     """
     audit = None if st is None else getattr(st, "audit", None)
     verify = None if audit is None else getattr(audit, "verify_entry", None)
+    order_ref = "" if getattr(order, "id", None) is None else str(order.id)
     if audit is None or not callable(verify) or not order_ref:
         return False
     for row in audit._rows():
         payload = row.payload or {}
         if payload.get("_phase") != "intent" or payload.get("_op") != "order_submit":
             continue
-        if (row.refs or {}).get("order_id") != order_ref:
+        if not _intent_binds_order(row.refs or {}, order):
             continue
         try:
             signed = verify(row)
@@ -2738,12 +2896,15 @@ def _aborted_intent_seqs(rows) -> set[int]:
     return seqs
 
 
-def _bind_sent_submission(gateway, client_order_id: str, order, approval_id) -> None:
-    """Sign the approval this send is about to hand to the broker.
+def _bind_sent_submission(
+    gateway, client_order_id: str, order, approval_id, *, attempt_id: str | None = None,
+) -> None:
+    """Sign the approval and attempt id before the broker call.
 
     The broker client order id is ``cockpit-<order id>`` for every retry.
-    The reservation id distinguishes the attempt. Recovery reads this row
-    and ignores aborted submit intents.
+    The attempt id is this dispatch. Recovery reads this row and ignores
+    aborted submit intents. A later submit of the same approval is refused
+    until this attempt is marked absent.
     """
     if (
         type(client_order_id) is not str
@@ -2751,6 +2912,8 @@ def _bind_sent_submission(gateway, client_order_id: str, order, approval_id) -> 
         or type(approval_id) is not str
         or not approval_id
         or getattr(order, "id", None) is None
+        or type(attempt_id) is not str
+        or not attempt_id
     ):
         raise ProfileRefused("approval", "submission approval is missing")
     order_ref = str(order.id)
@@ -2766,9 +2929,48 @@ def _bind_sent_submission(gateway, client_order_id: str, order, approval_id) -> 
             "approval_id": approval_id,
             "client_order_id": client_order_id,
             "broker_client_order_id": f"cockpit-{order_ref}"[:128],
+            "proposal_id": getattr(order, "proposal_id", None),
+            "risk_decision_id": getattr(order, "risk_decision_id", None),
+            "order_tuple_hash": getattr(order, "order_tuple_hash", None),
+            "attempt_id": attempt_id,
         },
-        payload={"status": "sent"},
+        payload={"status": "sent", "attempt_id": attempt_id},
     )
+
+
+def _approval_attempt_blocked(gateway, approval_id: str, *, except_client_id: str | None = None) -> bool:
+    """True when this approval already has a live dispatched attempt.
+
+    A live attempt is a verified ``paper_submission`` that no
+    ``paper_submission_absent`` row has closed. The attempt currently being
+    sent is excluded by its reservation id.
+    """
+    if type(approval_id) is not str or not approval_id:
+        return False
+    st = None if gateway is None else object.__getattribute__(gateway, "_st")
+    audit = None if st is None else getattr(st, "audit", None)
+    verify = None if audit is None else getattr(audit, "verify_entry", None)
+    if audit is None or not callable(verify):
+        return False
+    absent: set[str] = set()
+    live: list[str] = []
+    for row in audit._rows():
+        try:
+            signed = bool(verify(row))
+        except Exception:
+            signed = False
+        if not signed:
+            continue
+        refs = row.refs or {}
+        if refs.get("approval_id") != approval_id:
+            continue
+        event = getattr(row, "event_type", None)
+        client_id = refs.get("client_order_id")
+        if event == "paper_submission_absent" and type(client_id) is str:
+            absent.add(client_id)
+        elif event == "paper_submission" and type(client_id) is str:
+            live.append(client_id)
+    return any(client_id not in absent and client_id != except_client_id for client_id in live)
 
 
 def _mark_submission_absent(gateway, client_order_id: str, order_ref: str) -> None:
@@ -2834,7 +3036,7 @@ def _landed_approval_ids(st, order) -> list[str]:
         payload = row.payload or {}
         if payload.get("_phase") != "intent" or payload.get("_op") != "order_submit":
             continue
-        if refs.get("order_id") != order_ref:
+        if not _intent_binds_order(refs, order):
             continue
         if row.seq in aborted:
             continue
@@ -2969,7 +3171,11 @@ def _resolve_landed_submission(gateway, order_ref: str, *, store=None) -> None:
         ) from exc
     if not isinstance(found, dict) or not found.get("broker_order_id"):
         raise ProfileRefused("broker_unknown", "landed paper order cannot be resolved")
-    if not _signed_submit_intent(st, order_ref):
+    with st.session_factory() as session:
+        bound_order = session.get(Order, order_ref)
+        if bound_order is not None:
+            session.expunge(bound_order)
+    if not _signed_submit_intent(st, bound_order):
         raise ProfileRefused(
             "intent", "broker presence requires a signed order_submit intent"
         )
@@ -2986,7 +3192,7 @@ def _resolve_landed_submission(gateway, order_ref: str, *, store=None) -> None:
         payload = row.payload or {}
         if payload.get("_phase") != "intent" or payload.get("_op") != "order_submit":
             continue
-        if (row.refs or {}).get("order_id") != order_ref:
+        if not _intent_binds_order(row.refs or {}, bound_order):
             continue
         filled = found.get("filled_qty")
         price = found.get("avg_fill_price")
