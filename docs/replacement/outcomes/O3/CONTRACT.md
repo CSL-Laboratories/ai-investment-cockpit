@@ -427,13 +427,21 @@ only when the correction's `cause` is `settlement_payout`,
 `instrument_id` is that settlement's instrument, and `reverses_entry_id`
 names the original entry, and another journal entry is the exact mirror:
 same instrument, same accounts and amounts, debit and credit swapped, and
-the amounts positive. That mirror may debit `collateral_reserved` (and
-credit `fees_expense` when the original debited it). In the payout,
+the amounts positive. The original has to be an ordinary settlement
+before it can be paired: it may credit `collateral_reserved` and debit
+`fees_expense`, and it may not debit collateral or credit fees. The
+mirror is the only entry that may debit `collateral_reserved` (and
+credit `fees_expense` when the original debited it). Its sequence is
+strictly after the original. An earlier mirror, or one posted at the
+same sequence, is not a reversal. A journal `entry_id` is used once. A
+second entry with the same id fails `schema_invalid` and is not paired,
+so it cannot inherit the reversal exemption. In the payout,
 collateral-release, fee, and gain/loss identity the original and the
 mirror cancel as a pair and drop out. The settlement that remains has to
-match the evidence on its own. A zero-value pair, a partial swap, or a
-reversal whose correction names a missing entry does not cancel a
-settlement and does not permit the collateral debit.
+match the evidence on its own. A zero-value pair, a partial swap, a
+backward original, a mirror that is not strictly later, a reused entry
+id, or a reversal whose correction names a missing entry does not cancel
+a settlement and does not permit the collateral debit.
 
 `market_void` evidence on an instrument that also has settlement evidence,
 a `settled` market row, or a `settlement_payout` fails `void_unreconciled`.

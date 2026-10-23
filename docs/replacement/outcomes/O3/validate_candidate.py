@@ -253,15 +253,59 @@ def _correction_supersedes_void(
     return _admitted_fill_matches(fixture, item, instrument_id)
 
 
-def _linked_reversal_ids(fixture: dict) -> set[str]:
+_ORDINARY_SETTLEMENT_SIDES = frozenset({
+    ("cash_available", "dr"),
+    ("cash_available", "cr"),
+    ("collateral_reserved", "cr"),
+    ("realized_pnl", "dr"),
+    ("realized_pnl", "cr"),
+    ("fees_expense", "dr"),
+})
+
+
+def _repeated_entry_ids(journal: object) -> set[str]:
+    """Entry ids that name more than one journal row."""
+    seen: set[str] = set()
+    repeated: set[str] = set()
+    if not isinstance(journal, (list, tuple)):
+        return repeated
+    for entry in journal:
+        entry_id = entry.get("entry_id") if isinstance(entry, dict) else None
+        if not isinstance(entry_id, str):
+            continue
+        if entry_id in seen:
+            repeated.add(entry_id)
+        seen.add(entry_id)
+    return repeated
+
+
+def _ordinary_settlement(entry: dict) -> bool:
+    """A settlement that releases collateral. A reversal is not this shape."""
+    lines = entry.get("lines", ())
+    if not lines:
+        return False
+    return all(
+        (line.get("account"), line.get("side")) in _ORDINARY_SETTLEMENT_SIDES
+        for line in lines
+    )
+
+
+def _linked_reversal_ids(fixture: dict, repeated_ids: set[str]) -> tuple[set[str], set[str]]:
     """Entry ids of a settlement and the correction-linked mirror that reverses it.
 
-    The mirror is a positive ``settlement_payout`` on the same instrument with
-    the sides swapped and the amounts unchanged. The correction names that
-    settlement, with ``cause`` ``settlement_payout``. A zero pair, a partial
+    The original is an ordinary positive ``settlement_payout``: collateral is
+    credited, not debited. The mirror is a positive ``settlement_payout`` on
+    the same instrument with the sides swapped, the amounts unchanged, and a
+    sequence strictly after the original. The correction names that
+    settlement, with ``cause`` ``settlement_payout``. A reused entry id, a
+    backward original, an earlier or tied mirror, a zero pair, a partial
     swap, or a correction that names a missing entry does not qualify.
+
+    The first set is the pair, dropped from the gain/loss identity. The
+    second set is the mirror only, which may debit collateral.
     """
     paired: set[str] = set()
+    mirrors: set[str] = set()
     used: set[str] = set()
     journal = fixture.get("journal", ())
     for item in fixture.get("corrections", ()):
@@ -269,7 +313,7 @@ def _linked_reversal_ids(fixture: dict) -> set[str]:
             continue
         original_id = item.get("reverses_entry_id")
         instrument_id = item.get("instrument_id")
-        if not isinstance(original_id, str) or original_id in used:
+        if not isinstance(original_id, str) or original_id in used or original_id in repeated_ids:
             continue
         if not isinstance(instrument_id, str):
             continue
@@ -281,17 +325,30 @@ def _linked_reversal_ids(fixture: dict) -> set[str]:
             continue
         if not _only_instrument(original, instrument_id):
             continue
+        if not _ordinary_settlement(original):
+            continue
         if not _signature_positive(_line_signature(original, reverse=False)):
+            continue
+        original_sequence = original.get("sequence")
+        if type(original_sequence) is not int:
             continue
         wanted = _line_signature(original, reverse=True)
         partner_id = None
         for entry in journal:
             entry_id = entry.get("entry_id")
-            if not isinstance(entry_id, str) or entry_id == original_id or entry_id in used:
+            if (
+                not isinstance(entry_id, str)
+                or entry_id == original_id
+                or entry_id in used
+                or entry_id in repeated_ids
+            ):
                 continue
             if entry.get("reason") != "settlement_payout":
                 continue
             if not _only_instrument(entry, instrument_id):
+                continue
+            partner_sequence = entry.get("sequence")
+            if type(partner_sequence) is not int or partner_sequence <= original_sequence:
                 continue
             if _line_signature(entry, reverse=False) == wanted:
                 partner_id = entry_id
@@ -300,9 +357,10 @@ def _linked_reversal_ids(fixture: dict) -> set[str]:
             continue
         paired.add(original_id)
         paired.add(partner_id)
+        mirrors.add(partner_id)
         used.add(original_id)
         used.add(partner_id)
-    return paired
+    return paired, mirrors
 
 
 def _reject_void_unwind_shape(fixture: dict, failures: set[str]) -> None:
@@ -700,7 +758,11 @@ def evaluate_semantics(fixture: dict) -> set[str]:
     settlement_seq: dict[str, int] = {}
     reserved_presettle = dict(checkpoint_reservations)
     reserved_end = dict(checkpoint_reservations)
-    linked_reversals = _linked_reversal_ids(fixture)
+    repeated_entry_ids = _repeated_entry_ids(fixture["journal"])
+    if repeated_entry_ids:
+        # A second row with the same id must not inherit a reversal exemption.
+        failures.add("schema_invalid")
+    linked_reversals, reversal_mirrors = _linked_reversal_ids(fixture, repeated_entry_ids)
 
     for entry in sorted(fixture["journal"], key=lambda item: item["sequence"]):
         debits = 0
@@ -813,9 +875,9 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                 ("realized_pnl", "cr"),
                 ("fees_expense", "dr"),
             }
-            # The mirror of a real settlement debits the collateral the
-            # original released. Only that correction-linked pair may do so.
-            if entry.get("entry_id") in linked_reversals:
+            # Only the later mirror may debit the collateral the original
+            # released. The original itself stays an ordinary payout.
+            if entry.get("entry_id") in reversal_mirrors:
                 allowed_settlement.add(("collateral_reserved", "dr"))
                 allowed_settlement.add(("fees_expense", "cr"))
             for line in entry["lines"]:

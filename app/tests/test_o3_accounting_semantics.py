@@ -1251,6 +1251,50 @@ def test_o3_linked_settlement_reversal_reconciles_alone() -> None:
     assert "settlement_unreconciled" in _evaluate(wrong)
 
 
+def test_o3_duplicate_entry_id_is_not_a_reversal() -> None:
+    fixture = _settlement_reversal_fixture()
+    fixture["journal"].append({
+        "entry_id": "j-settle",
+        "sequence": 6,
+        "idempotency_key": "extra-payout",
+        "strategy_id": "s-event",
+        "reason": "settlement_payout",
+        "lines": [
+            {"account": "cash_available", "side": "dr", "amount_minor": 1000000, "instrument_id": "ev-no"},
+            {"account": "cash_available", "side": "cr", "amount_minor": 1000000, "instrument_id": "ev-no"},
+        ],
+    })
+    assert "schema_invalid" in _evaluate(fixture)
+
+
+def test_o3_reversal_original_must_be_an_ordinary_settlement() -> None:
+    fixture = _settlement_reversal_fixture()
+    settle = next(entry for entry in fixture["journal"] if entry["entry_id"] == "j-settle")
+    reverse = next(entry for entry in fixture["journal"] if entry["entry_id"] == "j-reverse")
+    settle_lines = json.loads(json.dumps(settle["lines"]))
+    settle["lines"] = json.loads(json.dumps(reverse["lines"]))
+    reverse["lines"] = settle_lines
+    assert "settlement_unreconciled" in _evaluate(fixture)
+
+
+def test_o3_reversal_mirror_is_strictly_after_the_original() -> None:
+    early = _settlement_reversal_fixture()
+    settle = next(entry for entry in early["journal"] if entry["entry_id"] == "j-settle")
+    reverse = next(entry for entry in early["journal"] if entry["entry_id"] == "j-reverse")
+    corrected = next(entry for entry in early["journal"] if entry["entry_id"] == "j-corrected")
+    settle["sequence"] = 4
+    reverse["sequence"] = 3
+    corrected["sequence"] = 5
+    assert "settlement_unreconciled" in _evaluate(early)
+
+    tied = _settlement_reversal_fixture()
+    settle = next(entry for entry in tied["journal"] if entry["entry_id"] == "j-settle")
+    reverse = next(entry for entry in tied["journal"] if entry["entry_id"] == "j-reverse")
+    settle["sequence"] = 4
+    reverse["sequence"] = 4
+    assert "settlement_unreconciled" in _evaluate(tied)
+
+
 def test_o3_checkpoint_only_fill_reserve_matches_checkpoint_hold() -> None:
     path = VALIDATOR.parent / "fixtures" / "event_resting_order_reservation.json"
     fixture = json.loads(path.read_text(encoding="utf-8"))
