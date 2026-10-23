@@ -1179,6 +1179,169 @@ def test_refresh_refuses_a_calendar_that_lapses_during_the_fence(st):
     assert scenario.st.audit.unresolved_intents() == []
 
 
+@pytest.mark.parametrize("value", [False, "", object(), {"ok": False}])
+def test_generic_fence_rejection_does_not_submit(st, value):
+    """False, an empty string, a bare object, and {ok: False} are not admission."""
+    scenario, broker = _paper_gateway(st)
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=lambda: value, **scenario.submit_kwargs()
+    )
+    assert outcome.ok is False
+    assert outcome.stage == "claim_fence"
+    assert "admission" in outcome.reason
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_replaced_paper_broker_cannot_supply_its_own_type(st):
+    """Omitting _admitted_paper_type must not let a later broker pick the pin."""
+    original = _CountingPaper()
+
+    class Supply(OrderGateway):
+        _admits_paper_profile = True
+
+        def __init__(self, broker, **kwargs):
+            self._admitted_paper_submit = AlpacaPaperBroker.submit_order
+            super().__init__(broker, **kwargs)
+
+    class Foreign:
+        def __init__(self):
+            self.calls = 0
+            self._client = _CountingPaper()._client
+
+        def submit_order(self, canonical):
+            self.calls += 1
+            return {
+                "broker_order_id": "foreign",
+                "status": "accepted",
+                "filled_qty": "0",
+                "avg_fill_price": None,
+            }
+
+    foreign = Foreign()
+    holder = {}
+
+    def fence():
+        return _permit(holder["scenario"])
+
+    gateway = Supply(original, st=st, execution_scope="paper", claim_fence=fence)
+    gateway._broker = foreign
+    scenario = build_scenario(st, mode=Mode.paper, broker=foreign, gateway=gateway)
+    holder["scenario"] = scenario
+    with pytest.raises(ImportError, match="not resolved"):
+        scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+    assert foreign.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_halt_probe_keyboard_interrupt_covers_the_intent(st, monkeypatch):
+    """An interrupt in the post-intent HALT probe must not leave the intent open."""
+    scenario, broker = _paper_gateway(st)
+
+    def halt(_path):
+        if scenario.st.audit.unresolved_intents():
+            raise KeyboardInterrupt
+        return False
+
+    monkeypatch.setattr("brokers.gateway._halt_active", halt)
+    with pytest.raises(KeyboardInterrupt):
+        scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_final_admission_holds_the_lock_through_send(st):
+    """The last admission check keeps the lock until the broker call returns."""
+    scenario, broker = _paper_gateway(st)
+
+    class HeldLock:
+        def __init__(self):
+            self.held = False
+
+        def acquire(self, blocking=True, timeout=-1):
+            self.held = True
+            return True
+
+        def release(self):
+            self.held = False
+
+    lock = HeldLock()
+    scenario.st.safety_admission_lock = lock
+    seen = {}
+    real_submit = broker.submit_order
+
+    def submit_order(canonical):
+        seen["held"] = lock.held
+        return real_submit(canonical)
+
+    broker.submit_order = submit_order
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=lambda: None, **scenario.submit_kwargs()
+    )
+    assert outcome.ok is True
+    assert seen["held"] is True
+    assert lock.held is False
+    assert broker.calls == 1
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_quote_that_expires_during_the_halt_probe_does_not_submit(st, monkeypatch):
+    """Quote age is part of the admission check after the HALT probe."""
+    scenario, broker = _paper_gateway(st)
+    fences = {"n": 0}
+
+    class Guard:
+        def __init__(self):
+            self.reason = None
+
+        def stale_reason(self, symbol, *, now, limit_s):
+            return self.reason
+
+    guard = Guard()
+    scenario.st.market_data = guard
+
+    def fence():
+        fences["n"] += 1
+
+    def halt(_path):
+        if fences["n"] > 0:
+            guard.reason = "quote expired during the halt probe"
+            fences["n"] = 0
+        return False
+
+    monkeypatch.setattr("brokers.gateway._halt_active", halt)
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=fence, **scenario.submit_kwargs()
+    )
+    assert outcome.ok is False
+    assert outcome.stage == "market_data"
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_authority_revoked_during_the_halt_probe_does_not_submit(st, monkeypatch):
+    """Authority is re-read after the probe, with the intent covered."""
+    scenario, broker = _paper_gateway(st)
+    original = scenario.gateway._final_audit_authority
+    calls = {"n": 0}
+
+    def authority(state):
+        calls["n"] += 1
+        if calls["n"] >= 2:
+            return False, "authority revoked during the halt probe"
+        return original(state)
+
+    monkeypatch.setattr(scenario.gateway, "_final_audit_authority", authority)
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=lambda: None, **scenario.submit_kwargs()
+    )
+    assert calls["n"] >= 2
+    assert outcome.ok is False
+    assert outcome.stage == "audit_integrity"
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
 def test_quote_that_expires_during_the_final_risk_refresh_does_not_submit(st):
     scenario, broker = _paper_gateway(st)
     calls = {"n": 0}

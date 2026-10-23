@@ -623,6 +623,73 @@ def test_pending_sibling_uses_qty_times_limit_when_the_chain_is_smaller(st):
     assert out_cap == cap
 
 
+def test_shrunk_qty_limit_cannot_undercut_signed_exposure(st):
+    """A keyless qty/limit shrink cannot undercut exposure signed at creation."""
+    broker = RecordingBroker()
+    cap = Decimal("3500")
+    sc = build_scenario(
+        st, gateway=OrderGateway(broker, pending_exposure_cap=cap), broker=broker,
+    )
+    sibling = _approved_sibling(st, qty="10", limit_price="300", notional="1")
+    with st.session_factory() as s:
+        entries = [
+            e for e in s.execute(select(AuditEntry).order_by(AuditEntry.seq)).scalars().all()
+            if e.event_type == EVENT_ORDER_TRANSITION
+            and (e.refs or {}).get("row_id") == sibling.id
+        ]
+    assert entries
+    assert all(Decimal(e.payload["exposure"]) == Decimal("3000") for e in entries)
+    with st.session_factory() as s, s.begin():
+        s.execute(
+            update(Order).where(Order.id == sibling.id).values(
+                qty=Decimal("1"), limit_price=Decimal("1"),
+            )
+        )
+    current, _appr, _rd = _fresh_submittable(
+        st, sc, qty="10", limit_price="150", notional="1500",
+    )
+    ok, total, out_cap = sc.gateway._pending_ok(st, current)
+    assert ok is False
+    assert total == Decimal("4500")
+    assert out_cap == cap
+
+
+def test_pending_scan_indexes_frozen_exposure_once(st, monkeypatch):
+    """One pending scan reads the frozen-exposure ledger a single time."""
+    broker = RecordingBroker()
+    cap = Decimal("9000")
+    sc = build_scenario(
+        st, gateway=OrderGateway(broker, pending_exposure_cap=cap), broker=broker,
+    )
+    first = _approved_sibling(
+        st, symbol="MSFT", qty="10", order_type="market", limit_price=None, notional="1",
+    )
+    second = _approved_sibling(
+        st, symbol="GME", qty="10", order_type="market", limit_price=None, notional="1",
+    )
+    st.audit.append(
+        "paper_submission", actor="paper", refs={"order_id": first.id},
+        payload={"exposure": "2500"},
+    )
+    st.audit.append(
+        "paper_submission", actor="paper", refs={"order_id": second.id},
+        payload={"exposure": "1800"},
+    )
+    calls = {"n": 0}
+    real_rows = st.audit._rows
+
+    def wrapped():
+        calls["n"] += 1
+        return real_rows()
+
+    monkeypatch.setattr(st.audit, "_rows", wrapped)
+    ok, total, out_cap = sc.gateway._pending_ok(st, sc.order)
+    assert calls["n"] == 1
+    assert ok is True
+    assert total == Decimal("5800")
+    assert out_cap == cap
+
+
 def test_pending_market_sibling_uses_the_frozen_exposure(st):
     broker = RecordingBroker()
     cap = Decimal("2000")

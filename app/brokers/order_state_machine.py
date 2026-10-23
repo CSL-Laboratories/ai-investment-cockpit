@@ -92,6 +92,27 @@ def _payload_notional(order: Order) -> str:
     return "0"
 
 
+def _conservative_exposure(order: Order) -> str:
+    """Exposure floor signed with the order and kept as a historical maximum.
+
+    The larger of a positive explicit notional and qty*limit_price. A later
+    shrink of the mutable qty or limit cannot undercut this signed floor.
+    An unpriced order falls back to the payload notional (``"0"``).
+    """
+    sizes = []
+    if order.notional is not None:
+        explicit = decimal_or_nan(order.notional)
+        if explicit.is_finite() and explicit > 0:
+            sizes.append(explicit)
+    if order.limit_price is not None and order.qty is not None:
+        product = decimal_or_nan(order.qty) * decimal_or_nan(order.limit_price)
+        if product.is_finite() and product > 0:
+            sizes.append(product)
+    if sizes:
+        return str(max(sizes))
+    return _payload_notional(order)
+
+
 def _row_values(order: Order) -> dict:
     return {column.name: getattr(order, column.name) for column in Order.__table__.columns}
 
@@ -161,7 +182,9 @@ def _transition_payload(order: Order, from_state: str | None, reason: str | None
         "from": from_state, "to": order.state, "reason": reason,
         "proposal_id": order.proposal_id, "risk_decision_id": order.risk_decision_id,
         "order_tuple_hash": order.order_tuple_hash, "approval_id": order.approval_id,
-        "notional": _payload_notional(order), "symbol": order.symbol, "side": order.side,
+        "notional": _payload_notional(order),
+        "exposure": _conservative_exposure(order),
+        "symbol": order.symbol, "side": order.side,
         "broker_order_id": order.broker_order_id, "filled_qty": str(decimal_or_nan(order.filled_qty)),
         "avg_fill_price": None if order.avg_fill_price is None else str(decimal_or_nan(order.avg_fill_price)),
     }
