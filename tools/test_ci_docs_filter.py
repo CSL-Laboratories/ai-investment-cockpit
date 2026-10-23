@@ -177,6 +177,9 @@ class DecideScriptTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(self.run_tests_for([path]), 'true')
 
+    def test_claude_md_alone_runs_tests(self):
+        self.assertEqual(self.run_tests_for(['CLAUDE.md']), 'true')
+
     def test_plain_documentation_still_skips(self):
         self.assertEqual(self.run_tests_for(list(STILL_SKIPPED)), 'false')
 
