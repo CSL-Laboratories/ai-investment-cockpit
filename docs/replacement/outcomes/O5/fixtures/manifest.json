@@ -29,7 +29,7 @@
     {
       "class": "prose",
       "path": "docs/replacement/outcomes/O5/CONTRACT.md",
-      "sha256": "eb1066a494b222e80163d403c8dde87128828a6fa441893d9b431c0976d86966"
+      "sha256": "d8c99f4254b5a2f47959440f10dfc50028b44c157cc2eee1b34a3b1a95ec02db"
     },
     {
       "class": "governing",
@@ -46,7 +46,7 @@
     {
       "kind": "task_suite",
       "path": "docs/replacement/outcomes/O5/fixtures/task-suite.json",
-      "sha256": "5e1b3931505f877878d672e1fa367fb38fd679d73ff256022a2564db8f597468"
+      "sha256": "b4eb2453ee9ecc38eff5ef2d63cb3034b2181d3c0401af1fd6ded8c44c0920a0"
     },
     {
       "kind": "capability_manifest",
@@ -96,22 +96,22 @@
     {
       "kind": "decision_request",
       "path": "docs/replacement/outcomes/O5/fixtures/positive/decision-request.json",
-      "sha256": "a84ebd02644390a5c0414940319f6c58264741218c7ff07df12ddec9273aca4c"
+      "sha256": "4c88b41f97fe6fccfdb4a16ca3a508c6835374dee965dc24466895ba4a5b9da8"
     },
     {
       "kind": "decision_request",
       "path": "docs/replacement/outcomes/O5/fixtures/positive/decision-request-refuse-order.json",
-      "sha256": "4592ab4ff62ff0d80381cd49a8f26e0e9263785b559ab72f01c2f353e8978079"
+      "sha256": "04e44e7b55612aa6e967e19cea2a91020ec7d8d20c2481b90c722bd33dedd187"
     },
     {
       "kind": "decision_result",
       "path": "docs/replacement/outcomes/O5/fixtures/positive/decision-result.json",
-      "sha256": "c6bb1f9a64ebaaa1d986c5453577f3718df43535e4a39d902a846e82307260f5"
+      "sha256": "8ca7313355b1697d21cc59f88bcc0d5d22c74d65b29ea25d60cdd29be36b04e5"
     },
     {
       "kind": "decision_refusal",
       "path": "docs/replacement/outcomes/O5/fixtures/positive/decision-refusal.json",
-      "sha256": "bff5e3ea5d8d8267753edb2773a1c5d9f80aebcde622680929a2b68162eed99d"
+      "sha256": "7f7ec6ee311c20e78a00efbd7d9b2e764d788e9c3b7358e02636a4c99780e551"
     }
   ],
   "negatives": [
@@ -175,7 +175,7 @@
       "id": "result_contradicts_suite",
       "kind": "decision_result",
       "path": "docs/replacement/outcomes/O5/fixtures/negative/result-contradicts-suite.json",
-      "sha256": "724f0f416d78c8afdd31f127b488469999dade2ebd7b1ab313e655df31758029",
+      "sha256": "316c77b13a7d5211141b953cbf787abfeb949ee098512bf45db4f448ba70f702",
       "expected_code": "result_contradicts_suite"
     },
     {
@@ -191,6 +191,20 @@
       "path": "docs/replacement/outcomes/O5/fixtures/negative/measures-reported-observed.json",
       "sha256": "9b3dec13474d96faec05477f67c869af55e9b2228d9480c78c71289534d0bf01",
       "expected_code": "measures_not_observed"
+    },
+    {
+      "id": "budget_unknown_route",
+      "kind": "budget_ledger",
+      "path": "docs/replacement/outcomes/O5/fixtures/negative/budget-unknown-route.json",
+      "sha256": "bb87087f6b42f5db5ba65af2c822ea1733c948248d28154e273178734f5e1dbe",
+      "expected_code": "unknown_route"
+    },
+    {
+      "id": "budget_undecided_ceiling",
+      "kind": "budget_ledger",
+      "path": "docs/replacement/outcomes/O5/fixtures/negative/budget-undecided-ceiling.json",
+      "sha256": "8ad6d33ffa9b1a6ec1963da1d48ac735f042f0e530d9129c8893162397320703",
+      "expected_code": "spend_authorized"
     }
   ]
 }

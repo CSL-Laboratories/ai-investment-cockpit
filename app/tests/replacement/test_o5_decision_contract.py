@@ -28,6 +28,8 @@ REQUIRED_NEGATIVES = {
     "faster_despite_worse_grounding": "worse_grounding_accepted",
     "cheaper_despite_worse_calibration": "worse_calibration_accepted",
     "provider_rewrites_protocol": "provider_result_rewrites_protocol",
+    "budget_unknown_route": "unknown_route",
+    "budget_undecided_ceiling": "spend_authorized",
 }
 
 FORBIDDEN_IMPORTS = frozenset({
@@ -228,6 +230,51 @@ def test_route_manifest_rejects_unsupported_evidence() -> None:
         refused = module._admit_document(higher, schema, context)
         assert refused.admitted is False
         assert refused.code == "installed_route_not_qualified"
+
+
+def test_budget_entry_route_must_be_known() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]["budget_ledger"]
+    routes = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/route-manifest.json").read_text(encoding="utf-8")
+    )
+    document = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/budget-ledger.json").read_text(encoding="utf-8")
+    )
+    context = _context(module, suite)
+    context.route_ids = {route["id"] for route in routes["routes"]}
+    admitted = module._admit_document(document, schema, context)
+    assert admitted.admitted is True
+    unknown = json.loads(json.dumps(document))
+    unknown["entries"][0]["route_id"] = "missing.route"
+    refused = module._admit_document(unknown, schema, context)
+    assert refused.admitted is False
+    assert refused.code == "unknown_route"
+
+
+def test_undecided_successor_spend_ceiling_stays_null() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]["budget_ledger"]
+    routes = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/route-manifest.json").read_text(encoding="utf-8")
+    )
+    document = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/budget-ledger.json").read_text(encoding="utf-8")
+    )
+    context = _context(module, suite)
+    context.route_ids = {route["id"] for route in routes["routes"]}
+    admitted = module._admit_document(document, schema, context)
+    assert admitted.admitted is True
+    claimed = json.loads(json.dumps(document))
+    successor = next(entry for entry in claimed["entries"] if entry["id"] == "successor_comparison_spend")
+    assert successor["owner_decision"] == "undecided"
+    assert successor["ceiling"] is None
+    successor["ceiling"] = "25"
+    refused = module._admit_document(claimed, schema, context)
+    assert refused.admitted is False
+    assert refused.code == "spend_authorized"
 
 
 def test_experiment_route_must_be_known() -> None:

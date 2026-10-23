@@ -215,6 +215,8 @@ The validator must refuse these fixtures. Refusal is the designed result.
 | `result_contradicts_suite` | `result_contradicts_suite` |
 | `experiment_marked_executed` | `experiment_executed` |
 | `measures_reported_observed` | `measures_not_observed` |
+| `budget_unknown_route` | `unknown_route` |
+| `budget_undecided_ceiling` | `spend_authorized` |
 
 Illustrative comparison numbers are synthetic. They are not route measurements.
 

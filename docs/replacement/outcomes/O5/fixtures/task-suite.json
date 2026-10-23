@@ -60,7 +60,9 @@
     "provider_rewrites_protocol",
     "result_contradicts_suite",
     "experiment_marked_executed",
-    "measures_reported_observed"
+    "measures_reported_observed",
+    "budget_unknown_route",
+    "budget_undecided_ceiling"
   ],
   "cases": [
     {

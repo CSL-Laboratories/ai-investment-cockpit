@@ -389,14 +389,23 @@ def _known_route(route_id: str, ctx: Context) -> Admission | None:
     return None
 
 
-def _admit_budget(document: dict[str, Any], _ctx: Context) -> Admission:
+def _admit_budget(document: dict[str, Any], ctx: Context) -> Admission:
     if document.get("spend_authorized") is not False or document.get("paid_calls_executed") is not False:
         return _refuse("spend_authorized", "this packet authorizes no spend and executes no paid call")
     for entry in document["entries"]:
+        if "route_id" in entry:
+            unknown = _known_route(entry["route_id"], ctx)
+            if unknown:
+                return unknown
         if entry.get("widening_allowed") is not False:
             return _refuse("fallback_widens_budget", f"{entry['id']} allows a budget to widen")
         if entry.get("owner_decision") != "undecided":
             return _refuse("spend_authorized", f"{entry['id']} records a spend decision")
+        # Successor USD spend stays null until the owner decides. Observed token caps are not spend.
+        if entry.get("ceiling") is not None and (
+            entry.get("unit") == "usd" or entry.get("metric") == "paid_provider_calls"
+        ):
+            return _refuse("spend_authorized", f"{entry['id']} records a spend ceiling before the owner decides")
     return _admit()
 
 
