@@ -446,6 +446,10 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         terminal = order.get("terminal_state")
         if terminal is not None and terminal not in allowed:
             failures.add("family_crossed")
+        effective = terminal or order["state"]
+        if effective in LATE_TERMINALS and type(order.get("terminal_sequence")) is not int:
+            # Without this sequence a later reserve has no clock to precede.
+            failures.add("schema_invalid")
 
     action_instruments = set()
     for action in fixture["corporate_actions"]:
@@ -656,6 +660,24 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         seen_market_instruments.add(market["instrument_id"])
         if market["instrument_id"] not in known_instruments:
             failures.add("unknown_instrument")
+        if market["state"] == "corrected":
+            instrument_id = market["instrument_id"]
+            entry_ids = {entry.get("entry_id") for entry in fixture["journal"]}
+            entry_ids |= applied_entry_ids
+            fills_for_market = {
+                fill.get("fill_id")
+                for fill in fixture["fills"]
+                if fill.get("instrument_id") == instrument_id
+            }
+            supported = any(
+                item.get("instrument_id") == instrument_id
+                and item.get("reverses_entry_id") in entry_ids
+                and item.get("admits_fill_id") in fills_for_market
+                for item in fixture["corrections"]
+            )
+            if not supported:
+                # The state says a later correction exists. The record has to name it.
+                failures.add("settlement_unreconciled")
         if market["state"] != "settled":
             continue
         instrument_id = market["instrument_id"]
@@ -776,13 +798,16 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         ):
             continue
         collateral_keys.add(entry.get("idempotency_key"))
+        # Lines inside one entry are one posting. A tie is two entries.
+        seen_here: set[tuple[str, int]] = set()
         for line in entry.get("lines", ()):
             if line.get("account") != "collateral_reserved":
                 continue
             instrument_id = line.get("instrument_id")
             if not isinstance(instrument_id, str):
                 continue
-            key = (instrument_id, sequence)
+            seen_here.add((instrument_id, sequence))
+        for key in seen_here:
             collateral_at[key] = collateral_at.get(key, 0) + 1
     if any(count > 1 for count in collateral_at.values()):
         failures.add("balance_mismatch")

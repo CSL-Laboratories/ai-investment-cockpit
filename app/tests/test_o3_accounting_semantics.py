@@ -470,6 +470,7 @@ def test_o3_unfilled_resting_order_may_hold_collateral() -> None:
     fixture["reported"]["attribution"][0]["fees_minor"] = 70000
     assert _evaluate(fixture) == set()
     rest["state"] = "cancelled"
+    rest["terminal_sequence"] = 4
     assert "balance_mismatch" in _evaluate(fixture)
     fixture["journal"].append({
         "entry_id": "j-release",
@@ -2078,7 +2079,126 @@ def test_o3_determined_result_is_not_a_settlement_record() -> None:
     phrase = "not a `market_settlement` record"
     kind = "no separate determination-evidence kind"
     assert "plus retained settlement evidence" not in lifecycle
+    assert "carries a result" not in lifecycle
+    assert "does not store" in lifecycle
     assert phrase in lifecycle
     assert kind in lifecycle
+    assert "does not store" in resolution
     assert phrase in resolution
     assert kind in resolution
+    schema = json.loads((VALIDATOR.parent / "schemas" / "market.schema.json").read_text(encoding="utf-8"))
+    assert "result" not in schema["properties"]
+    assert set(schema["required"]) == {"instrument_id", "state"}
+    resting = VALIDATOR.parent / "fixtures" / "event_resting_order_reservation.json"
+    determined = json.loads(resting.read_text(encoding="utf-8"))
+    determined["markets"][0]["state"] = "determined"
+    assert _evaluate(determined) == set()
+
+
+def _split_collateral_line(entry: dict) -> None:
+    """One collateral amount posted as two lines of the same entry."""
+    lines = entry["lines"]
+    index = next(i for i, line in enumerate(lines) if line["account"] == "collateral_reserved")
+    line = lines[index]
+    half = line["amount_minor"] // 2
+    other = dict(line)
+    other["amount_minor"] = line["amount_minor"] - half
+    line["amount_minor"] = half
+    lines.insert(index + 1, other)
+
+
+def test_o3_split_collateral_lines_in_one_entry_reconcile() -> None:
+    resting = VALIDATOR.parent / "fixtures" / "event_resting_order_reservation.json"
+    reserve = json.loads(resting.read_text(encoding="utf-8"))
+    _split_collateral_line(next(entry for entry in reserve["journal"] if entry["entry_id"] == "j-reserve"))
+    assert _evaluate(reserve) == set()
+    owned = json.loads(resting.read_text(encoding="utf-8"))
+    _split_collateral_line(next(entry for entry in owned["journal"] if entry["entry_id"] == "j-reserve-rest"))
+    assert _evaluate(owned) == set()
+    settlement = json.loads(
+        (VALIDATOR.parent / "fixtures" / "event_yes_settlement.json").read_text(encoding="utf-8")
+    )
+    _split_collateral_line(next(entry for entry in settlement["journal"] if entry["reason"] == "settlement_payout"))
+    assert _evaluate(settlement) == set()
+    unwind = json.loads(
+        (VALIDATOR.parent / "fixtures" / "event_void_reconciled.json").read_text(encoding="utf-8")
+    )
+    _split_collateral_line(unwind["journal"][0])
+    assert _evaluate(unwind) == set()
+
+
+def test_o3_terminal_order_requires_terminal_sequence() -> None:
+    for state in (
+        "cancelled",
+        "expired_unfilled",
+        "rejected_insufficient_collateral",
+        "trade_cancelled",
+        "void_ab_initio",
+    ):
+        late = _dead_order_activity(state, 6, 7, 2)
+        del late["orders"][-1]["terminal_sequence"]
+        assert "schema_invalid" in _evaluate(late)
+    checkpointed = _open_checkpoint_book(2, 0, "cancelled")
+    del checkpointed["orders"][0]["terminal_sequence"]
+    assert "schema_invalid" in _evaluate(checkpointed)
+    path = VALIDATOR.parent / "fixtures" / "equity_partial_then_dividend.json"
+    for state in ("cancelled", "expired", "rejected", "canary_breach"):
+        equity = json.loads(path.read_text(encoding="utf-8"))
+        equity["orders"] = [{
+            "order_id": "ord-eq-1",
+            "instrument_id": "eq-aapl",
+            "family": "equity",
+            "side": "buy",
+            "qty": 1,
+            "state": state,
+        }]
+        equity["fills"] = []
+        equity["journal"] = []
+        equity["corporate_actions"] = []
+        equity["reported"] = {
+            "cash_available": equity["checkpoint"]["cash_available"],
+            "collateral_reserved": 0,
+            "positions": [],
+            "open_reservations": [],
+            "attribution": [],
+        }
+        assert "schema_invalid" in _evaluate(equity)
+        equity["orders"][0]["terminal_sequence"] = 1
+        assert _evaluate(equity) == set()
+
+
+def test_o3_corrected_market_requires_a_correction() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_resting_order_reservation.json"
+    bare = json.loads(path.read_text(encoding="utf-8"))
+    bare["markets"][0]["state"] = "corrected"
+    assert "settlement_unreconciled" in _evaluate(bare)
+    other = json.loads(path.read_text(encoding="utf-8"))
+    other["markets"][0]["state"] = "corrected"
+    other["corrections"].append({
+        "correction_id": "c-other",
+        "admits_fill_id": "f-yes",
+        "reverses_entry_id": "j-reserve",
+        "reason": "correct another book",
+        "instrument_id": "ev-other",
+    })
+    assert "settlement_unreconciled" in _evaluate(other)
+    missing = json.loads(path.read_text(encoding="utf-8"))
+    missing["markets"][0]["state"] = "corrected"
+    missing["corrections"].append({
+        "correction_id": "c-missing",
+        "admits_fill_id": "f-yes",
+        "reverses_entry_id": "j-ghost",
+        "reason": "names a missing entry",
+        "instrument_id": "ev-yes",
+    })
+    assert "settlement_unreconciled" in _evaluate(missing)
+    good = json.loads(path.read_text(encoding="utf-8"))
+    good["markets"][0]["state"] = "corrected"
+    good["corrections"].append({
+        "correction_id": "c-yes",
+        "admits_fill_id": "f-yes",
+        "reverses_entry_id": "j-reserve",
+        "reason": "append-only correction",
+        "instrument_id": "ev-yes",
+    })
+    assert _evaluate(good) == set()

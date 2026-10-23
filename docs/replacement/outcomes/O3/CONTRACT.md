@@ -196,11 +196,16 @@ including a cancel with no fills, stays valid.
 `listed` → `open` → `closed_pending_determination` → `determined` → `settled`
 
 Side paths: `voided`, and `corrected` after a later append-only correction.
-`determined` carries a result of `yes`, `no`, or `scalar`. That result
-is not a `market_settlement` record, and this candidate has no separate
-determination-evidence kind. `market_settlement` evidence belongs only
-on `settled`, and `market_void` evidence only on `voided`. `voided` is
-not a yes or no result.
+`determined` is a lifecycle state. The market row stores `instrument_id`
+and `state` only, so this candidate does not store a yes, no, or scalar
+result on that row. That result is not a `market_settlement` record,
+and this candidate has no separate determination-evidence kind.
+`market_settlement` evidence belongs only on `settled`, and `market_void`
+evidence only on `voided`. `voided` is not a yes or no result. A
+`corrected` row requires a correction for that instrument:
+`instrument_id` is the market, `reverses_entry_id` names a journal or
+checkpoint entry, and `admits_fill_id` names a fill of that instrument.
+Without that record the row fails `settlement_unreconciled`.
 
 This candidate's examples are long buys. Short stock, margin, and options
 stay outside it, matching the issue's non-goals.
@@ -281,10 +286,12 @@ still reserved for an instrument must cover the positive holds of every
 order on it after each collateral posting, not only at the ending
 balance. An unnamed credit that spends owned collateral fails
 `balance_mismatch` even when a later reserve and a named release put
-the ending totals back in line. Two `collateral_reserved` postings for
-one instrument at one sequence fail `balance_mismatch` in either array
-order. Sequence is the only clock, so the array is not a tie-break. A
-posting for another instrument may share that sequence. A credit sequenced before the reserve
+the ending totals back in line. Two journal entries that each post
+`collateral_reserved` for one instrument at one sequence fail
+`balance_mismatch` in either array order. Lines that split that amount
+inside one entry are one posting, not a tie. Sequence is the only
+clock, so the array is not a tie-break. A posting for another
+instrument may share that sequence. A credit sequenced before the reserve
 fails the same way when the hold it creates is no longer reserved. A checkpoint
 open reservation may name its owning `order_id`. That optional id is
 this candidate's proposal for which order owns the checkpoint hold.
@@ -399,8 +406,9 @@ not change quantity.
   is rejected, not treated as already in the settled position. Sequence
   is the only clock in this candidate, and a tie does not show that the
   fill was inside the position the payout closed. The same rule orders
-  collateral: two `collateral_reserved` postings for one instrument at
-  one sequence fail `balance_mismatch` rather than following array order.
+  collateral across entries: two entries that each post
+  `collateral_reserved` for one instrument at one sequence fail
+  `balance_mismatch`. Lines inside one entry do not.
 - **Fill reference order.** A journal entry that names a fill and is
   sequenced before that fill fails `position_divergence`. The check does
   not depend on a settlement. An entry at the fill's own sequence is
@@ -410,7 +418,10 @@ not change quantity.
   `rejected_insufficient_collateral`, `expired_unfilled`,
   `trade_cancelled`, `void_ab_initio`) fails `late_fill_divergence`
   unless a correction record admits that fill id. The original entry stays
-  in the journal either way.
+  in the journal either way. That order's `state` or `terminal_state`
+  requires an integer `terminal_sequence`. Omitting it fails
+  `schema_invalid`, including when the order has no fill and the book
+  is only a checkpoint.
 
 ## Corporate actions
 
@@ -434,8 +445,12 @@ Terminal evidence has to agree with that row. `market_settlement`
 evidence on a market that is not `settled` fails
 `settlement_unreconciled`. `market_void` evidence on a market that is
 not `voided` fails `void_unreconciled`, unless a correction supersedes
-that void. `determined` names a result, not a `market_settlement`
-record. This candidate has no separate determination-evidence kind.
+that void. `determined` is a lifecycle state. The market row stores
+`instrument_id` and `state` only and does not store a yes, no, or
+scalar result. That result is not a `market_settlement` record.
+This candidate has no separate determination-evidence kind. A
+`corrected` market names a correction for that same instrument, as
+the lifecycle section requires.
 `listed`, `open`, `closed_pending_determination`,
 `determined`, and `corrected` do not carry either record.
 
