@@ -180,6 +180,32 @@ def _order_landed(history, order_id) -> bool:
     return False
 
 
+# Statuses that settle a broker order. American "canceled" is the same word.
+# Anything else, including an open "accepted"/"submitted" reply, is not
+# confirmation that a locally terminal row has left the broker.
+_BROKER_TERMINAL_STATUSES = frozenset({
+    "cancelled", "canceled", "rejected", "filled", "expired",
+})
+
+
+def _broker_order_is_terminal(history, order_id) -> bool:
+    """True only when history for this order id carries a terminal status.
+
+    An error, an empty reply, a non-dict, or a record for a different order
+    is not confirmation. The caller keeps the landed block in that case.
+    """
+    if not history or isinstance(history, BaseException):
+        return False
+    records = history if isinstance(history, (list, tuple)) else [history]
+    for rec in records:
+        if not isinstance(rec, dict) or rec.get("order_id") != order_id:
+            continue
+        status = str(rec.get("status", "")).strip().lower()
+        if status in _BROKER_TERMINAL_STATUSES:
+            return True
+    return False
+
+
 def reconcile_startup(
     st,
     *,
@@ -266,8 +292,10 @@ def reconcile_startup(
                 )
 
     # A landed send whose local row never became open leaves a sticky block.
-    # Clear it once the order is counted or terminal. Leave it, and alert,
-    # while the row is still proposed: new risk-increasing orders stay refused.
+    # Clear a counted row (approved/submitted/partially_filled). Clear a
+    # terminal row only when broker history confirms a terminal status. A
+    # local cancel, a history error, or an order the broker still shows open
+    # keeps the block and the alert.
     from brokers.gateway import UNRECONCILED_LANDED_EXPOSURE
 
     stuck_landed = False
@@ -290,7 +318,20 @@ def reconcile_startup(
         order_id = str((landed.refs or {}).get("order_id") or payload.get("order_id") or "")
         if order_id:
             latest_landed[order_id] = payload
-    counted_states = {"approved", "submitted", "partially_filled"} | set(TERMINAL_STATES)
+    counted_states = {"approved", "submitted", "partially_filled"}
+
+    def _clear_landed(order_id: str, payload: dict) -> None:
+        audit.append(
+            UNRECONCILED_LANDED_EXPOSURE,
+            actor="reconcile",
+            refs={"order_id": order_id},
+            payload={
+                "kind": "clear",
+                "order_id": order_id,
+                "notional": payload.get("notional"),
+            },
+        )
+
     for order_id, payload in latest_landed.items():
         if payload.get("kind") != "block":
             continue
@@ -298,17 +339,22 @@ def reconcile_startup(
             order_row = s.get(Order, order_id)
         state = None if order_row is None else order_row.state
         if state in counted_states:
-            audit.append(
-                UNRECONCILED_LANDED_EXPOSURE,
-                actor="reconcile",
-                refs={"order_id": order_id},
-                payload={
-                    "kind": "clear",
-                    "order_id": order_id,
-                    "notional": payload.get("notional"),
-                },
-            )
+            _clear_landed(order_id, payload)
             continue
+        if state in TERMINAL_STATES:
+            history = None
+            if broker_history_fn is not None:
+                try:
+                    history = broker_history_fn(order_id)
+                except Exception as exc:  # a history failure keeps the block
+                    log.warning(
+                        "reconcile: broker history read failed for landed order %s: %s",
+                        order_id, exc,
+                    )
+                    history = None
+            if _broker_order_is_terminal(history, order_id):
+                _clear_landed(order_id, payload)
+                continue
         stuck_landed = True
         alerter(
             f"#system reconcile: order {order_id} landed but local exposure is still "

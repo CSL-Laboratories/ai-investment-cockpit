@@ -1789,6 +1789,220 @@ def test_landed_order_whose_local_writes_both_fail_blocks_the_next_buy(st, monke
     assert scenario.st.audit.unresolved_intents() == []
 
 
+def _fail_writes_after_send(scenario, broker, monkeypatch):
+    """Raise on every local state write once the broker has been called."""
+    real = scenario.st.audit.record_state_change
+    fail = {"v": True}
+
+    def record(obj, event_type, *args, **kwargs):
+        if fail["v"] and broker.calls >= 1:
+            raise OSError("local write failed")
+        return real(obj, event_type, *args, **kwargs)
+
+    monkeypatch.setattr(scenario.st.audit, "record_state_change", record)
+    return fail
+
+
+def _latest_landed_kind(st, order_id):
+    from brokers.gateway import UNRECONCILED_LANDED_EXPOSURE
+
+    with st.session_factory() as session:
+        rows = session.execute(
+            select(AuditEntry)
+            .where(AuditEntry.event_type == UNRECONCILED_LANDED_EXPOSURE)
+            .order_by(AuditEntry.seq)
+        ).scalars().all()
+    kind = None
+    for row in rows:
+        payload = row.payload or {}
+        marked = str((row.refs or {}).get("order_id") or payload.get("order_id") or "")
+        if marked == str(order_id):
+            kind = payload.get("kind")
+    return kind
+
+
+def _reload_order(st, order_id):
+    with st.session_factory() as session:
+        row = session.get(Order, order_id)
+        session.expunge(row)
+        return row
+
+
+def test_unreadable_landed_state_still_blocks_the_next_buy(st, monkeypatch):
+    """A state read that raises after both local writes failed must still block.
+
+    3b8483d6 reads the row outside the marker try. The raise skips the marker,
+    the integrity admission, and the ambiguous-transport record, so the next
+    $1,500 buy under a $2,000 cap is sent.
+    """
+    from tests.brokers.test_pending_exposure_chain import _fresh_submittable
+
+    scenario, broker = _capped_paper(st)
+    fail = _fail_writes_after_send(scenario, broker, monkeypatch)
+    real_factory = scenario.st.session_factory
+    in_persist = {"v": False}
+    real_persist = scenario.gateway._persist_unreconciled_landed
+
+    def persist(st_arg, order, actor):
+        in_persist["v"] = True
+        try:
+            return real_persist(st_arg, order, actor)
+        finally:
+            in_persist["v"] = False
+
+    def factory(*args, **kwargs):
+        if in_persist["v"]:
+            raise RuntimeError("landed state unreadable")
+        return real_factory(*args, **kwargs)
+
+    monkeypatch.setattr(scenario.gateway, "_persist_unreconciled_landed", persist)
+    monkeypatch.setattr(scenario.st, "session_factory", factory)
+    try:
+        scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+    except RuntimeError:
+        pass
+    finally:
+        fail["v"] = False
+    assert broker.calls == 1
+    assert _latest_landed_kind(scenario.st, scenario.order.id) == "block"
+    second, approval, risk = _fresh_submittable(
+        st, scenario, proposal="p-next", nonce="n-next",
+    )
+    nxt = scenario.gateway.submit(
+        second,
+        **scenario.submit_kwargs(
+            approval=approval, risk_decision=risk, token_nonce="n-next",
+        ),
+    )
+    assert nxt.ok is False
+    assert nxt.stage in {"pending_exposure", "audit_integrity"}
+    assert broker.calls == 1
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_local_cancel_with_open_broker_history_keeps_the_landed_block(st, monkeypatch):
+    """A local cancel does not clear a landed block while the broker is still open."""
+    from orchestrator.reconcile import reconcile_startup
+    from tests.brokers.test_pending_exposure_chain import _fresh_submittable
+
+    scenario, broker = _capped_paper(st)
+    fail = _fail_writes_after_send(scenario, broker, monkeypatch)
+    outcome = scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+    fail["v"] = False
+    assert broker.calls == 1
+    assert outcome.stage == "broker_error"
+    row = _reload_order(scenario.st, scenario.order.id)
+    assert row.state == "proposed"
+    transition(scenario.st, row, "cancelled", actor="operator", reason="local cancel")
+    alerts: list[str] = []
+    report = reconcile_startup(
+        scenario.st,
+        broker_history_fn=lambda oid: [{"order_id": oid, "status": "accepted"}],
+        alerter=alerts.append,
+    )
+    assert report.ok is False
+    assert _latest_landed_kind(scenario.st, scenario.order.id) == "block"
+    assert any("unreconciled" in alert for alert in alerts)
+    second, approval, risk = _fresh_submittable(
+        st, scenario, proposal="p-next", nonce="n-next",
+    )
+    nxt = scenario.gateway.submit(
+        second,
+        **scenario.submit_kwargs(
+            approval=approval, risk_decision=risk, token_nonce="n-next",
+        ),
+    )
+    assert nxt.ok is False
+    assert nxt.stage == "pending_exposure"
+    assert broker.calls == 1
+
+
+def test_local_cancel_with_terminal_broker_history_clears_the_landed_block(st, monkeypatch):
+    """A local cancel keeps the block until broker history shows a terminal status.
+
+    3b8483d6 stops counting a terminal row on its own, so the buy before
+    reconcile is admitted. A cancelled broker history is what clears the marker.
+    """
+    from orchestrator.reconcile import reconcile_startup
+    from tests.brokers.test_pending_exposure_chain import _fresh_submittable
+
+    scenario, broker = _capped_paper(st)
+    fail = _fail_writes_after_send(scenario, broker, monkeypatch)
+    scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+    fail["v"] = False
+    assert broker.calls == 1
+    row = _reload_order(scenario.st, scenario.order.id)
+    transition(scenario.st, row, "cancelled", actor="operator", reason="local cancel")
+    probe, approval, risk = _fresh_submittable(
+        st, scenario, proposal="p-probe", nonce="n-probe",
+    )
+    pre = scenario.gateway.submit(
+        probe,
+        **scenario.submit_kwargs(
+            approval=approval, risk_decision=risk, token_nonce="n-probe",
+        ),
+    )
+    assert pre.ok is False
+    assert pre.stage == "pending_exposure"
+    assert broker.calls == 1
+    alerts: list[str] = []
+    reconcile_startup(
+        scenario.st,
+        broker_history_fn=lambda oid: [{"order_id": oid, "status": "cancelled"}],
+        alerter=alerts.append,
+    )
+    assert _latest_landed_kind(scenario.st, scenario.order.id) == "clear"
+    third, approval3, risk3 = _fresh_submittable(
+        st, scenario, proposal="p-next", nonce="n-next",
+    )
+    nxt = scenario.gateway.submit(
+        third,
+        **scenario.submit_kwargs(
+            approval=approval3, risk_decision=risk3, token_nonce="n-next",
+        ),
+    )
+    assert nxt.ok is True
+    assert broker.calls == 2
+
+
+def test_quote_that_expires_during_the_send_hold_exposure_scan_does_not_submit(
+    st, monkeypatch,
+):
+    """A quote that goes stale during the locked exposure scan must not be sent.
+
+    The cheap quote sample runs before that scan. 3b8483d6 does not sample it
+    again before transport.
+    """
+    scenario, broker = _paper_gateway(st)
+    scanned = {"v": False}
+    real_pending = scenario.gateway._pending_ok
+
+    def pending(st_arg, order):
+        result = real_pending(st_arg, order)
+        if st_arg.safety_admission_lock.locked():
+            scanned["v"] = True
+        return result
+
+    monkeypatch.setattr(scenario.gateway, "_pending_ok", pending)
+
+    class Guard:
+        def stale_reason(self, symbol, *, now, limit_s):
+            if scanned["v"]:
+                return "quote expired during the send-hold exposure scan"
+            return None
+
+    scenario.st.market_data = Guard()
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=lambda: None, **scenario.submit_kwargs()
+    )
+    assert scanned["v"] is True
+    assert outcome.ok is False
+    assert outcome.stage == "market_data"
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+    assert scenario.breaker.watch_only_reason() is not None
+
+
 def test_quote_that_expires_during_the_final_risk_refresh_does_not_submit(st):
     scenario, broker = _paper_gateway(st)
     calls = {"n": 0}

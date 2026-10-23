@@ -543,9 +543,11 @@ class OrderGateway:
         """Exposure of landed sends whose local row is still not counted.
 
         The latest verified marker per order wins. A ``clear`` drops it. A
-        block whose order is already open or terminal is waiting for
-        reconcile and is not added again here. ``None`` means a marker could
-        not be read, which the caller treats as fail-closed.
+        block whose order is already open (approved, submitted, or partially
+        filled) is in the cap and is not added again. A terminal row still
+        carrying a block is counted: a local cancel is not broker
+        confirmation. ``None`` means a marker could not be read, which the
+        caller treats as fail-closed.
         """
         with st.session_factory() as s:
             rows = s.execute(
@@ -566,7 +568,7 @@ class OrderGateway:
             latest[order_id] = payload
         if not latest:
             return Decimal("0")
-        counted = {"approved", "submitted", "partially_filled"} | set(TERMINAL_STATES)
+        counted = {"approved", "submitted", "partially_filled"}
         total = Decimal("0")
         with st.session_factory() as s:
             for order_id, payload in latest.items():
@@ -590,9 +592,13 @@ class OrderGateway:
         exposure does not count a ``proposed`` row, so the marker is what
         blocks the next risk-increasing order until reconcile clears it.
         """
-        with st.session_factory() as s:
-            row = s.get(Order, getattr(order, "id", None))
-            state = None if row is None else row.state
+        state = None
+        try:
+            with st.session_factory() as s:
+                row = s.get(Order, getattr(order, "id", None))
+                state = None if row is None else row.state
+        except Exception:  # noqa: BLE001 - an unreadable row is uncounted
+            state = None
         counted = {"approved", "submitted", "partially_filled"}
         if state in counted or state in TERMINAL_STATES:
             return
@@ -2308,6 +2314,11 @@ class OrderGateway:
                 try:
                     final_refusal = _decide_under_lock()
                     if final_refusal is None:
+                        # The exposure scan above can outlast the quote sampled
+                        # at the start of this hold. Sample it again as the last
+                        # check. Watch-only is published after this lock releases.
+                        final_refusal = self._quote_age_refusal(st, order, st.clock)
+                    if final_refusal is None:
                         # Before the call: a raise can still mean the order landed.
                         transport_entered = True
                         try:
@@ -2409,8 +2420,9 @@ class OrderGateway:
                     except Exception:  # noqa: BLE001 - one recovery attempt, then flag
                         pass
                     # Both the original write and this recovery missed. A proposed
-                    # row drops out of pending exposure, so stick a refusal that
-                    # reconcile clears only once the order is counted or terminal.
+                    # row drops out of pending exposure, so stick a refusal.
+                    # Reconcile clears a counted row, or a terminal row only
+                    # after the broker confirms that terminal status.
                     self._persist_unreconciled_landed(st, order, producing_runtime)
                     reason = (
                         "broker outcome ambiguous after transport: "
