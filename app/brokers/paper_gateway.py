@@ -274,17 +274,22 @@ def _guarded_submit(gateway, captured):
             and str(canonical.get("order_type") or "").strip().lower() == "market"
         ):
             from brokers.authority_profiles import (
+                _bind_sent_protective_limit,
                 _collar_market_submission,
                 _reserved_notional,
             )
 
             market, quote_now = _state_quote(gateway)
+            order = authority_kwargs["order"]
             canonical = _collar_market_submission(
-                authority_kwargs["order"],
+                order,
                 canonical,
                 market=market,
                 now=quote_now,
                 reserved=_reserved_notional(store, client_id),
+            )
+            _bind_sent_protective_limit(
+                store, gateway, client_id, order, canonical.get("limit_price"),
             )
         return captured(canonical)
 

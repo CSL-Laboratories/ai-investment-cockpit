@@ -29,7 +29,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from decimal import ROUND_DOWN, Decimal, InvalidOperation
+from decimal import ROUND_CEILING, ROUND_DOWN, Decimal, InvalidOperation
 from pathlib import Path
 from typing import Iterator, Mapping
 
@@ -44,11 +44,12 @@ SCHEMA_VERSION = 1
 # claim can be re-owned only after its lease expires, so two reconcilers
 # racing the same crashed claim cannot both bump the generation and both reach
 # the gateway. Version 5 adds the process transport hash and the restart
-# binding hash. A version-4 store already has the stop capability and the
-# claim lease, so its rows migrate in place. Earlier versions that hold rows
-# still refuse.
-STORE_USER_VERSION = 5
-ADMITTED_STORE_VERSIONS = frozenset({0, 1, 2, 3, 4, STORE_USER_VERSION})
+# binding hash. Version 6 records the protective limit sent for a market
+# order. A version-4 or version-5 store already has the stop capability and
+# the claim lease, so its rows migrate in place. Earlier versions that hold
+# rows still refuse.
+STORE_USER_VERSION = 6
+ADMITTED_STORE_VERSIONS = frozenset({0, 1, 2, 3, 4, 5, STORE_USER_VERSION})
 ADMITTED_ENVIRONMENTS = frozenset({"paper", "dry_run"})
 _MODEL_OUTPUT_KEYS = frozenset({"provider", "model_version", "summary", "confidence"})
 _HANDOFF_STATES = frozenset({"pending", "in_progress", "failed", "completed"})
@@ -450,7 +451,8 @@ _SCHEMA = (
         reconciled INTEGER NOT NULL DEFAULT 0,
         claimed_at TEXT,
         transport_client_hash TEXT,
-        transport_binding_hash TEXT
+        transport_binding_hash TEXT,
+        protective_limit TEXT
     )
     """,
 )
@@ -1150,7 +1152,7 @@ class AuthorityProfileStore:
                 "broker must confirm the cockpit order is absent before release or retry",
             )
         if visibility == "present":
-            _resolve_landed_submission(gateway, order_ref)
+            _resolve_landed_submission(gateway, order_ref, store=self)
         with self._txn() as conn:
             now = self._authoritative_now
             row = conn.execute(
@@ -1414,7 +1416,7 @@ class AuthorityProfileStore:
                             "pre-current profile store holds rows; recreate the store "
                             "or re-install profiles through the authenticated install path",
                         )
-            if version in {4, STORE_USER_VERSION}:
+            if version in {4, 5, STORE_USER_VERSION}:
                 # CREATE TABLE IF NOT EXISTS would silently rebuild a ledger
                 # lost in a damaged restore, including an admitted version-4
                 # file. Refuse before any recreation or column migration.
@@ -1442,17 +1444,18 @@ class AuthorityProfileStore:
                     "reconciled",
                     "claimed_at",
                 }
-                if version == STORE_USER_VERSION:
-                    required_reservation_columns = v4_reservation_columns | {
-                        "transport_client_hash",
-                        "transport_binding_hash",
-                    }
-                    if not required_reservation_columns <= pre_columns:
+                transport_columns = {"transport_client_hash", "transport_binding_hash"}
+                if version in {5, STORE_USER_VERSION}:
+                    if not v4_reservation_columns | transport_columns <= pre_columns:
                         raise ProfileRefused(
                             "store", "reservations ledger is missing a column"
                         )
                 elif not v4_reservation_columns <= pre_columns:
                     raise ProfileRefused("store", "reservations ledger is missing a column")
+                if version == STORE_USER_VERSION and "protective_limit" not in pre_columns:
+                    raise ProfileRefused(
+                        "store", "reservations ledger is missing a column"
+                    )
                 if "stop_capability_hash" not in pre_profile_columns:
                     raise ProfileRefused("store", "profile ledger is missing a column")
             for statement in _SCHEMA:
@@ -1467,7 +1470,7 @@ class AuthorityProfileStore:
                 "order_ref", "handoff_state", "claim_generation", "reconciled", "claimed_at",
             }
             required_reservation_columns = v4_reservation_columns | {
-                "transport_client_hash", "transport_binding_hash",
+                "transport_client_hash", "transport_binding_hash", "protective_limit",
             }
             if version == STORE_USER_VERSION:
                 # A current-version store missing a column is corruption, not
@@ -1501,6 +1504,10 @@ class AuthorityProfileStore:
                     """,
                     (_MIGRATED_UNBOUND,),
                 )
+                if "protective_limit" not in columns:
+                    conn.execute(
+                        "ALTER TABLE reservations ADD COLUMN protective_limit TEXT"
+                    )
             else:
                 # Empty pre-current store: add every missing column in place.
                 if "order_ref" not in columns:
@@ -1532,6 +1539,10 @@ class AuthorityProfileStore:
                 if "transport_binding_hash" not in columns:
                     conn.execute(
                         "ALTER TABLE reservations ADD COLUMN transport_binding_hash TEXT"
+                    )
+                if "protective_limit" not in columns:
+                    conn.execute(
+                        "ALTER TABLE reservations ADD COLUMN protective_limit TEXT"
                     )
                 if "stop_capability_hash" not in profile_columns:
                     conn.execute(
@@ -1956,11 +1967,26 @@ def _tuple_notional(order, *, market=None, now=None) -> Decimal:
     return _parse_money(product, code="notional")
 
 
-def _protective_unit(price: Decimal) -> Decimal:
-    """The fill cap for one share. Rounded down so it cannot exceed the buffer."""
-    unit = (price * (Decimal("1") + MARKET_REFERENCE_BUFFER)).quantize(
-        _MONEY, rounding=ROUND_DOWN
-    )
+def _protective_unit(price: Decimal, *, side: str) -> Decimal:
+    """The broker limit for one share.
+
+    A buy pays no more than the ask inflated by the buffer, rounded down.
+    A sell accepts no less than the bid reduced by the buffer, rounded up,
+    so the order can still fill at the touch. Exposure stays on the
+    inflated touch either way.
+    """
+    side_l = str(side or "").strip().lower()
+    if side_l == "buy":
+        raw = price * (Decimal("1") + MARKET_REFERENCE_BUFFER)
+        rounding = ROUND_DOWN
+    elif side_l == "sell":
+        raw = price * (Decimal("1") - MARKET_REFERENCE_BUFFER)
+        rounding = ROUND_CEILING
+    else:
+        raise ProfileRefused(
+            "quote_unavailable", "market order protective limit is missing"
+        )
+    unit = raw.quantize(_MONEY, rounding=rounding)
     if not unit.is_finite() or unit <= 0:
         raise ProfileRefused(
             "quote_unavailable", "market order protective limit is missing"
@@ -1982,12 +2008,15 @@ def _reserved_notional(store, client_order_id: str) -> Decimal:
 
 
 def _collar_market_submission(order, canonical, *, market, now, reserved: Decimal) -> dict:
-    """Copy a market payload into a limit at the buffered touch.
+    """Copy a market payload into a protective limit.
 
-    Exposure sizing is not a fill cap. The broker payload carries the cap.
-    The local order tuple, its hash, and the approval stay a market order.
-    One quote read supplies both this exposure check and the limit. A quote
-    that no longer matches the reservation refuses before the send.
+    Exposure sizing stays qty times the touch inflated by the buffer. The
+    broker payload is a limit: ask times the buffer rounded down for a buy,
+    bid times one minus the buffer rounded up for a sell. The local order
+    tuple, its hash, and the approval stay a market order. The sent limit
+    is recorded beside this copy. One quote read supplies both the exposure
+    check and the limit. A quote that no longer matches the reservation
+    refuses before the send.
     """
     if not isinstance(canonical, dict):
         raise ProfileRefused(
@@ -2010,7 +2039,13 @@ def _collar_market_submission(order, canonical, *, market, now, reserved: Decima
         raise ProfileRefused(
             "notional_mismatch", "order notional does not match the reservation"
         )
-    unit = _protective_unit(price)
+    side = str(getattr(order, "side", "") or canonical.get("side") or "").strip().lower()
+    canon_side = str(canonical.get("side") or "").strip().lower()
+    if canon_side and canon_side != side:
+        raise ProfileRefused(
+            "notional_mismatch", "order notional does not match the reservation"
+        )
+    unit = _protective_unit(price, side=side)
     if qty * unit > exposure:
         raise ProfileRefused(
             "notional_mismatch", "protective limit exceeds the reserved exposure"
@@ -2021,6 +2056,73 @@ def _collar_market_submission(order, canonical, *, market, now, reserved: Decima
     collared["order_type"] = "limit"
     collared["limit_price"] = _canonical_decimal_str(unit)
     return collared
+
+
+def _bind_sent_protective_limit(store, gateway, client_order_id: str, order, limit_text: str) -> None:
+    """Record the limit the broker is about to receive.
+
+    The local order stays a market order. The reservation column and a signed
+    audit row are what recovery and reconcile read.
+    """
+    if type(limit_text) is not str or not limit_text or type(client_order_id) is not str:
+        raise ProfileRefused("notional_mismatch", "protective limit is missing")
+    with store._txn() as conn:
+        updated = conn.execute(
+            """
+            UPDATE reservations
+            SET protective_limit = ?
+            WHERE client_order_id = ?
+              AND (protective_limit IS NULL OR protective_limit = ?)
+            """,
+            (limit_text, client_order_id, limit_text),
+        )
+        if updated.rowcount != 1:
+            raise ProfileRefused(
+                "notional_mismatch", "protective limit does not match the reservation"
+            )
+    st = None if gateway is None else object.__getattribute__(gateway, "_st")
+    audit = None if st is None else getattr(st, "audit", None)
+    if audit is None or not callable(getattr(audit, "append", None)):
+        raise ProfileRefused("intent", "protective limit was not signed")
+    audit.append(
+        "paper_protective_limit",
+        actor="paper-gateway",
+        refs={
+            "order_id": "" if getattr(order, "id", None) is None else str(order.id),
+            "client_order_id": client_order_id,
+        },
+        payload={
+            "protective_limit": limit_text,
+            "broker_order_type": "limit",
+            "local_order_type": "market",
+            "side": str(getattr(order, "side", "") or "").strip().lower(),
+        },
+    )
+
+
+def _signed_protective_limits(st, order_ref: str) -> list[str]:
+    """Verified protective limits recorded for this order. Disagreement is a refusal."""
+    audit = None if st is None else getattr(st, "audit", None)
+    verify = None if audit is None else getattr(audit, "verify_entry", None)
+    if audit is None or not callable(verify) or not order_ref:
+        return []
+    found: list[str] = []
+    for row in audit._rows():
+        if getattr(row, "event_type", None) != "paper_protective_limit":
+            continue
+        if str((row.refs or {}).get("order_id") or "") != str(order_ref):
+            continue
+        try:
+            signed = verify(row)
+        except Exception:
+            signed = False
+        if not signed:
+            continue
+        limit = (row.payload or {}).get("protective_limit")
+        if type(limit) is not str or not limit or limit in found:
+            continue
+        found.append(limit)
+    return found
 
 
 def _state_quote(gateway):
@@ -2716,7 +2818,7 @@ def _consume_landed_approval(st, order) -> None:
     )
 
 
-def _resolve_landed_submission(gateway, order_ref: str) -> None:
+def _resolve_landed_submission(gateway, order_ref: str, *, store=None) -> None:
     """Close this order's open submit intent and move the row to submitted.
 
     Presence recovery must not mark the reservation complete over a proposed
@@ -2783,6 +2885,27 @@ def _resolve_landed_submission(gateway, order_ref: str) -> None:
             session.expunge(order)
     if order is None:
         raise ProfileRefused("order_state", "landed order is not in the local book")
+    if str(getattr(order, "order_type", "") or "").strip().lower() == "market":
+        limits = _signed_protective_limits(st, order_ref)
+        if len(limits) != 1:
+            raise ProfileRefused(
+                "intent", "landed market order has no signed protective limit"
+            )
+        if store is not None:
+            with store._txn() as conn:
+                rows = conn.execute(
+                    "SELECT protective_limit FROM reservations WHERE order_ref = ?",
+                    (order_ref,),
+                ).fetchall()
+            bound = [
+                row["protective_limit"]
+                for row in rows
+                if type(row["protective_limit"]) is str and row["protective_limit"]
+            ]
+            if not bound or set(bound) != {limits[0]}:
+                raise ProfileRefused(
+                    "intent", "protective limit disagrees with the reservation"
+                )
     _consume_landed_approval(st, order)
     if order.state == "submitted":
         return

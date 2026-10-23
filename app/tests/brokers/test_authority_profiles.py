@@ -3875,7 +3875,7 @@ def test_version_four_store_migrates_the_transport_column(tmp_path):
         "SELECT COUNT(*) FROM reservations WHERE client_order_id = 'v4-row'"
     ).fetchone()[0]
     raw.close()
-    assert version == STORE_USER_VERSION == 5
+    assert version == STORE_USER_VERSION == 6
     assert "transport_client_hash" in names
     assert kept == 1
     assert reopened.consumption("profile-b") == (Decimal("10.00"), 1)
@@ -5403,14 +5403,41 @@ def test_market_buy_submits_a_protective_limit_at_the_buffered_ask(st, tmp_path)
     assert Decimal(str(scenario.order.notional)) == Decimal("1.00")
 
 
-def test_market_sell_submits_a_protective_limit_at_the_buffered_bid(st, tmp_path):
-    """A market sell is sent as a limit at the buffered bid, not as an uncapped market."""
+def _protective_limit_record(st, store, client_order_id):
+    """The price the broker was given, from the reservation and the signed audit."""
+    import sqlite3
+
+    raw = sqlite3.connect(store.path)
+    row = raw.execute(
+        "SELECT notional, protective_limit FROM reservations WHERE client_order_id = ?",
+        (client_order_id,),
+    ).fetchone()
+    raw.close()
+    signed = []
+    for entry in st.audit._rows():
+        if entry.event_type != "paper_protective_limit":
+            continue
+        if not st.audit.verify_entry(entry):
+            continue
+        if (entry.refs or {}).get("client_order_id") != client_order_id:
+            continue
+        signed.append((entry.payload or {}).get("protective_limit"))
+    return row, signed
+
+
+def test_market_sell_submits_a_protective_limit_below_the_bid(st, tmp_path):
+    """A market sell is a limit at bid x 0.95, not a limit above the bid.
+
+    Exposure stays the conservative bid x 1.05. The local order stays a market
+    order. The sent limit is on the reservation and the signed audit.
+    """
     broker = _CountingPaper()
     gateway = PaperOrderGateway(broker, st=st, pending_exposure_cap=Decimal("40"))
     scenario = build_scenario(
         st, mode=Mode.paper, broker=broker, gateway=gateway, side="sell",
         qty="10", order_type="market", limit_price=None, notional="1.00",
     )
+    birth_hash = scenario.order.order_tuple_hash
     st.market_data = _TouchQuote("1.40", "1.50")
     store = _store(tmp_path, "market-sell-collar.sqlite")
     now = scenario.clock.now()
@@ -5432,8 +5459,68 @@ def test_market_sell_submits_a_protective_limit_at_the_buffered_bid(st, tmp_path
     sent = broker._client.submitted[-1]
     assert sent["order_type"] == "limit"
     assert sent["side"] == "sell"
-    assert Decimal(str(sent["limit_price"])) == Decimal("1.47")
+    assert Decimal(str(sent["limit_price"])) == Decimal("1.33")
     assert scenario.order.order_type == "market"
+    assert scenario.order.limit_price is None
+    assert scenario.order.order_tuple_hash == birth_hash
+    bound, signed = _protective_limit_record(st, store, "market-sell-collar")
+    assert Decimal(bound[0]) == Decimal("14.70")
+    assert Decimal(bound[1]) == Decimal("1.33")
+    assert signed == ["1.33"]
+
+
+def test_protective_limit_rounds_the_sell_up_and_the_buy_down(st, tmp_path):
+    """Sell bid 1.01 x 0.95 = 0.9595 rounds up to 0.96. Buy ask 1.03 x 1.05 = 1.0815 rounds down to 1.08."""
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st, pending_exposure_cap=Decimal("40"))
+    sell = build_scenario(
+        st, mode=Mode.paper, broker=broker, gateway=gateway, side="sell",
+        qty="10", order_type="market", limit_price=None, notional="1.00",
+    )
+    st.market_data = _TouchQuote("1.01", "1.03")
+    store = _store(tmp_path, "market-round.sqlite")
+    now = sell.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    # 10 x 1.01 x 1.05 = 10.605, half-even to 10.60. The floor is not that size.
+    sell_result = handoff_to_gateway(
+        store, gateway, profile_id="profile-b", action="submit_paper",
+        client_order_id="market-round-sell", notional=Decimal("10.60"), actor="stop-owner",
+        now=now, submit_args=(sell.order,),
+        submit_kwargs=_paper_submit_kwargs(sell), **_PAPER_BINDINGS,
+    )
+    assert getattr(sell_result.outcome, "ok", None) is True
+    assert Decimal(str(broker._client.submitted[-1]["limit_price"])) == Decimal("0.96")
+    _bound, sell_signed = _protective_limit_record(st, store, "market-round-sell")
+    assert sell_signed == ["0.96"]
+    assert sell.order.order_type == "market"
+
+    buy = build_scenario(
+        st, mode=Mode.paper, broker=broker, gateway=gateway, side="buy",
+        qty="10", order_type="market", limit_price=None, notional="1.00",
+        mint=False,
+    )
+    buy.gateway.mint_submit_token(
+        nonce="n-round-buy", proposal_id="p1",
+        risk_decision_id=buy.risk_decision.id, order_tuple_hash=buy.tuple_hash,
+    )
+    # 10 x 1.03 x 1.05 = 10.815, half-even to 10.82.
+    buy_result = handoff_to_gateway(
+        store, gateway, profile_id="profile-b", action="submit_paper",
+        client_order_id="market-round-buy", notional=Decimal("10.82"), actor="stop-owner",
+        now=now, submit_args=(buy.order,),
+        submit_kwargs=_paper_submit_kwargs(buy, token_nonce="n-round-buy"),
+        **_PAPER_BINDINGS,
+    )
+    assert getattr(buy_result.outcome, "ok", None) is True
+    assert Decimal(str(broker._client.submitted[-1]["limit_price"])) == Decimal("1.08")
+    assert buy.order.order_type == "market"
 
 
 def test_quote_change_between_reserve_and_send_refuses(st, tmp_path):
