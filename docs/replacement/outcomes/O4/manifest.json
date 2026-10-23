@@ -5,67 +5,67 @@
   "files": [
     {
       "path": "PROTOCOL.md",
-      "sha256": "6d874c25972741de5f0742e8a7ce248c0aee64bf7ac38867a0f8c5461e6707b8"
+      "sha256": "722022f6a316bb4cc26e33e7db6bdd718e6018ee205998d73fca68167db4efa9"
     },
     {
       "path": "fixtures/candidate-packet.json",
-      "sha256": "eafdf19442db39c4734e75ee56aa3f5b1a4fb729140b1d6f8b26d9293e26094a"
+      "sha256": "90d307a7f46843d74217f5641a39f2dcf3649327b4ec0f9830c3d3bcdc14c691"
     },
     {
       "path": "fixtures/negative/dropped-costs.json",
-      "sha256": "dc23793f94f89f953abe78a34711224c213f1ea06bd666bd0bef8d07a322a453"
+      "sha256": "2a5495ad19cb420ac1e96f27a3daf5b732b04c0d94fed1277c9fdaa592ff5dbf"
     },
     {
       "path": "fixtures/negative/dropped-empty-outcome.json",
-      "sha256": "0d102cbeb3692d21d04e01628ecfc149aec7023b8429e82844dbba5cc369c741"
+      "sha256": "03015a22c33a31086629f200d3b6c2da01803676bd45cc8834fc520d35cf627d"
     },
     {
       "path": "fixtures/negative/leakage-control-satisfied.json",
-      "sha256": "000b74482c1fbdb85f4344db1248751de1073da9dc84ca298841c5eca810e957"
+      "sha256": "44dc3c46f96eb595a07b4fc5a8742908fb0457f56561973b9f517b14a89a485c"
     },
     {
       "path": "fixtures/negative/measured-costs.json",
-      "sha256": "56bd8f1b31e49541723bc671209614a2555087a1f86d7a9da0ce3f3b9856a530"
+      "sha256": "5aece957f91cf7c9bb21484963c2cec4e8d63364ce580048c0718e7939e4653e"
     },
     {
       "path": "fixtures/negative/metric-registry-incomplete.json",
-      "sha256": "e5663aad914852819588c30a5edf382ea17def6a9315fcd80123021d2503a2fa"
+      "sha256": "538c03bad4e61de73028c4c9b3404f9257ed8acff26e652ede49b07404ddee5d"
     },
     {
       "path": "fixtures/negative/overlapping-populations.json",
-      "sha256": "0a2fc9dbe311ff3c5e106b57a83e14dceb220f5a26b39d70420a09fe007526f4"
+      "sha256": "011432921226bf32c1cdf2a2626bdbbfb23dbe7925ab1aef9b165cdf84310e64"
     },
     {
       "path": "fixtures/negative/parameter-variants.json",
-      "sha256": "3754bba1b81d23a073093543cc9d85b1f025bba90f55b1bb3ebd336325676a09"
+      "sha256": "58a53298889eb2e453d3740044fa47d78a4b847c89a33d64b0a08a20a66a8013"
     },
     {
       "path": "fixtures/negative/population-members-rebound.json",
-      "sha256": "653dace95ffdc0c55ffdbcc5411d8b8ac47fbd834291b19aad82fa4b7a1a6142"
+      "sha256": "6bbfb4cb6fb9a1bd14f977646ad135ed5feae70f67d855346bbfe2895050269c"
     },
     {
       "path": "fixtures/negative/preresult-receipt-dropped.json",
-      "sha256": "f7f424428c971e530785a7cb88695abd0e9e7de9cf18d2310492ba73f4d2905f"
+      "sha256": "528a5e99812a69e4a65be06da03d82f320b3f2a017436edf581592accce99d80"
     },
     {
       "path": "fixtures/negative/promotion-stage-authorized.json",
-      "sha256": "40e44724f026cfde19c70fef0a43d7050a0ce4ad7919ef1665c0d731408314f8"
+      "sha256": "9943113da631e7a0a23b93ede3b15f1d8dc7a02cb11bd8cb383a5db1772d18c8"
     },
     {
       "path": "fixtures/negative/release-owner-person.json",
-      "sha256": "58abc3c36c77b8ddea0bfb5868cacc5636e089a78f7077e4d3744dfb3dfa813d"
+      "sha256": "89a24c17216f4162a342de3c8e7341b088fff52e4ab066809c27bf53f4ebd938"
     },
     {
       "path": "fixtures/negative/shadow-data-scope-dropped.json",
-      "sha256": "5a832fb91ff84b5af0edf4e98975a386b74db2fae5a43f09b3e7d649714d1cfc"
+      "sha256": "99c6cbd2e2146085a7b11107ee41ef2b4ba8f42612b8be85dd0ab5288e8eee90"
     },
     {
       "path": "fixtures/negative/stages-missing-rung.json",
-      "sha256": "675cc0e997c4b6748a49b64915f5da5e998353e57d0cd7c29446afe7324bd1be"
+      "sha256": "3a41e609d255b36a45c278be56d41948a6bca1b81d6ea6183e1fb2f6d7820108"
     },
     {
       "path": "fixtures/negative/variant-configuration.json",
-      "sha256": "975e520cb408996819a8d87b630aa99b47eb79809b29088586189d0fcf0f7df6"
+      "sha256": "af65d0708e0d8d82c0b8e87354981ac90fa68791a20a6195694bd0136d03c894"
     },
     {
       "path": "schemas/candidate-queue.schema.json",
@@ -77,7 +77,7 @@
     },
     {
       "path": "schemas/experiment.schema.json",
-      "sha256": "6fe6e41ce03a2e4a245de15d249951edc6dadc12506f34350489dd29788dc957"
+      "sha256": "bcef0d5744094ae0c86be438f6a66111a57daf6b3b64a8070ec89d78fe4f4f6e"
     },
     {
       "path": "schemas/metric-registry.schema.json",
@@ -101,7 +101,7 @@
     },
     {
       "path": "validate.py",
-      "sha256": "b63da09606c87ed762e26deecae01964479c589cda52b2d1967a1f9b8e4dac3e"
+      "sha256": "b3dc5e0ad0d980881cf61da2f4af778eba6c5451bb8aa96fa804193ac7470f05"
     }
   ],
   "linear_issue": "CSL-216",
