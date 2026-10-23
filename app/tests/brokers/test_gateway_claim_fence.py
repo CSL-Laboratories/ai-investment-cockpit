@@ -9,19 +9,26 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 import pytest
 
 import builtins
 import inspect
 
+from sqlalchemy import select
+
 from brokers.alpaca_paper import AlpacaPaperBroker
 from brokers.gateway import OrderBoundPermit, OrderGateway, _ADMISSION_WAIT_BUDGET_S
+from brokers.order_state_machine import create_order, transition
 from config.settings import Mode
 from core.clock import FrozenClock
+from core.ids import new_id
 from orchestrator.halt import default_halt_path, set_halt
+from orchestrator.state import EVENT_ADJUDICATION
 from schemas.models.approval_record import ApprovalRecord
+from schemas.models.audit_entry import AuditEntry
 from schemas.models.order import Order
 from schemas.models.risk_decision import RiskDecision
 from tests.brokers.conftest import build_scenario
@@ -733,6 +740,44 @@ def test_admission_read_exception_covers_the_intent(st):
     assert scenario.st.audit.unresolved_intents() == []
 
 
+def test_profile_subclass_may_omit_the_admitted_type(st):
+    """#173 pins the submit callable and the client. The type attribute is optional."""
+    broker = _CountingPaper()
+    holder = {}
+
+    def fence():
+        return _permit(holder["scenario"])
+
+    class Supply(OrderGateway):
+        _admits_paper_profile = True
+
+        def __init__(self, broker, **kwargs):
+            self._admitted_paper_submit = AlpacaPaperBroker.submit_order
+            super().__init__(broker, **kwargs)
+
+    gateway = Supply(broker, st=st, execution_scope="paper", claim_fence=fence)
+    assert not hasattr(gateway, "_admitted_paper_type")
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    holder["scenario"] = scenario
+    outcome = scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+    assert outcome.ok is True
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_profile_without_the_admitted_submit_raises_before_an_intent(st):
+    broker = _CountingPaper()
+
+    class Bare(OrderGateway):
+        _admits_paper_profile = True
+
+    gateway = Bare(broker, st=st, execution_scope="paper", claim_fence=lambda: None)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    with pytest.raises(ImportError, match="_admitted_paper_submit"):
+        scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
 def test_generic_gateway_does_not_depend_on_the_paper_broker():
     source = inspect.getsource(inspect.getmodule(OrderGateway))
     assert "alpaca_paper" not in source
@@ -893,6 +938,243 @@ def test_watch_only_during_the_final_risk_refresh_does_not_submit(st):
     assert calls["n"] >= 4
     assert outcome.ok is False
     assert outcome.stage == "mode"
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def _approved_sibling(st, *, notional="1500"):
+    order = create_order(
+        st, proposal_id=new_id("p"), risk_decision_id=new_id("rd"),
+        account="paper", symbol="MSFT", side="buy", qty="10",
+        order_type="limit", limit_price="150", tif="day",
+        notional=notional, order_tuple_hash=new_id("h"), actor="claude",
+    )
+    transition(st, order, "approved", actor="claude", reason="approved")
+    return order
+
+
+def _capped_paper(st, cap="2000"):
+    broker = _CountingPaper()
+    gateway = OrderGateway(
+        broker, st=st, execution_scope="paper",
+        pending_exposure_cap=Decimal(cap),
+    )
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    return scenario, broker
+
+
+def test_pending_sibling_admitted_during_the_fence_does_not_submit(st):
+    """A sibling that lands while the fence blocks is inside the post-fence cap."""
+    scenario, broker = _capped_paper(st)
+
+    def fence():
+        _approved_sibling(st)
+
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=fence, **scenario.submit_kwargs()
+    )
+    assert outcome.ok is False
+    assert outcome.stage == "pending_exposure"
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_pending_sibling_admitted_during_the_halt_probe_does_not_submit(st, monkeypatch):
+    """The HALT probe sits after the refresh. Exposure is recomputed after it."""
+    scenario, broker = _capped_paper(st)
+    fences = {"n": 0}
+
+    def fence():
+        fences["n"] += 1
+
+    def halt(_path):
+        if fences["n"] > 0:
+            _approved_sibling(st)
+            fences["n"] = 0
+        return False
+
+    monkeypatch.setattr("brokers.gateway._halt_active", halt)
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=fence, **scenario.submit_kwargs()
+    )
+    assert outcome.ok is False
+    assert outcome.stage == "pending_exposure"
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_mode_changed_during_the_halt_probe_does_not_submit(st, monkeypatch):
+    """A transport-mode change during the HALT probe is re-read before send."""
+    scenario, broker = _paper_gateway(st)
+    fences = {"n": 0}
+
+    def fence():
+        fences["n"] += 1
+
+    def halt(_path):
+        if fences["n"] > 0:
+            scenario.ladder.set_mode(Mode.review_live, actor="op")
+            fences["n"] = 0
+        return False
+
+    monkeypatch.setattr("brokers.gateway._halt_active", halt)
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=fence, **scenario.submit_kwargs()
+    )
+    assert outcome.ok is False
+    assert outcome.stage == "mode"
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_halt_probe_past_the_lease_does_not_submit(st, monkeypatch):
+    """The lease measurement includes the HALT probe that follows the re-fence loop."""
+    scenario, broker = _paper_gateway(st)
+    elapsed = {"s": 0.0}
+    fences = {"n": 0}
+
+    def monotonic():
+        return elapsed["s"]
+
+    def fence():
+        fences["n"] += 1
+        return type("Lease", (), {"remaining_s": 3.0})()
+
+    def halt(_path):
+        if fences["n"] > 0:
+            elapsed["s"] += 4.0
+        return False
+
+    monkeypatch.setattr(time, "monotonic", monotonic)
+    monkeypatch.setattr("brokers.gateway._halt_active", halt)
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=fence, **scenario.submit_kwargs()
+    )
+    assert outcome.ok is False
+    assert outcome.stage == "claim_fence"
+    assert "lease" in outcome.reason
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_refresh_refuses_an_approval_rebound_during_the_fence(st):
+    scenario, broker = _paper_gateway(st)
+
+    def fence():
+        with st.session_factory() as session, session.begin():
+            row = session.get(ApprovalRecord, scenario.approval.id)
+            row.order_tuple_hash = "not-this-order"
+
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=fence, **scenario.submit_kwargs()
+    )
+    assert outcome.ok is False
+    assert outcome.stage == "approval"
+    assert "order_tuple_hash" in outcome.reason
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_refresh_refuses_an_approval_repointed_during_the_fence(st):
+    scenario, broker = _paper_gateway(st)
+
+    def fence():
+        with st.session_factory() as session, session.begin():
+            row = session.get(ApprovalRecord, scenario.approval.id)
+            row.proposal_id = "other-proposal"
+
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=fence, **scenario.submit_kwargs()
+    )
+    assert outcome.ok is False
+    assert outcome.stage == "approval"
+    assert "proposal" in outcome.reason
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_refresh_refuses_a_tampered_adjudication_during_the_fence(st):
+    scenario, broker = _paper_gateway(st)
+
+    def fence():
+        with st.session_factory() as session, session.begin():
+            rows = session.execute(
+                select(AuditEntry).where(AuditEntry.event_type == EVENT_ADJUDICATION)
+            ).scalars().all()
+            for row in rows:
+                if (row.refs or {}).get("row_id") == scenario.approval.id:
+                    row.payload = {**(row.payload or {}), "order_tuple_hash": "tampered"}
+
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=fence, **scenario.submit_kwargs()
+    )
+    assert outcome.ok is False
+    assert outcome.stage == "approval"
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_refresh_refuses_a_mode_outside_the_transport_during_the_fence(st):
+    scenario, broker = _paper_gateway(st)
+
+    def fence():
+        scenario.ladder.set_mode(Mode.review_live, actor="op")
+
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=fence, **scenario.submit_kwargs()
+    )
+    assert outcome.ok is False
+    assert outcome.stage == "mode"
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_refresh_refuses_a_breaker_tripped_during_the_fence(st):
+    scenario, broker = _paper_gateway(st)
+
+    def fence():
+        scenario.breaker.trip("manual", "tripped during the fence")
+
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=fence, **scenario.submit_kwargs()
+    )
+    assert outcome.ok is False
+    assert outcome.stage == "breaker"
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_refresh_refuses_injection_flagged_during_the_fence(st):
+    scenario, broker = _paper_gateway(st)
+
+    def fence():
+        scenario.order.injection_detected = True
+
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=fence, **scenario.submit_kwargs()
+    )
+    assert outcome.ok is False
+    assert outcome.stage == "breaker"
+    assert "SEC-01" in outcome.reason
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_refresh_refuses_a_calendar_that_lapses_during_the_fence(st):
+    broker = _CountingPaper()
+    gateway = OrderGateway(
+        broker, st=st, execution_scope="paper", approval_ttl_seconds=10**9
+    )
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+
+    def fence():
+        scenario.clock._at = datetime(2029, 1, 2, 15, 0, tzinfo=timezone.utc)
+
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=fence, **scenario.submit_kwargs()
+    )
+    assert outcome.ok is False
+    assert outcome.stage == "calendar"
     assert broker.calls == 0
     assert scenario.st.audit.unresolved_intents() == []
 

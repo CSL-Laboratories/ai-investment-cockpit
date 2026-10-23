@@ -268,9 +268,10 @@ class OrderGateway:
         self._claim_fence = claim_fence
         # Same-thread re-entry (the state lock is an RLock). A fence must not submit again.
         self._submit_active = False
-        # A paper-profile subclass supplies ``_admitted_paper_type`` and
-        # ``_admitted_paper_submit`` before the first submit. This class does not
-        # import a concrete broker.
+        # A paper-profile subclass supplies ``_admitted_paper_submit`` before the
+        # first submit and may set ``_admitted_paper_type``. See
+        # ``_resolve_admitted_paper_transport``. This class does not import a
+        # concrete broker.
 
     @property
     def execution_scope(self) -> str:
@@ -438,23 +439,53 @@ class OrderGateway:
         return max(sizes)
 
     def _resolve_admitted_paper_transport(self):
-        """Resolve the paper transport before any submit intent is written.
+        """Resolve the pinned paper send, or None when this is not a paper profile.
 
-        The generic gateway names no concrete broker. A profile subclass sets
-        ``_admitted_paper_type`` and ``_admitted_paper_submit``, or overrides
-        this method. An import or lookup failure raises here, with no intent open.
+        Called before the submit intent is written. The generic gateway names no
+        concrete broker. A profile subclass sets ``_admits_paper_profile`` True on
+        the class and supplies this contract before ``submit``:
+
+        - ``_admitted_paper_submit``: the submit callable admitted at init. It is
+          pinned for the call. This class does not import a broker module to find it.
+        - ``_broker._client.submit_order``: the send callable captured with the
+          client object. The broker call uses that captured callable.
+        - ``_admitted_paper_type``, optional: when set, ``_broker`` must be an
+          instance of it. When omitted, the type of ``_broker`` at this call is
+          the pin.
+
+        Override this method to build the same mapping another way. Raise
+        ``ImportError`` when resolution fails. ``submit`` does not catch that
+        exception, so no intent is left open.
+
+        The mapping keys are ``broker``, ``broker_type``, ``submit``, ``client``,
+        and ``client_submit``. The fence for a profile gateway returns an
+        ``OrderBoundPermit`` for this order; a transport permit with no order id
+        and tuple hash is refused.
         """
         if not bool(getattr(type(self), "_admits_paper_profile", False)):
             return None
-        broker_type = getattr(self, "_admitted_paper_type", None)
         submit = getattr(self, "_admitted_paper_submit", None)
-        if broker_type is None or not callable(submit):
-            raise ImportError("admitted paper transport is not resolved")
+        if not callable(submit):
+            raise ImportError(
+                "admitted paper transport is not resolved: set _admitted_paper_submit "
+                "to the admitted submit callable, or override "
+                "_resolve_admitted_paper_transport"
+            )
         broker = self._broker
+        explicit_type = getattr(self, "_admitted_paper_type", None)
+        broker_type = type(broker) if explicit_type is None else explicit_type
         client = getattr(broker, "_client", None)
         client_submit = None if client is None else getattr(client, "submit_order", None)
         if client is None or not callable(client_submit):
-            raise ImportError("admitted paper client is not resolved")
+            raise ImportError(
+                "admitted paper client is not resolved: _broker._client.submit_order "
+                "must be the pinned send callable"
+            )
+        if not isinstance(broker, broker_type):
+            raise ImportError(
+                "admitted paper transport is not resolved: _broker is not an instance "
+                "of _admitted_paper_type"
+            )
         return {
             "broker": broker,
             "broker_type": broker_type,
@@ -619,6 +650,12 @@ class OrderGateway:
 
         Returns ``(refusal, fence_value)``. ``refusal`` is a ``GateOutcome`` when the
         fence failed closed, and ``fence_value`` is what a successful fence returned.
+
+        The callable runs on this thread while ``st.lock`` is held. The admission
+        deadline is measured after it returns. A fence that never returns cannot
+        be interrupted safely: stopping this thread from another thread would leave
+        the fence running after the lock was released, still able to write the
+        claim store. The callable has to return.
         """
         try:
             value = claim_fence()
@@ -668,13 +705,14 @@ class OrderGateway:
 
     def _time_sensitive_refusal(
         self, st, order, *, approval, risk_decision, breaker_engine, risk_recheck,
-        positions, clock,
+        positions, clock, ladder, producing_runtime, resolved_hash,
     ):
-        """Feed, risk re-run, approval/risk-eval TTL, consumed approval, and order state.
+        """Re-run the gates a blocking claim fence can outlast.
 
-        These are the checks a blocking claim fence can outlast. The post-fence refresh
-        uses the same rules as ``_precheck`` and does not record audit itself. The
-        caller-supplied clock is not authority here: age and freshness use ``st.clock``.
+        Feed, risk, approval binding, TTL, order state, calendar, mode, breakers,
+        and the pending-exposure cap. The refresh uses the same rules as
+        ``_precheck`` and does not record audit itself. The caller-supplied clock
+        is not authority here: age and freshness use ``st.clock``.
         """
         clock = st.clock
         feed = self._feed_refusal(st, order, breaker_engine, clock)
@@ -717,6 +755,24 @@ class OrderGateway:
                 None,
                 "approval.risk_decision_id does not match the risk decision",
             )
+        if db_appr.proposal_id != order.proposal_id:
+            return ("approval", None, "approval does not bind this order's proposal")
+        if db_appr.order_tuple_hash != resolved_hash:
+            return (
+                "approval",
+                None,
+                "order_tuple_hash mismatch (modify/re-price needs a new approval)",
+            )
+        if not self._adjudication_binds(
+            st, db_appr.id, proposal_id=order.proposal_id,
+            risk_decision_id=db_appr.risk_decision_id,
+            order_tuple_hash=resolved_hash,
+        ):
+            return (
+                "approval",
+                None,
+                "no HMAC-signed adjudication binds this approval to this order",
+            )
         db_rd = self._load_row(st, RiskDecision, db_appr.risk_decision_id)
         if db_rd is None or db_rd.decision != "approved":
             return (
@@ -746,18 +802,60 @@ class OrderGateway:
                 None,
                 f"order state {getattr(db_order, 'state', None)!r} is not submittable",
             )
+
+        try:
+            require_calendar_coverage(clock.now())
+        except (CalendarCoverageError, TypeError, ValueError) as exc:
+            return ("calendar", None, str(exc))
+
+        denial = breaker_engine.watch_only_reason()
+        if denial is not None:
+            return ("mode", None, denial)
+        mode = ladder.current()
+        mode_v = mode.value if hasattr(mode, "value") else str(mode)
+        if mode_v not in self._allowed_modes:
+            return (
+                "mode",
+                None,
+                f"mode {mode_v!r} cannot use {self._execution_scope!r} broker transport",
+            )
+        try:
+            active_breakers = breaker_engine.active_trips()
+        except Exception:  # noqa: BLE001 - unreadable breaker authority must refuse
+            return ("breaker", None, "active-breaker state is unavailable")
+        if active_breakers:
+            return (
+                "breaker",
+                None,
+                "active safety breaker(s): " + ", ".join(sorted(active_breakers)),
+            )
+        if breaker_engine.check_order_path(context=order) is not None:
+            return ("breaker", None, "SEC-01 injection/anomaly breaker tripped")
+        try:
+            ladder.assert_execution_runtime(mode, producing_runtime)
+        except ExecutionRuntimeError as exc:
+            return ("runtime", None, str(exc))
+
+        pending_ok, total, cap = self._pending_ok(st, order)
+        if not pending_ok:
+            return (
+                "pending_exposure",
+                None,
+                f"pending exposure {total} + order would exceed cap {cap} (SEC-07)",
+            )
         return None
 
     def _refresh_time_sensitive(
         self, st, order, intent, *, approval, risk_decision, breaker_engine, risk_recheck,
-        positions, clock, actor, resolved_hash,
+        positions, clock, actor, resolved_hash, ladder, producing_runtime,
     ):
-        """Re-check feed, risk, and approval after a fence. Return a refusal, or None."""
+        """Re-check the post-fence gates. Return a refusal, or None."""
         try:
             found = self._time_sensitive_refusal(
                 st, order, approval=approval, risk_decision=risk_decision,
                 breaker_engine=breaker_engine, risk_recheck=risk_recheck,
-                positions=positions, clock=clock,
+                positions=positions, clock=clock, ladder=ladder,
+                producing_runtime=producing_runtime, resolved_hash=resolved_hash,
             )
         except BaseException as exc:  # noqa: BLE001 - cover the intent, then refuse or re-raise
             outcome = self._abort_after_intent(
@@ -1515,7 +1613,8 @@ class OrderGateway:
                     approval=approval, risk_decision=risk_decision,
                     breaker_engine=breaker_engine, risk_recheck=risk_recheck,
                     positions=positions, clock=st.clock, actor=producing_runtime,
-                    resolved_hash=resolved_hash,
+                    resolved_hash=resolved_hash, ladder=ladder,
+                    producing_runtime=producing_runtime,
                 )
 
             def _refresh_after_fence():
@@ -1580,6 +1679,10 @@ class OrderGateway:
             # over. Re-run the fence (generation + unexpired lease CAS) and then re-read
             # admission. An admission read that itself blocked past the budget is followed
             # by a fresh fence, so no unchecked wait precedes transport.
+            # ``round_started`` is the beginning of the round that cleared the budget.
+            # The HALT probe below is inside that same measurement.
+            round_started: float | None = None
+            round_limit: float | None = None
             if claim_fence is not None:
                 for _round in range(_MAX_FENCE_ROUNDS):
                     refused = _run_fence()
@@ -1601,7 +1704,7 @@ class OrderGateway:
                     # The post-fence risk refresh can block on broker HTTP too, so the
                     # wait budget covers it as well as the admission read. The budget is
                     # the lease remainder the fence just reported, capped at the ceiling.
-                    started = time.monotonic()
+                    round_started = time.monotonic()
                     refused = _refresh_after_fence()
                     if refused is not None:
                         return refused
@@ -1620,11 +1723,11 @@ class OrderGateway:
                     )
                     if refused is not None:
                         return refused
-                    waited = time.monotonic() - started
-                    limit = _ADMISSION_WAIT_BUDGET_S
+                    waited = time.monotonic() - round_started
+                    round_limit = _ADMISSION_WAIT_BUDGET_S
                     if lease_remaining_s is not None:
-                        limit = min(limit, lease_remaining_s)
-                    if waited <= limit:
+                        round_limit = min(round_limit, lease_remaining_s)
+                    if waited <= round_limit:
                         break
                 else:
                     return self._abort_after_intent(
@@ -1649,6 +1752,29 @@ class OrderGateway:
                     actor=producing_runtime,
                     resolved_hash=resolved_hash,
                 )
+            # The probe can block. After a fence, re-run the post-fence gates,
+            # including the pending-exposure cap, then measure the lease across
+            # that whole wait. An unfenced submit does not take this second pass:
+            # its risk re-run already happened before the intent.
+            if claim_fence is not None:
+                refused = _refresh_validity()
+                if refused is not None:
+                    return refused
+            if round_started is not None and round_limit is not None:
+                now = time.monotonic()
+                lease_expired = now - round_started > round_limit or (
+                    admission_deadline is not None and now > admission_deadline
+                )
+                if lease_expired:
+                    return self._abort_after_intent(
+                        st,
+                        order,
+                        intent,
+                        stage="claim_fence",
+                        reason="claim lease expired before transport",
+                        actor=producing_runtime,
+                        resolved_hash=resolved_hash,
+                    )
 
             # The private broker call (SEC-03: never a module global / string dispatch).
             # ``client_order_id`` is stable transport metadata and cannot change the approved
