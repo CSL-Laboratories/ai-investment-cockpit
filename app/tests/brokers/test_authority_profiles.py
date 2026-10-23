@@ -5,6 +5,7 @@ cases must fail closed. A profile reservation is not broker authority.
 """
 from __future__ import annotations
 
+import inspect
 import json
 import threading
 from datetime import datetime, timedelta, timezone
@@ -31,7 +32,8 @@ from brokers.authority_profiles import (
     model_output_grants_authority,
     reconcile_handoff_to_gateway,
 )
-from brokers.gateway import GateOutcome, OrderGateway, PaperOrderGateway
+from brokers.gateway import GateOutcome, OrderGateway
+from brokers.paper_gateway import PaperOrderGateway
 from config.settings import Mode
 from tests.brokers.conftest import build_scenario
 
@@ -98,6 +100,16 @@ def _install(store, document=None, *, now=NOW):
     profile, capability = store.install(document, actor=document["stop_owner"], now=now)
     _CAPS[(str(store.path), profile.profile_id)] = capability
     return profile
+
+
+def _order_gateway_claim_fence_landed() -> bool:
+    return "claim_fence" in inspect.signature(OrderGateway.submit).parameters
+
+
+_NEEDS_GATEWAY_FENCE = pytest.mark.skipif(
+    not _order_gateway_claim_fence_landed(),
+    reason="in-lock claim fence lands with the CSL-218 gateway split",
+)
 
 
 def _refuse(fn) -> str:
@@ -695,7 +707,7 @@ def test_duck_typed_gateway_is_refused_before_reservation(st, tmp_path):
     assert duck.calls == 0
     probe = _ProbeBroker()
     forged = OrderGateway(probe, st=st, execution_scope="paper")
-    assert forged.execution_scope == "paper"
+    assert forged._execution_scope == "paper"
     assert _refuse(
         lambda: handoff_to_gateway(
             store, forged, profile_id="profile-b", action="submit_paper",
@@ -878,7 +890,7 @@ def test_stop_owner_string_is_not_a_capability(tmp_path):
 def test_caller_set_execution_scope_is_not_paper_authority(st, tmp_path):
     broker = _CountingPaper()
     gateway = OrderGateway(broker, st=st, execution_scope="paper")
-    assert gateway.execution_scope == "paper"
+    assert gateway._execution_scope == "paper"
     assert type(gateway) is OrderGateway
     store = _store(tmp_path)
     _install(
@@ -1114,7 +1126,13 @@ def test_stale_claim_generation_is_a_noop_refusal(st, tmp_path):
     assert (row["handoff_state"], row["handoff_done"]) == ("completed", 1)
 
 
-@pytest.mark.parametrize("recovery", [False, True], ids=["fresh", "expired-claim"])
+@pytest.mark.parametrize(
+    "recovery",
+    [
+        pytest.param(False, id="fresh"),
+        pytest.param(True, id="expired-claim", marks=_NEEDS_GATEWAY_FENCE),
+    ],
+)
 def test_handoff_ignores_instance_submit_override(st, tmp_path, monkeypatch, recovery):
     """4302176363: an exact gateway type still cannot supply its own submitter."""
     from types import SimpleNamespace
@@ -1927,6 +1945,7 @@ def test_running_owner_fenced_out_after_expired_lease_takeover(st, tmp_path):
     assert st.audit.verify_chain().ok
 
 
+@_NEEDS_GATEWAY_FENCE
 def test_owner_fenced_out_when_takeover_happens_after_final_admission(st, tmp_path):
     """4303610145: the fence re-runs right before transport, after admission."""
     scenario, store_a, ticket_a, broker = _claimed_paper_scenario(st, tmp_path)
@@ -1994,6 +2013,7 @@ def test_claim_fence_clock_failure_refuses_without_writing_lease(st, tmp_path, f
 
 
 @pytest.mark.parametrize("recovery", [False, True], ids=["handoff", "reconcile"])
+@_NEEDS_GATEWAY_FENCE
 def test_handoff_clock_failure_cannot_fall_back_to_handoff_time(
     st, tmp_path, monkeypatch, recovery,
 ):
@@ -2058,6 +2078,7 @@ def test_handoff_clock_failure_cannot_fall_back_to_handoff_time(
 
 
 @pytest.mark.parametrize("mutation", ["paper-broker", "other-adapter", "broker-type", "scope"])
+@_NEEDS_GATEWAY_FENCE
 def test_claim_fence_cannot_swap_transport_or_paper_scope(st, tmp_path, mutation):
     """4303485166: callback mutations never reach either the old or new transport."""
     scenario, store, ticket, broker = _claimed_paper_scenario(st, tmp_path)

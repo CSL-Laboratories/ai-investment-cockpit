@@ -1586,7 +1586,7 @@ def handoff_to_gateway(
         raise ProfileRefused(claim, "handoff claim was refused")
     if not isinstance(claim, ClaimTicket):
         raise ProfileRefused("store", "handoff claim was not admitted")
-    from brokers.gateway import PaperOrderGateway
+    from brokers.paper_gateway import PaperOrderGateway
 
     outcome = PaperOrderGateway.submit(
         gateway,
@@ -1675,7 +1675,7 @@ def reconcile_handoff_to_gateway(
         raise ProfileRefused(verdict, "handoff reconcile was refused")
     if not isinstance(verdict, ClaimTicket):
         raise ProfileRefused("store", "handoff reconcile was not admitted")
-    from brokers.gateway import PaperOrderGateway
+    from brokers.paper_gateway import PaperOrderGateway
 
     outcome = PaperOrderGateway.submit(
         gateway,
@@ -1799,7 +1799,7 @@ def _reservation_completed(store, client_order_id: str) -> bool:
 def _require_paper_gateway(gateway) -> None:
     """Admit only the paper gateway type. A caller-set scope string is not proof."""
     from brokers.alpaca_paper import AlpacaPaperBroker
-    from brokers.gateway import PaperOrderGateway
+    from brokers.paper_gateway import PaperOrderGateway
 
     if type(gateway) is not PaperOrderGateway:
         raise ProfileRefused("transport", "paper handoff requires the paper order gateway type")
