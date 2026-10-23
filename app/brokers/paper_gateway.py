@@ -1,18 +1,17 @@
 """Paper order gateway for profile handoff.
 
 Paper admission is this concrete type, not a caller-set ``execution_scope``
-string on ``OrderGateway``. The claim-fence hook inside ``OrderGateway.submit``
-is the separate CSL-218 gateway split (#252). This class sets
-``_admits_paper_profile`` so that hook can pin the paper adapter. Until the
-hook is present, a supplied ``claim_fence`` runs once before the parent submit
-and again inside the broker call, immediately before the admitted adapter.
-A fence error refuses closed.
+string on ``OrderGateway``. When ``OrderGateway.submit`` accepts
+``claim_fence`` (the CSL-218 gateway split, #252), this class forwards that
+callback and does not call it. The parent then owns re-entrancy, the
+admission-lock budget, the post-fence feed/risk/approval refresh, intent
+coverage for ``BaseException``, and the ``AlpacaPaperBroker.submit_order``
+captured before the fence.
 
-``_precheck`` and ``broker.submit_order`` are pinned here so an instance
-replacement cannot skip them. #252 pins the same calls inside
-``OrderGateway.submit`` for every gateway; this class does not edit that
-module. The post-admission HALT probe during ``safety_admission_lock`` stays
-on #252.
+Until that parameter exists, a supplied fence runs once before the parent
+submit and again inside the broker call. The second call must return a
+transport permit. A missing fence refuses at stage ``claim_fence`` either way.
+``_precheck`` stays pinned here so an instance replacement cannot skip it.
 """
 from __future__ import annotations
 
@@ -20,6 +19,10 @@ import inspect
 
 from brokers.alpaca_paper import AlpacaPaperBroker
 from brokers.gateway import GateOutcome, OrderGateway
+
+
+def _parent_accepts_claim_fence() -> bool:
+    return "claim_fence" in inspect.signature(OrderGateway.submit).parameters
 
 
 class PaperOrderGateway(OrderGateway):
@@ -58,12 +61,20 @@ class PaperOrderGateway(OrderGateway):
         if not callable(fence):
             return GateOutcome(
                 False,
-                "claim_required",
-                "paper submit requires a validated profile claim",
+                "claim_fence",
+                "paper profile submission requires a claim fence",
             )
+        # #252 calls the fence itself, after the intent is open. A pre-call here
+        # would hide re-entrancy, the admission lock, and BaseException coverage.
+        if _parent_accepts_claim_fence():
+            return super().submit(order, **kwargs)
+
         broker = self._broker
         pinned_type = type(broker)
         scope = self._execution_scope
+        # Captured before the fence, same as #252: a subclass override or a
+        # method swapped inside the callback is not the profile transport.
+        admitted_paper_submit = AlpacaPaperBroker.submit_order
         try:
             fence()
         except Exception as exc:  # noqa: BLE001 - a fence error refuses before transport
@@ -85,13 +96,20 @@ class PaperOrderGateway(OrderGateway):
 
         class _PinnedBroker(AlpacaPaperBroker):
             def submit_order(self, canonical):
-                from brokers.authority_profiles import accept_transport_permit
+                from brokers.authority_profiles import ProfileRefused, accept_transport_permit
 
                 # Final fence under the store lock, then the admitted class
-                # method. An instance ``submit_order`` replacement is not called.
-                # OrderGateway.submit is what enters this object.
+                # function captured before the fence. OrderGateway.submit is
+                # what enters this object. A class-attribute swap is refused
+                # rather than called. The attribute call is the one the
+                # Invariant-1 AST gate counts.
                 accept_transport_permit(fence())
-                return pinned_type.submit_order(broker, canonical)
+                if AlpacaPaperBroker.submit_order is not admitted_paper_submit:
+                    raise ProfileRefused(
+                        "claim_required",
+                        "paper submit requires a validated profile claim",
+                    )
+                return AlpacaPaperBroker.submit_order(broker, canonical)
 
             def __getattr__(self, name):
                 return getattr(broker, name)
@@ -100,8 +118,6 @@ class PaperOrderGateway(OrderGateway):
         self._broker = pinned
         try:
             forward = dict(kwargs)
-            if "claim_fence" in inspect.signature(OrderGateway.submit).parameters:
-                return super().submit(order, **forward)
             forward.pop("claim_fence", None)
             return super().submit(order, **forward)
         finally:
