@@ -2430,3 +2430,297 @@ def test_o3_either_order_field_requires_terminal_sequence() -> None:
         "attribution": [],
     }
     assert "schema_invalid" in _evaluate(equity)
+
+
+def test_o3_reversal_exemption_waits_for_the_replacement() -> None:
+    fixture = _resting_book()
+    fixture["orders"].append({
+        "order_id": "ord-new",
+        "instrument_id": "ev-yes",
+        "family": "event",
+        "side": "buy",
+        "qty": 1,
+        "state": "resting",
+    })
+    fixture["journal"].append({
+        "entry_id": "j-new",
+        "sequence": 6,
+        "idempotency_key": "reserve-new",
+        "order_id": "ord-new",
+        "strategy_id": "s-event",
+        "reason": "reserve_collateral",
+        "lines": [
+            {
+                "account": "collateral_reserved",
+                "side": "dr",
+                "amount_minor": 100000,
+                "instrument_id": "ev-yes",
+            },
+            {
+                "account": "cash_available",
+                "side": "cr",
+                "amount_minor": 100000,
+                "instrument_id": "ev-yes",
+            },
+        ],
+    })
+    fixture["journal"].append({
+        "entry_id": "j-new-rev",
+        "sequence": 7,
+        "idempotency_key": "reverse-new",
+        "order_id": "ord-new",
+        "strategy_id": "s-event",
+        "reason": "reserve_collateral",
+        "lines": [
+            {
+                "account": "collateral_reserved",
+                "side": "cr",
+                "amount_minor": 100000,
+                "instrument_id": "ev-yes",
+            },
+            {
+                "account": "cash_available",
+                "side": "dr",
+                "amount_minor": 100000,
+                "instrument_id": "ev-yes",
+            },
+        ],
+    })
+    fixture["corrections"].append({
+        "correction_id": "c-new",
+        "admits_fill_id": "f-yes",
+        "reverses_entry_id": "j-new",
+        "reason": "reversal without a replacement",
+        "instrument_id": "ev-yes",
+        "cause": "reserve_collateral",
+    })
+    assert "balance_mismatch" in _evaluate(fixture)
+
+
+def _fee_lines(entry: dict, *, reverse: bool) -> list[dict]:
+    flipped = {"dr": "cr", "cr": "dr"}
+    return [
+        {
+            "account": line["account"],
+            "side": flipped[line["side"]] if reverse else line["side"],
+            "amount_minor": line["amount_minor"],
+            "instrument_id": line["instrument_id"],
+        }
+        for line in entry["lines"]
+    ]
+
+
+def test_o3_fee_reversal_keeps_the_original_strategy() -> None:
+    original = next(entry for entry in _resting_book()["journal"] if entry["entry_id"] == "j-fee")
+    crossed = _resting_book()
+    crossed["journal"].append({
+        "entry_id": "j-fee-rev",
+        "sequence": 6,
+        "idempotency_key": "fee-rev",
+        "fill_id": "f-yes",
+        "strategy_id": "s-other",
+        "reason": "trade_fee",
+        "lines": _fee_lines(original, reverse=True),
+    })
+    crossed["journal"].append({
+        "entry_id": "j-fee-rep",
+        "sequence": 7,
+        "idempotency_key": "fee-rep",
+        "fill_id": "f-yes",
+        "strategy_id": "s-event",
+        "reason": "trade_fee",
+        "lines": _fee_lines(original, reverse=False),
+    })
+    crossed["corrections"].append({
+        "correction_id": "c-fee",
+        "admits_fill_id": "f-yes",
+        "reverses_entry_id": "j-fee",
+        "reason": "fee charged to another strategy",
+        "instrument_id": "ev-yes",
+        "cause": "trade_fee",
+    })
+    crossed["reported"]["attribution"] = [
+        {"strategy_id": "s-event", "realized_pnl_minor": 0, "fees_minor": 170000},
+        {"strategy_id": "s-other", "realized_pnl_minor": 0, "fees_minor": -70000},
+    ]
+    assert "balance_mismatch" in _evaluate(crossed)
+    same = _resting_book()
+    same["journal"].append({
+        "entry_id": "j-fee-rev",
+        "sequence": 6,
+        "idempotency_key": "fee-rev",
+        "fill_id": "f-yes",
+        "strategy_id": "s-event",
+        "reason": "trade_fee",
+        "lines": _fee_lines(original, reverse=True),
+    })
+    same["journal"].append({
+        "entry_id": "j-fee-rep",
+        "sequence": 7,
+        "idempotency_key": "fee-rep",
+        "fill_id": "f-yes",
+        "strategy_id": "s-event",
+        "reason": "trade_fee",
+        "lines": _fee_lines(original, reverse=False),
+    })
+    same["corrections"].append({
+        "correction_id": "c-fee",
+        "admits_fill_id": "f-yes",
+        "reverses_entry_id": "j-fee",
+        "reason": "fee reversed on its strategy",
+        "instrument_id": "ev-yes",
+        "cause": "trade_fee",
+    })
+    assert _evaluate(same) == set()
+    moved = _resting_book()
+    moved["journal"].append({
+        "entry_id": "j-fee-rev",
+        "sequence": 6,
+        "idempotency_key": "fee-rev",
+        "fill_id": "f-yes",
+        "strategy_id": "s-event",
+        "reason": "trade_fee",
+        "lines": _fee_lines(original, reverse=True),
+    })
+    moved["journal"].append({
+        "entry_id": "j-fee-rep",
+        "sequence": 7,
+        "idempotency_key": "fee-rep",
+        "fill_id": "f-yes",
+        "strategy_id": "s-other",
+        "reason": "trade_fee",
+        "lines": _fee_lines(original, reverse=False),
+    })
+    moved["corrections"].append({
+        "correction_id": "c-fee",
+        "admits_fill_id": "f-yes",
+        "reverses_entry_id": "j-fee",
+        "reason": "replacement names the corrected strategy",
+        "instrument_id": "ev-yes",
+        "cause": "trade_fee",
+    })
+    moved["reported"]["attribution"] = [
+        {"strategy_id": "s-event", "realized_pnl_minor": 0, "fees_minor": 30000},
+        {"strategy_id": "s-other", "realized_pnl_minor": 0, "fees_minor": 70000},
+    ]
+    assert _evaluate(moved) == set()
+
+
+def _split_checkpoint_position(reported_qty: int) -> dict:
+    path = VALIDATOR.parent / "fixtures" / "event_restart_idempotent.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["journal"] = []
+    fixture["evidence"] = []
+    fixture["markets"] = [{"instrument_id": "ev-yes", "state": "open"}]
+    fixture["checkpoint"]["positions"] = [
+        {"instrument_id": "ev-yes", "qty": 5},
+        {"instrument_id": "ev-yes", "qty": 5},
+    ]
+    fixture["orders"][0]["checkpoint_filled_qty"] = 10
+    fixture["orders"][0]["qty"] = 10
+    fixture["orders"][0]["state"] = "filled"
+    fixture["reported"] = {
+        "cash_available": fixture["checkpoint"]["cash_available"],
+        "collateral_reserved": fixture["checkpoint"]["collateral_reserved"],
+        "positions": [{"instrument_id": "ev-yes", "qty": reported_qty}],
+        "open_reservations": fixture["checkpoint"]["open_reservations"],
+        "attribution": [],
+    }
+    return fixture
+
+
+def test_o3_checkpoint_position_rows_add() -> None:
+    assert "position_divergence" in _evaluate(_split_checkpoint_position(5))
+    assert _evaluate(_split_checkpoint_position(10)) == set()
+
+
+def _void_then_fill(void_sequence: int, reserve_sequence: int, fill_sequence: int) -> dict:
+    path = VALIDATOR.parent / "fixtures" / "event_resting_order_reservation.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["orders"] = [{
+        "order_id": "ord-yes",
+        "instrument_id": "ev-yes",
+        "family": "event",
+        "side": "buy",
+        "qty": 1,
+        "state": "filled",
+    }]
+    fixture["fills"] = [{
+        "fill_id": "f-yes",
+        "order_id": "ord-yes",
+        "instrument_id": "ev-yes",
+        "sequence": fill_sequence,
+        "qty": 1,
+        "price_minor": 100000,
+        "fee_minor": 0,
+        "side": "buy",
+    }]
+    fixture["journal"] = [
+        {
+            "entry_id": "j-void",
+            "sequence": void_sequence,
+            "idempotency_key": "void-early",
+            "strategy_id": "s-event",
+            "reason": "void_unwind",
+            "lines": [
+                {
+                    "account": "cash_available",
+                    "side": "dr",
+                    "amount_minor": 100000,
+                    "instrument_id": "ev-yes",
+                },
+                {
+                    "account": "collateral_reserved",
+                    "side": "cr",
+                    "amount_minor": 100000,
+                    "instrument_id": "ev-yes",
+                },
+            ],
+        },
+        {
+            "entry_id": "j-reserve",
+            "sequence": reserve_sequence,
+            "idempotency_key": "reserve-late",
+            "fill_id": "f-yes",
+            "strategy_id": "s-event",
+            "reason": "reserve_collateral",
+            "lines": [
+                {
+                    "account": "collateral_reserved",
+                    "side": "dr",
+                    "amount_minor": 100000,
+                    "instrument_id": "ev-yes",
+                },
+                {
+                    "account": "cash_available",
+                    "side": "cr",
+                    "amount_minor": 100000,
+                    "instrument_id": "ev-yes",
+                },
+            ],
+        },
+    ]
+    fixture["markets"] = [{"instrument_id": "ev-yes", "state": "voided"}]
+    fixture["evidence"] = [{
+        "kind": "market_void",
+        "instrument_id": "ev-yes",
+        "source_id": "void-1",
+    }]
+    fixture["corrections"] = []
+    fixture["checkpoint"]["cash_available"] = 10000000000
+    fixture["checkpoint"]["collateral_reserved"] = 0
+    fixture["checkpoint"]["positions"] = []
+    fixture["checkpoint"]["open_reservations"] = []
+    fixture["reported"] = {
+        "cash_available": 10000000000,
+        "collateral_reserved": 0,
+        "positions": [],
+        "open_reservations": [],
+        "attribution": [],
+    }
+    return fixture
+
+
+def test_o3_void_release_cannot_precede_the_collateral() -> None:
+    assert "balance_mismatch" in _evaluate(_void_then_fill(1, 2, 2))
+    assert _evaluate(_void_then_fill(2, 1, 1)) == set()

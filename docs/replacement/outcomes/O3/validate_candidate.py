@@ -366,9 +366,11 @@ def _posted_correction_facts(fixture: dict) -> tuple[set[str], set[str]]:
 
     Support is three journal entries on that instrument, in sequence order:
     the original, a later exact reversal, and a still later replacement.
-    ``cause`` is the original reason. Lines on the original post only that
-    instrument, so a bare checkpoint id does not qualify. The reversal ids
-    may post the swapped sides of a reserve, fill, or fee.
+    ``cause`` is the original reason. The reversal keeps the original
+    ``strategy_id``. Lines on the original post only that instrument, so a
+    bare checkpoint id does not qualify. The reversal id is exempted only
+    after that replacement is present, and then it may post the swapped
+    sides of a reserve, fill, or fee.
     """
     supported: set[str] = set()
     mirrors: set[str] = set()
@@ -419,6 +421,8 @@ def _posted_correction_facts(fixture: dict) -> tuple[set[str], set[str]]:
             sequence = _entry_sequence(entry)
             if sequence is None or sequence <= original_sequence:
                 continue
+            if entry.get("strategy_id") != original.get("strategy_id"):
+                continue
             if _line_signature(entry, reverse=False) != wanted:
                 continue
             if reversal_sequence is None or sequence < reversal_sequence:
@@ -427,8 +431,9 @@ def _posted_correction_facts(fixture: dict) -> tuple[set[str], set[str]]:
         if reversal is None or reversal_sequence is None:
             continue
         reversal_id = reversal.get("entry_id")
-        if isinstance(reversal_id, str):
-            mirrors.add(reversal_id)
+        if not isinstance(reversal_id, str):
+            continue
+        replaced = False
         for entry in journal:
             if not isinstance(entry, dict):
                 continue
@@ -447,8 +452,12 @@ def _posted_correction_facts(fixture: dict) -> tuple[set[str], set[str]]:
             signature = _line_signature(entry, reverse=False)
             if not _signature_positive(signature) or signature == wanted:
                 continue
-            supported.add(instrument_id)
+            replaced = True
             break
+        if not replaced:
+            continue
+        mirrors.add(reversal_id)
+        supported.add(instrument_id)
     return supported, mirrors
 
 
@@ -597,12 +606,12 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         )
     if sum(checkpoint_reservations.values()) != checkpoint["collateral_reserved"]:
         failures.add("collateral_double_count")
-    derived = {row["instrument_id"]: row["qty"] for row in checkpoint["positions"]}
-    checkpoint_qty: dict[str, int] = {}
+    # Rows for one instrument add. The last row is not the carried position.
+    derived: dict[str, int] = {}
     for row in checkpoint["positions"]:
-        checkpoint_qty[row["instrument_id"]] = (
-            checkpoint_qty.get(row["instrument_id"], 0) + row["qty"]
-        )
+        instrument_id = row["instrument_id"]
+        derived[instrument_id] = derived.get(instrument_id, 0) + row["qty"]
+    checkpoint_qty = dict(derived)
     checkpoint_order_qty: dict[str, int] = {}
     for order in orders.values():
         checkpoint_order_qty[order["instrument_id"]] = (
@@ -1117,6 +1126,10 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                 reserved_end[line["instrument_id"]] = (
                     reserved_end.get(line["instrument_id"], 0) + collateral_delta
                 )
+                if reserved_end[line["instrument_id"]] < 0:
+                    # A later reserve cannot fund a credit that already
+                    # released collateral this instrument did not hold.
+                    failures.add("balance_mismatch")
                 # An unnamed credit does not reduce the hold, so a later
                 # reserve must not be what puts this posting back in range.
                 _hold_must_stay_covered()

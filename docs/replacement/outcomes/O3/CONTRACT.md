@@ -210,8 +210,12 @@ journal entry, and that entry's lines post only this instrument.
 `applied_entry_ids` has no lines, so it does not show an instrument.
 The journal then has a later entry that reverses those lines and a
 still later entry that replaces them, both with that same reason and
-only this instrument. Without those postings the row fails
-`settlement_unreconciled`.
+only this instrument. The reversal keeps the original entry's
+`strategy_id`. The replacement may name another strategy. Swapped
+sides on the reversal are accepted only when that replacement is
+posted. A reversal with no replacement fails `balance_mismatch` on an
+open market as well as on `corrected`. Without those postings the row
+fails `settlement_unreconciled`.
 
 This candidate's examples are long buys. Short stock, margin, and options
 stay outside it, matching the issue's non-goals.
@@ -292,7 +296,10 @@ still reserved for an instrument must cover the positive holds of every
 order on it after each collateral posting, not only at the ending
 balance. An unnamed credit that spends owned collateral fails
 `balance_mismatch` even when a later reserve and a named release put
-the ending totals back in line. Two journal entries that each post
+the ending totals back in line. A credit cannot take that instrument's
+reserved balance below zero. A `void_unwind` sequenced before the
+collateral it releases fails `balance_mismatch`, and a later reserve
+does not fund the earlier credit. Two journal entries that each post
 `collateral_reserved` for one instrument at one sequence fail
 `balance_mismatch` in either array order. Lines that split that amount
 inside one entry are one posting, not a tie. Sequence is the only
@@ -400,6 +407,9 @@ not change quantity.
   fails `position_divergence` and does not replace the earlier row.
 - **Checkpoint quantity.** The sum of `checkpoint_filled_qty` for the
   orders of one instrument equals that instrument's checkpoint position.
+  Rows for one instrument add, and the position carried forward is that
+  sum. A reported quantity equal to the last row alone fails
+  `position_divergence`.
   A checkpointed buy the checkpoint does not hold fails
   `position_divergence`. A fill retained at or below the checkpoint
   sequence is already applied, so that order's `checkpoint_filled_qty`
