@@ -154,6 +154,58 @@ def _line_signature(entry: dict, *, reverse: bool) -> tuple:
     return tuple(sorted(rows, key=lambda row: tuple(str(part) for part in row)))
 
 
+def _signature_positive(signature: tuple) -> bool:
+    return any(
+        isinstance(amount, int) and amount > 0
+        for _account, _side, amount, _instrument in signature
+    )
+
+
+def _posts_instrument(entry: dict, instrument_id: str) -> bool:
+    return any(line.get("instrument_id") == instrument_id for line in entry.get("lines", ()))
+
+
+def _only_instrument(entry: dict, instrument_id: str) -> bool:
+    lines = entry.get("lines", ())
+    return bool(lines) and all(line.get("instrument_id") == instrument_id for line in lines)
+
+
+def _paired_settlement_ids(fixture: dict, settlements: list[dict]) -> set[str]:
+    """One reversal covers one settlement. A second copy stays unpaired."""
+    paired: set[str] = set()
+    used: set[str] = set()
+    for entry in settlements:
+        entry_id = entry.get("entry_id")
+        if not isinstance(entry_id, str) or entry_id in used:
+            continue
+        wanted = _line_signature(entry, reverse=True)
+        partner_id = None
+        for other in fixture["journal"]:
+            other_id = other.get("entry_id")
+            if not isinstance(other_id, str) or other_id == entry_id or other_id in used:
+                continue
+            if _line_signature(other, reverse=False) == wanted:
+                partner_id = other_id
+                break
+        if partner_id is None:
+            continue
+        paired.add(entry_id)
+        paired.add(partner_id)
+        used.add(entry_id)
+        used.add(partner_id)
+    return paired
+
+
+def _admitted_fill_matches(fixture: dict, item: dict, instrument_id: str) -> bool:
+    fill_id = item.get("admits_fill_id")
+    if not isinstance(fill_id, str) or not fill_id:
+        return False
+    for fill in fixture.get("fills", ()):
+        if fill.get("fill_id") == fill_id:
+            return fill.get("instrument_id") == instrument_id
+    return False
+
+
 def _correction_supersedes_void(
     fixture: dict,
     item: dict,
@@ -177,16 +229,28 @@ def _correction_supersedes_void(
     )
     if original is None or original.get("reason") != "settlement_payout":
         return False
-    if any(line.get("instrument_id") != instrument_id for line in original.get("lines", ())):
+    if not _only_instrument(original, instrument_id):
         return False
-    wanted = _line_signature(original, reverse=True)
-    if not wanted:
+    if not _signature_positive(_line_signature(original, reverse=False)):
         return False
-    original_id = original.get("entry_id")
-    return any(
-        entry.get("entry_id") != original_id and _line_signature(entry, reverse=False) == wanted
-        for entry in fixture["journal"]
-    )
+    settlements: list[dict] = []
+    for entry in fixture["journal"]:
+        if entry.get("reason") != "settlement_payout":
+            continue
+        if not _posts_instrument(entry, instrument_id):
+            continue
+        # A posting that mixes instruments is not a reversal of this void.
+        if not _only_instrument(entry, instrument_id):
+            return False
+        if _signature_positive(_line_signature(entry, reverse=False)):
+            settlements.append(entry)
+    if not settlements:
+        return False
+    paired = _paired_settlement_ids(fixture, settlements)
+    settlement_ids = {entry.get("entry_id") for entry in settlements}
+    if not settlement_ids <= paired or original.get("entry_id") not in settlement_ids:
+        return False
+    return _admitted_fill_matches(fixture, item, instrument_id)
 
 
 def _reject_void_unwind_shape(fixture: dict, failures: set[str]) -> None:
@@ -201,25 +265,32 @@ def _reject_void_unwind_shape(fixture: dict, failures: set[str]) -> None:
             continue
         if entry.get("fill_id"):
             failures.add("balance_mismatch")
-        cash = 0
-        collateral = 0
+        per_instrument: dict[str, list[int]] = {}
         other = False
         instruments: set[str] = set()
         for line in entry.get("lines", ()):
             instrument_id = line.get("instrument_id")
             if isinstance(instrument_id, str):
                 instruments.add(instrument_id)
+            else:
+                other = True
+                continue
             amount = _int(line.get("amount_minor"))
             if amount is None:
                 other = True
                 continue
+            bucket = per_instrument.setdefault(instrument_id, [0, 0])
             if line.get("account") == "cash_available" and line.get("side") == "dr":
-                cash += amount
+                bucket[0] += amount
             elif line.get("account") == "collateral_reserved" and line.get("side") == "cr":
-                collateral += amount
+                bucket[1] += amount
             else:
                 other = True
-        if other or cash != collateral or cash == 0:
+        if (
+            other
+            or not per_instrument
+            or any(cash != collateral or cash == 0 for cash, collateral in per_instrument.values())
+        ):
             failures.add("balance_mismatch")
         owned_release = isinstance(entry.get("order_id"), str) and bool(entry.get("order_id"))
         if not owned_release and not instruments <= void_evidence:
@@ -376,9 +447,9 @@ def evaluate_semantics(fixture: dict) -> set[str]:
     posted_premium: dict[str, int] = {}
     posted_fees: dict[str, int] = {}
     order_first_fill_seq: dict[str, int] = {}
-    order_reserve_seq: dict[str, int] = {}
     order_reserve_total: dict[str, int] = {}
     order_created: dict[str, int] = {}
+    order_collateral_events: dict[str, list[tuple[int, int]]] = {}
 
     for fill in sorted(fixture["fills"], key=lambda item: item["sequence"]):
         if fill["order_id"] not in orders:
@@ -728,6 +799,9 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                     if collateral_delta < 0 and -collateral_delta > available:
                         failures.add("balance_mismatch")
                     order_hold[order_ref] = available + collateral_delta
+                    order_collateral_events.setdefault(order_ref, []).append(
+                        (entry["sequence"], collateral_delta)
+                    )
                 reserved_end[line["instrument_id"]] = (
                     reserved_end.get(line["instrument_id"], 0) + collateral_delta
                 )
@@ -775,40 +849,43 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         if fill_ref is not None:
             posted_premium[fill_ref] = posted_premium.get(fill_ref, 0) + premium_delta
             posted_fees[fill_ref] = posted_fees.get(fill_ref, 0) + fee_delta
-        elif (
-            order_ref is not None
-            and entry["reason"] == "reserve_collateral"
-            and (order_ref not in order_reserve_seq or entry["sequence"] < order_reserve_seq[order_ref])
-        ):
-            order_reserve_seq[order_ref] = entry["sequence"]
 
     if not (failures & FILL_DEFECTS):
         for fill in accepted_fills:
-            reserve_seq = order_reserve_seq.get(fill["order_id"])
             posted = posted_premium.get(fill["fill_id"], 0)
-            opening = order_checkpoint_hold.get(fill["order_id"], 0)
-            funded_before = opening > 0 or (
-                reserve_seq is not None and reserve_seq <= fill["sequence"]
-            )
-            if funded_before:
-                # Checkpoint collateral or an earlier order reservation already
-                # funds this fill, so a second premium posting double-charges it.
+            premium = fill["qty"] * fill["price_minor"]
+            # Releases at or before the fill reduce what that sequence can fund.
+            available = order_checkpoint_hold.get(fill["order_id"], 0)
+            for seq, delta in order_collateral_events.get(fill["order_id"], ()):
+                if seq <= fill["sequence"]:
+                    available += delta
+            if available >= premium:
+                # Collateral still held at this sequence already funds the fill.
                 if posted != 0:
                     failures.add("balance_mismatch")
-            elif posted != fill["qty"] * fill["price_minor"]:
+            elif posted != premium:
                 failures.add("balance_mismatch")
             if posted_fees.get(fill["fill_id"], 0) != fill["fee_minor"]:
                 failures.add("fee_mismatch")
 
     if not (failures & FILL_DEFECTS):
-        reported_by_order: dict[str, int] = {}
-        reported_order_seen: set[str] = set()
+        reported_by_key: dict[tuple[str, str], int] = {}
+        named_keys: set[tuple[str, str]] = set()
         for row in fixture["reported"]["open_reservations"]:
             owner = row.get("order_id")
-            if isinstance(owner, str) and owner:
-                reported_order_seen.add(owner)
-                reported_by_order[owner] = reported_by_order.get(owner, 0) + row["amount_minor"]
-        order_ids = set(order_reserve_total) | set(order_checkpoint_hold)
+            if not isinstance(owner, str) or not owner:
+                continue
+            order = orders.get(owner)
+            if order is None or row["instrument_id"] != order["instrument_id"]:
+                # A forged owner, or a hold moved onto another instrument.
+                failures.add("balance_mismatch")
+                continue
+            key = (owner, row["instrument_id"])
+            named_keys.add(key)
+            reported_by_key[key] = reported_by_key.get(key, 0) + row["amount_minor"]
+        order_ids = set(order_reserve_total) | set(order_checkpoint_hold) | {
+            order_id for order_id, _instrument_id in named_keys
+        }
         for order_id in order_ids:
             order = orders.get(order_id)
             if order is None:
@@ -826,7 +903,8 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                     failures.add("balance_mismatch")
             elif terminal in LATE_TERMINALS and ending != 0:
                 failures.add("balance_mismatch")
-            if order_id in reported_order_seen and reported_by_order.get(order_id, 0) != ending:
+            key = (order_id, order["instrument_id"])
+            if key in named_keys and reported_by_key.get(key, 0) != ending:
                 failures.add("balance_mismatch")
 
     if not (failures & FILL_DEFECTS) and journal_fees != applied_fill_fees:
@@ -990,8 +1068,17 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             if reported_reservations.get(instrument_id, 0) != reserved_end.get(instrument_id, 0):
                 failures.add("collateral_double_count")
 
-    reported_attribution = {row["strategy_id"]: row for row in reported["attribution"]}
-    if set(reported_attribution) != set(attribution):
+    reported_attribution: dict[str, dict] = {}
+    seen_attribution: set[str] = set()
+    duplicate_attribution = False
+    for row in reported["attribution"]:
+        strategy_id = row["strategy_id"]
+        if strategy_id in seen_attribution:
+            # The last row must not replace an earlier strategy rollup.
+            duplicate_attribution = True
+        seen_attribution.add(strategy_id)
+        reported_attribution[strategy_id] = row
+    if duplicate_attribution or set(reported_attribution) != set(attribution):
         failures.add("attribution_mismatch")
     else:
         for strategy_id, bucket in attribution.items():

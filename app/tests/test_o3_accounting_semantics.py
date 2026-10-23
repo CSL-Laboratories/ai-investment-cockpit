@@ -722,6 +722,7 @@ def test_o3_correction_must_match_instrument_cause_and_reversal() -> None:
 
     reversed_posting = json.loads(json.dumps(named_only))
     reversed_posting["journal"].append(_reversal_of(settle, "j-reverse"))
+    reversed_posting["corrections"][0]["admits_fill_id"] = "f-no"
     assert "void_unreconciled" not in _evaluate(reversed_posting)
 
 
@@ -946,3 +947,246 @@ def test_o3_fill_at_settlement_sequence_is_rejected() -> None:
     assert _evaluate(fixture) == set()
     fixture["fills"][0]["sequence"] = 3
     assert "settlement_unreconciled" in _evaluate(fixture)
+
+
+def _checkpoint_funded_resting_fill() -> dict:
+    path = VALIDATOR.parent / "fixtures" / "event_resting_order_reservation.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["checkpoint"] = {
+        "sequence": 3,
+        "applied_keys": ["reserve-1", "fee-1", "reserve-rest-1"],
+        "cash_available": 9995100000,
+        "collateral_reserved": 4830000,
+        "positions": [{"instrument_id": "ev-yes", "qty": 10}],
+        "open_reservations": [
+            {"reservation_id": "reserve-1", "instrument_id": "ev-yes", "amount_minor": 4000000},
+            {
+                "reservation_id": "reserve-rest",
+                "order_id": "ord-rest",
+                "instrument_id": "ev-yes",
+                "amount_minor": 830000,
+            },
+        ],
+        "applied_entry_ids": ["j-reserve", "j-fee", "j-reserve-rest"],
+    }
+    fixture["orders"][0]["checkpoint_filled_qty"] = 10
+    fixture["fills"] = [fill for fill in fixture["fills"] if fill["fill_id"] == "f-rest"]
+    fixture["journal"] = [entry for entry in fixture["journal"] if entry["entry_id"] == "j-fee-rest"]
+    fixture["reported"]["attribution"][0]["fees_minor"] = 30000
+    return fixture
+
+
+def test_o3_refunded_hold_does_not_fund_a_later_fill() -> None:
+    fixture = _checkpoint_funded_resting_fill()
+    assert _evaluate(fixture) == set()
+    for fill in fixture["fills"]:
+        if fill["fill_id"] == "f-rest":
+            fill["sequence"] = 5
+    fixture["journal"].append({
+        "entry_id": "j-release-rest",
+        "sequence": 4,
+        "idempotency_key": "release-rest",
+        "order_id": "ord-rest",
+        "strategy_id": "s-event",
+        "reason": "void_unwind",
+        "lines": [
+            {
+                "account": "cash_available",
+                "side": "dr",
+                "amount_minor": 830000,
+                "instrument_id": "ev-yes",
+            },
+            {
+                "account": "collateral_reserved",
+                "side": "cr",
+                "amount_minor": 830000,
+                "instrument_id": "ev-yes",
+            },
+        ],
+    })
+    fixture["reported"]["cash_available"] += 830000
+    fixture["reported"]["collateral_reserved"] -= 830000
+    fixture["reported"]["open_reservations"] = [
+        row for row in fixture["reported"]["open_reservations"] if row["amount_minor"] != 830000
+    ]
+    assert "balance_mismatch" in _evaluate(fixture)
+
+
+def _two_equal_resting_holds() -> dict:
+    path = VALIDATOR.parent / "fixtures" / "event_void_reconciled.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["instruments"].append(_event_instrument("ev-other", "OTHER-HOLD"))
+    fixture["orders"] = [
+        {
+            "order_id": "ord-void",
+            "instrument_id": "ev-void",
+            "family": "event",
+            "side": "buy",
+            "qty": 1,
+            "state": "resting",
+        },
+        {
+            "order_id": "ord-other",
+            "instrument_id": "ev-other",
+            "family": "event",
+            "side": "buy",
+            "qty": 1,
+            "state": "resting",
+        },
+    ]
+    fixture["markets"] = []
+    fixture["evidence"] = []
+    fixture["journal"] = []
+    fixture["checkpoint"] = {
+        "sequence": 1,
+        "applied_keys": ["r-void", "r-other"],
+        "cash_available": 9996000000,
+        "collateral_reserved": 4000000,
+        "positions": [],
+        "open_reservations": [
+            {
+                "reservation_id": "r-void",
+                "order_id": "ord-void",
+                "instrument_id": "ev-void",
+                "amount_minor": 2000000,
+            },
+            {
+                "reservation_id": "r-other",
+                "order_id": "ord-other",
+                "instrument_id": "ev-other",
+                "amount_minor": 2000000,
+            },
+        ],
+    }
+    fixture["reported"] = {
+        "cash_available": 9996000000,
+        "collateral_reserved": 4000000,
+        "positions": [],
+        "open_reservations": [
+            {
+                "reservation_id": "r-void",
+                "order_id": "ord-void",
+                "instrument_id": "ev-void",
+                "amount_minor": 2000000,
+            },
+            {
+                "reservation_id": "r-other",
+                "order_id": "ord-other",
+                "instrument_id": "ev-other",
+                "amount_minor": 2000000,
+            },
+        ],
+        "attribution": [],
+    }
+    return fixture
+
+
+def test_o3_reported_reservation_owner_is_not_forgeable() -> None:
+    forged = _two_equal_resting_holds()
+    assert _evaluate(forged) == set()
+    forged["reported"]["open_reservations"][0]["order_id"] = "ord-ghost"
+    assert "balance_mismatch" in _evaluate(forged)
+
+    swapped = _two_equal_resting_holds()
+    swapped["reported"]["open_reservations"][0]["order_id"] = "ord-other"
+    swapped["reported"]["open_reservations"][1]["order_id"] = "ord-void"
+    assert "balance_mismatch" in _evaluate(swapped)
+
+
+def test_o3_noop_reversal_does_not_hide_the_settlement() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_no_settlement.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["evidence"].append({
+        "kind": "market_void",
+        "instrument_id": "ev-no",
+        "source_id": "void-no-1",
+    })
+    zero_lines = [
+        {"account": "cash_available", "side": "dr", "amount_minor": 0, "instrument_id": "ev-no"},
+        {"account": "cash_available", "side": "cr", "amount_minor": 0, "instrument_id": "ev-no"},
+    ]
+    fixture["journal"].append({
+        "entry_id": "j-zero-a",
+        "sequence": 4,
+        "idempotency_key": "zero-a",
+        "strategy_id": "s-event",
+        "reason": "settlement_payout",
+        "lines": zero_lines,
+    })
+    fixture["journal"].append({
+        "entry_id": "j-zero-b",
+        "sequence": 5,
+        "idempotency_key": "zero-b",
+        "strategy_id": "s-event",
+        "reason": "settlement_payout",
+        "lines": [dict(line) for line in zero_lines],
+    })
+    fixture["corrections"].append({
+        "correction_id": "c-void",
+        "admits_fill_id": "f-no",
+        "reverses_entry_id": "j-zero-a",
+        "reason": "supersede void",
+        "supersedes_source_id": "void-no-1",
+        "instrument_id": "ev-no",
+        "cause": "settlement_payout",
+    })
+    assert "void_unreconciled" in _evaluate(fixture)
+
+    missing_fill = json.loads(path.read_text(encoding="utf-8"))
+    missing_fill["evidence"].append({
+        "kind": "market_void",
+        "instrument_id": "ev-no",
+        "source_id": "void-no-1",
+    })
+    settle = next(entry for entry in missing_fill["journal"] if entry["entry_id"] == "j-settle")
+    missing_fill["journal"].append(_reversal_of(settle, "j-reverse"))
+    missing_fill["corrections"].append({
+        "correction_id": "c-void",
+        "admits_fill_id": "missing-fill",
+        "reverses_entry_id": "j-settle",
+        "reason": "supersede void",
+        "supersedes_source_id": "void-no-1",
+        "instrument_id": "ev-no",
+        "cause": "settlement_payout",
+    })
+    assert "void_unreconciled" in _evaluate(missing_fill)
+
+
+def test_o3_void_unwind_balances_per_instrument() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_void_reconciled.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    assert _evaluate(fixture) == set()
+    fixture["markets"][0]["state"] = "open"
+    fixture["reported"]["positions"][0]["qty"] = 10
+    fixture["instruments"].append(_event_instrument("ev-other", "OTHER-VOID"))
+    fixture["evidence"].append({
+        "kind": "market_void",
+        "instrument_id": "ev-other",
+        "source_id": "void-other",
+    })
+    for line in fixture["journal"][0]["lines"]:
+        if line["account"] == "cash_available":
+            line["instrument_id"] = "ev-other"
+            line["amount_minor"] = 2000000
+        elif line["account"] == "collateral_reserved":
+            line["amount_minor"] = 2000000
+    fixture["reported"]["cash_available"] = 9998000000
+    fixture["reported"]["collateral_reserved"] = 2000000
+    fixture["reported"]["open_reservations"] = [{
+        "reservation_id": "reserve-void",
+        "instrument_id": "ev-void",
+        "amount_minor": 2000000,
+    }]
+    assert "balance_mismatch" in _evaluate(fixture)
+
+
+def test_o3_duplicate_attribution_row_rejected() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_yes_settlement.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    assert _evaluate(fixture) == set()
+    fixture["reported"]["attribution"].insert(0, {
+        "strategy_id": "s-event",
+        "realized_pnl_minor": 1,
+        "fees_minor": 1,
+    })
+    assert "attribution_mismatch" in _evaluate(fixture)

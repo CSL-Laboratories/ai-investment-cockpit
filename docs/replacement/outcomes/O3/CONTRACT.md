@@ -237,9 +237,11 @@ explicitly.
 
 Attribution is a rollup of `realized_pnl` and `fees_expense` by
 `strategy_id` over the journal entries applied after the checkpoint. It is
-not a second set of accounts. If the rollup disagrees with the reported
-attribution, the fixture fails `attribution_mismatch`. Strategy labels in
-the fixtures are placeholders.
+not a second set of accounts. Reported attribution rows are one per
+`strategy_id`. A second row for the same strategy fails
+`attribution_mismatch`, and the last row does not replace the first. If
+the rollup disagrees with the reported attribution, the fixture fails
+`attribution_mismatch`. Strategy labels in the fixtures are placeholders.
 
 Posting references tie each entry to its cause. An entry with reason
 `fill` carries the `fill_id` it posts, and the premium and fee on those
@@ -270,8 +272,12 @@ fails `balance_mismatch` and does not fund a release. `checkpoint_filled_qty` do
 order held the collateral. A release above the order's available hold
 fails `balance_mismatch`. A release may be partial. The ending owned
 balance is the checkpoint hold plus later order-linked collateral
-changes. When a reported open reservation names that `order_id`, its
-amount has to equal that ending balance. A voided market still has to
+changes. When a reported open reservation names that `order_id`, the
+order has to exist and the row's `instrument_id` has to be that order's
+instrument. The amount is reconciled per `(order_id, instrument_id)`
+against that order's ending balance. An unknown order, a row whose
+instrument is not the named order's instrument, or a swap of two equal
+holds onto each other's instruments fails `balance_mismatch`. A voided market still has to
 finish at zero collateral for that instrument; the partial release is
 the remainder of an order that is not flattening a void. Once the
 order has an accepted fill, the pre-release reservation must equal the
@@ -282,17 +288,24 @@ An extra checkpoint hold on top of a journal reserve that already
 matches the fills fails `balance_mismatch`. A reserve that exceeds or
 falls short of that executed total fails the same way. A hold for the
 still-unfilled remainder, above that executed total, is not represented
-in this candidate. When an order reserved collateral up front, or the
-checkpoint already holds collateral for that order, its later fills do
-not re-post premium. Fill-linked premium on those fills must be zero,
-and a second premium posting fails `balance_mismatch`. Fees still
+in this candidate. A fill is funded by the collateral that order still
+holds at the fill's sequence. The checkpoint hold counts from the start.
+An order-linked reserve or release counts when its sequence is at or
+before the fill, so a release that already returned the collateral does
+not fund a later fill. When that balance still covers the fill's
+`qty * price_minor`, the fill does not re-post premium, and a second
+premium posting fails `balance_mismatch`. When the balance is below that
+premium, including after a full refund, the fill has to post
+`qty * price_minor` itself. Fees still
 reconcile per fill.
 Only `fill`,
 `reserve_collateral`, and `trade_fee` entries contribute to a fill's
 posted premium and fee. A `void_unwind` is checked on the entry itself,
 not only when a market row says `voided`. Its lines are a cash debit and
-a collateral credit for the same positive amount, and it does not carry
-a `fill_id`. The cause is an `order_id` on the entry, or `market_void`
+a collateral credit for the same positive amount on each instrument,
+checked separately, and it does not carry
+a `fill_id`. Cash posted on one instrument does not balance collateral
+posted on another. The cause is an `order_id` on the entry, or `market_void`
 evidence for every instrument the entry posts. A reserve relabeled as
 `void_unwind` — collateral debit, cash credit, or a fill cause — fails
 `balance_mismatch`. A `void_unwind` that carries a `fill_id` does not
@@ -400,7 +413,13 @@ A correction supersedes that void only when all of the following hold.
 `settlement_payout` and equals the reason of the journal entry named by
 `reverses_entry_id`. That entry's lines all use the voided instrument.
 Another journal entry posts the reversal: the same accounts, amounts,
-and instrument, with debit and credit swapped. Naming a live settlement,
+and instrument, with debit and credit swapped. The reversed entry has to
+be a positive `settlement_payout` on that instrument, and every positive
+`settlement_payout` on that instrument needs its own reversal partner.
+One partner covers one posting. A zero-value pair reverses itself and
+does not hide an unreversed settlement. `admits_fill_id` has to name a
+fill of the voided instrument; a missing fill does not supersede the
+void. Naming a live settlement,
 a missing fill, or a different instrument or cause does not supersede
 the void. A checkpoint id with no posted reversal does not supersede it
 either. Any other correction leaves the contradiction in place.
