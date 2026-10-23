@@ -365,7 +365,12 @@ not change quantity.
 - **Checkpoint quantity.** The sum of `checkpoint_filled_qty` for the
   orders of one instrument equals that instrument's checkpoint position.
   A checkpointed buy the checkpoint does not hold fails
-  `position_divergence`.
+  `position_divergence`. A fill retained at or below the checkpoint
+  sequence is already applied, so that order's `checkpoint_filled_qty`
+  has to include it. This holds for a cancel, expire, or reject as well
+  as for a resting or filled order. A retained quantity the checkpoint
+  omits fails `position_divergence`. Fills that were not retained may
+  still be represented only by `checkpoint_filled_qty`.
 - **After settlement.** A fill sequenced at or after that instrument's
   `settlement_payout` fails `settlement_unreconciled`. A shared sequence
   is rejected, not treated as already in the settled position. Sequence
@@ -400,6 +405,12 @@ A fixture has one current market-state row per event instrument. A
 missing row fails `settlement_unreconciled`, as does a second row,
 including an `open` row beside `settled`. An equity book has no market
 rows. Those rows carry no sequence, so they are not lifecycle history.
+Terminal evidence has to agree with that row. `market_settlement`
+evidence on a market that is not `settled` fails
+`settlement_unreconciled`. `market_void` evidence on a market that is
+not `voided` fails `void_unreconciled`, unless a correction supersedes
+that void. `listed`, `open`, `closed_pending_determination`,
+`determined`, and `corrected` do not carry either record.
 
 Settlement evidence is a retained record: source id, market result, long
 quantity, short quantity, payout, settlement fee, whether that fee is

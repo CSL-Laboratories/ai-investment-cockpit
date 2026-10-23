@@ -1718,3 +1718,116 @@ def test_o3_void_supersession_requires_a_strictly_later_reversal() -> None:
     copy["idempotency_key"] = "settle-copy"
     reused["journal"].append(copy)
     assert "void_unreconciled" in _evaluate(reused)
+
+
+def _retained_checkpoint_fill(
+    state: str,
+    recorded: int,
+    retained: int,
+    sequence: int = 2,
+) -> dict:
+    """A fill at the checkpoint sequence, with the checkpoint quantity under test."""
+    path = VALIDATOR.parent / "fixtures" / "event_restart_idempotent.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["markets"] = [{"instrument_id": "ev-yes", "state": "open"}]
+    fixture["evidence"] = []
+    fixture["journal"] = []
+    fixture["corrections"] = []
+    order = fixture["orders"][0]
+    order["state"] = state
+    order["qty"] = 2
+    order["checkpoint_filled_qty"] = recorded
+    if state in {"cancelled", "expired", "rejected"}:
+        order["terminal_sequence"] = 2
+    fixture["checkpoint"]["positions"] = (
+        [{"instrument_id": "ev-yes", "qty": recorded}] if recorded else []
+    )
+    fixture["checkpoint"]["collateral_reserved"] = 0
+    fixture["checkpoint"]["cash_available"] = 10000000000
+    fixture["checkpoint"]["open_reservations"] = []
+    fixture["fills"] = [{
+        "fill_id": "f-before",
+        "order_id": "ord-yes",
+        "instrument_id": "ev-yes",
+        "sequence": sequence,
+        "qty": retained,
+        "price_minor": 0,
+        "fee_minor": 0,
+        "side": "buy",
+    }]
+    fixture["reported"] = {
+        "cash_available": 10000000000,
+        "collateral_reserved": 0,
+        "positions": [{"instrument_id": "ev-yes", "qty": recorded}],
+        "open_reservations": [],
+        "attribution": [],
+    }
+    return fixture
+
+
+def test_o3_pre_checkpoint_fill_must_be_in_checkpoint_qty() -> None:
+    cancelled = _retained_checkpoint_fill("cancelled", 0, 1)
+    assert "position_divergence" in _evaluate(cancelled)
+    earlier = _retained_checkpoint_fill("cancelled", 0, 1, sequence=1)
+    assert "position_divergence" in _evaluate(earlier)
+    resting = _retained_checkpoint_fill("resting", 0, 1)
+    assert "position_divergence" in _evaluate(resting)
+    covered = _retained_checkpoint_fill("cancelled", 1, 1)
+    assert _evaluate(covered) == set()
+    partial = _retained_checkpoint_fill("cancelled", 1, 2)
+    assert "position_divergence" in _evaluate(partial)
+
+
+def test_o3_open_market_rejects_terminal_evidence() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_resting_order_reservation.json"
+    settled = json.loads(path.read_text(encoding="utf-8"))
+    assert _evaluate(settled) == set()
+    settled["evidence"].append({
+        "kind": "market_settlement",
+        "instrument_id": "ev-yes",
+        "source_id": "settle-open",
+        "market_result": "yes",
+        "long_qty": 12,
+        "short_qty": 0,
+        "payout_minor": 0,
+        "misc_fee_minor": 0,
+        "fee_already_deducted_from_payout": False,
+        "pre_rounding_minor": 0,
+    })
+    assert "settlement_unreconciled" in _evaluate(settled)
+
+    voided = json.loads(path.read_text(encoding="utf-8"))
+    voided["evidence"].append({
+        "kind": "market_void",
+        "instrument_id": "ev-yes",
+        "source_id": "void-open",
+    })
+    assert "void_unreconciled" in _evaluate(voided)
+
+    listed = json.loads(path.read_text(encoding="utf-8"))
+    listed["markets"][0]["state"] = "listed"
+    assert _evaluate(listed) == set()
+    listed["evidence"].append({
+        "kind": "market_settlement",
+        "instrument_id": "ev-yes",
+        "source_id": "settle-listed",
+    })
+    assert "settlement_unreconciled" in _evaluate(listed)
+
+    pending = json.loads(path.read_text(encoding="utf-8"))
+    pending["markets"][0]["state"] = "closed_pending_determination"
+    pending["evidence"].append({
+        "kind": "market_void",
+        "instrument_id": "ev-yes",
+        "source_id": "void-pending",
+    })
+    assert "void_unreconciled" in _evaluate(pending)
+
+    determined = json.loads(path.read_text(encoding="utf-8"))
+    determined["markets"][0]["state"] = "determined"
+    determined["evidence"].append({
+        "kind": "market_settlement",
+        "instrument_id": "ev-yes",
+        "source_id": "settle-determined",
+    })
+    assert "settlement_unreconciled" in _evaluate(determined)

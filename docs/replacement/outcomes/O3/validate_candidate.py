@@ -538,6 +538,7 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             if previous is None or sequence < previous:
                 settlement_at[instrument_id] = sequence
     post_checkpoint_qty: dict[str, int] = {}
+    retained_checkpoint_qty: dict[str, int] = {}
     posted_premium: dict[str, int] = {}
     posted_fees: dict[str, int] = {}
     order_first_fill_seq: dict[str, int] = {}
@@ -602,7 +603,12 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         if first_seq is None or fill["sequence"] < first_seq:
             order_first_fill_seq[fill["order_id"]] = fill["sequence"]
         if fill["sequence"] <= checkpoint["sequence"]:
+            # The checkpoint already applied this fill. Dropping it from the
+            # checkpoint quantity and position loses an executed trade.
             checkpointed_fill_ids.add(fill["fill_id"])
+            retained_checkpoint_qty[order["order_id"]] = (
+                retained_checkpoint_qty.get(order["order_id"], 0) + fill["qty"]
+            )
             continue
         post_checkpoint_qty[order["order_id"]] = (
             post_checkpoint_qty.get(order["order_id"], 0) + fill["qty"]
@@ -629,6 +635,11 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                 failures.add("partial_fill_divergence")
             if partial and terminal not in LATE_TERMINALS and terminal != "partially_filled":
                 failures.add("partial_fill_divergence")
+
+    for order_id, retained in retained_checkpoint_qty.items():
+        recorded = orders.get(order_id, {}).get("checkpoint_filled_qty", 0)
+        if retained > recorded:
+            failures.add("position_divergence")
 
     pre_settlement = dict(derived)
     seen_market_instruments: set[str] = set()
@@ -1111,29 +1122,22 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             failures.add("void_unreconciled")
 
     _reject_void_unwind_shape(fixture, failures)
-    settlement_instruments = {
-        item["instrument_id"]
-        for item in fixture["evidence"]
-        if item["kind"] == "market_settlement"
-    }
-    settlement_instruments.update(
-        market["instrument_id"]
-        for market in fixture["markets"]
-        if market["state"] == "settled"
-    )
-    for entry in fixture["journal"]:
-        if entry["reason"] != "settlement_payout":
-            continue
-        for line in entry["lines"]:
-            settlement_instruments.add(line["instrument_id"])
+    market_state = {market["instrument_id"]: market["state"] for market in fixture["markets"]}
     for item in fixture["evidence"]:
-        if item["kind"] != "market_void":
+        kind = item.get("kind")
+        instrument_id = item.get("instrument_id")
+        if not isinstance(instrument_id, str):
             continue
-        if item["instrument_id"] not in settlement_instruments:
+        state = market_state.get(instrument_id)
+        if kind == "market_settlement" and state != "settled":
+            # Listed, open, determined, and the other non-settled states do
+            # not carry a settlement record.
+            failures.add("settlement_unreconciled")
+        if kind != "market_void" or state == "voided":
             continue
         source_id = item.get("source_id")
         superseded = any(
-            _correction_supersedes_void(fixture, correction, item["instrument_id"], source_id)
+            _correction_supersedes_void(fixture, correction, instrument_id, source_id)
             for correction in fixture["corrections"]
         )
         if not superseded:
