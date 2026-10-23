@@ -8,6 +8,10 @@ last-verified: 2026-10-15
 
 Reconciled 2026-10-15 against `origin/main` `4a4308d`. Status cells that still said `claimed`, `in review`, or `unmerged` after the corresponding pull request had merged are updated below. Merge dates and `last-verified` added here are UTC calendar dates from GitHub `mergedAt` (PR #81 is 2026-09-08 UTC, which is still 2026-09-07 in US Eastern). Screen and evidence dates already in these sections keep the calendar dates they recorded. This pass records merge state only. It does not close an empirical, paper-day, witness, selection, or pre-live gate, and it does not claim PASS.
 
+## Linear and this register
+
+This register keeps package ID allocation and package claims, scope and completion contracts. Linear (`CSL-N`) holds execution assignment, status and discussion, and cites the package ID here in its title or description; it does not allocate, split, renumber or close one. Take the next unused ID by reading this board at claim time. Process work states it has no package ID. Moving or closing a Linear issue leaves rows here unchanged. Cycle length and membership remain owned by CSL-8. This section reserves nothing and changes no existing row.
+
 ## RW-37 slice A 2026-09-15 Tuesday GET-only screen intake — merged 2026-09-16
 
 | ID | Scope | Status | Owner | Completion contract |
@@ -164,7 +168,7 @@ dates, watchlists, model authority, broker adapters, or the live soak.
 
 | ID | Defect | Priority | Status |
 |---|---|---|---|
-| `BUG-159` | Interrupted watch-only transitions can lose denial across restart; recovery can publish permission before its signed event commits; admitted late safety changes and final audit corruption can be missed before paper broker entry (D1–D4) | P1 high paper | merged — [PR #83](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/83) (`9c61dcf`); head `d076b50`; [[evidence/astra-watchonly-claim-shape-2026-09-06]]; [[evidence/bug159-watchonly-durability-2026-09-08]] |
+| `BUG-159` | Interrupted watch-only transitions can lose denial across restart; recovery can publish permission before its signed event commits; admitted late safety changes and final audit corruption can be missed before paper broker entry (D1–D4) | P1 high paper | merged — [PR #83](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/83) (`9c61dcf`); head `d076b50`; [[evidence/astra-watchonly-claim-shape-2026-09-06]]; [[evidence/bug159-watchonly-durability-2026-09-08]]; provisional hosted four-cell stand-in on merged `94862b6` (run 39029246863, jobs 117386225539/117386225549/117386225573/117386225584): [[evidence/csl62-dec09-hosted-2026-10-17]] — DEC-09 substitution undecided (Lucas) |
 
 ### RW-24 measured reliability follow-up — merged 2026-09-08
 
@@ -183,7 +187,7 @@ Intake, reproducible baselines and validation: [[evidence/rw24-reliability-2026-
 |---|---|---|---|
 | `BUG-157` | Intraday discovered holding is excluded by daily-bars readiness latch | P2 | merged — PR #81 (`6d2a747`) |
 | `BUG-158` | Malformed frames bypass the stream diagnostic frame limit | P3 | merged — PR #81 (`5c37e69`) |
-| `RW-24` | Bounded fixes, measured triage scans, installed/fallback Discord validation | — | merged — PR #81 (`5d50b25`); validated at `fa3cc1c`; head `f3f315f` |
+| `RW-24` | Bounded fixes, measured triage scans, installed/fallback Discord validation | — | merged — PR #81 (`5d50b25`); validated at `fa3cc1c`; head `f3f315f`; provisional hosted four-cell stand-in on merged `94862b6` (run 39029246863): [[evidence/csl62-dec09-hosted-2026-10-17]] — DEC-09 substitution undecided (Lucas) |
 
 ### RW-23 post-merge audit repair — merged 2026-09-08
 

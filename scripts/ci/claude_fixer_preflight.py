@@ -12,6 +12,14 @@ DEVIN_ID = 158243242
 SAFE_REF_RE = re.compile(r"^(?!.*\.\.)[A-Za-z0-9._/-]+$")
 SAFE_SHA_RE = re.compile(r"^[0-9a-f]{40}$|^[0-9a-f]{64}$")
 PROTECTED_REFS = frozenset({"master", "main", "HEAD"})
+# Human pause: a live PR label, or repo variable CLAUDE_FIXER_PAUSE=true for
+# every PR. Checked under the shared lock before any checkout or reservation.
+PAUSE_LABELS = frozenset({"claude:pause", "hold"})
+LOOP_CAP = 8
+# GitHub's PR commits endpoint lists at most 250 commits (oldest first), so a
+# longer PR may hide its newest commits. Treat a possibly truncated list as at
+# the cap: fail closed until a human reviews the branch.
+COMMIT_LIST_LIMIT = 250
 QUERY = """query($owner:String!, $name:String!, $number:Int!, $cursor:String) {
   repository(owner:$owner, name:$name) { pullRequest(number:$number) {
     reviewThreads(first:100, after:$cursor) {
@@ -55,10 +63,58 @@ def api(path: str):
     return json.loads(subprocess.check_output(["gh", "api", path], text=True))
 
 
+def pause_reason(pr: dict) -> str:
+    if os.environ.get("CLAUDE_FIXER_PAUSE") == "true":
+        return "repo variable CLAUDE_FIXER_PAUSE"
+    labels = pr.get("labels")
+    # Unreadable labels fail closed: a hold must not be missed.
+    if not isinstance(labels, list) or not all(isinstance(label, dict) for label in labels):
+        return "unreadable PR labels"
+    held = sorted(PAUSE_LABELS & {str(label.get("name") or "").lower() for label in labels})
+    return f"label {held[0]}" if held else ""
+
+
+def claude_streak(repo: str, number: str) -> int:
+    """Same rule as the Devin-path loop cap: Claude commits after the newest human commit."""
+    commits, page = [], 1
+    while True:
+        batch = api(f"repos/{repo}/pulls/{number}/commits?per_page=100&page={page}")
+        if not isinstance(batch, list):
+            raise ValueError("invalid commit listing")
+        commits.extend(batch)
+        if len(batch) < 100:
+            break
+        page += 1
+    if len(commits) >= COMMIT_LIST_LIMIT:
+        print(f"::notice::{len(commits)} PR commits listed (GitHub's limit is {COMMIT_LIST_LIMIT}); "
+              "the Claude commit streak cannot be counted, so a human has to take over this PR.")
+        return LOOP_CAP
+    count = 0
+    for item in reversed(commits):
+        # Author and committer both: the model can pass `git commit --author`,
+        # but its committer comes from the job's git config (claude[bot]).
+        # A commit is human only when neither side is Claude or a bot.
+        meta = item.get("commit") or {}
+        logins = [str((item.get(key) or {}).get("login") or "-") for key in ("author", "committer")]
+        names = [str((meta.get(key) or {}).get("name") or "-") for key in ("author", "committer")]
+        if "claude[bot]" in logins or any(name in {"claude[bot]", "claude"} for name in names):
+            count += 1
+        elif any(value.endswith("[bot]") for value in logins + names):
+            continue
+        else:
+            break
+    return count
+
+
 def main() -> None:
     repo, number, expected_ref = (os.environ[k] for k in ("REPO", "PR_NUMBER", "EXPECTED_HEAD_REF"))
     mention = os.environ.get("REQUEST_MODE") == "mention"
     pr = api(f"repos/{repo}/pulls/{number}")
+    reason = pause_reason(pr)
+    if reason:
+        print(f"::notice::Claude PR writer paused by {reason}; nothing reserved or run.")
+        emit("true")
+        return
     head = pr.get("head") or {}
     # Select the live checkout only after acquiring the shared PR lock. A queued
     # review may have observed an older head while the preceding fixer pushed.
@@ -77,6 +133,13 @@ def main() -> None:
         actor = os.environ.get("MENTION_ACTOR", "")
         if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}", actor)
                 or api(f"repos/{repo}/collaborators/{actor}/permission").get("permission") not in {"write", "maintain", "admin"}):
+            emit("true")
+            return
+        streak = claude_streak(repo, number)
+        if streak >= LOOP_CAP:
+            print(f"::notice::@claude skipped: {streak} Claude commits since the last human commit "
+                  f"(cap {LOOP_CAP}). A human commit resets the streak, except on a PR listing "
+                  f"{COMMIT_LIST_LIMIT}+ commits, where a human has to take over.")
             emit("true")
             return
         emit("false", sha=sha, ref=ref)
