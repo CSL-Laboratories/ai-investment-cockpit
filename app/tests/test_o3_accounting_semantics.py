@@ -187,6 +187,7 @@ def test_o3_checkpointed_correction_admits_late_fill() -> None:
         "outcome_side": "yes",
         "collateral_model": "fully_collateralized",
     })
+    fixture["markets"].append({"instrument_id": "ev-two", "state": "open"})
     fixture["orders"].append({
         "order_id": "ord-x",
         "instrument_id": "ev-two",
@@ -308,6 +309,7 @@ def _resting_extension(fixture: dict) -> dict:
         "outcome_side": "yes",
         "collateral_model": "fully_collateralized",
     })
+    fixture["markets"].append({"instrument_id": "ev-two", "state": "open"})
     fixture["orders"].append({
         "order_id": "ord-rest",
         "instrument_id": "ev-two",
@@ -1034,7 +1036,10 @@ def _two_equal_resting_holds() -> dict:
             "state": "resting",
         },
     ]
-    fixture["markets"] = []
+    fixture["markets"] = [
+        {"instrument_id": "ev-void", "state": "open"},
+        {"instrument_id": "ev-other", "state": "open"},
+    ]
     fixture["evidence"] = []
     fixture["journal"] = []
     fixture["checkpoint"] = {
@@ -1288,6 +1293,132 @@ def test_o3_checkpoint_only_fill_reserve_matches_checkpoint_hold() -> None:
         "attribution": [],
     }
     assert "balance_mismatch" in _evaluate(fixture)
+
+
+def _partial_refund_fixture(posted: int) -> dict:
+    path = VALIDATOR.parent / "fixtures" / "event_resting_order_reservation.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    for fill in fixture["fills"]:
+        if fill["fill_id"] == "f-rest":
+            fill["sequence"] = 5
+    for entry in fixture["journal"]:
+        if entry["entry_id"] == "j-fee-rest":
+            entry["sequence"] = 6
+    fixture["journal"].append({
+        "entry_id": "j-release-rest",
+        "sequence": 4,
+        "idempotency_key": "release-rest-part",
+        "order_id": "ord-rest",
+        "strategy_id": "s-event",
+        "reason": "void_unwind",
+        "lines": [
+            {"account": "cash_available", "side": "dr", "amount_minor": 100000, "instrument_id": "ev-yes"},
+            {"account": "collateral_reserved", "side": "cr", "amount_minor": 100000, "instrument_id": "ev-yes"},
+        ],
+    })
+    fixture["journal"].append({
+        "entry_id": "j-top-up",
+        "sequence": 5,
+        "idempotency_key": "top-up-rest",
+        "fill_id": "f-rest",
+        "strategy_id": "s-event",
+        "reason": "reserve_collateral",
+        "lines": [
+            {"account": "collateral_reserved", "side": "dr", "amount_minor": posted, "instrument_id": "ev-yes"},
+            {"account": "cash_available", "side": "cr", "amount_minor": posted, "instrument_id": "ev-yes"},
+        ],
+    })
+    fixture["reported"]["cash_available"] = 9995170000 - posted
+    fixture["reported"]["collateral_reserved"] = 4730000 + posted
+    fixture["reported"]["open_reservations"][1]["amount_minor"] = 730000
+    fixture["reported"]["open_reservations"].append({
+        "reservation_id": "reserve-topup",
+        "instrument_id": "ev-yes",
+        "amount_minor": posted,
+    })
+    return fixture
+
+
+def test_o3_partial_refund_posts_only_uncovered_premium() -> None:
+    shortfall = _partial_refund_fixture(70000)
+    assert _evaluate(shortfall) == set()
+    doubled = _partial_refund_fixture(800000)
+    assert "balance_mismatch" in _evaluate(doubled)
+
+
+def test_o3_overfill_guard_includes_checkpoint_filled_qty() -> None:
+    path = VALIDATOR.parent / "fixtures" / "equity_partial_then_dividend.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["orders"] = [{
+        "order_id": "ord-eq-1",
+        "instrument_id": "eq-aapl",
+        "family": "equity",
+        "side": "buy",
+        "qty": 100,
+        "state": "cancelled",
+        "terminal_sequence": 5,
+        "checkpoint_filled_qty": 80,
+    }]
+    fixture["fills"] = [{
+        "fill_id": "f-late",
+        "order_id": "ord-eq-1",
+        "instrument_id": "eq-aapl",
+        "sequence": 4,
+        "qty": 30,
+        "price_minor": 1000,
+        "fee_minor": 1,
+        "side": "buy",
+    }]
+    fixture["journal"] = [{
+        "entry_id": "j-late",
+        "sequence": 4,
+        "idempotency_key": "fill-late",
+        "fill_id": "f-late",
+        "strategy_id": "s-equity",
+        "reason": "fill",
+        "lines": [
+            {"account": "position_cost", "side": "dr", "amount_minor": 30000, "instrument_id": "eq-aapl"},
+            {"account": "fees_expense", "side": "dr", "amount_minor": 1, "instrument_id": "eq-aapl"},
+            {"account": "cash_available", "side": "cr", "amount_minor": 30001, "instrument_id": "eq-aapl"},
+        ],
+    }]
+    fixture["corporate_actions"] = []
+    fixture["checkpoint"] = {
+        "sequence": 2,
+        "applied_keys": [],
+        "cash_available": 10000000,
+        "collateral_reserved": 0,
+        "positions": [{"instrument_id": "eq-aapl", "qty": 80}],
+        "open_reservations": [],
+    }
+    fixture["reported"] = {
+        "cash_available": 9969999,
+        "collateral_reserved": 0,
+        "positions": [{"instrument_id": "eq-aapl", "qty": 110}],
+        "open_reservations": [],
+        "attribution": [{
+            "strategy_id": "s-equity",
+            "realized_pnl_minor": 0,
+            "fees_minor": 1,
+        }],
+    }
+    assert "partial_fill_divergence" in _evaluate(fixture)
+
+
+def test_o3_event_instrument_requires_market_state_row() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_resting_order_reservation.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    assert _evaluate(fixture) == set()
+    fixture["markets"] = []
+    assert "settlement_unreconciled" in _evaluate(fixture)
+
+
+def test_o3_fill_linked_entry_before_fill_rejected() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_resting_order_reservation.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    assert _evaluate(fixture) == set()
+    fixture["fills"][0]["sequence"] = 2
+    assert "position_divergence" in _evaluate(fixture)
 
 
 def test_o3_duplicate_attribution_row_rejected() -> None:

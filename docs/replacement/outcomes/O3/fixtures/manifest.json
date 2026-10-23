@@ -54,7 +54,7 @@
       "id": "neg_double_counted_collateral_after_restart",
       "path": "fixtures/neg_double_counted_collateral_after_restart.json",
       "role": "negative",
-      "sha256": "632becd2d5a2c275eb950c74c1385c5b573465eec4cf170b40400bcb4c1b1fe5",
+      "sha256": "3bada38042cf24bc2fe2cf61f8da392957b0895add724c85e60f7a53c11e5b8f",
       "expected_failure_codes": [
         "collateral_double_count"
       ]
@@ -90,7 +90,7 @@
       "id": "neg_late_fill_divergence",
       "path": "fixtures/neg_late_fill_divergence.json",
       "role": "negative",
-      "sha256": "e205fc14659c6dd92984107facb2c25f1a30323a212ddae08ecd183fdacc82b9",
+      "sha256": "a8529e33bdfe431140f1744de2c8f4af329123f3b38fb780a6ff0edc8b2a47a1",
       "expected_failure_codes": [
         "late_fill_divergence"
       ]
@@ -99,7 +99,7 @@
       "id": "event_resting_order_reservation",
       "path": "fixtures/event_resting_order_reservation.json",
       "role": "positive",
-      "sha256": "fc6b06f7f9f607a8da6a798217ed80b356cf123ccbb7474b9b424ba19b42ebd0",
+      "sha256": "9cb22f8f018333816af15561348189d7d14b1c13562302499d4e94ae78c611c0",
       "expected_failure_codes": []
     },
     {

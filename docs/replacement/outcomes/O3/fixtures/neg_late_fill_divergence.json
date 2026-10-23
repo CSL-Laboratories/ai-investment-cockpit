@@ -42,7 +42,7 @@
   "journal": [
     {
       "entry_id": "j1",
-      "sequence": 1,
+      "sequence": 2,
       "idempotency_key": "fill-late",
       "fill_id": "f-late",
       "strategy_id": "s-equity",

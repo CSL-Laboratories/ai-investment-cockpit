@@ -148,7 +148,12 @@
             ]
         }
     ],
-    "markets": [],
+    "markets": [
+        {
+            "instrument_id": "ev-yes",
+            "state": "open"
+        }
+    ],
     "corporate_actions": [],
     "corrections": [],
     "evidence": [],

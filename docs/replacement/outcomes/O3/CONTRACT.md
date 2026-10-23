@@ -299,9 +299,12 @@ An order-linked reserve or release counts when its sequence is at or
 before the fill, so a release that already returned the collateral does
 not fund a later fill. When that balance still covers the fill's
 `qty * price_minor`, the fill does not re-post premium, and a second
-premium posting fails `balance_mismatch`. When the balance is below that
-premium, including after a full refund, the fill has to post
-`qty * price_minor` itself. Fees still
+premium posting fails `balance_mismatch`. When a partial release leaves
+a hold below that premium, the fill posts only the uncovered part:
+`qty * price_minor` minus the hold still in place. Posting the full
+premium charges the held part twice and fails `balance_mismatch`. A
+full refund leaves no hold, so the fill posts `qty * price_minor`
+itself. Fees still
 reconcile per fill.
 Only `fill`,
 `reserve_collateral`, and `trade_fee` entries contribute to a fill's
@@ -333,9 +336,13 @@ Position quantity changes from accepted fills, corporate actions that change
 quantity, settlement, void, or an explicit correction. An order intent does
 not change quantity.
 
-- **Partial.** Accepted fill quantity cannot exceed order quantity. Reported
-  quantity that includes the unfilled remainder fails
-  `partial_fill_divergence`.
+- **Partial.** Accepted fill quantity cannot exceed order quantity. A
+  post-checkpoint fill is measured against the quantity still open:
+  `checkpoint_filled_qty` plus fills already accepted after the
+  checkpoint. A later fill that carries that total over `qty` fails
+  `partial_fill_divergence`, including when the order is already in a
+  cancel-like terminal. Reported quantity that includes the unfilled
+  remainder fails `partial_fill_divergence`.
 - **Complete.** A `filled` order accounts for its full quantity: retained
   fill rows plus the quantity the checkpoint already applied
   (`checkpoint_filled_qty`) must equal `qty`. An order that declares
@@ -353,8 +360,11 @@ not change quantity.
   `settlement_payout` fails `settlement_unreconciled`. A shared sequence
   is rejected, not treated as already in the settled position. Sequence
   is the only clock in this candidate, and a tie does not show that the
-  fill was inside the position the payout closed. A journal entry
-  sequenced before that fill fails `position_divergence`.
+  fill was inside the position the payout closed.
+- **Fill reference order.** A journal entry that names a fill and is
+  sequenced before that fill fails `position_divergence`. The check does
+  not depend on a settlement. An entry at the fill's own sequence is
+  ordered with the fill.
 - **Late.** A fill sequenced after a cancel-like terminal
   (`cancelled`, `expired`, `rejected`, `canary_breach`,
   `rejected_insufficient_collateral`, `expired_unfilled`,
@@ -376,9 +386,10 @@ any corporate action (`family_crossed`).
 
 ## Resolution, void, and correction
 
-A fixture has one current market-state row per instrument. A second row,
-including an `open` row beside `settled`, fails `settlement_unreconciled`.
-Those rows carry no sequence, so they are not lifecycle history.
+A fixture has one current market-state row per event instrument. A
+missing row fails `settlement_unreconciled`, as does a second row,
+including an `open` row beside `settled`. An equity book has no market
+rows. Those rows carry no sequence, so they are not lifecycle history.
 
 Settlement evidence is a retained record: source id, market result, long
 quantity, short quantity, payout, settlement fee, whether that fee is
@@ -496,7 +507,7 @@ checkpoint.
 | `neg_partial_fill_divergence` | negative | 40 of 100 shares filled; reported position is 100. |
 | `neg_duplicate_fill_divergence` | negative | The same fill id is applied twice; reported position is 80. |
 | `neg_late_fill_divergence` | negative | A fill is sequenced after cancel; reported position includes it. |
-| `event_resting_order_reservation` | positive | A filled position plus an order-linked reservation posted before the first match. After a partial fill the order state is `partially_filled`, and the reservation equals the executed premium and fee. |
+| `event_resting_order_reservation` | positive | A filled position plus an order-linked reservation posted before the first match. After a partial fill the order state is `partially_filled`, and the reservation equals the executed premium and fee. The instrument has one `open` market-state row. |
 | `neg_offsetting_fill_prices` | negative | Two fills whose prices disagree with their postings but net out in aggregate. Per-fill linkage fails it. |
 | `event_no_settlement` | positive | A losing NO-side binary: zero payout, reserved premium released, realized loss debited, position flat. |
 

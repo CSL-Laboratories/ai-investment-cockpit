@@ -481,6 +481,11 @@ def evaluate_semantics(fixture: dict) -> set[str]:
     applied_fill_fees = 0
     fill_ids = {fill["fill_id"] for fill in fixture["fills"]}
     fills_by_id = {fill["fill_id"]: fill for fill in fixture["fills"]}
+    fill_earliest: dict[str, int] = {}
+    for fill in fixture["fills"]:
+        previous = fill_earliest.get(fill["fill_id"])
+        if previous is None or fill["sequence"] < previous:
+            fill_earliest[fill["fill_id"]] = fill["sequence"]
     settlement_at: dict[str, int] = {}
     for entry in fixture["journal"]:
         if entry.get("reason") != "settlement_payout":
@@ -536,7 +541,16 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             # is not part of the position that settlement closed.
             failures.add("settlement_unreconciled")
             continue
-        filled = accepted_qty.get(order["order_id"], 0)
+        if fill["sequence"] > checkpoint["sequence"]:
+            # Checkpoint quantity is already applied and is not in the
+            # post-checkpoint rows. A later fill overfills the order when
+            # those shares plus this fill exceed qty, including after cancel.
+            filled = (
+                order.get("checkpoint_filled_qty", 0)
+                + post_checkpoint_qty.get(order["order_id"], 0)
+            )
+        else:
+            filled = accepted_qty.get(order["order_id"], 0)
         if filled + fill["qty"] > order["qty"]:
             failures.add("partial_fill_divergence")
             defect_instruments.add(fill["instrument_id"])
@@ -628,6 +642,11 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         elif record["misc_fee_minor"] != 0 and record["pre_rounding_minor"] != record["payout_minor"]:
             failures.add("settlement_unreconciled")
         derived[instrument_id] = 0
+
+    if book_id == "event":
+        for instrument_id in known_instruments:
+            if instrument_id not in seen_market_instruments:
+                failures.add("settlement_unreconciled")
 
     voided = {market["instrument_id"] for market in fixture["markets"] if market["state"] == "voided"}
     settled_ids = {market["instrument_id"] for market in fixture["markets"] if market["state"] == "settled"}
@@ -723,15 +742,10 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         order_ref = entry.get("order_id")
         if fill_ref is not None and (fill_ref not in fill_ids or fill_ref in checkpointed_fill_ids):
             failures.add("position_divergence")
-        referenced_fill = fills_by_id.get(fill_ref) if fill_ref is not None else None
-        if referenced_fill is not None:
-            settle_at = settlement_at.get(referenced_fill["instrument_id"])
-            if (
-                settle_at is not None
-                and referenced_fill["sequence"] >= settle_at
-                and entry["sequence"] < referenced_fill["sequence"]
-            ):
-                failures.add("position_divergence")
+        earliest_fill = fill_earliest.get(fill_ref) if fill_ref is not None else None
+        if earliest_fill is not None and entry["sequence"] < earliest_fill:
+            # The posting cannot precede the fill that caused it.
+            failures.add("position_divergence")
         if order_ref is not None and order_ref not in orders:
             failures.add("position_divergence")
         if fill_ref is not None and order_ref is not None:
@@ -932,11 +946,10 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             for seq, delta in order_collateral_events.get(fill["order_id"], ()):
                 if seq <= fill["sequence"]:
                     available += delta
-            if available >= premium:
-                # Collateral still held at this sequence already funds the fill.
-                if posted != 0:
-                    failures.add("balance_mismatch")
-            elif posted != premium:
+            # A partial release leaves a hold that still covers part of the
+            # premium. The fill posts only the uncovered remainder.
+            covered = min(premium, max(available, 0))
+            if posted != premium - covered:
                 failures.add("balance_mismatch")
             if posted_fees.get(fill["fill_id"], 0) != fill["fee_minor"]:
                 failures.add("fee_mismatch")
