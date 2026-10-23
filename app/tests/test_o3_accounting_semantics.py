@@ -1912,6 +1912,104 @@ def test_o3_unnamed_release_is_not_restored_by_a_later_reserve() -> None:
     assert "balance_mismatch" in _evaluate(released)
 
 
+def _tied_release_and_refill(refill_first: bool) -> dict:
+    """Unnamed release and fill reserve share sequence 3."""
+    fixture = _unnamed_release_then_refill()
+    for entry in fixture["journal"]:
+        if entry["entry_id"] in {"j-void", "j-refill"}:
+            entry["sequence"] = 3
+    if refill_first:
+        void = next(entry for entry in fixture["journal"] if entry["entry_id"] == "j-void")
+        refill = next(entry for entry in fixture["journal"] if entry["entry_id"] == "j-refill")
+        rest = [
+            entry for entry in fixture["journal"]
+            if entry["entry_id"] not in {"j-void", "j-refill"}
+        ]
+        fixture["journal"] = [refill, void, *rest]
+    return fixture
+
+
+def test_o3_same_instrument_collateral_tie_is_rejected() -> None:
+    assert "balance_mismatch" in _evaluate(_tied_release_and_refill(False))
+    assert "balance_mismatch" in _evaluate(_tied_release_and_refill(True))
+
+
+def _dead_order_activity(
+    state: str,
+    reserve_sequence: int,
+    release_sequence: int,
+    terminal_sequence: int,
+) -> dict:
+    """Unfilled order with a reserve and a later release around its terminal."""
+    path = VALIDATOR.parent / "fixtures" / "event_resting_order_reservation.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["orders"].append({
+        "order_id": "ord-dead",
+        "instrument_id": "ev-yes",
+        "family": "event",
+        "side": "buy",
+        "qty": 1,
+        "state": state,
+        "terminal_sequence": terminal_sequence,
+    })
+    fixture["journal"].append({
+        "entry_id": "j-dead-reserve",
+        "sequence": reserve_sequence,
+        "idempotency_key": "reserve-dead",
+        "order_id": "ord-dead",
+        "strategy_id": "s-event",
+        "reason": "reserve_collateral",
+        "lines": [
+            {
+                "account": "collateral_reserved",
+                "side": "dr",
+                "amount_minor": 100000,
+                "instrument_id": "ev-yes",
+            },
+            {
+                "account": "cash_available",
+                "side": "cr",
+                "amount_minor": 100000,
+                "instrument_id": "ev-yes",
+            },
+        ],
+    })
+    fixture["journal"].append({
+        "entry_id": "j-dead-release",
+        "sequence": release_sequence,
+        "idempotency_key": "release-dead",
+        "order_id": "ord-dead",
+        "strategy_id": "s-event",
+        "reason": "void_unwind",
+        "lines": [
+            {
+                "account": "cash_available",
+                "side": "dr",
+                "amount_minor": 100000,
+                "instrument_id": "ev-yes",
+            },
+            {
+                "account": "collateral_reserved",
+                "side": "cr",
+                "amount_minor": 100000,
+                "instrument_id": "ev-yes",
+            },
+        ],
+    })
+    return fixture
+
+
+def test_o3_reservation_after_terminal_is_rejected() -> None:
+    for state in ("cancelled", "expired_unfilled", "rejected_insufficient_collateral"):
+        late = _dead_order_activity(state, 6, 7, 2)
+        assert "position_divergence" in _evaluate(late)
+    tied = _dead_order_activity("cancelled", 6, 7, 6)
+    assert "position_divergence" in _evaluate(tied)
+    # The reserve is open before the terminal. The release after it stays valid.
+    earlier = _dead_order_activity("cancelled", 6, 8, 7)
+    assert _evaluate(earlier) == set()
+
+
 def _open_checkpoint_book(qty: int, recorded: int, state: str) -> dict:
     """Open market whose only quantity is the checkpoint, with no fill rows."""
     path = VALIDATOR.parent / "fixtures" / "event_restart_idempotent.json"

@@ -260,12 +260,17 @@ cost and always carries a `fill_id`. One entry carries at most one
 causal reference — an entry naming both `fill_id` and `order_id` is
 ambiguous and fails. An `order_id` reservation must post before the
 order's first fill: it is valid while the order is still resting and
-unfilled, and a reservation sequenced after a fill is rejected. That
-ordering check applies only when the reservation is created
-(`reserve_collateral` with an `order_id` and no `fill_id`). A later
-`void_unwind` or `settlement_payout` that names the order, and credits
+unfilled, and a reservation sequenced after a fill is rejected. It
+also has to post before the order's `terminal_sequence`. A tie with
+that sequence does not show the reserve was still open, so a
+`reserve_collateral` that names the order and is sequenced at or after
+the terminal fails `position_divergence`. That ordering check applies
+only when the reservation is created (`reserve_collateral` with an
+`order_id` and no `fill_id`). A later `void_unwind` or
+`settlement_payout` that names the order, and credits
 `collateral_reserved`, is a release of that hold. It is not a new
-reservation, and it is not rejected for coming after the fill. Before
+reservation, and it is not rejected for coming after the fill or the
+terminal. Before
 any fill, that hold is not compared with a fill total of zero, unless
 the order is already in a cancel, expire, or reject terminal. A dead
 order that still carries the hold fails `balance_mismatch`. A release
@@ -276,7 +281,10 @@ still reserved for an instrument must cover the positive holds of every
 order on it after each collateral posting, not only at the ending
 balance. An unnamed credit that spends owned collateral fails
 `balance_mismatch` even when a later reserve and a named release put
-the ending totals back in line. A credit sequenced before the reserve
+the ending totals back in line. Two `collateral_reserved` postings for
+one instrument at one sequence fail `balance_mismatch` in either array
+order. Sequence is the only clock, so the array is not a tie-break. A
+posting for another instrument may share that sequence. A credit sequenced before the reserve
 fails the same way when the hold it creates is no longer reserved. A checkpoint
 open reservation may name its owning `order_id`. That optional id is
 this candidate's proposal for which order owns the checkpoint hold.
@@ -390,7 +398,9 @@ not change quantity.
   `settlement_payout` fails `settlement_unreconciled`. A shared sequence
   is rejected, not treated as already in the settled position. Sequence
   is the only clock in this candidate, and a tie does not show that the
-  fill was inside the position the payout closed.
+  fill was inside the position the payout closed. The same rule orders
+  collateral: two `collateral_reserved` postings for one instrument at
+  one sequence fail `balance_mismatch` rather than following array order.
 - **Fill reference order.** A journal entry that names a fill and is
   sequenced before that fill fails `position_divergence`. The check does
   not depend on a settlement. An entry at the fill's own sequence is

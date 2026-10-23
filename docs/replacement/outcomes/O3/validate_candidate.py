@@ -761,6 +761,32 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         failures.add("schema_invalid")
     linked_reversals, reversal_mirrors = _linked_reversal_ids(fixture, repeated_entry_ids)
 
+    # Sequence is the only clock. Two collateral postings for one instrument
+    # at one sequence would be applied in array order.
+    collateral_at: dict[tuple[str, int], int] = {}
+    collateral_keys = set(checkpoint["applied_keys"])
+    for entry in sorted(fixture["journal"], key=lambda item: item["sequence"]):
+        sequence = entry.get("sequence")
+        if type(sequence) is not int:
+            continue
+        if (
+            sequence <= floor
+            or entry.get("idempotency_key") in collateral_keys
+            or entry.get("entry_id") in applied_entry_ids
+        ):
+            continue
+        collateral_keys.add(entry.get("idempotency_key"))
+        for line in entry.get("lines", ()):
+            if line.get("account") != "collateral_reserved":
+                continue
+            instrument_id = line.get("instrument_id")
+            if not isinstance(instrument_id, str):
+                continue
+            key = (instrument_id, sequence)
+            collateral_at[key] = collateral_at.get(key, 0) + 1
+    if any(count > 1 for count in collateral_at.values()):
+        failures.add("balance_mismatch")
+
     def _hold_must_stay_covered() -> None:
         """Owned holds have to sit inside collateral after every posting."""
         owned_by_instrument: dict[str, int] = {}
@@ -824,14 +850,26 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         if fill_ref is not None and order_ref is not None:
             failures.add("position_divergence")
         first_fill_seq = order_first_fill_seq.get(order_ref) if order_ref is not None else None
-        # Only the creation of a reservation is ordered before the first fill.
-        # A later release (settlement or void unwind) may name the same order.
+        terminal_sequence = None
+        if order_ref in orders:
+            terminal_sequence = orders[order_ref].get("terminal_sequence")
+        # A new reservation has to be open while the order can still rest.
+        # A later release may name the order after the fill or the terminal.
+        reserve_after_fill = (
+            first_fill_seq is not None
+            and type(entry.get("sequence")) is int
+            and entry["sequence"] > first_fill_seq
+        )
+        reserve_after_terminal = (
+            type(terminal_sequence) is int
+            and type(entry.get("sequence")) is int
+            and entry["sequence"] >= terminal_sequence
+        )
         if (
             entry["reason"] == "reserve_collateral"
             and fill_ref is None
             and order_ref is not None
-            and first_fill_seq is not None
-            and entry["sequence"] > first_fill_seq
+            and (reserve_after_fill or reserve_after_terminal)
         ):
             failures.add("position_divergence")
         if entry["reason"] == "fill" and fill_ref is None:
