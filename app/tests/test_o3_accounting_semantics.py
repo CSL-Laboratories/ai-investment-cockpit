@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import itertools
 import json
 import subprocess
 import sys
@@ -3164,4 +3165,208 @@ def test_o3_one_reversal_does_not_excuse_two_order_reserves() -> None:
         }],
         "attribution": [],
     }
-    assert "balance_mismatch" in _evaluate(fixture)
+    journal = fixture["journal"]
+    corrections = fixture["corrections"]
+    for entry_order in itertools.permutations(range(len(journal))):
+        for flips in itertools.product((False, True), repeat=len(journal)):
+            for rows in (corrections, list(reversed(corrections))):
+                variant = json.loads(json.dumps(fixture))
+                variant["journal"] = []
+                for index, flip in zip(entry_order, flips):
+                    entry = json.loads(json.dumps(journal[index]))
+                    if flip:
+                        entry["lines"] = list(reversed(entry["lines"]))
+                    variant["journal"].append(entry)
+                variant["corrections"] = rows
+                assert "balance_mismatch" in _evaluate(variant)
+
+
+def test_o3_offsetting_collateral_lines_fail_in_every_line_order() -> None:
+    """A debit and a credit in one posting are not ordered by line position."""
+    path = VALIDATOR.parent / "fixtures" / "event_yes_settlement.json"
+    base = json.loads(path.read_text(encoding="utf-8"))
+    settle = next(entry for entry in base["journal"] if entry["entry_id"] == "j-settle")
+    settle["lines"] = list(settle["lines"]) + [
+        {
+            "account": "collateral_reserved",
+            "side": "dr",
+            "amount_minor": 10,
+            "instrument_id": "ev-yes",
+        },
+        {
+            "account": "collateral_reserved",
+            "side": "cr",
+            "amount_minor": 10,
+            "instrument_id": "ev-yes",
+        },
+    ]
+    lines = settle["lines"]
+    for perm in itertools.permutations(range(len(lines))):
+        variant = json.loads(json.dumps(base))
+        row = next(entry for entry in variant["journal"] if entry["entry_id"] == "j-settle")
+        row["lines"] = [lines[index] for index in perm]
+        assert "balance_mismatch" in _evaluate(variant)
+
+
+def test_o3_split_reserve_lines_stay_clean_in_every_line_order() -> None:
+    """Same-direction splits are one posting, so line order does not reject them."""
+    fixture = _corrected_order_reserve()
+    original = next(entry for entry in fixture["journal"] if entry["entry_id"] == "j-orig")
+    cash = next(line for line in original["lines"] if line["account"] == "cash_available")
+    original["lines"] = [
+        {
+            "account": "collateral_reserved",
+            "side": "dr",
+            "amount_minor": 500000,
+            "instrument_id": "ev-yes",
+        },
+        {
+            "account": "collateral_reserved",
+            "side": "dr",
+            "amount_minor": 300000,
+            "instrument_id": "ev-yes",
+        },
+        cash,
+    ]
+    reversal = next(entry for entry in fixture["journal"] if entry["entry_id"] == "j-rev")
+    reversal["lines"] = [
+        {
+            "account": "collateral_reserved",
+            "side": "cr",
+            "amount_minor": 500000,
+            "instrument_id": "ev-yes",
+        },
+        {
+            "account": "collateral_reserved",
+            "side": "cr",
+            "amount_minor": 300000,
+            "instrument_id": "ev-yes",
+        },
+        {
+            "account": "cash_available",
+            "side": "dr",
+            "amount_minor": 800000,
+            "instrument_id": "ev-yes",
+        },
+    ]
+    for original_order in itertools.permutations(range(3)):
+        for reversal_order in itertools.permutations(range(3)):
+            variant = json.loads(json.dumps(fixture))
+            orig = next(entry for entry in variant["journal"] if entry["entry_id"] == "j-orig")
+            rev = next(entry for entry in variant["journal"] if entry["entry_id"] == "j-rev")
+            orig["lines"] = [original["lines"][index] for index in original_order]
+            rev["lines"] = [reversal["lines"][index] for index in reversal_order]
+            assert _evaluate(variant) == set()
+
+
+def _order_and_fill_corrections() -> dict:
+    """Order reserve corrected beside a fill-linked reserve on the same instrument."""
+    fixture = _two_order_book()
+    fixture["orders"] = [
+        {
+            "order_id": "ord-a",
+            "instrument_id": "ev-yes",
+            "family": "event",
+            "side": "buy",
+            "qty": 1,
+            "state": "filled",
+        },
+        {
+            "order_id": "ord-b",
+            "instrument_id": "ev-yes",
+            "family": "event",
+            "side": "buy",
+            "qty": 1,
+            "state": "filled",
+        },
+    ]
+    fixture["fills"] = [
+        {
+            "fill_id": "f-b",
+            "order_id": "ord-b",
+            "instrument_id": "ev-yes",
+            "sequence": 3,
+            "qty": 1,
+            "price_minor": 100000,
+            "fee_minor": 0,
+            "side": "buy",
+        },
+        {
+            "fill_id": "f-a",
+            "order_id": "ord-a",
+            "instrument_id": "ev-yes",
+            "sequence": 7,
+            "qty": 1,
+            "price_minor": 830000,
+            "fee_minor": 0,
+            "side": "buy",
+        },
+    ]
+    fixture["journal"] = [
+        _order_reserve_line("j-a", 1, "ord-a", 800000),
+        _order_reserve_line("j-ar", 2, "ord-a", 800000, release=True),
+        _order_reserve_line("j-b", 3, "f-b", 100000),
+        _order_reserve_line("j-br", 4, "f-b", 100000, release=True),
+        _order_reserve_line("j-ar2", 5, "ord-a", 830000),
+        _order_reserve_line("j-br2", 6, "f-b", 100000),
+    ]
+    for entry_id in ("j-b", "j-br", "j-br2"):
+        entry = next(row for row in fixture["journal"] if row["entry_id"] == entry_id)
+        entry["fill_id"] = entry.pop("order_id")
+    fixture["corrections"] = [
+        {
+            "correction_id": "c-a",
+            "admits_fill_id": "f-a",
+            "reverses_entry_id": "j-a",
+            "reason": "correct the order reserve",
+            "instrument_id": "ev-yes",
+            "cause": "reserve_collateral",
+        },
+        {
+            "correction_id": "c-b",
+            "admits_fill_id": "f-b",
+            "reverses_entry_id": "j-b",
+            "reason": "correct the fill reserve",
+            "instrument_id": "ev-yes",
+            "cause": "reserve_collateral",
+        },
+    ]
+    fixture["reported"] = {
+        "cash_available": 9999070000,
+        "collateral_reserved": 930000,
+        "positions": [{"instrument_id": "ev-yes", "qty": 2}],
+        "open_reservations": [
+            {
+                "reservation_id": "r-a",
+                "order_id": "ord-a",
+                "instrument_id": "ev-yes",
+                "amount_minor": 830000,
+            },
+            {
+                "reservation_id": "r-b",
+                "instrument_id": "ev-yes",
+                "amount_minor": 100000,
+            },
+        ],
+        "attribution": [],
+    }
+    return fixture
+
+
+def test_o3_fill_correction_cannot_consume_the_order_replacement() -> None:
+    """Both correction orders and both line orders of a valid pair stay clean."""
+    base = _order_and_fill_corrections()
+    journals = (base["journal"], list(reversed(base["journal"])))
+    correction_orders = (base["corrections"], list(reversed(base["corrections"])))
+    for journal in journals:
+        for corrections in correction_orders:
+            for flips in itertools.product((False, True), repeat=len(journal)):
+                variant = json.loads(json.dumps(base))
+                variant["journal"] = []
+                for entry, flip in zip(journal, flips):
+                    row = json.loads(json.dumps(entry))
+                    if flip:
+                        row["lines"] = list(reversed(row["lines"]))
+                    variant["journal"].append(row)
+                variant["corrections"] = corrections
+                assert _evaluate(variant) == set()

@@ -212,9 +212,13 @@ The journal then has a later entry that reverses those lines and a
 still later entry that replaces them, both with that same reason and
 only this instrument. The reversal keeps the original entry's
 `strategy_id`. The replacement may name another strategy. An order
-reserve's reversal and its replacement name that same order. Another
-order's reserve on the instrument is not that pair, and each reversal
-and each replacement pairs with one original. Swapped
+reserve's reversal and its replacement name that same order. A
+fill-linked reserve's reversal and replacement name that same fill.
+Another order's reserve, or a fill's reserve, is not the other pair.
+Correction rows are not a clock: the earliest reversal and the earliest
+later replacement are the pair, and two candidates at one sequence do
+not pair. Each reversal and each replacement pairs with one original.
+Swapped
 sides on the reversal are accepted only when that replacement is
 posted. A reversal with no replacement fails `balance_mismatch` on an
 open market as well as on `corrected`. Without those postings the row
@@ -296,11 +300,13 @@ reduce it. A validated correction does: when the original reserve, its
 reversal, and the replacement all name that order, the reversed debit
 drops out and the replacement is the amount that funded the fill. The
 replacement is that order's own later reserve. Another order's reserve
-on the same instrument does not replace it, and another order's earlier
-reversal does not stand in for this one. One reversal and one
-replacement drop one original. A second original that shares them stays
-in the total. A reversal that is not that correction leaves the original
-debit in the total. A dead order that still carries the hold fails
+on the same instrument does not replace it, a fill-linked reserve does
+not replace it, and another order's earlier reversal does not stand in
+for this one. One reversal and one replacement drop one original. A
+second original that shares them stays in the total. The order of the
+correction rows does not change that. A reversal that is not that
+correction leaves the original debit in the total. A dead order that
+still carries the hold fails
 `balance_mismatch`. A release
 that does not name the order leaves the hold in place. A `void_unwind`
 or `settlement_payout` that credits `collateral_reserved` has to name
@@ -315,8 +321,11 @@ collateral it releases fails `balance_mismatch`, and a later reserve
 does not fund the earlier credit. Two journal entries that each post
 `collateral_reserved` for one instrument at one sequence fail
 `balance_mismatch` in either array order. Lines that split that amount
-inside one entry are one posting, not a tie. Sequence is the only
-clock, so the array is not a tie-break. A posting for another
+inside one entry are one posting, not a tie. Their order inside the
+entry is not a clock. A collateral debit and a collateral credit for
+the same instrument in that one posting fail `balance_mismatch`; the
+net is not read as the credit landing after the debit. Sequence is the
+only clock, so the array is not a tie-break. A posting for another
 instrument may share that sequence. A credit sequenced before the reserve
 fails the same way when the hold it creates is no longer reserved. A checkpoint
 open reservation may name its owning `order_id`. That optional id is

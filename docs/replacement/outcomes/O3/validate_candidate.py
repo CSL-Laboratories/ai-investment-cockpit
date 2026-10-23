@@ -336,6 +336,8 @@ def _linked_reversal_ids(fixture: dict, repeated_ids: set[str]) -> tuple[set[str
             continue
         wanted = _line_signature(original, reverse=True)
         partner_id = None
+        partner_sequence_best: int | None = None
+        partner_tie = False
         for entry in journal:
             entry_id = entry.get("entry_id")
             if (
@@ -354,10 +356,15 @@ def _linked_reversal_ids(fixture: dict, repeated_ids: set[str]) -> tuple[set[str
                 continue
             if entry.get("strategy_id") != original.get("strategy_id"):
                 continue
-            if _line_signature(entry, reverse=False) == wanted:
+            if _line_signature(entry, reverse=False) != wanted:
+                continue
+            if partner_sequence_best is None or partner_sequence < partner_sequence_best:
                 partner_id = entry_id
-                break
-        if partner_id is None:
+                partner_sequence_best = partner_sequence
+                partner_tie = False
+            elif partner_sequence == partner_sequence_best:
+                partner_tie = True
+        if partner_id is None or partner_tie:
             continue
         paired.add(original_id)
         paired.add(partner_id)
@@ -365,6 +372,25 @@ def _linked_reversal_ids(fixture: dict, repeated_ids: set[str]) -> tuple[set[str
         used.add(original_id)
         used.add(partner_id)
     return paired, mirrors
+
+
+def _causal_key(entry: dict) -> tuple[str, str] | None:
+    """Order or fill that a reserve belongs to.
+
+    An entry that names both is ambiguous and matches nothing. Pairing
+    then fails closed instead of borrowing the other posting.
+    """
+    fill_id = entry.get("fill_id")
+    order_id = entry.get("order_id")
+    has_fill = isinstance(fill_id, str) and bool(fill_id)
+    has_order = isinstance(order_id, str) and bool(order_id)
+    if has_fill and has_order:
+        return None
+    if has_fill:
+        return ("fill", fill_id)
+    if has_order:
+        return ("order", order_id)
+    return ("bare", "")
 
 
 def _order_level_reserve(entry: dict) -> bool:
@@ -384,9 +410,12 @@ def _posted_correction_facts(fixture: dict) -> tuple[set[str], set[str], set[str
     Support is three journal entries on that instrument, in sequence order:
     the original, a later exact reversal, and a still later replacement.
     ``cause`` is the original reason. The reversal keeps the original
-    ``strategy_id``. An order-level reserve also keeps that ``order_id``
-    on the reversal and on the replacement, so another order's posting is
-    not this correction. Each reversal and each replacement is used once.
+    ``strategy_id`` and the same order or the same fill. A fill-linked
+    reserve cannot replace an order reserve, and the reverse is not a
+    pair either. Corrections are matched by original sequence, not by
+    their row order. The earliest later reversal and the earliest still
+    later replacement win. Two candidates at one sequence are ambiguous
+    and do not pair. Each reversal and each replacement is used once.
     Lines on the original post only that instrument, so a bare checkpoint
     id does not qualify. The reversal id is exempted only after that
     replacement is present, and then it may post the swapped sides of a
@@ -409,7 +438,24 @@ def _posted_correction_facts(fixture: dict) -> tuple[set[str], set[str], set[str
         entry_id = entry.get("entry_id")
         if isinstance(entry_id, str) and entry_id not in repeated and entry_id not in by_id:
             by_id[entry_id] = entry
-    for item in fixture.get("corrections", ()):
+    pending: list[tuple[bool, int, str, int, dict]] = []
+    for index, item in enumerate(fixture.get("corrections", ())):
+        if not isinstance(item, dict):
+            continue
+        named = item.get("reverses_entry_id")
+        original_row = by_id.get(named) if isinstance(named, str) else None
+        original_sequence_key = (
+            _entry_sequence(original_row) if isinstance(original_row, dict) else None
+        )
+        pending.append((
+            original_sequence_key is None,
+            original_sequence_key if original_sequence_key is not None else 0,
+            named if isinstance(named, str) else "",
+            index,
+            item,
+        ))
+    pending.sort()
+    for _missing, _sequence_key, _named, _index, item in pending:
         instrument_id = item.get("instrument_id")
         cause = item.get("cause")
         original_id = item.get("reverses_entry_id")
@@ -430,8 +476,10 @@ def _posted_correction_facts(fixture: dict) -> tuple[set[str], set[str], set[str
         if original_sequence is None:
             continue
         wanted = _line_signature(original, reverse=True)
+        original_key = _causal_key(original)
         reversal = None
         reversal_sequence = None
+        reversal_tie = False
         for entry in journal:
             if not isinstance(entry, dict):
                 continue
@@ -450,22 +498,24 @@ def _posted_correction_facts(fixture: dict) -> tuple[set[str], set[str], set[str
                 continue
             if entry.get("strategy_id") != original.get("strategy_id"):
                 continue
-            if (
-                _order_level_reserve(original)
-                and entry.get("order_id") != original.get("order_id")
-            ):
+            if _causal_key(entry) != original_key:
                 continue
             if _line_signature(entry, reverse=False) != wanted:
                 continue
             if reversal_sequence is None or sequence < reversal_sequence:
                 reversal = entry
                 reversal_sequence = sequence
-        if reversal is None or reversal_sequence is None:
+                reversal_tie = False
+            elif sequence == reversal_sequence:
+                reversal_tie = True
+        if reversal is None or reversal_sequence is None or reversal_tie:
             continue
         reversal_id = reversal.get("entry_id")
         if not isinstance(reversal_id, str):
             continue
         replacement = None
+        replacement_sequence = None
+        replacement_tie = False
         for entry in journal:
             if not isinstance(entry, dict):
                 continue
@@ -482,17 +532,18 @@ def _posted_correction_facts(fixture: dict) -> tuple[set[str], set[str], set[str
             sequence = _entry_sequence(entry)
             if sequence is None or sequence <= reversal_sequence:
                 continue
-            if _order_level_reserve(original) and not (
-                _order_level_reserve(entry)
-                and entry.get("order_id") == original.get("order_id")
-            ):
+            if _causal_key(entry) != original_key:
                 continue
             signature = _line_signature(entry, reverse=False)
             if not _signature_positive(signature) or signature == wanted:
                 continue
-            replacement = entry
-            break
-        if replacement is None:
+            if replacement_sequence is None or sequence < replacement_sequence:
+                replacement = entry
+                replacement_sequence = sequence
+                replacement_tie = False
+            elif sequence == replacement_sequence:
+                replacement_tie = True
+        if replacement is None or replacement_tie:
             continue
         mirrors.add(reversal_id)
         supported.add(instrument_id)
@@ -983,6 +1034,67 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             if owned > reserved_end.get(instrument, 0):
                 failures.add("balance_mismatch")
 
+    def _apply_collateral_posting(
+        entry: dict,
+        order_ref: object,
+        fill_ref: object,
+        groups: dict[str, list[tuple[str, int]]],
+    ) -> None:
+        """Apply one entry's collateral as a single posting.
+
+        Line order inside the entry is not a clock. Both a debit and a
+        credit for one instrument are ambiguous and fail closed. The net
+        of one direction is what the hold, the created total, and the
+        reserved balance see.
+        """
+        if not groups:
+            return
+        for sides in groups.values():
+            if any(side == "dr" for side, _amount in sides) and any(
+                side == "cr" for side, _amount in sides
+            ):
+                failures.add("balance_mismatch")
+        tracks_order = (
+            order_ref is not None
+            and fill_ref is None
+            and entry["reason"] in {"reserve_collateral", "void_unwind", "settlement_payout"}
+        )
+        order_delta = 0
+        for instrument_id, sides in groups.items():
+            delta = 0
+            for side, amount in sides:
+                delta += amount if side == "dr" else -amount
+            if tracks_order:
+                order_delta += delta
+            reserved_end[instrument_id] = reserved_end.get(instrument_id, 0) + delta
+            if reserved_end[instrument_id] < 0:
+                failures.add("balance_mismatch")
+            settled_seq = settlement_seq.get(instrument_id)
+            if entry["reason"] != "settlement_payout" and (
+                settled_seq is None or entry["sequence"] < settled_seq
+            ):
+                reserved_presettle[instrument_id] = (
+                    reserved_presettle.get(instrument_id, 0) + delta
+                )
+        if tracks_order:
+            order_reserve_total[order_ref] = (
+                order_reserve_total.get(order_ref, 0) + order_delta
+            )
+            if (
+                entry["reason"] == "reserve_collateral"
+                and order_delta > 0
+                and entry.get("entry_id") not in reversed_order_reserves
+            ):
+                order_created[order_ref] = order_created.get(order_ref, 0) + order_delta
+            available = order_hold.get(order_ref, 0)
+            if order_delta < 0 and -order_delta > available:
+                failures.add("balance_mismatch")
+            order_hold[order_ref] = available + order_delta
+            order_collateral_events.setdefault(order_ref, []).append(
+                (entry["sequence"], order_delta)
+            )
+        _hold_must_stay_covered()
+
     for entry in sorted(fixture["journal"], key=lambda item: item["sequence"]):
         debits = 0
         credits = 0
@@ -1119,6 +1231,7 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                     failures.add("settlement_unreconciled")
         premium_delta = 0
         fee_delta = 0
+        collateral_sides: dict[str, list[tuple[str, int]]] = {}
         for line in entry["lines"]:
             amount = _line_amount(line, failures)
             if line["instrument_id"] not in known_instruments:
@@ -1155,57 +1268,16 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                     )
             elif account == "collateral_reserved":
                 collateral += amount if side == "dr" else -amount
-                collateral_delta = amount if side == "dr" else -amount
-                if (
-                    order_ref is not None
-                    and fill_ref is None
-                    and entry["reason"] in {"reserve_collateral", "void_unwind", "settlement_payout"}
-                ):
-                    order_reserve_total[order_ref] = (
-                        order_reserve_total.get(order_ref, 0) + collateral_delta
-                    )
-                    if (
-                        entry["reason"] == "reserve_collateral"
-                        and collateral_delta > 0
-                        and entry.get("entry_id") not in reversed_order_reserves
-                    ):
-                        # A validated correction already replaced this debit.
-                        # Counting it again with the replacement doubles the
-                        # reserve that funded the fill.
-                        order_created[order_ref] = (
-                            order_created.get(order_ref, 0) + collateral_delta
-                        )
-                    available = order_hold.get(order_ref, 0)
-                    if collateral_delta < 0 and -collateral_delta > available:
-                        failures.add("balance_mismatch")
-                    order_hold[order_ref] = available + collateral_delta
-                    order_collateral_events.setdefault(order_ref, []).append(
-                        (entry["sequence"], collateral_delta)
-                    )
-                reserved_end[line["instrument_id"]] = (
-                    reserved_end.get(line["instrument_id"], 0) + collateral_delta
-                )
-                if reserved_end[line["instrument_id"]] < 0:
-                    # A later reserve cannot fund a credit that already
-                    # released collateral this instrument did not hold.
-                    failures.add("balance_mismatch")
-                # An unnamed credit does not reduce the hold, so a later
-                # reserve must not be what puts this posting back in range.
-                _hold_must_stay_covered()
-                settled_seq = settlement_seq.get(line["instrument_id"])
-                if entry["reason"] != "settlement_payout" and (
-                    settled_seq is None or entry["sequence"] < settled_seq
-                ):
-                    reserved_presettle[line["instrument_id"]] = (
-                        reserved_presettle.get(line["instrument_id"], 0) + collateral_delta
-                    )
+                instrument_id = line["instrument_id"]
+                if isinstance(instrument_id, str):
+                    collateral_sides.setdefault(instrument_id, []).append((side, amount))
                 counts_settlement = (
                     entry["reason"] == "settlement_payout"
                     and entry.get("entry_id") not in linked_reversals
                 )
                 if counts_settlement and side == "cr":
-                    settlement_collateral_by[line["instrument_id"]] = (
-                        settlement_collateral_by.get(line["instrument_id"], 0) + amount
+                    settlement_collateral_by[instrument_id] = (
+                        settlement_collateral_by.get(instrument_id, 0) + amount
                     )
                 if entry["reason"] not in {"reserve_collateral", "settlement_payout", "void_unwind"}:
                     failures.add("balance_mismatch")
@@ -1243,6 +1315,7 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                     failures.add("balance_mismatch")
             else:
                 failures.add("schema_invalid")
+        _apply_collateral_posting(entry, order_ref, fill_ref, collateral_sides)
         if fill_ref is not None:
             posted_premium[fill_ref] = posted_premium.get(fill_ref, 0) + premium_delta
             posted_fees[fill_ref] = posted_fees.get(fill_ref, 0) + fee_delta
