@@ -125,15 +125,18 @@ class _StampedIntent:
         return self._real(op, refs=refs, payload=payload)
 
 
-def _arm_submission_token(st, token: str, order_or_id) -> None:
+def _arm_submission_token(st, token: str, order_or_id, *, approval_id=None) -> None:
     with _STAMP_LOCK:
         current = st.audit.intent
         if not isinstance(current, _StampedIntent):
             current = _StampedIntent(current)
             st.audit.intent = current
-    if hasattr(order_or_id, "id") and hasattr(order_or_id, "approval_id"):
+    if hasattr(order_or_id, "id"):
         order_id = order_or_id.id
-        approval_id = order_or_id.approval_id
+        # Production births leave the row empty until the broker ack. The
+        # submit argument is the approval this intent will name.
+        if type(approval_id) is not str or not approval_id:
+            approval_id = getattr(order_or_id, "approval_id", None)
         risk_id = getattr(order_or_id, "risk_decision_id", None)
     else:
         order_id = order_or_id
@@ -266,6 +269,23 @@ def _guarded_submit(gateway, captured):
         if failure is not None:
             stage, _event, reason = failure
             raise ProfileRefused(stage, reason)
+        if (
+            isinstance(canonical, dict)
+            and str(canonical.get("order_type") or "").strip().lower() == "market"
+        ):
+            from brokers.authority_profiles import (
+                _collar_market_submission,
+                _reserved_notional,
+            )
+
+            market, quote_now = _state_quote(gateway)
+            canonical = _collar_market_submission(
+                authority_kwargs["order"],
+                canonical,
+                market=market,
+                now=quote_now,
+                reserved=_reserved_notional(store, client_id),
+            )
         return captured(canonical)
 
     return submit_order
@@ -298,13 +318,10 @@ class _AdmittedPaperClient:
         setattr(object.__getattribute__(self, "_real"), name, value)
 
 
-def _owned_transport(http):
-    """A new transport. The caller's transport object is not reused."""
+def _owned_transport(_http):
+    """A fresh pool. The caller's transport and its handler are never reused."""
     import httpx
 
-    handler = getattr(http._transport, "handler", None)
-    if callable(handler):
-        return httpx.MockTransport(handler)
     try:
         return httpx.HTTPTransport()
     except Exception:
@@ -315,10 +332,9 @@ def _owned_http_session(http):
     """A private HTTP session for this gateway.
 
     The caller's ``httpx.Client`` stays shared with them. This session gets
-    its own transport, built at init from the handler or a fresh connection
-    pool. Event hooks, proxy env, and a later mutation of the caller's
-    transport cannot move this session. The secret is not copied into the
-    profile store.
+    its own connection pool. The caller's handler, event hooks, and proxy env
+    are not copied. If the pool cannot be built, the caller is not a fallback.
+    The secret is not copied into the profile store.
     """
     import httpx
 
@@ -388,14 +404,33 @@ def _capture_send(client):
         for key, value in headers.items()
         if type(key) is str and type(value) is str
     }
-    session, owned = _owned_http_session(getattr(client, "_client", None))
+    import httpx
+
+    from brokers.authority_profiles import ProfileRefused
+
+    http = getattr(client, "_client", None)
+    session, owned = _owned_http_session(http)
+    # A real HTTP client with no owned pool must not fall back to that client.
+    # A test double with no HTTP client keeps the pinned request function.
+    if isinstance(http, httpx.Client) and (session is None or owned is None):
+        def unavailable(_canonical):
+            raise ProfileRefused(
+                "transport", "owned paper transport could not be built"
+            )
+
+        def unavailable_info(*_args, **_kwargs):
+            raise ProfileRefused(
+                "transport", "owned paper transport could not be built"
+            )
+
+        return unavailable, unavailable_info, None
 
     class _Pin:
         pass
 
     pin = _Pin()
     pin._headers = dict(snap_headers)
-    pin._client = session if session is not None else getattr(client, "_client", None)
+    pin._client = session
 
     def call(method, base_url, path, *, json=None, params=None):
         if isinstance(base_url, str) and "data.alpaca.markets" in base_url:
@@ -801,7 +836,10 @@ class PaperOrderGateway(PaperExecutionGateway):
                 st.safety_admission_lock = wrapper
             open_before = set(st.audit.unresolved_intents())
             token = secrets.token_urlsafe(16)
-            _arm_submission_token(st, token, order)
+            approval = kwargs.get("approval")
+            _arm_submission_token(
+                st, token, order, approval_id=getattr(approval, "id", None),
+            )
             try:
                 try:
                     return super().submit(order, **kwargs)

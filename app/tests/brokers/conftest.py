@@ -83,10 +83,10 @@ class Scenario:
 
 
 def build_scenario(st, *, mode=Mode.review_live, broker=None, gateway=None,
-                   qty="10", order_type="limit", limit_price="150", notional="1500",
-                   consumed=False, risk_decision_state="approved",
+                   qty="10", side="buy", order_type="limit", limit_price="150",
+                   notional="1500", consumed=False, risk_decision_state="approved",
                    execution_verdict=None,
-                   mint=True) -> Scenario:
+                   mint=True, bind_approval=True) -> Scenario:
     """Assemble a fully-valid submit scenario. Individual tests mutate ONE field to prove each
     gate independently."""
     clk = st.clock
@@ -109,7 +109,7 @@ def build_scenario(st, *, mode=Mode.review_live, broker=None, gateway=None,
         risk_payload["execution_verdict"] = execution_verdict
     st.audit.record_state_change(rd, "risk_decision", actor="risk", payload=risk_payload)
 
-    canon = canonical_order_tuple(symbol="AAPL", side="buy", qty=qty, order_type=order_type,
+    canon = canonical_order_tuple(symbol="AAPL", side=side, qty=qty, order_type=order_type,
                                   limit_price=limit_price, tif="day")
     h = order_tuple_hash(canon)
 
@@ -124,8 +124,11 @@ def build_scenario(st, *, mode=Mode.review_live, broker=None, gateway=None,
                                  payload={"decision": "approve", "proposal_id": "p1",
                                           "risk_decision_id": rd.id, "order_tuple_hash": h})
 
-    order = create_order(st, proposal_id="p1", risk_decision_id=rd.id, approval_id=appr.id,
-                         account="paper", symbol="AAPL", side="buy", qty=qty,
+    # Production births leave approval_id unset until the broker ack. Tests that
+    # recover a landed order pass bind_approval=False so they match that row.
+    order = create_order(st, proposal_id="p1", risk_decision_id=rd.id,
+                         approval_id=appr.id if bind_approval else None,
+                         account="paper", symbol="AAPL", side=side, qty=qty,
                          order_type=order_type, limit_price=limit_price, tif="day",
                          notional=notional, order_tuple_hash=h, actor="claude")
 

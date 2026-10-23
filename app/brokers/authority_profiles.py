@@ -29,7 +29,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from pathlib import Path
 from typing import Iterator, Mapping
 
@@ -1956,6 +1956,73 @@ def _tuple_notional(order, *, market=None, now=None) -> Decimal:
     return _parse_money(product, code="notional")
 
 
+def _protective_unit(price: Decimal) -> Decimal:
+    """The fill cap for one share. Rounded down so it cannot exceed the buffer."""
+    unit = (price * (Decimal("1") + MARKET_REFERENCE_BUFFER)).quantize(
+        _MONEY, rounding=ROUND_DOWN
+    )
+    if not unit.is_finite() or unit <= 0:
+        raise ProfileRefused(
+            "quote_unavailable", "market order protective limit is missing"
+        )
+    return unit
+
+
+def _reserved_notional(store, client_order_id: str) -> Decimal:
+    with store._txn() as conn:
+        row = conn.execute(
+            "SELECT notional FROM reservations WHERE client_order_id = ?",
+            (client_order_id,),
+        ).fetchone()
+    if row is None:
+        raise ProfileRefused(
+            "notional_mismatch", "order notional does not match the reservation"
+        )
+    return _parse_money(row["notional"], code="notional")
+
+
+def _collar_market_submission(order, canonical, *, market, now, reserved: Decimal) -> dict:
+    """Copy a market payload into a limit at the buffered touch.
+
+    Exposure sizing is not a fill cap. The broker payload carries the cap.
+    The local order tuple, its hash, and the approval stay a market order.
+    One quote read supplies both this exposure check and the limit. A quote
+    that no longer matches the reservation refuses before the send.
+    """
+    if not isinstance(canonical, dict):
+        raise ProfileRefused(
+            "notional_mismatch", "order notional does not match the reservation"
+        )
+    if str(canonical.get("order_type") or "").strip().lower() != "market":
+        return canonical
+    price = _fresh_reference_price(order, market=market, now=now)
+    try:
+        qty = Decimal(str(canonical.get("qty")))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ProfileRefused(
+            "notional_mismatch", "order notional does not match the reservation"
+        ) from exc
+    exposure = _parse_money(
+        (qty * price * (Decimal("1") + MARKET_REFERENCE_BUFFER)).quantize(_MONEY),
+        code="notional",
+    )
+    if exposure != _parse_money(reserved, code="notional"):
+        raise ProfileRefused(
+            "notional_mismatch", "order notional does not match the reservation"
+        )
+    unit = _protective_unit(price)
+    if qty * unit > exposure:
+        raise ProfileRefused(
+            "notional_mismatch", "protective limit exceeds the reserved exposure"
+        )
+    from brokers.order_tuple import _canonical_decimal_str
+
+    collared = dict(canonical)
+    collared["order_type"] = "limit"
+    collared["limit_price"] = _canonical_decimal_str(unit)
+    return collared
+
+
 def _state_quote(gateway):
     """The gateway state's trusted quote source and the state clock's now."""
     st = None if gateway is None else getattr(gateway, "_st", None)
@@ -2521,26 +2588,117 @@ def _approval_consumed_on_chain(st, approval_id: str) -> bool:
     return False
 
 
-def _consume_landed_approval(st, order) -> None:
-    """Burn the persisted approval the way a normal submit does.
+def _signed_submit_approval_ids(st, order_ref: str) -> list[str]:
+    """Approval ids on verified ``order_submit`` intents for this order.
 
-    Accept-then-timeout returns before ``OrderGateway`` reaches that write.
-    Presence recovery has to do it, once, or the same approval can send again.
-    A second recovery that finds the column and the signed record does not
-    append another consumption.
+    The order row stays empty until the broker ack. Recovery must not read it.
+    """
+    audit = None if st is None else getattr(st, "audit", None)
+    verify = None if audit is None else getattr(audit, "verify_entry", None)
+    if audit is None or not callable(verify) or not order_ref:
+        return []
+    found: list[str] = []
+    for row in audit._rows():
+        payload = row.payload or {}
+        if payload.get("_phase") != "intent" or payload.get("_op") != "order_submit":
+            continue
+        refs = row.refs or {}
+        if refs.get("order_id") != order_ref:
+            continue
+        try:
+            signed = verify(row)
+        except Exception:
+            signed = False
+        if not signed:
+            continue
+        approval_id = refs.get("approval_id")
+        if type(approval_id) is not str or not approval_id or approval_id in found:
+            continue
+        found.append(approval_id)
+    return found
+
+
+def _signed_approval_binds(st, approval_id: str, order) -> bool:
+    """True when a verified approve adjudication binds this order."""
+    from sqlalchemy import select
+
+    from orchestrator.state import EVENT_ADJUDICATION
+    from schemas.models.audit_entry import AuditEntry
+
+    proposal_id = getattr(order, "proposal_id", None)
+    risk_id = getattr(order, "risk_decision_id", None)
+    tuple_hash = getattr(order, "order_tuple_hash", None)
+    with st.session_factory() as session:
+        entries = session.execute(
+            select(AuditEntry).where(AuditEntry.event_type == EVENT_ADJUDICATION)
+        ).scalars().all()
+    for entry in entries:
+        if (entry.refs or {}).get("row_id") != approval_id:
+            continue
+        try:
+            signed = st.audit.verify_entry(entry)
+        except Exception:
+            signed = False
+        if not signed:
+            continue
+        payload = entry.payload or {}
+        if (
+            payload.get("decision") == "approve"
+            and payload.get("proposal_id") == proposal_id
+            and payload.get("risk_decision_id") == risk_id
+            and payload.get("order_tuple_hash") == tuple_hash
+        ):
+            return True
+    return False
+
+
+def _consume_landed_approval(st, order) -> None:
+    """Burn the approval named by the verified submit intent.
+
+    Accept-then-timeout returns before ``OrderGateway`` writes
+    ``order.approval_id``. That column is empty for a production birth, so
+    recovery reads the signed intent instead. A row value that disagrees is
+    refused before either approval is consumed. A second recovery that finds
+    the signed consumption does not append another one.
     """
     from orchestrator.state import EVENT_ADJUDICATION
     from schemas.models.approval_record import ApprovalRecord
 
-    approval_id = getattr(order, "approval_id", None)
-    if type(approval_id) is not str or not approval_id:
-        raise ProfileRefused("approval", "landed order has no approval to consume")
+    order_ref = getattr(order, "id", None)
+    approval_ids = _signed_submit_approval_ids(
+        st, "" if order_ref is None else str(order_ref)
+    )
+    if len(approval_ids) != 1:
+        raise ProfileRefused(
+            "approval", "landed order has no single signed approval to consume"
+        )
+    approval_id = approval_ids[0]
+    row_id = getattr(order, "approval_id", None)
+    if type(row_id) is str and row_id and row_id != approval_id:
+        raise ProfileRefused(
+            "approval", "order approval disagrees with the signed submit intent"
+        )
+    if not _signed_approval_binds(st, approval_id, order):
+        raise ProfileRefused(
+            "approval", "signed approval does not bind the landed order"
+        )
     with st.session_factory() as session:
         approval = session.get(ApprovalRecord, approval_id)
         if approval is not None:
             session.expunge(approval)
     if approval is None:
         raise ProfileRefused("approval", "landed order approval is not persisted")
+    if (
+        approval.proposal_id != getattr(order, "proposal_id", None)
+        or approval.risk_decision_id != getattr(order, "risk_decision_id", None)
+        or approval.order_tuple_hash != getattr(order, "order_tuple_hash", None)
+        or approval.user_decision != "approve"
+    ):
+        raise ProfileRefused(
+            "approval", "mutable approval disagrees with the landed order"
+        )
+    if type(row_id) is not str or not row_id:
+        order.approval_id = approval_id
     if bool(approval.single_use_consumed) and _approval_consumed_on_chain(st, approval.id):
         return
     approval.single_use_consumed = True

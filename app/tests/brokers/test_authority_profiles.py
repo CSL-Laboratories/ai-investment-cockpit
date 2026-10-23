@@ -1963,10 +1963,12 @@ def test_claim_fence_refreshes_lease_with_current_clock(tmp_path):
     ) == "clock"
 
 
-def _claimed_paper_scenario(st, tmp_path):
+def _claimed_paper_scenario(st, tmp_path, *, bind_approval=True):
     broker = _CountingPaper()
     gateway = PaperOrderGateway(broker, st=st)
-    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    scenario = build_scenario(
+        st, mode=Mode.paper, broker=broker, gateway=gateway, bind_approval=bind_approval,
+    )
     store = _store(tmp_path)
     now = scenario.clock.now()
     _install(
@@ -3781,7 +3783,10 @@ def test_accept_then_timeout_completes_when_the_broker_has_the_order(st, tmp_pat
 
     broker._client.submit_order = ack_then_timeout
     gateway = PaperOrderGateway(broker, st=st)
-    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    scenario = build_scenario(
+        st, mode=Mode.paper, broker=broker, gateway=gateway, bind_approval=False,
+    )
+    assert scenario.order.approval_id is None
     store = _store(tmp_path, "present.sqlite")
     now = scenario.clock.now()
     _install(
@@ -4548,7 +4553,10 @@ def test_presence_recovery_resolves_intent_and_order_before_complete(st, tmp_pat
 
     broker._client.submit_order = ack_then_timeout
     gateway = PaperOrderGateway(broker, st=st)
-    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    scenario = build_scenario(
+        st, mode=Mode.paper, broker=broker, gateway=gateway, bind_approval=False,
+    )
+    assert scenario.order.approval_id is None
     real_result = st.audit.result
 
     def skip_abort(intent_entry, op, refs=None, payload=None):
@@ -4621,27 +4629,25 @@ def test_failed_arm_restores_reconciled(st, tmp_path):
     assert int(flags["reconciled"]) == 1
 
 
-def test_httpx_request_hook_cannot_redirect_the_secret(st, tmp_path):
+def test_httpx_request_hook_cannot_redirect_the_secret(st, tmp_path, monkeypatch):
     """A request hook added during risk_recheck must not carry the secret off the paper host."""
     import httpx
 
     from brokers.alpaca_paper import PAPER_BASE_URL, AlpacaPaperHTTPClient
 
+    caller_seen = []
     seen = []
 
     def handler(request):
-        seen.append((str(request.url), request.headers.get("APCA-API-SECRET-KEY")))
-        return httpx.Response(
-            201,
-            json={
-                "id": "alp-owned",
-                "status": "accepted",
-                "filled_qty": "0",
-                "filled_avg_price": None,
-                "client_order_id": None,
-            },
-        )
+        caller_seen.append((str(request.url), request.headers.get("APCA-API-SECRET-KEY")))
+        return _http_accept("alp-caller")
 
+    def owned_handle(self, request):
+        del self
+        seen.append((str(request.url), request.headers.get("APCA-API-SECRET-KEY")))
+        return _http_accept("alp-owned")
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", owned_handle)
     http = httpx.Client(transport=httpx.MockTransport(handler), timeout=2.0)
     client = AlpacaPaperHTTPClient("key-1", "secret-1", http_client=http)
     broker = AlpacaPaperBroker(client=client)
@@ -4680,6 +4686,7 @@ def test_httpx_request_hook_cannot_redirect_the_secret(st, tmp_path):
     finally:
         http.close()
     assert outcome.ok is True
+    assert caller_seen == []
     assert seen
     assert not any("substitute.invalid" in url for url, _secret in seen)
     assert all(
@@ -4692,6 +4699,7 @@ def test_presence_recovery_consumes_the_approval(st, tmp_path):
     """Accept-then-timeout recovery burns the approval, so a fresh capability cannot resend."""
     from brokers.order_state_machine import create_order
     from schemas.models.approval_record import ApprovalRecord
+    from schemas.models.order import Order
 
     broker = _CountingPaper()
     real_submit = broker._client.submit_order
@@ -4702,7 +4710,10 @@ def test_presence_recovery_consumes_the_approval(st, tmp_path):
 
     broker._client.submit_order = ack_then_timeout
     gateway = PaperOrderGateway(broker, st=st)
-    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    scenario = build_scenario(
+        st, mode=Mode.paper, broker=broker, gateway=gateway, bind_approval=False,
+    )
+    assert scenario.order.approval_id is None
     store = _store(tmp_path, "consume-approval.sqlite")
     now = scenario.clock.now()
     _install(
@@ -4723,7 +4734,10 @@ def test_presence_recovery_consumes_the_approval(st, tmp_path):
     with st.session_factory() as session:
         approval = session.get(ApprovalRecord, scenario.approval.id)
         consumed = None if approval is None else bool(approval.single_use_consumed)
+        landed = session.get(Order, scenario.order.id)
+        landed_approval = None if landed is None else landed.approval_id
     assert consumed is True
+    assert landed_approval == scenario.approval.id
     assert gateway._consumed_on_chain(st, scenario.approval.id) is True
     replay = create_order(
         st, proposal_id=scenario.order.proposal_id,
@@ -5152,7 +5166,7 @@ def test_damaged_version_four_store_is_not_rebuilt(tmp_path):
     assert "reservations" not in names
 
 
-def test_owned_transport_is_not_the_caller_object(st, tmp_path):
+def test_owned_transport_is_not_the_caller_object(st, tmp_path, monkeypatch):
     """Mutating the caller's transport after init cannot redirect the secret."""
     import httpx
 
@@ -5161,20 +5175,15 @@ def test_owned_transport_is_not_the_caller_object(st, tmp_path):
     seen = []
 
     def handler(request):
-        seen.append(("owned", str(request.url), request.headers.get("APCA-API-SECRET-KEY")))
-        body = request.read()
-        del body
-        return httpx.Response(
-            201,
-            json={
-                "id": "alp-owned-transport",
-                "status": "accepted",
-                "filled_qty": "0",
-                "filled_avg_price": None,
-                "client_order_id": None,
-            },
-        )
+        seen.append(("caller", str(request.url), request.headers.get("APCA-API-SECRET-KEY")))
+        return _http_accept("alp-caller-transport")
 
+    def owned_handle(self, request):
+        del self
+        seen.append(("owned", str(request.url), request.headers.get("APCA-API-SECRET-KEY")))
+        return _http_accept("alp-owned-transport")
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", owned_handle)
     http = httpx.Client(transport=httpx.MockTransport(handler), timeout=2.0)
     client = AlpacaPaperHTTPClient("key-1", "secret-1", http_client=http)
     broker = AlpacaPaperBroker(client=client)
@@ -5256,3 +5265,320 @@ def test_submission_token_does_not_depend_on_the_gateway_submit_frame(st):
     open_seqs = set(st.audit.unresolved_intents())
     assert callback.seq in open_seqs
     assert parent.seq not in open_seqs
+
+
+def _http_accept(order_id="alp-owned"):
+    import httpx
+
+    return httpx.Response(
+        201,
+        json={
+            "id": order_id,
+            "status": "accepted",
+            "filled_qty": "0",
+            "filled_avg_price": None,
+            "client_order_id": None,
+        },
+    )
+
+
+def _armed_http_submit(st, tmp_path, client, gateway, name):
+    scenario = build_scenario(st, mode=Mode.paper, broker=gateway._broker, gateway=gateway)
+    store = _store(tmp_path, f"{name}.sqlite")
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    store.authorize(
+        "profile-b", action="submit_paper", client_order_id=name,
+        notional=Decimal(str(scenario.order.notional)), actor="stop-owner", now=now,
+        order_ref=str(scenario.order.id),
+    )
+    ticket = store.claim_handoff(name, now=now, awaiting_submit=True)
+    _arm(gateway, store, name, ticket.generation)
+    return scenario, store
+
+
+def test_caller_transport_handler_never_sees_the_secret(st, tmp_path, monkeypatch):
+    """4359992101: an owned session must not call the caller's transport handler."""
+    import httpx
+
+    from brokers.alpaca_paper import PAPER_BASE_URL, AlpacaPaperHTTPClient
+
+    caller_seen = []
+
+    def handler(request):
+        caller_seen.append(request.headers.get("APCA-API-SECRET-KEY"))
+        return _http_accept("alp-caller-handler")
+
+    def owned_handle(self, request):
+        del self
+        assert str(request.url).startswith(PAPER_BASE_URL)
+        return _http_accept("alp-owned-pool")
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", owned_handle)
+    http = httpx.Client(transport=httpx.MockTransport(handler), timeout=2.0)
+    client = AlpacaPaperHTTPClient("key-1", "secret-1", http_client=http)
+    broker = AlpacaPaperBroker(client=client)
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario, store = _armed_http_submit(st, tmp_path, client, gateway, "handler-secret")
+    try:
+        outcome = gateway.submit(scenario.order, **_paper_submit_kwargs(scenario))
+    finally:
+        http.close()
+    assert caller_seen == []
+    assert outcome.ok is True
+    assert b"secret-1" not in Path(store.path).read_bytes()
+
+
+def test_owned_transport_failure_does_not_use_the_caller(st, tmp_path, monkeypatch):
+    """4359992101: a failed owned transport refuses. It does not fall back to the caller."""
+    import httpx
+
+    from brokers.alpaca_paper import AlpacaPaperHTTPClient
+
+    caller_seen = []
+
+    def handler(request):
+        caller_seen.append(request.headers.get("APCA-API-SECRET-KEY"))
+        return _http_accept("alp-fallback")
+
+    http = httpx.Client(transport=httpx.MockTransport(handler), timeout=2.0)
+
+    def boom(self, *args, **kwargs):
+        del self, args, kwargs
+        raise RuntimeError("owned pool unavailable")
+
+    monkeypatch.setattr(httpx.HTTPTransport, "__init__", boom)
+    client = AlpacaPaperHTTPClient("key-1", "secret-1", http_client=http)
+    broker = AlpacaPaperBroker(client=client)
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario, store = _armed_http_submit(st, tmp_path, client, gateway, "transport-fail")
+    try:
+        outcome = gateway.submit(scenario.order, **_paper_submit_kwargs(scenario))
+    finally:
+        http.close()
+    assert outcome.ok is False
+    assert "transport" in outcome.reason
+    assert caller_seen == []
+    assert b"secret-1" not in Path(store.path).read_bytes()
+
+
+def test_market_buy_submits_a_protective_limit_at_the_buffered_ask(st, tmp_path):
+    """The 5% buffer is also the fill cap. A market buy is sent as that limit."""
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st, pending_exposure_cap=Decimal("40"))
+    scenario = _market_buy(st, broker, gateway)
+    birth_hash = scenario.order.order_tuple_hash
+    st.market_data = _TouchQuote("1.40", "1.50")
+    store = _store(tmp_path, "market-collar.sqlite")
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    result = handoff_to_gateway(
+        store, gateway, profile_id="profile-b", action="submit_paper",
+        client_order_id="market-collar", notional=Decimal("15.75"), actor="stop-owner",
+        now=now, submit_args=(scenario.order,),
+        submit_kwargs=_paper_submit_kwargs(scenario), **_PAPER_BINDINGS,
+    )
+    assert getattr(result.outcome, "ok", None) is True
+    assert _sends(broker) == 1
+    sent = broker._client.submitted[-1]
+    assert sent["order_type"] == "limit"
+    assert Decimal(str(sent["limit_price"])) == Decimal("1.57")
+    assert scenario.order.order_type == "market"
+    assert scenario.order.limit_price is None
+    assert scenario.order.order_tuple_hash == birth_hash
+    assert Decimal(str(scenario.order.notional)) == Decimal("1.00")
+
+
+def test_market_sell_submits_a_protective_limit_at_the_buffered_bid(st, tmp_path):
+    """A market sell is sent as a limit at the buffered bid, not as an uncapped market."""
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st, pending_exposure_cap=Decimal("40"))
+    scenario = build_scenario(
+        st, mode=Mode.paper, broker=broker, gateway=gateway, side="sell",
+        qty="10", order_type="market", limit_price=None, notional="1.00",
+    )
+    st.market_data = _TouchQuote("1.40", "1.50")
+    store = _store(tmp_path, "market-sell-collar.sqlite")
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    result = handoff_to_gateway(
+        store, gateway, profile_id="profile-b", action="submit_paper",
+        client_order_id="market-sell-collar", notional=Decimal("14.70"), actor="stop-owner",
+        now=now, submit_args=(scenario.order,),
+        submit_kwargs=_paper_submit_kwargs(scenario), **_PAPER_BINDINGS,
+    )
+    assert getattr(result.outcome, "ok", None) is True
+    sent = broker._client.submitted[-1]
+    assert sent["order_type"] == "limit"
+    assert sent["side"] == "sell"
+    assert Decimal(str(sent["limit_price"])) == Decimal("1.47")
+    assert scenario.order.order_type == "market"
+
+
+def test_quote_change_between_reserve_and_send_refuses(st, tmp_path):
+    """A quote that moves after the reservation does not send at the old exposure."""
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st, pending_exposure_cap=Decimal("40"))
+    scenario = _market_buy(st, broker, gateway)
+    quote = _TouchQuote("1.40", "1.50")
+    st.market_data = quote
+    store = _store(tmp_path, "market-quote-move.sqlite")
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+
+    def risk_recheck(_positions):
+        quote._ask = "2.00"
+        return {"decision": "approved", "failed_checks": []}
+
+    result = handoff_to_gateway(
+        store, gateway, profile_id="profile-b", action="submit_paper",
+        client_order_id="market-quote-move", notional=Decimal("15.75"), actor="stop-owner",
+        now=now, submit_args=(scenario.order,),
+        submit_kwargs=_paper_submit_kwargs(scenario, risk_recheck=risk_recheck),
+        **_PAPER_BINDINGS,
+    )
+    assert _sends(broker) == 0
+    assert getattr(result.outcome, "ok", None) is False
+    assert "notional" in str(getattr(result.outcome, "reason", "")).lower()
+    assert scenario.order.order_type == "market"
+    assert broker._client.submitted == []
+
+
+def test_recovery_ignores_an_unsigned_order_row_approval(st, tmp_path):
+    """4360006561: a row approval planted after birth is not the approval recovery burns."""
+    from core.ids import new_id
+    from orchestrator.state import EVENT_ADJUDICATION
+    from schemas.models.approval_record import ApprovalRecord
+    from schemas.models.order import Order
+
+    broker = _CountingPaper()
+    real_submit = broker._client.submit_order
+
+    def ack_then_timeout(canonical):
+        real_submit(canonical)
+        raise TimeoutError("response lost after accept")
+
+    broker._client.submit_order = ack_then_timeout
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(
+        st, mode=Mode.paper, broker=broker, gateway=gateway, bind_approval=False,
+    )
+    assert scenario.order.approval_id is None
+    other = ApprovalRecord(
+        id=new_id("appr"), proposal_id=scenario.order.proposal_id,
+        risk_decision_id=scenario.risk_decision.id, actor_user_id="lucas",
+        user_decision="approve", surface="discord",
+        order_tuple_hash=scenario.tuple_hash, single_use_consumed=False,
+        decided_at=scenario.clock.now(), created_at=scenario.clock.now(),
+    )
+    st.audit.record_state_change(
+        other, EVENT_ADJUDICATION, actor="lucas",
+        payload={
+            "decision": "approve", "proposal_id": other.proposal_id,
+            "risk_decision_id": other.risk_decision_id,
+            "order_tuple_hash": other.order_tuple_hash,
+        },
+    )
+    with st.session_factory() as session:
+        row = session.get(Order, scenario.order.id)
+        row.approval_id = other.id
+        session.commit()
+    store = _store(tmp_path, "row-approval.sqlite")
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    with pytest.raises(ProfileRefused):
+        handoff_to_gateway(
+            store, gateway, profile_id="profile-b", action="submit_paper",
+            client_order_id="row-approval", notional=Decimal(str(scenario.order.notional)),
+            actor="stop-owner", now=now, submit_args=(scenario.order,),
+            submit_kwargs=_paper_submit_kwargs(scenario), **_PAPER_BINDINGS,
+        )
+    with st.session_factory() as session:
+        planted = session.get(ApprovalRecord, other.id)
+        signed = session.get(ApprovalRecord, scenario.approval.id)
+        planted_consumed = None if planted is None else bool(planted.single_use_consumed)
+        signed_consumed = None if signed is None else bool(signed.single_use_consumed)
+    assert planted_consumed is False
+    assert signed_consumed is False
+    assert _order_state(st, scenario.order.id) != "submitted"
+    flags = _reservation_flags(store.path, "row-approval")
+    assert flags["handoff_state"] != "completed"
+
+
+def test_null_order_approval_still_stamps_the_submission_intent(st, tmp_path):
+    """Production births leave approval_id null. The timeout still closes that submit intent."""
+    scenario, store, ticket, broker = _claimed_paper_scenario(
+        st, tmp_path, bind_approval=False,
+    )
+    assert scenario.order.approval_id is None
+
+    class _Held:
+        def acquire(self, blocking=True, timeout=-1):
+            del blocking
+            if timeout is None or timeout < 0:
+                return False
+            return False
+
+        def release(self):
+            return None
+
+        def __enter__(self):
+            if not self.acquire():
+                raise RuntimeError("held")
+            return self
+
+        def __exit__(self, *_args):
+            self.release()
+            return False
+
+    scenario.st.safety_admission_lock = _Held()
+    _arm(scenario.gateway, store, "fence-1", ticket.generation)
+    outcome = scenario.gateway.submit(
+        scenario.order, **_paper_submit_kwargs(scenario),
+    )
+    assert (outcome.ok, outcome.stage) == (False, "admission_lock")
+    assert _sends(broker) == 0
+    open_seqs = set(st.audit.unresolved_intents())
+    submission = [
+        row.seq for row in st.audit._rows()
+        if (row.payload or {}).get("_phase") == "intent"
+        and (row.payload or {}).get("_op") == "order_submit"
+        and (row.refs or {}).get("approval_id") == scenario.approval.id
+    ]
+    assert len(submission) == 1
+    assert submission[0] not in open_seqs
