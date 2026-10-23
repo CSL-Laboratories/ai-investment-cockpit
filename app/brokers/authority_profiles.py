@@ -1714,6 +1714,39 @@ def _fence_now(gateway, kwargs: Mapping):
     return current
 
 
+def _require_authoritative_chain(st) -> None:
+    """Trust an absent submitted transition only after the whole chain verifies.
+
+    A truncated or unreadable ledger must not look like "not submitted". When
+    an external anchor is configured, that witness has to be present and match.
+    """
+    try:
+        result = st.audit.verify_chain()
+    except Exception as exc:
+        raise ProfileRefused("chain_unreadable", "signed chain could not be read") from exc
+    if not getattr(result, "ok", False):
+        raise ProfileRefused("chain_unreadable", "signed chain did not verify")
+    anchor_store = getattr(st, "anchor_store", None)
+    if anchor_store is None:
+        return
+    try:
+        anchor = anchor_store.latest()
+    except Exception as exc:
+        raise ProfileRefused(
+            "chain_unreadable", "external anchor could not be read"
+        ) from exc
+    if anchor is None:
+        raise ProfileRefused("chain_unreadable", "required external anchor is unavailable")
+    try:
+        anchored = st.audit.verify_against_anchor(anchor[0], anchor[1])
+    except Exception as exc:
+        raise ProfileRefused(
+            "chain_unreadable", "signed chain could not be checked against its anchor"
+        ) from exc
+    if not getattr(anchored, "ok", False):
+        raise ProfileRefused("chain_unreadable", "signed chain does not match its anchor")
+
+
 def _gateway_submitted(gateway, order_ref: str | None, ladder) -> bool:
     """Read signed evidence using class implementations, never instance overrides."""
     from brokers.gateway import OrderGateway
@@ -1732,14 +1765,14 @@ def _gateway_submitted(gateway, order_ref: str | None, ladder) -> bool:
         ) from exc
     if type(submitted) is not bool:
         raise ProfileRefused("gateway_identity", "gateway submit verdict is malformed")
+    if submitted is False:
+        _require_authoritative_chain(st)
     return submitted
 
 
 def _chain_submitted(gateway, order_ref: str, kwargs: Mapping) -> bool:
-    try:
-        return _gateway_submitted(gateway, order_ref, kwargs.get("ladder"))
-    except Exception:
-        return False
+    """Return signed submission evidence. An unreadable chain is not a negative."""
+    return _gateway_submitted(gateway, order_ref, kwargs.get("ladder"))
 
 
 def _settle_completed(store, gateway, client_order_id, order_ref, generation, kwargs, now):
@@ -1747,13 +1780,22 @@ def _settle_completed(store, gateway, client_order_id, order_ref, generation, kw
 
     If a concurrent reconcile re-owned the claim while this submit was in
     flight, the order may still have landed. The durable chain is the truth.
+    An unreadable chain leaves the row in progress and propagates.
     """
     try:
         store.complete_handoff(
             client_order_id, generation=generation, gateway=gateway, ladder=kwargs.get("ladder")
         )
     except ProfileRefused as exc:
-        if exc.code != "stale_claim" or not _chain_submitted(gateway, order_ref, kwargs):
+        if exc.code != "stale_claim":
+            raise
+        try:
+            submitted = _chain_submitted(gateway, order_ref, kwargs)
+        except ProfileRefused as chain_exc:
+            if chain_exc.code in {"chain_unreadable", "gateway_identity"}:
+                raise
+            raise
+        if not submitted:
             raise
         _record_landed(store, gateway, client_order_id, order_ref, kwargs, now)
 
@@ -1762,19 +1804,46 @@ def _settle_failed(store, gateway, client_order_id, order_ref, generation, kwarg
     """Record a refusal only if the order did not already land on the chain.
 
     Returns True when the signed chain shows the order already submitted (the
-    reservation is then completed), so callers do not report a refusal.
+    reservation is then completed), so callers do not report a refusal. An
+    unreadable or incomplete chain leaves the row in progress: do not call
+    ``fail_handoff``, and do not free the client id.
     """
-    if _chain_submitted(gateway, order_ref, kwargs):
+    try:
+        submitted = _chain_submitted(gateway, order_ref, kwargs)
+    except ProfileRefused as exc:
+        if exc.code in {"chain_unreadable", "gateway_identity"}:
+            raise
+        raise
+    if submitted:
         _record_landed(store, gateway, client_order_id, order_ref, kwargs, now)
         return True
     store.fail_handoff(client_order_id, generation=generation)
     return False
 
 
+def _stored_recovery_owner(store, client_order_id: str) -> str:
+    """The installed profile's recovery owner, for the internal landed-record path."""
+    with store._txn() as conn:
+        row = conn.execute(
+            """
+            SELECT profiles.recovery_owner AS recovery_owner
+            FROM reservations
+            JOIN profiles ON profiles.profile_id = reservations.profile_id
+            WHERE reservations.client_order_id = ?
+            """,
+            (client_order_id,),
+        ).fetchone()
+    owner = None if row is None else row["recovery_owner"]
+    if type(owner) is not str:
+        raise ProfileRefused("store", "recovery owner is missing")
+    return owner
+
+
 def _record_landed(store, gateway, client_order_id, order_ref, kwargs, now) -> None:
     try:
         store._reconcile_handoff(
             client_order_id, order_ref=order_ref, now=now,
+            actor=_stored_recovery_owner(store, client_order_id),
             gateway=gateway, ladder=kwargs.get("ladder"),
         )
     except ProfileRefused:

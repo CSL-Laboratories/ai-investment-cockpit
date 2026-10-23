@@ -1303,7 +1303,10 @@ def test_claim_ticket_cannot_complete_without_signed_submission(
             {"ladder": kwargs.get("ladder")}, now,
         )
 
-    assert _refuse(complete) == "gateway_identity"
+    # A tampered submitted entry fails the whole chain. That is not a clean
+    # "not submitted" lookup, so completion refuses chain_unreadable.
+    expected = "chain_unreadable" if evidence == "invalid-signature" else "gateway_identity"
+    assert _refuse(complete) == expected
     row = _handoff_row(store.path, "completion-1")
     assert (row["handoff_state"], row["handoff_done"]) == ("in_progress", 0)
     # Completion refusal must not turn a future handoff into a completed replay.
@@ -2105,3 +2108,78 @@ def test_claim_fence_cannot_swap_transport_or_paper_scope(st, tmp_path, mutation
     assert broker.calls == swapped.calls == 0
     assert st.audit.unresolved_intents() == []
     assert st.audit.verify_chain().ok
+
+
+def test_unreadable_chain_after_refused_submit_stays_in_progress(st, tmp_path, monkeypatch):
+    """An unreadable chain after a non-ok submit is not "not submitted".
+
+    The row stays in progress, the client id is not reusable, and the
+    exception propagates. ``fail_handoff`` must not run.
+    """
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway, mint=False)
+    path = tmp_path / "unread.sqlite"
+    store = AuthorityProfileStore(path)
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+
+    def _unreadable(*_args, **_kwargs):
+        raise ProfileRefused("chain_unreadable", "signed chain did not verify")
+
+    monkeypatch.setattr("brokers.authority_profiles._gateway_submitted", _unreadable)
+    call = dict(
+        profile_id="profile-b", action="submit_paper", client_order_id="unread-1",
+        notional=Decimal(str(scenario.order.notional)), actor="stop-owner", now=now,
+        submit_args=(scenario.order,), submit_kwargs=_paper_submit_kwargs(scenario),
+        model_output=_VALID_MODEL, **_PAPER_BINDINGS,
+    )
+    with pytest.raises(ProfileRefused) as exc:
+        handoff_to_gateway(store, gateway, **call)
+    assert exc.value.code == "chain_unreadable"
+    row = _handoff_row(path, "unread-1")
+    assert (row["handoff_state"], row["handoff_done"]) == ("in_progress", 0)
+    assert _refuse(lambda: handoff_to_gateway(store, gateway, **call)) == "handoff_in_progress"
+
+
+def test_truncated_chain_is_not_a_not_submitted_verdict(st):
+    """Deleting a signed tail must not let a negative lookup return False."""
+    from sqlalchemy import delete, select
+
+    from brokers.authority_profiles import _gateway_submitted
+    from schemas.models.audit_entry import AuditEntry
+
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway, mint=False)
+    with st.session_factory() as session, session.begin():
+        last = session.execute(
+            select(AuditEntry).order_by(AuditEntry.seq.desc()).limit(1)
+        ).scalar_one()
+        session.execute(delete(AuditEntry).where(AuditEntry.id == last.id))
+    assert _refuse(
+        lambda: _gateway_submitted(gateway, "missing-order", scenario.ladder)
+    ) == "chain_unreadable"
+
+
+def test_configured_anchor_must_be_present_before_a_negative_lookup(st):
+    from types import SimpleNamespace
+
+    from brokers.authority_profiles import _gateway_submitted
+
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway, mint=False)
+    st.anchor_store = SimpleNamespace(latest=lambda: None)
+    assert _refuse(
+        lambda: _gateway_submitted(gateway, "missing-order", scenario.ladder)
+    ) == "chain_unreadable"
+
+
