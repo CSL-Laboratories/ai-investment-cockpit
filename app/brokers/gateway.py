@@ -1252,7 +1252,21 @@ class OrderGateway:
                         actor=producing_runtime,
                         resolved_hash=resolved_hash,
                     )
-                lease_remaining_s = _lease_remaining_s(value)
+                try:
+                    lease_remaining_s = _lease_remaining_s(value)
+                except BaseException as exc:  # noqa: BLE001 - cover the intent, then refuse or re-raise
+                    outcome = self._abort_after_intent(
+                        st,
+                        order,
+                        intent,
+                        stage="claim_fence",
+                        reason=f"claim fence lease metadata unreadable: {exc}",
+                        actor=producing_runtime,
+                        resolved_hash=resolved_hash,
+                    )
+                    if not isinstance(exc, Exception):
+                        raise
+                    return outcome
                 return None
 
             if claim_fence is not None:
@@ -1375,10 +1389,10 @@ class OrderGateway:
                     )
                     if refused is not None:
                         return refused
-                    waited = time.monotonic() - started
                     refused = _refresh_validity()
                     if refused is not None:
                         return refused
+                    waited = time.monotonic() - started
                     limit = _ADMISSION_WAIT_BUDGET_S
                     if lease_remaining_s is not None:
                         limit = min(limit, lease_remaining_s)
