@@ -120,6 +120,10 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
    explicitly assigned by a human asks for it; bots mark ready with their own
    identity, never `GITHUB_TOKEN`.
 
+Before writing on a shared PR branch, check the current Linear owner/claim and
+active writers. For a confirmed collision, follow the
+[per-PR pause procedure](docs/ci-runbook.md#5-stop-or-roll-back-automation).
+
 ## Hard rules
 - Never put an LLM on the order or risk path.
 - Never move live capital or unlock an auto rung without its gate.
@@ -173,6 +177,8 @@ decision.
   `docs/research/agent-swarm-rebase-2026-09-14.md`.
 
 ## Review loop
+
+For writer collisions, use the [pause and resumption checklist](docs/ci-runbook.md#5-stop-or-roll-back-automation).
 
 Devin reviews → Claude fixes (`claude.yml`) → stuck threads are picked up by
 [`.github/workflows/stuck-thread-watch.yml`](.github/workflows/stuck-thread-watch.yml),
