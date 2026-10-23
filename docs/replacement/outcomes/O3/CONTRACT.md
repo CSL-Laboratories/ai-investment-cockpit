@@ -185,15 +185,22 @@ When accepted quantity is greater than zero and less than the order
 quantity, and the order is not in a cancel, expire, or reject terminal,
 its state is `partially_filled`. A `resting` label on that partial fill
 fails `partial_fill_divergence`. `partially_filled` with no accepted
-quantity, or with the full order quantity, fails the same way.
+quantity, or with the full order quantity, fails the same way. Accepted
+quantity equal to the order quantity is the `filled` state. A cancel,
+expire, or reject on that full quantity fails `partial_fill_divergence`,
+as does quantity above the order. A cancel of an unexecuted remainder,
+including a cancel with no fills, stays valid.
 
 ### Event-contract market
 
 `listed` → `open` → `closed_pending_determination` → `determined` → `settled`
 
 Side paths: `voided`, and `corrected` after a later append-only correction.
-`determined` carries a result of `yes`, `no`, or `scalar` plus retained
-settlement evidence. `voided` is not a yes or no result.
+`determined` carries a result of `yes`, `no`, or `scalar`. That result
+is not a `market_settlement` record, and this candidate has no separate
+determination-evidence kind. `market_settlement` evidence belongs only
+on `settled`, and `market_void` evidence only on `voided`. `voided` is
+not a yes or no result.
 
 This candidate's examples are long buys. Short stock, margin, and options
 stay outside it, matching the issue's non-goals.
@@ -266,9 +273,11 @@ that does not name the order leaves the hold in place. A `void_unwind`
 or `settlement_payout` that credits `collateral_reserved` has to name
 the order when that credit is against an owned hold. The collateral
 still reserved for an instrument must cover the positive holds of every
-order on it. An unnamed credit, including one sequenced before the
-reserve, that leaves those holds larger than the reserved collateral
-fails `balance_mismatch`. A checkpoint
+order on it after each collateral posting, not only at the ending
+balance. An unnamed credit that spends owned collateral fails
+`balance_mismatch` even when a later reserve and a named release put
+the ending totals back in line. A credit sequenced before the reserve
+fails the same way when the hold it creates is no longer reserved. A checkpoint
 open reservation may name its owning `order_id`. That optional id is
 this candidate's proposal for which order owns the checkpoint hold.
 The reservation's `instrument_id` has to be that order's instrument. A
@@ -353,11 +362,17 @@ not change quantity.
   `partial_fill_divergence`, including when the order is already in a
   cancel-like terminal. Reported quantity that includes the unfilled
   remainder fails `partial_fill_divergence`.
-- **Complete.** A `filled` order accounts for its full quantity: retained
-  fill rows plus the quantity the checkpoint already applied
-  (`checkpoint_filled_qty`) must equal `qty`. An order that declares
-  `filled` with no retained fills and no checkpoint evidence fails
-  `partial_fill_divergence`.
+- **Complete.** Accepted quantity equal to `qty` is the `filled` state.
+  A cancel, expire, or reject applies only to an unexecuted remainder, so
+  a full quantity labelled with one of those states fails
+  `partial_fill_divergence`. `state` has to be `filled` on that full
+  quantity even when `terminal_state` says `filled`. Quantity above
+  `qty` fails the same way, including a checkpoint quantity with no
+  later fill. A `filled` order
+  that does not account for its full quantity, retained fill rows plus
+  `checkpoint_filled_qty`, fails `partial_fill_divergence`. An order that
+  declares `filled` with no retained fills and no checkpoint evidence
+  fails the same way. A zero fill or a partial fill may still be cancelled.
 - **Duplicate.** A `fill_id` applies once. A second copy fails
   `duplicate_fill_divergence` and does not increase quantity again.
   An `order_id` applies once too. A second order row with the same id
@@ -409,7 +424,9 @@ Terminal evidence has to agree with that row. `market_settlement`
 evidence on a market that is not `settled` fails
 `settlement_unreconciled`. `market_void` evidence on a market that is
 not `voided` fails `void_unreconciled`, unless a correction supersedes
-that void. `listed`, `open`, `closed_pending_determination`,
+that void. `determined` names a result, not a `market_settlement`
+record. This candidate has no separate determination-evidence kind.
+`listed`, `open`, `closed_pending_determination`,
 `determined`, and `corrected` do not carry either record.
 
 Settlement evidence is a retained record: source id, market result, long

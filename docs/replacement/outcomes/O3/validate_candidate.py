@@ -628,7 +628,14 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                 order.get("checkpoint_filled_qty", 0)
                 + post_checkpoint_qty.get(order["order_id"], 0)
             )
-            if terminal == "filled" and filled_qty != order["qty"]:
+            complete = filled_qty == order["qty"]
+            # Full quantity is filled. A cancel-like label, a resting label,
+            # or a terminal_state of filled beside another state, all fail.
+            if (
+                filled_qty > order["qty"]
+                or complete != (terminal == "filled")
+                or (complete and order["state"] != "filled")
+            ):
                 failures.add("partial_fill_divergence")
             partial = 0 < filled_qty < order["qty"]
             if terminal == "partially_filled" and not partial:
@@ -753,6 +760,20 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         # A second row with the same id must not inherit a reversal exemption.
         failures.add("schema_invalid")
     linked_reversals, reversal_mirrors = _linked_reversal_ids(fixture, repeated_entry_ids)
+
+    def _hold_must_stay_covered() -> None:
+        """Owned holds have to sit inside collateral after every posting."""
+        owned_by_instrument: dict[str, int] = {}
+        for oid, hold in order_hold.items():
+            if hold <= 0:
+                continue
+            instrument = (orders.get(oid) or {}).get("instrument_id")
+            if not isinstance(instrument, str):
+                continue
+            owned_by_instrument[instrument] = owned_by_instrument.get(instrument, 0) + hold
+        for instrument, owned in owned_by_instrument.items():
+            if owned > reserved_end.get(instrument, 0):
+                failures.add("balance_mismatch")
 
     for entry in sorted(fixture["journal"], key=lambda item: item["sequence"]):
         debits = 0
@@ -934,6 +955,9 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                 reserved_end[line["instrument_id"]] = (
                     reserved_end.get(line["instrument_id"], 0) + collateral_delta
                 )
+                # An unnamed credit does not reduce the hold, so a later
+                # reserve must not be what puts this posting back in range.
+                _hold_must_stay_covered()
                 settled_seq = settlement_seq.get(line["instrument_id"])
                 if entry["reason"] != "settlement_payout" and (
                     settled_seq is None or entry["sequence"] < settled_seq
@@ -988,20 +1012,6 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         if fill_ref is not None:
             posted_premium[fill_ref] = posted_premium.get(fill_ref, 0) + premium_delta
             posted_fees[fill_ref] = posted_fees.get(fill_ref, 0) + fee_delta
-
-    # An unnamed credit does not reduce an owned hold. The collateral still
-    # reserved has to cover every positive hold, including one created later.
-    owned_end: dict[str, int] = {}
-    for oid, hold in order_hold.items():
-        if hold <= 0:
-            continue
-        instrument = (orders.get(oid) or {}).get("instrument_id")
-        if not isinstance(instrument, str):
-            continue
-        owned_end[instrument] = owned_end.get(instrument, 0) + hold
-    for instrument, owned in owned_end.items():
-        if owned > reserved_end.get(instrument, 0):
-            failures.add("balance_mismatch")
 
     if not (failures & FILL_DEFECTS):
         hold_used: dict[str, int] = {}

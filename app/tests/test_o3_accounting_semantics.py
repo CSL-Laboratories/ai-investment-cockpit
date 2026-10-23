@@ -197,12 +197,14 @@ def test_o3_checkpointed_correction_admits_late_fill() -> None:
         "state": "trade_cancelled",
         "terminal_sequence": 4,
     })
+    # The admitted fill is a remainder, not the whole order. A full quantity
+    # on this cancel would be the filled state.
     fixture["fills"].append({
         "fill_id": "f-late",
         "order_id": "ord-x",
         "instrument_id": "ev-two",
         "sequence": 5,
-        "qty": 3,
+        "qty": 1,
         "price_minor": 400000,
         "fee_minor": 0,
         "side": "buy",
@@ -215,8 +217,8 @@ def test_o3_checkpointed_correction_admits_late_fill() -> None:
         "strategy_id": "s-event",
         "reason": "reserve_collateral",
         "lines": [
-            {"account": "collateral_reserved", "side": "dr", "amount_minor": 1200000, "instrument_id": "ev-two"},
-            {"account": "cash_available", "side": "cr", "amount_minor": 1200000, "instrument_id": "ev-two"},
+            {"account": "collateral_reserved", "side": "dr", "amount_minor": 400000, "instrument_id": "ev-two"},
+            {"account": "cash_available", "side": "cr", "amount_minor": 400000, "instrument_id": "ev-two"},
         ],
     })
     fixture["corrections"].append({
@@ -225,13 +227,13 @@ def test_o3_checkpointed_correction_admits_late_fill() -> None:
         "reverses_entry_id": "j-reserve",
         "reason": "admit late fill",
     })
-    fixture["reported"]["cash_available"] -= 1200000
-    fixture["reported"]["collateral_reserved"] += 1200000
-    fixture["reported"]["positions"].append({"instrument_id": "ev-two", "qty": 3})
+    fixture["reported"]["cash_available"] -= 400000
+    fixture["reported"]["collateral_reserved"] += 400000
+    fixture["reported"]["positions"].append({"instrument_id": "ev-two", "qty": 1})
     fixture["reported"]["open_reservations"].append({
         "reservation_id": "reserve-late",
         "instrument_id": "ev-two",
-        "amount_minor": 1200000,
+        "amount_minor": 400000,
     })
     assert _evaluate(fixture) == set()
     fixture["corrections"][0]["reverses_entry_id"] = "j-ghost"
@@ -316,7 +318,7 @@ def _resting_extension(fixture: dict) -> dict:
         "family": "event",
         "side": "buy",
         "qty": 5,
-        "state": "resting",
+        "state": "filled",
     })
     fixture["journal"].append({
         "entry_id": "j-rest",
@@ -1831,3 +1833,154 @@ def test_o3_open_market_rejects_terminal_evidence() -> None:
         "source_id": "settle-determined",
     })
     assert "settlement_unreconciled" in _evaluate(determined)
+
+
+def _unnamed_release_then_refill() -> dict:
+    """Owned hold released unnamed, then a fill reserve restores the ending total."""
+    path = VALIDATOR.parent / "fixtures" / "event_void_reconciled.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["checkpoint"]["open_reservations"][0]["order_id"] = "ord-void"
+    fixture["orders"].append({
+        "order_id": "ord-new",
+        "instrument_id": "ev-void",
+        "family": "event",
+        "side": "buy",
+        "qty": 10,
+        "state": "filled",
+    })
+    fixture["fills"] = [{
+        "fill_id": "f-new",
+        "order_id": "ord-new",
+        "instrument_id": "ev-void",
+        "sequence": 3,
+        "qty": 10,
+        "price_minor": 400000,
+        "fee_minor": 0,
+        "side": "buy",
+    }]
+    fixture["journal"].append({
+        "entry_id": "j-refill",
+        "sequence": 3,
+        "idempotency_key": "refill-1",
+        "fill_id": "f-new",
+        "strategy_id": "s-event",
+        "reason": "reserve_collateral",
+        "lines": [
+            {
+                "account": "collateral_reserved",
+                "side": "dr",
+                "amount_minor": 4000000,
+                "instrument_id": "ev-void",
+            },
+            {
+                "account": "cash_available",
+                "side": "cr",
+                "amount_minor": 4000000,
+                "instrument_id": "ev-void",
+            },
+        ],
+    })
+    fixture["journal"].append({
+        "entry_id": "j-named-release",
+        "sequence": 4,
+        "idempotency_key": "release-void",
+        "order_id": "ord-void",
+        "strategy_id": "s-event",
+        "reason": "void_unwind",
+        "lines": [
+            {
+                "account": "cash_available",
+                "side": "dr",
+                "amount_minor": 4000000,
+                "instrument_id": "ev-void",
+            },
+            {
+                "account": "collateral_reserved",
+                "side": "cr",
+                "amount_minor": 4000000,
+                "instrument_id": "ev-void",
+            },
+        ],
+    })
+    return fixture
+
+
+def test_o3_unnamed_release_is_not_restored_by_a_later_reserve() -> None:
+    # Checkpoint names ord-void. The shipped unwind does not. A later fill
+    # reserve and a named release put the ending totals back in line.
+    released = _unnamed_release_then_refill()
+    assert "balance_mismatch" in _evaluate(released)
+
+
+def _open_checkpoint_book(qty: int, recorded: int, state: str) -> dict:
+    """Open market whose only quantity is the checkpoint, with no fill rows."""
+    path = VALIDATOR.parent / "fixtures" / "event_restart_idempotent.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["markets"] = [{"instrument_id": "ev-yes", "state": "open"}]
+    fixture["evidence"] = []
+    fixture["journal"] = []
+    fixture["corrections"] = []
+    fixture["fills"] = []
+    order = fixture["orders"][0]
+    order["state"] = state
+    order["qty"] = qty
+    order["checkpoint_filled_qty"] = recorded
+    if state in {"cancelled", "expired", "rejected", "trade_cancelled"}:
+        order["terminal_sequence"] = 2
+    fixture["checkpoint"]["positions"] = (
+        [{"instrument_id": "ev-yes", "qty": recorded}] if recorded else []
+    )
+    fixture["checkpoint"]["collateral_reserved"] = 0
+    fixture["checkpoint"]["cash_available"] = 10000000000
+    fixture["checkpoint"]["open_reservations"] = []
+    fixture["reported"] = {
+        "cash_available": 10000000000,
+        "collateral_reserved": 0,
+        "positions": (
+            [{"instrument_id": "ev-yes", "qty": recorded}] if recorded else []
+        ),
+        "open_reservations": [],
+        "attribution": [],
+    }
+    return fixture
+
+
+def test_o3_full_execution_must_be_filled() -> None:
+    path = VALIDATOR.parent / "fixtures" / "equity_partial_then_dividend.json"
+    assert _evaluate(json.loads(path.read_text(encoding="utf-8"))) == set()
+    for state in ("cancelled", "expired", "rejected", "canary_breach", "submitted"):
+        booked = json.loads(path.read_text(encoding="utf-8"))
+        booked["orders"][0]["state"] = state
+        booked["orders"][0]["terminal_sequence"] = 5
+        assert "partial_fill_divergence" in _evaluate(booked)
+    disguised = json.loads(path.read_text(encoding="utf-8"))
+    disguised["orders"][0]["state"] = "cancelled"
+    disguised["orders"][0]["terminal_state"] = "filled"
+    disguised["orders"][0]["terminal_sequence"] = 5
+    assert "partial_fill_divergence" in _evaluate(disguised)
+    assert "partial_fill_divergence" in _evaluate(_open_checkpoint_book(2, 3, "cancelled"))
+    assert "partial_fill_divergence" in _evaluate(_open_checkpoint_book(2, 2, "resting"))
+    assert "partial_fill_divergence" in _evaluate(
+        _open_checkpoint_book(2, 2, "trade_cancelled")
+    )
+    assert _evaluate(_open_checkpoint_book(2, 1, "cancelled")) == set()
+    assert _evaluate(_open_checkpoint_book(2, 0, "cancelled")) == set()
+
+
+def test_o3_determined_result_is_not_a_settlement_record() -> None:
+    text = (VALIDATOR.parent / "CONTRACT.md").read_text(encoding="utf-8")
+    lifecycle = " ".join(
+        text.split("### Event-contract market", 1)[1].split("## Journal", 1)[0].split()
+    )
+    resolution = " ".join(
+        text.split("## Resolution, void, and correction", 1)[1]
+        .split("## Reconciliation and restart", 1)[0]
+        .split()
+    )
+    phrase = "not a `market_settlement` record"
+    kind = "no separate determination-evidence kind"
+    assert "plus retained settlement evidence" not in lifecycle
+    assert phrase in lifecycle
+    assert kind in lifecycle
+    assert phrase in resolution
+    assert kind in resolution
