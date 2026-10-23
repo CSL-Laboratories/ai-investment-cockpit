@@ -47,7 +47,7 @@ from brokers.order_state_machine import (
 
 from brokers.order_tuple import canonical_order_tuple, order_tuple_hash
 from orchestrator.breakers import BreakerThresholds, StaleAnalysisError
-from orchestrator.halt import default_halt_path, halt_is_set
+from orchestrator.halt import default_halt_path, halt_is_set, set_halt
 from orchestrator.market_calendar import (
     CalendarCoverageError,
     is_market_open,
@@ -600,26 +600,65 @@ class OrderGateway:
         except Exception:  # noqa: BLE001 - an unreadable row is uncounted
             state = None
         counted = {"approved", "submitted", "partially_filled"}
-        if state in counted or state in TERMINAL_STATES:
+        if state in counted:
+            return
+        # A local terminal row is not broker confirmation. Write the block
+        # unless the broker history's latest status is itself terminal.
+        if state in TERMINAL_STATES and self._broker_history_confirms_terminal(order):
             return
         amount = self._order_notional(order)
         text = str(amount) if amount.is_finite() and amount > 0 else "Infinity"
+        self._write_landed_block(st, order, actor, text)
+
+    def _broker_history_confirms_terminal(self, order) -> bool:
+        """True only when this broker's history says the order is now terminal."""
+        from orchestrator.reconcile import _broker_order_is_terminal
+
+        order_id = str(getattr(order, "id", None) or "")
+        history_fn = getattr(self._broker, "order_history", None)
+        if not order_id or not callable(history_fn):
+            return False
         try:
-            st.audit.append(
-                UNRECONCILED_LANDED_EXPOSURE,
-                actor=actor,
-                refs={"order_id": getattr(order, "id", None)},
-                payload={
-                    "kind": "block",
-                    "order_id": getattr(order, "id", None),
-                    "notional": text,
-                },
-            )
-        except Exception as exc:  # noqa: BLE001 - a lost marker must not look settled
-            st.admit_integrity_failure(
+            history = history_fn(order_id)
+        except Exception:  # noqa: BLE001 - unreadable history is not confirmation
+            return False
+        return _broker_order_is_terminal(history, order_id)
+
+    def _write_landed_block(self, st, order, actor, text: str) -> None:
+        """Persist the block. A failed audit write still leaves a durable halt.
+
+        ``admit_integrity_failure`` is in-memory and does not survive a restart.
+        The halt sentinel does, so the next process still refuses the buy.
+        """
+        payload = {
+            "kind": "block",
+            "order_id": getattr(order, "id", None),
+            "notional": text,
+        }
+        refs = {"order_id": getattr(order, "id", None)}
+        last_exc: BaseException | None = None
+        for _attempt in range(2):
+            try:
+                st.audit.append(
+                    UNRECONCILED_LANDED_EXPOSURE,
+                    actor=actor,
+                    refs=refs,
+                    payload=payload,
+                )
+                return
+            except Exception as exc:  # noqa: BLE001 - retry once, then fail closed
+                last_exc = exc
+        detail = f"{type(last_exc).__name__}: {last_exc}"
+        st.admit_integrity_failure(
+            "unreconciled landed exposure was not persisted: " + detail
+        )
+        set_halt(
+            default_halt_path(),
+            reason=(
                 "unreconciled landed exposure was not persisted: "
-                f"{type(exc).__name__}: {exc}"
-            )
+                f"{getattr(order, 'id', None)} notional {text}: {detail}"
+            ),
+        )
 
     def _resolve_admitted_paper_transport(self):
         """Resolve the pinned paper send, or None when this is not a paper profile.
@@ -2270,8 +2309,8 @@ class OrderGateway:
                     Two HALT probes run before the other reads so a mutation on
                     the last probe is visible, and so a mutation that waits for
                     those probes (the old gap between release and the send
-                    acquire) is visible to the same hold. The lease is sampled
-                    again as the last act before the caller sends. An unfenced
+                    acquire) is visible to the same hold. The caller samples
+                    the lease again after the quote read, which can block. An unfenced
                     submit skips authority, mode, and pending: another chain
                     read after the snapshot would hide an integrity fault.
                     """
@@ -2315,9 +2354,15 @@ class OrderGateway:
                     final_refusal = _decide_under_lock()
                     if final_refusal is None:
                         # The exposure scan above can outlast the quote sampled
-                        # at the start of this hold. Sample it again as the last
-                        # check. Watch-only is published after this lock releases.
+                        # at the start of this hold. Sample it again here. The
+                        # read can block, so HALT and the lease are checked
+                        # after it. Watch-only is published after this lock
+                        # releases. Nothing blocking follows those two checks.
                         final_refusal = self._quote_age_refusal(st, order, st.clock)
+                    if final_refusal is None:
+                        final_refusal = _halt_decision()
+                    if final_refusal is None:
+                        final_refusal = _lease_decision()
                     if final_refusal is None:
                         # Before the call: a raise can still mean the order landed.
                         transport_entered = True

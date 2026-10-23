@@ -189,21 +189,52 @@ _BROKER_TERMINAL_STATUSES = frozenset({
 
 
 def _broker_order_is_terminal(history, order_id) -> bool:
-    """True only when history for this order id carries a terminal status.
+    """True only when the latest history record for this order id is terminal.
 
-    An error, an empty reply, a non-dict, or a record for a different order
-    is not confirmation. The caller keeps the landed block in that case.
+    An earlier cancel does not confirm a later reopen. An error, an empty
+    reply, a non-dict, or a record for a different order is not confirmation.
+    The caller keeps the landed block in that case.
     """
     if not history or isinstance(history, BaseException):
         return False
     records = history if isinstance(history, (list, tuple)) else [history]
+    latest = None
     for rec in records:
-        if not isinstance(rec, dict) or rec.get("order_id") != order_id:
+        if isinstance(rec, dict) and rec.get("order_id") == order_id:
+            latest = rec
+    if latest is None:
+        return False
+    status = str(latest.get("status", "")).strip().lower()
+    return status in _BROKER_TERMINAL_STATUSES
+
+
+def _signed_open_exposure(st, order_id) -> bool:
+    """True when the latest verified transition says this order is open.
+
+    The mutable ``order.state`` column is not evidence. An unverified
+    transition for the order fails closed.
+    """
+    from orchestrator.state import EVENT_ORDER_TRANSITION
+    from sqlalchemy import select
+
+    open_states = {"approved", "submitted", "partially_filled"}
+    with st.session_factory() as session:
+        rows = session.execute(
+            select(AuditEntry)
+            .where(AuditEntry.event_type == EVENT_ORDER_TRANSITION)
+            .order_by(AuditEntry.seq)
+        ).scalars().all()
+    latest_to = None
+    for row in rows:
+        marked = str((row.refs or {}).get("row_id") or "")
+        if marked != str(order_id):
             continue
-        status = str(rec.get("status", "")).strip().lower()
-        if status in _BROKER_TERMINAL_STATUSES:
-            return True
-    return False
+        if not st.audit.verify_entry(row):
+            return False
+        to_state = (row.payload or {}).get("to")
+        if to_state:
+            latest_to = to_state
+    return latest_to in open_states
 
 
 def reconcile_startup(
@@ -292,10 +323,10 @@ def reconcile_startup(
                 )
 
     # A landed send whose local row never became open leaves a sticky block.
-    # Clear a counted row (approved/submitted/partially_filled). Clear a
-    # terminal row only when broker history confirms a terminal status. A
-    # local cancel, a history error, or an order the broker still shows open
-    # keeps the block and the alert.
+    # Clear it only when the rest of this report is clean AND either the
+    # verified chain says the order is open or the broker's latest status is
+    # terminal. The mutable state column is not enough, and a report that is
+    # already not ok does not discharge the block.
     from brokers.gateway import UNRECONCILED_LANDED_EXPOSURE
 
     stuck_landed = False
@@ -318,7 +349,24 @@ def reconcile_startup(
         order_id = str((landed.refs or {}).get("order_id") or payload.get("order_id") or "")
         if order_id:
             latest_landed[order_id] = payload
-    counted_states = {"approved", "submitted", "partially_filled"}
+
+    # 1:1 completeness gate — orphan results + uncovered domain rows (bypassed record_state_change).
+    # Computed before any clear: a report that is already not ok keeps the block.
+    orphans = tuple(audit.orphan_results())
+    for oseq in orphans:
+        alerter(f"#system reconcile: orphan result seq {oseq} has no matching intent.")
+
+    uncovered: dict[str, tuple[str, ...]] = {}
+    for m in models:
+        gaps = audit.verify_completeness(m)
+        if gaps:
+            uncovered[m.__tablename__] = tuple(gaps)
+            alerter(
+                f"#system reconcile: {len(gaps)} row(s) of {m.__tablename__} have NO covering "
+                f"audit entry (state change bypassed record_state_change): {list(gaps)}"
+            )
+
+    otherwise_ok = not alerted and not orphans and not uncovered and not ambiguous
 
     def _clear_landed(order_id: str, payload: dict) -> None:
         audit.append(
@@ -338,23 +386,25 @@ def reconcile_startup(
         with st.session_factory() as s:
             order_row = s.get(Order, order_id)
         state = None if order_row is None else order_row.state
-        if state in counted_states:
+        confirmed = False
+        if otherwise_ok:
+            if _signed_open_exposure(st, order_id):
+                confirmed = True
+            else:
+                history = None
+                if broker_history_fn is not None:
+                    try:
+                        history = broker_history_fn(order_id)
+                    except Exception as exc:  # a history failure keeps the block
+                        log.warning(
+                            "reconcile: broker history read failed for landed order %s: %s",
+                            order_id, exc,
+                        )
+                        history = None
+                confirmed = _broker_order_is_terminal(history, order_id)
+        if confirmed:
             _clear_landed(order_id, payload)
             continue
-        if state in TERMINAL_STATES:
-            history = None
-            if broker_history_fn is not None:
-                try:
-                    history = broker_history_fn(order_id)
-                except Exception as exc:  # a history failure keeps the block
-                    log.warning(
-                        "reconcile: broker history read failed for landed order %s: %s",
-                        order_id, exc,
-                    )
-                    history = None
-            if _broker_order_is_terminal(history, order_id):
-                _clear_landed(order_id, payload)
-                continue
         stuck_landed = True
         alerter(
             f"#system reconcile: order {order_id} landed but local exposure is still "
@@ -362,22 +412,7 @@ def reconcile_startup(
             "until the order is settled."
         )
 
-    # 1:1 completeness gate — orphan results + uncovered domain rows (bypassed record_state_change).
-    orphans = tuple(audit.orphan_results())
-    for oseq in orphans:
-        alerter(f"#system reconcile: orphan result seq {oseq} has no matching intent.")
-
-    uncovered: dict[str, tuple[str, ...]] = {}
-    for m in models:
-        gaps = audit.verify_completeness(m)
-        if gaps:
-            uncovered[m.__tablename__] = tuple(gaps)
-            alerter(
-                f"#system reconcile: {len(gaps)} row(s) of {m.__tablename__} have NO covering "
-                f"audit entry (state change bypassed record_state_change): {list(gaps)}"
-            )
-
-    ok = not alerted and not orphans and not uncovered and not ambiguous and not stuck_landed
+    ok = otherwise_ok and not stuck_landed
     return ReconcileReport(
         healed=tuple(healed),
         alerted=tuple(alerted),

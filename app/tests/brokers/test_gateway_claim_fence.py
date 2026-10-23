@@ -2003,6 +2003,262 @@ def test_quote_that_expires_during_the_send_hold_exposure_scan_does_not_submit(
     assert scenario.breaker.watch_only_reason() is not None
 
 
+def test_quote_stall_past_the_lease_does_not_submit(st, monkeypatch):
+    """A 6s stall in the final quote read must not outrun the claim lease.
+
+    63473731 samples HALT and the lease, then reads the quote, and sends
+    with no check after that read.
+    """
+    scenario, broker = _paper_gateway(st)
+    scanned = {"v": False}
+    real_pending = scenario.gateway._pending_ok
+
+    def pending(st_arg, order):
+        result = real_pending(st_arg, order)
+        if st_arg.safety_admission_lock.locked():
+            scanned["v"] = True
+        return result
+
+    monkeypatch.setattr(scenario.gateway, "_pending_ok", pending)
+
+    class Guard:
+        def stale_reason(self, symbol, *, now, limit_s):
+            if scanned["v"] and scenario.st.safety_admission_lock.locked():
+                time.sleep(6)
+            return None
+
+    scenario.st.market_data = Guard()
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=lambda: None, **scenario.submit_kwargs()
+    )
+    assert scanned["v"] is True
+    assert outcome.ok is False
+    assert outcome.stage == "claim_fence"
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_locally_terminal_landed_row_still_writes_the_block(st, monkeypatch):
+    """A local cancel during a landed send must still leave the exposure block.
+
+    63473731 returns before writing the marker when the mutable row is already
+    terminal, with no broker confirmation. The next $1,500 buy is sent.
+    """
+    from sqlalchemy import update
+
+    from tests.brokers.test_pending_exposure_chain import _fresh_submittable
+
+    scenario, broker = _capped_paper(st)
+    fail = _fail_writes_after_send(scenario, broker, monkeypatch)
+    real_persist = scenario.gateway._persist_unreconciled_landed
+
+    def persist(st_arg, order, actor):
+        with scenario.st.session_factory() as session, session.begin():
+            session.execute(
+                update(Order).where(Order.id == order.id).values(state="cancelled")
+            )
+        return real_persist(st_arg, order, actor)
+
+    monkeypatch.setattr(scenario.gateway, "_persist_unreconciled_landed", persist)
+    scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+    fail["v"] = False
+    assert broker.calls == 1
+    assert _latest_landed_kind(scenario.st, scenario.order.id) == "block"
+    second, approval, risk = _fresh_submittable(
+        st, scenario, proposal="p-next", nonce="n-next",
+    )
+    nxt = scenario.gateway.submit(
+        second,
+        **scenario.submit_kwargs(
+            approval=approval, risk_decision=risk, token_nonce="n-next",
+        ),
+    )
+    assert nxt.ok is False
+    assert nxt.stage == "pending_exposure"
+    assert broker.calls == 1
+
+
+def test_mutable_open_state_does_not_clear_the_landed_block(st, monkeypatch):
+    """A keyless state edit must not discharge a landed block.
+
+    63473731 clears when the mutable column says approved, then a restore to
+    proposed lets the next $1,500 buy through a $2,000 cap.
+    """
+    from sqlalchemy import update
+
+    from orchestrator.reconcile import reconcile_startup
+    from tests.brokers.test_pending_exposure_chain import _fresh_submittable
+
+    scenario, broker = _capped_paper(st)
+    fail = _fail_writes_after_send(scenario, broker, monkeypatch)
+    scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+    fail["v"] = False
+    assert broker.calls == 1
+    with scenario.st.session_factory() as session, session.begin():
+        session.execute(
+            update(Order).where(Order.id == scenario.order.id).values(state="approved")
+        )
+    history_reads = {"n": 0}
+
+    def history(oid):
+        history_reads["n"] += 1
+        return [{"order_id": oid, "status": "accepted"}]
+
+    report = reconcile_startup(
+        scenario.st, broker_history_fn=history, alerter=lambda _msg: None,
+    )
+    assert report.ok is False
+    assert _latest_landed_kind(scenario.st, scenario.order.id) == "block"
+    with scenario.st.session_factory() as session, session.begin():
+        session.execute(
+            update(Order).where(Order.id == scenario.order.id).values(state="proposed")
+        )
+    second, approval, risk = _fresh_submittable(
+        st, scenario, proposal="p-next", nonce="n-next",
+    )
+    nxt = scenario.gateway.submit(
+        second,
+        **scenario.submit_kwargs(
+            approval=approval, risk_decision=risk, token_nonce="n-next",
+        ),
+    )
+    assert nxt.ok is False
+    assert nxt.stage == "pending_exposure"
+    assert broker.calls == 1
+    assert history_reads["n"] == 0 or _latest_landed_kind(
+        scenario.st, scenario.order.id
+    ) == "block"
+
+
+def test_cancel_then_reopen_in_broker_history_keeps_the_landed_block(st, monkeypatch):
+    """The latest broker status decides. A cancel followed by a reopen does not.
+
+    63473731 treats any terminal record as confirmation, so this history clears
+    the block. A later fill is terminal only when it is the latest status.
+    """
+    from orchestrator.reconcile import _broker_order_is_terminal, reconcile_startup
+    from tests.brokers.test_pending_exposure_chain import _fresh_submittable
+
+    scenario, broker = _capped_paper(st)
+    fail = _fail_writes_after_send(scenario, broker, monkeypatch)
+    scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+    fail["v"] = False
+    row = _reload_order(scenario.st, scenario.order.id)
+    transition(scenario.st, row, "cancelled", actor="operator", reason="local cancel")
+    oid = scenario.order.id
+    reopened = [
+        {"order_id": oid, "status": "cancelled"},
+        {"order_id": oid, "status": "accepted"},
+    ]
+    filled = [
+        {"order_id": oid, "status": "cancelled"},
+        {"order_id": oid, "status": "filled"},
+    ]
+    assert _broker_order_is_terminal(reopened, oid) is False
+    assert _broker_order_is_terminal(filled, oid) is True
+    reconcile_startup(
+        scenario.st,
+        broker_history_fn=lambda _oid: reopened,
+        alerter=lambda _msg: None,
+    )
+    assert _latest_landed_kind(scenario.st, oid) == "block"
+    probe, approval, risk = _fresh_submittable(
+        st, scenario, proposal="p-probe", nonce="n-probe",
+    )
+    pre = scenario.gateway.submit(
+        probe,
+        **scenario.submit_kwargs(
+            approval=approval, risk_decision=risk, token_nonce="n-probe",
+        ),
+    )
+    assert pre.ok is False
+    assert pre.stage == "pending_exposure"
+    assert broker.calls == 1
+    reconcile_startup(
+        scenario.st,
+        broker_history_fn=lambda _oid: filled,
+        alerter=lambda _msg: None,
+    )
+    assert _latest_landed_kind(scenario.st, oid) == "clear"
+    third, approval3, risk3 = _fresh_submittable(
+        st, scenario, proposal="p-next", nonce="n-next",
+    )
+    nxt = scenario.gateway.submit(
+        third,
+        **scenario.submit_kwargs(
+            approval=approval3, risk_decision=risk3, token_nonce="n-next",
+        ),
+    )
+    assert nxt.ok is True
+    assert broker.calls == 2
+
+
+def test_failed_landed_block_write_blocks_after_restart(st, monkeypatch):
+    """A marker write that fails must still refuse the next buy after restart.
+
+    63473731 only remembers the failure on the in-memory usage tracker. A new
+    state on the same database admits the next $1,500 buy.
+    """
+    from orchestrator.halt import default_halt_path, halt_is_set
+    from orchestrator.mode_ladder import ModeLadder
+    from orchestrator.state import OrchestratorState
+    from tests.brokers.conftest import KEY, approved_risk_recheck
+    from tests.brokers.test_pending_exposure_chain import _fresh_submittable
+
+    scenario, broker = _capped_paper(st)
+    fail = _fail_writes_after_send(scenario, broker, monkeypatch)
+    real_append = scenario.st.audit.append
+
+    def append(event_type, *args, **kwargs):
+        if event_type == "unreconciled_landed_exposure":
+            raise OSError("marker write failed")
+        return real_append(event_type, *args, **kwargs)
+
+    monkeypatch.setattr(scenario.st.audit, "append", append)
+    try:
+        scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+    except OSError:
+        pass
+    finally:
+        fail["v"] = False
+    assert broker.calls == 1
+    restarted = OrchestratorState.build(
+        scenario.st.session_factory,
+        hmac_key=KEY,
+        settings=scenario.st.settings,
+        clock=scenario.st.clock,
+    )
+    assert restarted.usage.integrity_error is None
+    broker2 = _CountingPaper()
+    gateway = OrderGateway(
+        broker2, st=restarted, execution_scope="paper",
+        pending_exposure_cap=Decimal("2000"),
+    )
+    ladder = ModeLadder(restarted)
+    ladder.set_mode(Mode.paper, actor="op")
+    holder = type("Holder", (), {"clock": restarted.clock, "gateway": gateway})()
+    second, approval, risk = _fresh_submittable(
+        restarted, holder, proposal="p-restart", nonce="n-restart",
+    )
+    nxt = gateway.submit(
+        second,
+        approval=approval,
+        risk_decision=risk,
+        ladder=ladder,
+        breaker_engine=scenario.breaker.__class__(restarted),
+        risk_recheck=approved_risk_recheck,
+        positions={},
+        token_nonce="n-restart",
+        producing_runtime="claude",
+        clock=restarted.clock,
+    )
+    assert nxt.ok is False
+    assert broker2.calls == 0
+    assert halt_is_set(default_halt_path()) or _latest_landed_kind(
+        restarted, scenario.order.id
+    ) == "block"
+
+
 def test_quote_that_expires_during_the_final_risk_refresh_does_not_submit(st):
     scenario, broker = _paper_gateway(st)
     calls = {"n": 0}
