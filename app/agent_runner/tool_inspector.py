@@ -53,14 +53,20 @@ class ToolStarvationError(Exception):
     tool/MCP starvation. Raised to FAIL CLOSED — the job must not run; an auto mode must not arm."""
 
 
+def _flag_value_at(tokens: list[str], i: int) -> str | None:
+    """Value for the flag token at ``tokens[i]``: the inline ``=`` part when present, else
+    the following token (``None`` when the flag is the last token)."""
+    _, sep, inline = tokens[i].partition("=")
+    if sep:
+        return inline
+    return tokens[i + 1] if i + 1 < len(tokens) else None
+
+
 def _flag_value(tokens: list[str], *names: str) -> str | None:
     for i, tok in enumerate(tokens):
-        flag, sep, inline = tok.partition("=")
-        if flag.lower() not in names:
+        if tok.partition("=")[0].lower() not in names:
             continue
-        if sep:
-            return inline
-        return tokens[i + 1] if i + 1 < len(tokens) else None
+        return _flag_value_at(tokens, i)
     return None
 
 
@@ -96,12 +102,11 @@ def _inspect_codex_decision_argv(tokens: list[str]) -> None:
             )
 
     # The only config override allowed is the exact deny value for built-in web search.
-    config_values: list[str] = []
-    for i, tok in enumerate(tokens):
-        flag, sep, inline = tok.partition("=")
-        if flag.lower() not in {"-c", "--config"}:
-            continue
-        config_values.append(inline if sep else (tokens[i + 1] if i + 1 < len(tokens) else ""))
+    config_values = [
+        _flag_value_at(tokens, i) or ""
+        for i, tok in enumerate(tokens)
+        if tok.partition("=")[0].lower() in {"-c", "--config"}
+    ]
     if config_values != ['web_search="disabled"']:
         raise ToolStarvationError(
             "Codex decision argv must carry only `-c web_search=\"disabled\"` (SEC-06)"
@@ -217,7 +222,7 @@ def inspect_argv(argv, *, decision_stage: bool = True) -> None:
             )
         if flag in _ALLOWED_TOOLS_FLAGS:
             # value may be inline (--allowedTools=Bash) or the next token (--allowedTools Bash)
-            value = tok.split("=", 1)[1] if "=" in tok else (tokens[i + 1] if i + 1 < len(tokens) else "")
+            value = _flag_value_at(tokens, i) or ""
             granted = _tool_entries(value)
             if granted:
                 raise ToolStarvationError(

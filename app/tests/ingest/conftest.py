@@ -1,6 +1,6 @@
 """Surface CSL-236 results in quiet pytest output.
 
-Blacksmith runs ``python -m pytest -q``, which prints dots rather than node ids.
+CI runs ``python -m pytest -q``, which prints dots rather than node ids.
 The acceptance check for these tests is that each one is visible as passing in
 that job log.
 """

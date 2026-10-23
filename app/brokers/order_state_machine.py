@@ -34,12 +34,12 @@ mutable ``order_row.state`` / ``order_row.notional`` columns.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import inspect, select
 from sqlalchemy.orm.attributes import set_committed_value
 
 from core.ids import new_id
+from core.numeric import decimal_or_nan
 from orchestrator.state import (
     EVENT_ORDER_FILL_PROGRESS,
     EVENT_ORDER_TRANSITION,
@@ -76,24 +76,17 @@ def legal_order_transition(src: str, dst: str) -> bool:
     return dst in LEGAL_TRANSITIONS.get(src, frozenset())
 
 
-def _dec(x) -> Decimal:
-    try:
-        return x if isinstance(x, Decimal) else Decimal(str(x))
-    except (InvalidOperation, ValueError, TypeError):
-        return Decimal("NaN")
-
-
 def _payload_notional(order: Order) -> str:
     """JSON-native notional for the SIGNED transition payload (WP8 SEC-07 "Sharpened"
     closure): the order row's explicit notional, else qty*limit_price, else "0" for an
     un-priced market order — the SAME rule as ``gateway.OrderGateway._order_notional``, so
     the chain-anchored pending-exposure sum folds exactly the value the cap would use."""
     if order.notional is not None:
-        n = _dec(order.notional)
+        n = decimal_or_nan(order.notional)
         if n.is_finite():
             return str(n)
     if order.limit_price is not None:
-        n = _dec(order.qty) * _dec(order.limit_price)
+        n = decimal_or_nan(order.qty) * decimal_or_nan(order.limit_price)
         if n.is_finite():
             return str(n)
     return "0"
@@ -157,7 +150,7 @@ def _current_order(st: OrchestratorState, session, order: Order) -> Order:
                         "avg_fill_price": current.avg_fill_price}.items():
         signed = p.get(name)
         if name not in p or (value is None and signed is not None) or (
-            value is not None and (not _dec(signed).is_finite() or _dec(signed) != _dec(value))
+            value is not None and (not decimal_or_nan(signed).is_finite() or decimal_or_nan(signed) != decimal_or_nan(value))
         ):
             raise IllegalOrderTransition(f"order {order.id} has inconsistent signed {name}")
     return current
@@ -169,8 +162,8 @@ def _transition_payload(order: Order, from_state: str | None, reason: str | None
         "proposal_id": order.proposal_id, "risk_decision_id": order.risk_decision_id,
         "order_tuple_hash": order.order_tuple_hash, "approval_id": order.approval_id,
         "notional": _payload_notional(order), "symbol": order.symbol, "side": order.side,
-        "broker_order_id": order.broker_order_id, "filled_qty": str(_dec(order.filled_qty)),
-        "avg_fill_price": None if order.avg_fill_price is None else str(_dec(order.avg_fill_price)),
+        "broker_order_id": order.broker_order_id, "filled_qty": str(decimal_or_nan(order.filled_qty)),
+        "avg_fill_price": None if order.avg_fill_price is None else str(decimal_or_nan(order.avg_fill_price)),
     }
 
 
@@ -312,14 +305,14 @@ def record_fill_progress(
             raise IllegalOrderTransition(
                 f"fill progress requires 'partially_filled' state (order {order.id})"
             )
-        new_qty = _dec(filled_qty)
-        old_qty = _dec(current.filled_qty)
-        total_qty = _dec(current.qty)
+        new_qty = decimal_or_nan(filled_qty)
+        old_qty = decimal_or_nan(current.filled_qty)
+        total_qty = decimal_or_nan(current.qty)
         if not all(value.is_finite() for value in (new_qty, old_qty, total_qty)):
             raise ValueError("fill progress quantities must be finite")
         if not old_qty < new_qty < total_qty:
             raise ValueError("fill progress must strictly increase below total order quantity")
-        price = None if avg_fill_price is None else _dec(avg_fill_price)
+        price = None if avg_fill_price is None else decimal_or_nan(avg_fill_price)
         if price is not None and (not price.is_finite() or price <= 0):
             raise ValueError("average fill price must be positive and finite")
         current.filled_qty = new_qty
@@ -334,9 +327,9 @@ def record_fill_progress(
     def payload(row):
         # Numeric storage may round away a tiny increase or round up to the total.
         # Refuse the whole write if the actual persisted values violate the progress edge.
-        if not old_qty < _dec(row.filled_qty) < _dec(row.qty):
+        if not old_qty < decimal_or_nan(row.filled_qty) < decimal_or_nan(row.qty):
             raise ValueError("stored fill progress must strictly increase below total quantity")
-        if row.avg_fill_price is not None and _dec(row.avg_fill_price) <= 0:
+        if row.avg_fill_price is not None and decimal_or_nan(row.avg_fill_price) <= 0:
             raise ValueError("stored average fill price must be positive")
         return _transition_payload(row, "partially_filled", reason)
 
