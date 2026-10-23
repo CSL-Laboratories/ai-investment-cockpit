@@ -217,7 +217,9 @@ class TransportPermit:
 
     Only ``AuthorityProfileStore`` mints these, after it has re-checked the
     profile and the caller's claim generation. A caller-built object is not a
-    permit: the nonce has to be one this process just issued.
+    permit: the nonce has to be one this process just issued. Consumption
+    repeats that check inside the store transaction and requires the order id
+    the reservation was bound to.
 
     ``remaining_s`` is set when the renewed lease has less than the admission
     budget left, so the gateway does not wait longer than the lease.
@@ -458,7 +460,10 @@ class AuthorityProfileStore:
         # A ``now`` argument on a public method is not that clock.
         self._clock = clock if clock is not None else Clock()
         self._authoritative_now: datetime | None = None
-        self._live_permits: dict[str, tuple[str, int]] = {}
+        self._live_permits: dict[str, tuple[str, int, str]] = {}
+        # order id -> client that consumed the permit. A different client cannot
+        # prove that cockpit order absent.
+        self._admitted_clients: dict[str, object] = {}
         try:
             self._conn = sqlite3.connect(
                 str(file_path), check_same_thread=False, isolation_level=None, timeout=30
@@ -1106,36 +1111,37 @@ class AuthorityProfileStore:
                 order_submitted = _gateway_submitted(gateway, row["order_ref"], ladder)
             generation = int(row["claim_generation"])
             if order_submitted:
-                # The order is on the gateway's signed chain. Recording
-                # completed is the truth and removes any double-submit path.
-                updated = conn.execute(
-                    """
-                    UPDATE reservations
-                    SET handoff_state = 'completed', handoff_done = 1,
-                        reconciled = 1, claim_generation = ?
-                    WHERE client_order_id = ? AND handoff_state = ?
-                      AND handoff_done = 0 AND claim_generation = ?
-                    """,
-                    (generation + 1, client_id, state, generation),
-                )
-                if updated.rowcount != 1:
+                if not self._complete_reconciled(conn, client_id, state, generation):
                     raise ProfileRefused("store", "handoff reconcile was not admitted")
                 return "completed"
-            # No signed submission. An accept-then-timeout can still be at the
-            # broker under cockpit-<order id>. Ask before releasing or retrying.
-            self._require_broker_absent(gateway, row["order_ref"])
-            if state in {"pending", "failed"}:
-                updated = conn.execute(
-                    """
-                    UPDATE reservations
-                    SET handoff_state = 'failed', reconciled = 1,
-                        claim_generation = ?
-                    WHERE client_order_id = ? AND handoff_state = ?
-                      AND handoff_done = 0 AND claim_generation = ?
-                    """,
-                    (generation + 1, client_id, state, generation),
-                )
-                if updated.rowcount != 1:
+            # A pending row has not entered transport. Do not ask the broker.
+            if state == "pending":
+                if not self._fail_reconciled(conn, client_id, state, generation):
+                    raise ProfileRefused("store", "handoff reconcile was not admitted")
+                return "failed"
+            order_ref = row["order_ref"]
+        # Broker I/O stays outside the store lock so kill and hold are not stalled.
+        self._require_broker_absent(gateway, order_ref)
+        with self._txn() as conn:
+            now = self._authoritative_now
+            row = conn.execute(
+                "SELECT * FROM reservations WHERE client_order_id = ?",
+                (client_id,),
+            ).fetchone()
+            if (
+                row is None
+                or row["handoff_state"] != state
+                or int(row["claim_generation"]) != generation
+                or int(row["handoff_done"])
+            ):
+                raise ProfileRefused("store", "handoff reconcile was not admitted")
+            if row["action"] == "submit_paper" or row["order_ref"] is not None:
+                if _gateway_submitted(gateway, row["order_ref"], ladder):
+                    if not self._complete_reconciled(conn, client_id, state, generation):
+                        raise ProfileRefused("store", "handoff reconcile was not admitted")
+                    return "completed"
+            if state == "failed":
+                if not self._fail_reconciled(conn, client_id, state, generation):
                     raise ProfileRefused("store", "handoff reconcile was not admitted")
                 return "failed"
             # An in_progress row whose lease has not expired is still an active
@@ -1176,17 +1182,7 @@ class AuthorityProfileStore:
                     raise ProfileRefused("store", "stop ledger is missing")
                 admittable = blocked is None
             if not admittable:
-                updated = conn.execute(
-                    """
-                    UPDATE reservations
-                    SET handoff_state = 'failed', reconciled = 1,
-                        claim_generation = ?
-                    WHERE client_order_id = ? AND handoff_state = 'in_progress'
-                      AND handoff_done = 0 AND claim_generation = ?
-                    """,
-                    (generation + 1, client_id, generation),
-                )
-                if updated.rowcount != 1:
+                if not self._fail_reconciled(conn, client_id, "in_progress", generation):
                     raise ProfileRefused("store", "handoff reconcile was not admitted")
                 return "failed"
             # The lease was checked above, before any reconciled write. Only an
@@ -1203,6 +1199,32 @@ class AuthorityProfileStore:
             if updated.rowcount != 1:
                 raise ProfileRefused("store", "handoff reconcile was not admitted")
             return ClaimTicket(client_id, generation + 1, "retry")
+
+    def _complete_reconciled(self, conn, client_id: str, state: str, generation: int) -> bool:
+        updated = conn.execute(
+            """
+            UPDATE reservations
+            SET handoff_state = 'completed', handoff_done = 1,
+                reconciled = 1, claim_generation = ?
+            WHERE client_order_id = ? AND handoff_state = ?
+              AND handoff_done = 0 AND claim_generation = ?
+            """,
+            (generation + 1, client_id, state, generation),
+        )
+        return updated.rowcount == 1
+
+    def _fail_reconciled(self, conn, client_id: str, state: str, generation: int) -> bool:
+        updated = conn.execute(
+            """
+            UPDATE reservations
+            SET handoff_state = 'failed', reconciled = 1,
+                claim_generation = ?
+            WHERE client_order_id = ? AND handoff_state = ?
+              AND handoff_done = 0 AND claim_generation = ?
+            """,
+            (generation + 1, client_id, state, generation),
+        )
+        return updated.rowcount == 1
 
     def reconcile_non_gateway_handoff(
         self, client_order_id: str, *, now: datetime, actor: str, capability: object = None
@@ -1279,7 +1301,10 @@ class AuthorityProfileStore:
                 raise ProfileRefused(
                     "stale_claim", "handoff claim generation or lease is stale before broker submit"
                 )
-        return self._issue_transport_permit(client_id, generation)
+            order_ref = row["order_ref"]
+            if type(order_ref) is not str or not order_ref:
+                raise ProfileRefused("order_ref", "paper submit requires an order id")
+        return self._issue_transport_permit(client_id, generation, order_ref)
 
     def _set_stop(
         self,
@@ -1528,7 +1553,7 @@ class AuthorityProfileStore:
         """Refuse release or retry until the broker confirms the cockpit id is absent."""
         if not order_ref:
             return
-        visibility = _broker_order_visibility(gateway, order_ref)
+        visibility = _broker_order_visibility(gateway, order_ref, store=self)
         if visibility == "absent":
             return
         code = "broker_accepted" if visibility == "present" else "broker_unknown"
@@ -1537,31 +1562,100 @@ class AuthorityProfileStore:
             "broker must confirm the cockpit order is absent before release or retry",
         )
 
-    def _issue_transport_permit(self, client_order_id: str, generation: int) -> TransportPermit:
+    def _issue_transport_permit(
+        self, client_order_id: str, generation: int, order_ref: str
+    ) -> TransportPermit:
         nonce = secrets.token_urlsafe(32)
         self._live_permits = {
             key: value
             for key, value in self._live_permits.items()
             if value[0] != client_order_id
         }
-        self._live_permits[nonce] = (client_order_id, generation)
+        self._live_permits[nonce] = (client_order_id, generation, order_ref)
         return TransportPermit(self, nonce)
 
-    def _consume_transport_permit(self, nonce: str) -> None:
+    def _matching_permit(self, nonce: str) -> tuple[str, tuple[str, int, str]] | None:
         if type(nonce) is not str:
-            raise ProfileRefused(
-                "claim_required", "paper submit requires a validated profile claim"
-            )
-        match = None
-        for key in self._live_permits:
+            return None
+        for key, value in self._live_permits.items():
             if hmac.compare_digest(key, nonce):
-                match = key
-                break
-        if match is None:
+                return key, value
+        return None
+
+    def _assert_live_claim(self, conn, client_id: str, generation: int, order_ref: str, now):
+        """Authority, generation, lease, and order, as one read inside ``_txn``."""
+        row = conn.execute(
+            "SELECT * FROM reservations WHERE client_order_id = ?",
+            (client_id,),
+        ).fetchone()
+        if (
+            row is None
+            or int(row["claim_generation"]) != generation
+            or row["handoff_state"] != "in_progress"
+            or int(row["handoff_done"])
+        ):
+            raise ProfileRefused(
+                "stale_claim", "handoff claim generation is stale"
+            )
+        if row["order_ref"] != order_ref:
+            raise ProfileRefused(
+                "client_order_conflict", "permit is bound to a different order"
+            )
+        try:
+            profile = self._load_installed(conn, row["profile_id"], now=now)
+        except ProfileRefused as exc:
+            if exc.code in {"revoked", "expired"}:
+                raise ProfileRefused(
+                    exc.code, "profile authority is no longer valid"
+                ) from exc
+            raise
+        self._refuse_if_blocked(conn, profile)
+        claimed_at = row["claimed_at"]
+        if not claimed_at or now >= _parse_claimed_at(claimed_at) + CLAIM_LEASE:
+            raise ProfileRefused(
+                "stale_claim",
+                "handoff claim generation or lease is stale before broker submit",
+            )
+
+    def _consume_transport_permit(
+        self, nonce: str, *, order_ref: str, client: object = None
+    ) -> tuple[object, str, int, str]:
+        """Re-check the live claim, then burn the nonce. Returns the binding."""
+        if type(nonce) is not str or type(order_ref) is not str or not order_ref:
             raise ProfileRefused(
                 "claim_required", "paper submit requires a validated profile claim"
             )
-        del self._live_permits[match]
+        with self._txn() as conn:
+            now = self._authoritative_now
+            matched = self._matching_permit(nonce)
+            if matched is None:
+                raise ProfileRefused(
+                    "claim_required", "paper submit requires a validated profile claim"
+                )
+            key, (client_id, generation, bound_order) = matched
+            if bound_order != order_ref:
+                raise ProfileRefused(
+                    "client_order_conflict", "permit is bound to a different order"
+                )
+            self._assert_live_claim(conn, client_id, generation, bound_order, now)
+            del self._live_permits[key]
+            if client is not None:
+                self._admitted_clients[bound_order] = client
+        return (self, client_id, generation, bound_order)
+
+    def _recheck_transport_authority(
+        self, client_order_id: str, generation: int, order_ref: str
+    ) -> None:
+        """The transport call re-reads authority after the gateway's safety checks."""
+        client_id = _ident(client_order_id, code="client_order_id")
+        if type(generation) is not int or type(order_ref) is not str or not order_ref:
+            raise ProfileRefused(
+                "claim_required", "paper submit requires a validated profile claim"
+            )
+        with self._txn() as conn:
+            self._assert_live_claim(
+                conn, client_id, generation, order_ref, self._authoritative_now
+            )
 
     def _read_store_clock(self) -> datetime:
         """The authority clock, and only after both the Python and SQLite locks."""
@@ -1851,25 +1945,36 @@ def _fence_now(gateway, kwargs: Mapping):
     raise ProfileRefused("clock", "caller clock is not the store clock")
 
 
-def accept_transport_permit(permit: object) -> None:
-    """Reject anything except a permit this process just issued."""
+def accept_transport_permit(
+    permit: object, *, order_ref: str, client: object = None
+) -> tuple[object, str, int, str]:
+    """Consume a permit only if it still matches this order and the live claim."""
     if type(permit) is not TransportPermit or type(permit.store) is not AuthorityProfileStore:
         raise ProfileRefused(
             "claim_required", "paper submit requires a validated profile claim"
         )
-    permit.store._consume_transport_permit(permit.nonce)
+    return permit.store._consume_transport_permit(
+        permit.nonce, order_ref=order_ref, client=client
+    )
 
 
-def _broker_order_visibility(gateway, order_ref: str) -> str:
+def _broker_order_visibility(gateway, order_ref: str, *, store=None) -> str:
     """``present``, ``absent``, or ``unknown`` for ``cockpit-<order_ref>``.
 
     The lookup is the admitted adapter class, not a replacement instance method.
+    When a permit consume recorded the client for this order, a different client
+    cannot prove the order absent.
     """
     from brokers.alpaca_paper import AlpacaPaperBroker
 
     broker = None if gateway is None else getattr(gateway, "_broker", None)
     if not isinstance(broker, AlpacaPaperBroker):
         return "unknown"
+    client = getattr(broker, "_client", None)
+    if store is not None:
+        admitted = getattr(store, "_admitted_clients", {}).get(order_ref)
+        if admitted is not None and client is not admitted:
+            return "unknown"
     client_order_id = f"cockpit-{order_ref}"[:128]
     try:
         found = AlpacaPaperBroker.find_order(
@@ -2008,8 +2113,13 @@ def _settle_failed(
             store, gateway, client_order_id, order_ref, kwargs, now, capability=capability
         )
         return True
-    if getattr(outcome, "stage", None) == "broker_error":
-        visibility = "unknown" if not order_ref else _broker_order_visibility(gateway, order_ref)
+    # ``order_state`` is also how a post-submit FSM failure is reported. Ask the
+    # broker before fail_handoff for every stage that can follow transport.
+    if getattr(outcome, "stage", None) in {"broker_error", "order_state"}:
+        visibility = (
+            "unknown" if not order_ref
+            else _broker_order_visibility(gateway, order_ref, store=store)
+        )
         if visibility != "absent":
             code = "broker_accepted" if visibility == "present" else "broker_unknown"
             raise ProfileRefused(
