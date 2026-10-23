@@ -2911,3 +2911,257 @@ def test_o3_corrected_order_reserve_is_not_double_counted() -> None:
     assert "balance_mismatch" in _evaluate(
         _corrected_order_reserve(reversal_strategy="s-other")
     )
+
+
+def _order_reserve_line(
+    entry_id: str,
+    sequence: int,
+    order_id: str,
+    amount: int,
+    *,
+    release: bool = False,
+) -> dict:
+    return {
+        "entry_id": entry_id,
+        "sequence": sequence,
+        "idempotency_key": entry_id,
+        "order_id": order_id,
+        "strategy_id": "s-event",
+        "reason": "reserve_collateral",
+        "lines": [
+            {
+                "account": "collateral_reserved",
+                "side": "cr" if release else "dr",
+                "amount_minor": amount,
+                "instrument_id": "ev-yes",
+            },
+            {
+                "account": "cash_available",
+                "side": "dr" if release else "cr",
+                "amount_minor": amount,
+                "instrument_id": "ev-yes",
+            },
+        ],
+    }
+
+
+def _two_order_book() -> dict:
+    """Shared open-market shell for two orders on one instrument."""
+    path = VALIDATOR.parent / "fixtures" / "event_resting_order_reservation.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["markets"] = [{"instrument_id": "ev-yes", "state": "open"}]
+    fixture["evidence"] = []
+    fixture["checkpoint"]["cash_available"] = 10000000000
+    fixture["checkpoint"]["collateral_reserved"] = 0
+    fixture["checkpoint"]["positions"] = []
+    fixture["checkpoint"]["open_reservations"] = []
+    fixture["checkpoint"]["sequence"] = 0
+    return fixture
+
+
+def test_o3_other_order_reserve_does_not_mask_the_replacement() -> None:
+    """Order B's reserve between A's reversal and replacement is not A's replacement."""
+    fixture = _two_order_book()
+    fixture["orders"] = [
+        {
+            "order_id": "ord-yes",
+            "instrument_id": "ev-yes",
+            "family": "event",
+            "side": "buy",
+            "qty": 1,
+            "state": "filled",
+        },
+        {
+            "order_id": "ord-other",
+            "instrument_id": "ev-yes",
+            "family": "event",
+            "side": "buy",
+            "qty": 1,
+            "state": "resting",
+        },
+    ]
+    fixture["fills"] = [{
+        "fill_id": "f-yes",
+        "order_id": "ord-yes",
+        "instrument_id": "ev-yes",
+        "sequence": 7,
+        "qty": 1,
+        "price_minor": 830000,
+        "fee_minor": 0,
+        "side": "buy",
+    }]
+    fixture["journal"] = [
+        _order_reserve_line("j-orig", 3, "ord-yes", 800000),
+        _order_reserve_line("j-rev", 4, "ord-yes", 800000, release=True),
+        _order_reserve_line("j-other", 5, "ord-other", 100000),
+        _order_reserve_line("j-rep", 6, "ord-yes", 830000),
+    ]
+    fixture["corrections"] = [{
+        "correction_id": "c-yes",
+        "admits_fill_id": "f-yes",
+        "reverses_entry_id": "j-orig",
+        "reason": "correct the reserve",
+        "instrument_id": "ev-yes",
+        "cause": "reserve_collateral",
+    }]
+    fixture["reported"] = {
+        "cash_available": 9999070000,
+        "collateral_reserved": 930000,
+        "positions": [{"instrument_id": "ev-yes", "qty": 1}],
+        "open_reservations": [
+            {
+                "reservation_id": "r-yes",
+                "order_id": "ord-yes",
+                "instrument_id": "ev-yes",
+                "amount_minor": 830000,
+            },
+            {
+                "reservation_id": "r-other",
+                "order_id": "ord-other",
+                "instrument_id": "ev-yes",
+                "amount_minor": 100000,
+            },
+        ],
+        "attribution": [],
+    }
+    assert _evaluate(fixture) == set()
+
+
+def test_o3_other_order_reversal_does_not_mask_the_original() -> None:
+    """B's earlier mirror is B's correction, not the reversal of A's reserve."""
+    fixture = _two_order_book()
+    fixture["orders"] = [
+        {
+            "order_id": "ord-yes",
+            "instrument_id": "ev-yes",
+            "family": "event",
+            "side": "buy",
+            "qty": 1,
+            "state": "filled",
+        },
+        {
+            "order_id": "ord-other",
+            "instrument_id": "ev-yes",
+            "family": "event",
+            "side": "buy",
+            "qty": 1,
+            "state": "resting",
+        },
+    ]
+    fixture["fills"] = [{
+        "fill_id": "f-yes",
+        "order_id": "ord-yes",
+        "instrument_id": "ev-yes",
+        "sequence": 8,
+        "qty": 1,
+        "price_minor": 830000,
+        "fee_minor": 0,
+        "side": "buy",
+    }]
+    fixture["journal"] = [
+        _order_reserve_line("j-b-orig", 1, "ord-other", 800000),
+        _order_reserve_line("j-a-orig", 3, "ord-yes", 800000),
+        _order_reserve_line("j-b-rev", 4, "ord-other", 800000, release=True),
+        _order_reserve_line("j-a-rev", 5, "ord-yes", 800000, release=True),
+        _order_reserve_line("j-b-rep", 6, "ord-other", 800000),
+        _order_reserve_line("j-a-rep", 7, "ord-yes", 830000),
+    ]
+    fixture["corrections"] = [
+        {
+            "correction_id": "c-yes",
+            "admits_fill_id": "f-yes",
+            "reverses_entry_id": "j-a-orig",
+            "reason": "correct A's reserve",
+            "instrument_id": "ev-yes",
+            "cause": "reserve_collateral",
+        },
+        {
+            "correction_id": "c-other",
+            "admits_fill_id": "f-yes",
+            "reverses_entry_id": "j-b-orig",
+            "reason": "correct B's reserve",
+            "instrument_id": "ev-yes",
+            "cause": "reserve_collateral",
+        },
+    ]
+    fixture["reported"] = {
+        "cash_available": 9998370000,
+        "collateral_reserved": 1630000,
+        "positions": [{"instrument_id": "ev-yes", "qty": 1}],
+        "open_reservations": [
+            {
+                "reservation_id": "r-yes",
+                "order_id": "ord-yes",
+                "instrument_id": "ev-yes",
+                "amount_minor": 830000,
+            },
+            {
+                "reservation_id": "r-other",
+                "order_id": "ord-other",
+                "instrument_id": "ev-yes",
+                "amount_minor": 800000,
+            },
+        ],
+        "attribution": [],
+    }
+    assert _evaluate(fixture) == set()
+
+
+def test_o3_one_reversal_does_not_excuse_two_order_reserves() -> None:
+    """Two originals that share one reversal and one replacement stay over-reserved."""
+    fixture = _two_order_book()
+    fixture["orders"] = [{
+        "order_id": "ord-yes",
+        "instrument_id": "ev-yes",
+        "family": "event",
+        "side": "buy",
+        "qty": 1,
+        "state": "filled",
+    }]
+    fixture["fills"] = [{
+        "fill_id": "f-yes",
+        "order_id": "ord-yes",
+        "instrument_id": "ev-yes",
+        "sequence": 5,
+        "qty": 1,
+        "price_minor": 830000,
+        "fee_minor": 0,
+        "side": "buy",
+    }]
+    fixture["journal"] = [
+        _order_reserve_line("j-a", 1, "ord-yes", 800000),
+        _order_reserve_line("j-b", 2, "ord-yes", 800000),
+        _order_reserve_line("j-rev", 3, "ord-yes", 800000, release=True),
+        _order_reserve_line("j-rep", 4, "ord-yes", 830000),
+    ]
+    fixture["corrections"] = [
+        {
+            "correction_id": "c-a",
+            "admits_fill_id": "f-yes",
+            "reverses_entry_id": "j-a",
+            "reason": "correct the first reserve",
+            "instrument_id": "ev-yes",
+            "cause": "reserve_collateral",
+        },
+        {
+            "correction_id": "c-b",
+            "admits_fill_id": "f-yes",
+            "reverses_entry_id": "j-b",
+            "reason": "correct the second reserve",
+            "instrument_id": "ev-yes",
+            "cause": "reserve_collateral",
+        },
+    ]
+    fixture["reported"] = {
+        "cash_available": 9998370000,
+        "collateral_reserved": 1630000,
+        "positions": [{"instrument_id": "ev-yes", "qty": 1}],
+        "open_reservations": [{
+            "reservation_id": "r-yes",
+            "order_id": "ord-yes",
+            "instrument_id": "ev-yes",
+            "amount_minor": 1630000,
+        }],
+        "attribution": [],
+    }
+    assert "balance_mismatch" in _evaluate(fixture)

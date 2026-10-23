@@ -384,17 +384,22 @@ def _posted_correction_facts(fixture: dict) -> tuple[set[str], set[str], set[str
     Support is three journal entries on that instrument, in sequence order:
     the original, a later exact reversal, and a still later replacement.
     ``cause`` is the original reason. The reversal keeps the original
-    ``strategy_id``. Lines on the original post only that instrument, so a
-    bare checkpoint id does not qualify. The reversal id is exempted only
-    after that replacement is present, and then it may post the swapped
-    sides of a reserve, fill, or fee. When the original, the reversal, and
-    the replacement are all reserves for one order, the original id is
+    ``strategy_id``. An order-level reserve also keeps that ``order_id``
+    on the reversal and on the replacement, so another order's posting is
+    not this correction. Each reversal and each replacement is used once.
+    Lines on the original post only that instrument, so a bare checkpoint
+    id does not qualify. The reversal id is exempted only after that
+    replacement is present, and then it may post the swapped sides of a
+    reserve, fill, or fee. When the original, the reversal, and the
+    replacement are all reserves for one order, the original id is
     returned so its debit is not counted again as collateral created for
-    the fill.
+    the fill. A second original that shares that pair stays counted.
     """
     supported: set[str] = set()
     mirrors: set[str] = set()
     reversed_order_reserves: set[str] = set()
+    consumed: set[str] = set()
+    handled: set[str] = set()
     journal = fixture.get("journal", ())
     repeated = _repeated_entry_ids(journal)
     by_id: dict[str, dict] = {}
@@ -410,7 +415,7 @@ def _posted_correction_facts(fixture: dict) -> tuple[set[str], set[str], set[str
         original_id = item.get("reverses_entry_id")
         if not isinstance(instrument_id, str) or not isinstance(cause, str):
             continue
-        if not isinstance(original_id, str) or original_id in repeated:
+        if not isinstance(original_id, str) or original_id in repeated or original_id in handled:
             continue
         if not _admitted_fill_matches(fixture, item, instrument_id):
             continue
@@ -435,6 +440,7 @@ def _posted_correction_facts(fixture: dict) -> tuple[set[str], set[str], set[str
                 not isinstance(entry_id, str)
                 or entry_id == original_id
                 or entry_id in repeated
+                or entry_id in consumed
                 or entry.get("reason") != cause
                 or not _only_instrument(entry, instrument_id)
             ):
@@ -443,6 +449,11 @@ def _posted_correction_facts(fixture: dict) -> tuple[set[str], set[str], set[str
             if sequence is None or sequence <= original_sequence:
                 continue
             if entry.get("strategy_id") != original.get("strategy_id"):
+                continue
+            if (
+                _order_level_reserve(original)
+                and entry.get("order_id") != original.get("order_id")
+            ):
                 continue
             if _line_signature(entry, reverse=False) != wanted:
                 continue
@@ -463,12 +474,18 @@ def _posted_correction_facts(fixture: dict) -> tuple[set[str], set[str], set[str
                 not isinstance(entry_id, str)
                 or entry_id in {original_id, reversal_id}
                 or entry_id in repeated
+                or entry_id in consumed
                 or entry.get("reason") != cause
                 or not _only_instrument(entry, instrument_id)
             ):
                 continue
             sequence = _entry_sequence(entry)
             if sequence is None or sequence <= reversal_sequence:
+                continue
+            if _order_level_reserve(original) and not (
+                _order_level_reserve(entry)
+                and entry.get("order_id") == original.get("order_id")
+            ):
                 continue
             signature = _line_signature(entry, reverse=False)
             if not _signature_positive(signature) or signature == wanted:
@@ -479,6 +496,11 @@ def _posted_correction_facts(fixture: dict) -> tuple[set[str], set[str], set[str
             continue
         mirrors.add(reversal_id)
         supported.add(instrument_id)
+        handled.add(original_id)
+        consumed.add(reversal_id)
+        replacement_id = replacement.get("entry_id")
+        if isinstance(replacement_id, str):
+            consumed.add(replacement_id)
         if (
             _order_level_reserve(original)
             and _order_level_reserve(reversal)

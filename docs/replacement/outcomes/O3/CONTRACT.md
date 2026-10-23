@@ -211,7 +211,10 @@ journal entry, and that entry's lines post only this instrument.
 The journal then has a later entry that reverses those lines and a
 still later entry that replaces them, both with that same reason and
 only this instrument. The reversal keeps the original entry's
-`strategy_id`. The replacement may name another strategy. Swapped
+`strategy_id`. The replacement may name another strategy. An order
+reserve's reversal and its replacement name that same order. Another
+order's reserve on the instrument is not that pair, and each reversal
+and each replacement pairs with one original. Swapped
 sides on the reversal are accepted only when that replacement is
 posted. A reversal with no replacement fails `balance_mismatch` on an
 open market as well as on `corrected`. Without those postings the row
@@ -291,9 +294,13 @@ the order is already in a cancel, expire, or reject terminal. The
 created total is the collateral reserved for the fills. Releases do not
 reduce it. A validated correction does: when the original reserve, its
 reversal, and the replacement all name that order, the reversed debit
-drops out and the replacement is the amount that funded the fill. A
-reversal that is not that correction leaves the original debit in the
-total. A dead order that still carries the hold fails
+drops out and the replacement is the amount that funded the fill. The
+replacement is that order's own later reserve. Another order's reserve
+on the same instrument does not replace it, and another order's earlier
+reversal does not stand in for this one. One reversal and one
+replacement drop one original. A second original that shares them stays
+in the total. A reversal that is not that correction leaves the original
+debit in the total. A dead order that still carries the hold fails
 `balance_mismatch`. A release
 that does not name the order leaves the hold in place. A `void_unwind`
 or `settlement_payout` that credits `collateral_reserved` has to name
