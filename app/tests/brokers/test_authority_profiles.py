@@ -4603,3 +4603,261 @@ def test_failed_arm_restores_reconciled(st, tmp_path):
     flags = _reservation_flags(store.path, "fence-1")
     assert flags["handoff_state"] == "failed"
     assert int(flags["reconciled"]) == 1
+
+
+def test_httpx_request_hook_cannot_redirect_the_secret(st, tmp_path):
+    """A request hook added during risk_recheck must not carry the secret off the paper host."""
+    import httpx
+
+    from brokers.alpaca_paper import PAPER_BASE_URL, AlpacaPaperHTTPClient
+
+    seen = []
+
+    def handler(request):
+        seen.append((str(request.url), request.headers.get("APCA-API-SECRET-KEY")))
+        return httpx.Response(
+            201,
+            json={
+                "id": "alp-owned",
+                "status": "accepted",
+                "filled_qty": "0",
+                "filled_avg_price": None,
+                "client_order_id": None,
+            },
+        )
+
+    http = httpx.Client(transport=httpx.MockTransport(handler), timeout=2.0)
+    client = AlpacaPaperHTTPClient("key-1", "secret-1", http_client=http)
+    broker = AlpacaPaperBroker(client=client)
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    store = _store(tmp_path, "owned-http.sqlite")
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    store.authorize(
+        "profile-b", action="submit_paper", client_order_id="owned-1",
+        notional=Decimal(str(scenario.order.notional)), actor="stop-owner", now=now,
+        order_ref=str(scenario.order.id),
+    )
+    ticket = store.claim_handoff("owned-1", now=now, awaiting_submit=True)
+    assert isinstance(ticket, ClaimTicket)
+
+    def risk_recheck(_positions):
+        def rewrite(request):
+            request.url = httpx.URL("https://substitute.invalid/v2/orders")
+
+        client._client.event_hooks["request"].append(rewrite)
+        return {"decision": "approved", "failed_checks": []}
+
+    _arm(gateway, store, "owned-1", ticket.generation)
+    try:
+        outcome = gateway.submit(
+            scenario.order, **_paper_submit_kwargs(scenario, risk_recheck=risk_recheck),
+        )
+    finally:
+        http.close()
+    assert outcome.ok is True
+    assert seen
+    assert not any("substitute.invalid" in url for url, _secret in seen)
+    assert all(
+        url.startswith(PAPER_BASE_URL) and secret == "secret-1" for url, secret in seen
+    )
+    assert b"secret-1" not in Path(store.path).read_bytes()
+
+
+def test_presence_recovery_consumes_the_approval(st, tmp_path):
+    """Accept-then-timeout recovery burns the approval, so a fresh capability cannot resend."""
+    from brokers.order_state_machine import create_order
+    from schemas.models.approval_record import ApprovalRecord
+
+    broker = _CountingPaper()
+    real_submit = broker._client.submit_order
+
+    def ack_then_timeout(canonical):
+        real_submit(canonical)
+        raise TimeoutError("response lost after accept")
+
+    broker._client.submit_order = ack_then_timeout
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    store = _store(tmp_path, "consume-approval.sqlite")
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    notional = Decimal(str(scenario.order.notional))
+    handoff_to_gateway(
+        store, gateway, profile_id="profile-b", action="submit_paper",
+        client_order_id="consume-1", notional=notional, actor="stop-owner",
+        now=now, submit_args=(scenario.order,),
+        submit_kwargs=_paper_submit_kwargs(scenario), **_PAPER_BINDINGS,
+    )
+    with st.session_factory() as session:
+        approval = session.get(ApprovalRecord, scenario.approval.id)
+        consumed = None if approval is None else bool(approval.single_use_consumed)
+    assert consumed is True
+    assert gateway._consumed_on_chain(st, scenario.approval.id) is True
+    replay = create_order(
+        st, proposal_id=scenario.order.proposal_id,
+        risk_decision_id=scenario.risk_decision.id, approval_id=scenario.approval.id,
+        account="paper", symbol="AAPL", side="buy", qty=scenario.order.qty,
+        order_type="limit", limit_price=scenario.order.limit_price, tif="day",
+        notional=notional, order_tuple_hash=scenario.tuple_hash, actor="claude",
+    )
+    gateway.mint_submit_token(
+        nonce="n-replay", proposal_id=replay.proposal_id,
+        risk_decision_id=scenario.risk_decision.id, order_tuple_hash=scenario.tuple_hash,
+    )
+    second = handoff_to_gateway(
+        store, gateway, profile_id="profile-b", action="submit_paper",
+        client_order_id="consume-2", notional=notional, actor="stop-owner",
+        now=now, submit_args=(replay,),
+        submit_kwargs=_paper_submit_kwargs(scenario, token_nonce="n-replay"),
+        **_PAPER_BINDINGS,
+    )
+    assert getattr(second.outcome, "ok", None) is not True
+    assert getattr(second.outcome, "stage", None) == "approval"
+    assert _sends(broker) == 1
+
+
+def test_tuple_exposure_refuses_a_ten_thousand_dollar_order_signed_at_one_dollar(st, tmp_path):
+    """A $10,000 limit signed at notional $1 must not pass a $40 exposure cap."""
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st, pending_exposure_cap=Decimal("40"))
+    scenario = build_scenario(
+        st, mode=Mode.paper, broker=broker, gateway=gateway,
+        qty="100", limit_price="100", notional="1.00",
+    )
+    store = _store(tmp_path, "exposure-paper.sqlite")
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="10000.00", max_order_notional="10000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    result = handoff_to_gateway(
+        store, gateway, profile_id="profile-b", action="submit_paper",
+        client_order_id="exposure-1", notional=Decimal("10000.00"), actor="stop-owner",
+        now=now, submit_args=(scenario.order,),
+        submit_kwargs=_paper_submit_kwargs(scenario), **_PAPER_BINDINGS,
+    )
+    assert getattr(result.outcome, "ok", None) is False
+    assert getattr(result.outcome, "stage", None) == "pending_exposure"
+    assert _sends(broker) == 0
+
+
+def test_build_paper_execution_refuses_understated_notional_without_gateway_edits(st):
+    """The paper composition at main.py must apply qty x limit_price on this tree."""
+    import ast
+
+    from brokers.capability import TokenRegistry
+    from brokers.paper_gateway import PaperExecutionGateway
+
+    source = (APP / "main.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    fn = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "build_paper_execution"
+    )
+    constructed = [
+        node.func.id for node in ast.walk(fn)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    ]
+    assert "OrderGateway" not in constructed
+    assert "PaperExecutionGateway" in constructed
+    broker = _CountingPaper()
+    gateway = PaperExecutionGateway(
+        broker, st=st, token_registry=TokenRegistry(),
+        pending_exposure_cap=Decimal("40"),
+        approval_ttl_seconds=900,
+        execution_scope="paper",
+        require_analysis_generation=True,
+    )
+    scenario = build_scenario(
+        st, mode=Mode.paper, broker=broker, gateway=gateway,
+        qty="100", limit_price="100", notional="1.00",
+    )
+    outcome = gateway.submit(scenario.order, **_paper_submit_kwargs(scenario))
+    assert outcome.ok is False
+    assert outcome.stage == "pending_exposure"
+    assert _sends(broker) == 0
+
+
+def test_admission_timeout_closes_only_the_submission_intent_token(st, tmp_path):
+    """A same-order intent opened by a callback stays open. Only this submission closes."""
+    scenario, store, ticket, broker = _claimed_paper_scenario(st, tmp_path)
+    prior = st.audit.intent(
+        "order_submit",
+        refs={"order_id": "earlier-order"},
+        payload={"symbol": "MSFT", "side": "buy"},
+    )
+    opened = {}
+
+    def risk_recheck(_positions):
+        opened["callback"] = st.audit.intent(
+            "order_submit",
+            refs={"order_id": scenario.order.id},
+            payload={"symbol": "AAPL", "side": "buy"},
+        )
+        return {"decision": "approved", "failed_checks": []}
+
+    class _Held:
+        def acquire(self, blocking=True, timeout=-1):
+            if timeout is None or timeout < 0:
+                return False
+            opened["same_order"] = st.audit.intent(
+                "order_submit",
+                refs={
+                    "order_id": scenario.order.id,
+                    "proposal_id": scenario.order.proposal_id,
+                },
+                payload={"symbol": "AAPL", "side": "buy"},
+            )
+            return False
+
+        def release(self):
+            return None
+
+        def __enter__(self):
+            if not self.acquire():
+                raise RuntimeError("held")
+            return self
+
+        def __exit__(self, *_args):
+            self.release()
+            return False
+
+    scenario.st.safety_admission_lock = _Held()
+    _arm(scenario.gateway, store, "fence-1", ticket.generation)
+    outcome = scenario.gateway.submit(
+        scenario.order, **_paper_submit_kwargs(scenario, risk_recheck=risk_recheck),
+    )
+    assert (outcome.ok, outcome.stage) == (False, "admission_lock")
+    assert _sends(broker) == 0
+    open_seqs = set(st.audit.unresolved_intents())
+    assert prior.seq in open_seqs
+    assert opened["callback"].seq in open_seqs
+    assert opened["same_order"].seq in open_seqs
+    submission = [
+        row.seq for row in st.audit._rows()
+        if (row.payload or {}).get("_phase") == "intent"
+        and (row.payload or {}).get("_op") == "order_submit"
+        and (row.refs or {}).get("approval_id") == scenario.approval.id
+    ]
+    assert len(submission) == 1
+    assert submission[0] not in open_seqs

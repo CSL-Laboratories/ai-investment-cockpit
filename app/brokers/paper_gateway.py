@@ -89,16 +89,67 @@ def _order_is_inflight(st, order) -> bool:
     return inflight is not None and order_id in inflight
 
 
-def _close_submission_intent(st, order, already_open: set, reason: str) -> None:
-    """Resolve this submission's own intent. Leave every other intent open."""
+_SUBMISSION_TOKEN = "_submission_token"
+_STAMP_LOCK = threading.Lock()
+
+
+class _StampedIntent:
+    """Stamp only the intent ``OrderGateway.submit`` itself appends.
+
+    A callback can open another ``order_submit`` for the same order id before
+    or during the admission wait. The timeout closer matches this token, not
+    the order id.
+    """
+
+    def __init__(self, real) -> None:
+        self._real = real
+        self._local = threading.local()
+
+    def __call__(self, op, refs=None, payload=None):
+        token = getattr(self._local, "token", None)
+        order_id = getattr(self._local, "order_id", None)
+        if token and op == "order_submit" and (refs or {}).get("order_id") == order_id:
+            frame = inspect.currentframe()
+            caller = None if frame is None else frame.f_back
+            code = None if caller is None else caller.f_code
+            filename = "" if code is None else code.co_filename.replace("\\", "/")
+            if (
+                code is not None
+                and code.co_name == "submit"
+                and filename.endswith("/brokers/gateway.py")
+            ):
+                payload = dict(payload or {})
+                payload[_SUBMISSION_TOKEN] = token
+        return self._real(op, refs=refs, payload=payload)
+
+
+def _arm_submission_token(st, token: str, order_id) -> None:
+    with _STAMP_LOCK:
+        current = st.audit.intent
+        if not isinstance(current, _StampedIntent):
+            current = _StampedIntent(current)
+            st.audit.intent = current
+    current._local.token = token
+    current._local.order_id = order_id
+
+
+def _clear_submission_token(st) -> None:
+    current = getattr(getattr(st, "audit", None), "intent", None)
+    if isinstance(current, _StampedIntent):
+        current._local.token = None
+        current._local.order_id = None
+
+
+def _close_submission_intent(st, order, already_open: set, reason: str, token: str) -> None:
+    """Resolve the intent this submission stamped. Leave every other intent open."""
 
     class _Seq:
         def __init__(self, seq: int) -> None:
             self.seq = seq
 
-    order_id = getattr(order, "id", None)
-    if type(order_id) is not str or not order_id:
+    if type(token) is not str or not token:
         return
+    order_id = getattr(order, "id", None)
     rows = {row.seq: row for row in st.audit._rows()}
     for seq in list(st.audit.unresolved_intents()):
         if seq in already_open:
@@ -109,7 +160,7 @@ def _close_submission_intent(st, order, already_open: set, reason: str) -> None:
         payload = row.payload or {}
         if payload.get("_phase") != "intent" or payload.get("_op") != "order_submit":
             continue
-        if (row.refs or {}).get("order_id") != order_id:
+        if payload.get(_SUBMISSION_TOKEN) != token:
             continue
         st.audit.result(
             _Seq(seq),
@@ -228,11 +279,63 @@ class _AdmittedPaperClient:
         setattr(object.__getattribute__(self, "_real"), name, value)
 
 
+class _PinnedTransport:
+    """The transport object captured at init. Closing it does not close the caller's."""
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+
+    def handle_request(self, request):
+        return self._inner.handle_request(request)
+
+    def close(self) -> None:
+        return None
+
+
+def _owned_http_session(http):
+    """A private HTTP session for this gateway.
+
+    The caller's ``httpx.Client`` stays shared with them. Event hooks, proxy
+    env, and a later replacement of their client cannot move this session.
+    The secret is not copied into the profile store.
+    """
+    import httpx
+
+    if not isinstance(http, httpx.Client):
+        return None, None
+    pinned_timeout = http.timeout
+    # The caller's transport object, as it existed at init. A later hook on
+    # either client does not run: this path never enters ``Client.request``.
+    handle = http._transport.handle_request
+    owned = httpx.Client(
+        timeout=pinned_timeout,
+        follow_redirects=False,
+        trust_env=False,
+        event_hooks={},
+        transport=_PinnedTransport(http._transport),
+    )
+
+    def request(method, url, *, headers=None, json=None, params=None, **_ignored):
+        outgoing = httpx.Request(method, url, headers=headers, json=json, params=params)
+        outgoing.extensions = dict(outgoing.extensions, timeout=pinned_timeout.as_dict())
+        response = handle(outgoing)
+        response.read()
+        return response
+
+    class _Session:
+        def request(self, method, url, **kwargs):
+            return request(method, url, **kwargs)
+
+    return _Session(), owned
+
+
 def _capture_send(client):
     """Pin the request function, credential snapshot, and paper endpoint.
 
     A later assignment on the live client cannot redirect this send. The
     secret stays in the captured headers and is not written to the profile store.
+    An HTTP client gets a private session built here, at gateway init, so a
+    request hook added on the caller's session cannot see that secret.
     """
     request = getattr(client, "_request", None)
     headers = getattr(client, "_headers", None)
@@ -244,12 +347,12 @@ def _capture_send(client):
             return _send(canonical)
 
         if not callable(info):
-            return frozen, None
+            return frozen, None, None
 
         def frozen_info(*args, _info=info, **kwargs):
             return _info(*args, **kwargs)
 
-        return frozen, frozen_info
+        return frozen, frozen_info, None
 
     from brokers.alpaca_paper import (
         DATA_BASE_URL,
@@ -264,14 +367,14 @@ def _capture_send(client):
         for key, value in headers.items()
         if type(key) is str and type(value) is str
     }
-    http = getattr(client, "_client", None)
+    session, owned = _owned_http_session(getattr(client, "_client", None))
 
     class _Pin:
         pass
 
     pin = _Pin()
     pin._headers = dict(snap_headers)
-    pin._client = http
+    pin._client = session if session is not None else getattr(client, "_client", None)
 
     def call(method, base_url, path, *, json=None, params=None):
         if isinstance(base_url, str) and "data.alpaca.markets" in base_url:
@@ -319,7 +422,7 @@ def _capture_send(client):
                 )
         return _normalize_order_body(body)
 
-    return submit, order_info
+    return submit, order_info, owned
 
 
 class BoundClaimFence:
@@ -462,7 +565,37 @@ class _BoundPaperTransport(AlpacaPaperBroker):
         return AlpacaPaperBroker.submit_order(self, canonical)
 
 
-class PaperOrderGateway(OrderGateway):
+def _tuple_exposure_notional(order):
+    """Exposure for a priced order is qty times limit price.
+
+    ``OrderGateway._order_notional`` prefers a detached ``order.notional``.
+    A birth row signed at $1 would then pass a cap the limit order exceeds.
+    """
+    from brokers.gateway import _dec
+
+    limit = getattr(order, "limit_price", None)
+    qty = getattr(order, "qty", None)
+    if limit is not None and qty is not None:
+        product = _dec(qty) * _dec(limit)
+        if product.is_finite() and product > 0:
+            return product
+    return OrderGateway._order_notional(order)
+
+
+class PaperExecutionGateway(OrderGateway):
+    """The paper composition gateway ``build_paper_execution`` constructs.
+
+    Pending exposure uses qty times limit price. A raw ``OrderGateway`` still
+    prefers ``order.notional`` until that method changes in the gateway split.
+    """
+
+    def __getattribute__(self, name):
+        if name == "_order_notional":
+            return _tuple_exposure_notional
+        return super().__getattribute__(name)
+
+
+class PaperOrderGateway(PaperExecutionGateway):
     """Paper transport by concrete type, not by a caller-set scope string.
 
     Construction forces the paper scope, fresh analysis and the admitted paper
@@ -512,7 +645,9 @@ class PaperOrderGateway(OrderGateway):
         # Same capture #252 takes in ``OrderGateway.__init__``. A later
         # replacement of the class attribute is not this gateway's transport.
         self._admitted_paper_submit = AlpacaPaperBroker.submit_order
-        self._captured_submit, frozen_info = _capture_send(self._admitted_client)
+        self._captured_submit, frozen_info, self._owned_http = _capture_send(
+            self._admitted_client
+        )
         self._paper_submit_open = False
         if _parent_init_accepts_claim_fence():
             kwargs["claim_fence"] = self._profile_fence
@@ -523,6 +658,14 @@ class PaperOrderGateway(OrderGateway):
             order_info=frozen_info,
         )
         self._transport = _BoundPaperTransport(broker, self._admitted_paper_submit, client)
+
+    def __del__(self) -> None:
+        owned = getattr(self, "_owned_http", None)
+        if owned is not None:
+            try:
+                owned.close()
+            except Exception:
+                pass
 
     def arm_profile_claim(self, store, client_order_id: str, generation: int) -> None:
         """Arm the bound fence with the claim ``submit`` will confirm."""
@@ -615,12 +758,18 @@ class PaperOrderGateway(OrderGateway):
                 wrapper = _TimedAdmissionLock(original_lock, _ADMISSION_BUDGET_S)
                 st.safety_admission_lock = wrapper
             open_before = set(st.audit.unresolved_intents())
+            token = secrets.token_urlsafe(16)
+            _arm_submission_token(st, token, getattr(order, "id", None))
             try:
-                return super().submit(order, **kwargs)
-            except _AdmissionTimeout:
-                _close_submission_intent(st, order, open_before, _ADMISSION_TIMEOUT)
-                return GateOutcome(False, "admission_lock", _ADMISSION_TIMEOUT)
+                try:
+                    return super().submit(order, **kwargs)
+                except _AdmissionTimeout:
+                    _close_submission_intent(
+                        st, order, open_before, _ADMISSION_TIMEOUT, token
+                    )
+                    return GateOutcome(False, "admission_lock", _ADMISSION_TIMEOUT)
             finally:
+                _clear_submission_token(st)
                 with state_lock:
                     if st.safety_admission_lock is wrapper:
                         st.safety_admission_lock = original_lock

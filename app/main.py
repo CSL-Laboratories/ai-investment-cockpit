@@ -673,8 +673,8 @@ def build_paper_execution(state, *, client=None, watchlist_fn=None, parquet_root
     """
     from brokers.alpaca_paper import AlpacaPaperBroker, AlpacaPaperHTTPClient
     from brokers.capability import TokenRegistry
-    from brokers.gateway import OrderGateway
     from brokers.paper_execution import PaperExecutionService
+    from brokers.paper_gateway import PaperExecutionGateway
     from brokers.paper_reconciliation import PaperOrderReconciler
     from core.secrets import get_secret
     from ingest.market_data import MarketDataService
@@ -696,7 +696,7 @@ def build_paper_execution(state, *, client=None, watchlist_fn=None, parquet_root
 
     broker = AlpacaPaperBroker(client=client)
     registry = TokenRegistry()
-    gateway = OrderGateway(
+    gateway = PaperExecutionGateway(
         broker,
         st=state,
         token_registry=registry,

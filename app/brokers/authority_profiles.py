@@ -2334,12 +2334,71 @@ def _open_submit_intent(gateway, order_ref: str) -> bool:
     return False
 
 
+def _approval_consumed_on_chain(st, approval_id: str) -> bool:
+    """True when a verified adjudication already records this approval as consumed."""
+    from sqlalchemy import select
+
+    from orchestrator.state import EVENT_ADJUDICATION
+    from schemas.models.audit_entry import AuditEntry
+
+    with st.session_factory() as session:
+        entries = session.execute(
+            select(AuditEntry).where(AuditEntry.event_type == EVENT_ADJUDICATION)
+        ).scalars().all()
+    for entry in entries:
+        if (entry.refs or {}).get("row_id") != approval_id:
+            continue
+        if (entry.payload or {}).get("kind") != "approval_consumed":
+            continue
+        if st.audit.verify_entry(entry):
+            return True
+    return False
+
+
+def _consume_landed_approval(st, order) -> None:
+    """Burn the persisted approval the way a normal submit does.
+
+    Accept-then-timeout returns before ``OrderGateway`` reaches that write.
+    Presence recovery has to do it, once, or the same approval can send again.
+    A second recovery that finds the column and the signed record does not
+    append another consumption.
+    """
+    from orchestrator.state import EVENT_ADJUDICATION
+    from schemas.models.approval_record import ApprovalRecord
+
+    approval_id = getattr(order, "approval_id", None)
+    if type(approval_id) is not str or not approval_id:
+        raise ProfileRefused("approval", "landed order has no approval to consume")
+    with st.session_factory() as session:
+        approval = session.get(ApprovalRecord, approval_id)
+        if approval is not None:
+            session.expunge(approval)
+    if approval is None:
+        raise ProfileRefused("approval", "landed order approval is not persisted")
+    if bool(approval.single_use_consumed) and _approval_consumed_on_chain(st, approval.id):
+        return
+    approval.single_use_consumed = True
+    tuple_hash = getattr(order, "order_tuple_hash", None)
+    st.audit.record_state_change(
+        approval,
+        EVENT_ADJUDICATION,
+        actor="paper-recovery",
+        payload={
+            "kind": "approval_consumed",
+            "proposal_id": getattr(order, "proposal_id", None),
+            "order_id": getattr(order, "id", None),
+            "order_tuple_hash": tuple_hash,
+        },
+    )
+
+
 def _resolve_landed_submission(gateway, order_ref: str) -> None:
     """Close this order's open submit intent and move the row to submitted.
 
     Presence recovery must not mark the reservation complete over a proposed
     order or an unresolved intent. An intent that is already resolved is left
-    alone. The broker id is read back; it is not invented.
+    alone. The broker id is read back; it is not invented. The approval is
+    consumed before the reservation can complete.
     """
     from brokers.alpaca_paper import AlpacaPaperBroker
     from brokers.order_state_machine import IllegalOrderTransition, transition
@@ -2396,6 +2455,7 @@ def _resolve_landed_submission(gateway, order_ref: str) -> None:
             session.expunge(order)
     if order is None:
         raise ProfileRefused("order_state", "landed order is not in the local book")
+    _consume_landed_approval(st, order)
     if order.state == "submitted":
         return
     if order.state not in {"proposed", "approved"}:
