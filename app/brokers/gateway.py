@@ -1237,10 +1237,12 @@ class OrderGateway:
                             actor=producing_runtime,
                             resolved_hash=resolved_hash,
                         )
+                    # The post-fence risk refresh can block on broker HTTP too, so the
+                    # wait budget covers it as well as the admission read.
+                    started = time.monotonic()
                     refused = _refresh_after_fence()
                     if refused is not None:
                         return refused
-                    started = time.monotonic()
                     final_stage, final_reason = _final_admission()
                     waited = time.monotonic() - started
                     if final_stage is not None:
