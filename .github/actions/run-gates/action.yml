@@ -20,7 +20,7 @@ runs:
       shell: bash
       env:
         PIP_DISABLE_PIP_VERSION_CHECK: "1"
-      run: python .github/actions/run-gates/install.py
+      run: python -P .github/actions/run-gates/install.py
     - name: Put the CI virtualenv on PATH
       shell: bash
       run: |

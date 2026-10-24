@@ -55,7 +55,7 @@ class RunGatesActionTests(unittest.TestCase):
         self.assertNotIn('uses: actions/cache@', self.action)
         self.assertNotIn('cache-hit', self.action)
         self.assertIn(
-            'python .github/actions/run-gates/install.py',
+            'python -P .github/actions/run-gates/install.py',
             self.action,
         )
         self.assertNotIn('pip install -U pip pydantic', self.action)
@@ -87,7 +87,15 @@ class FreshEnvironmentTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        base = Path(self.temp.name)
+        self.root = base / 'checkout'
+        self.root.mkdir()
+        self.runner_temp = base / 'runner-temp'
+        self.runner_temp.mkdir()
+        # Hermetic: ambient RUNNER_TEMP on a developer box must not leak in.
+        self.env_patch = patch.dict(os.environ, {'RUNNER_TEMP': str(self.runner_temp)})
+        self.env_patch.start()
+        self.addCleanup(self.env_patch.stop)
         self.create_patch = patch.object(INSTALLER.venv, 'EnvBuilder')
         self.builder = self.create_patch.start()
         self.addCleanup(self.create_patch.stop)
@@ -194,6 +202,35 @@ class FreshEnvironmentTests(unittest.TestCase):
         INSTALLER.install(self.root)
         self.assertEqual(self.run.call_args_list[0].args[0][0],
                          str(self.root / '.venv/Scripts/python.exe'))
+
+    def test_pip_runs_isolated_from_checkout_cwd(self):
+        # CSL-471: ci.yml linux/windows/macos cells run this installer on a PR
+        # checkout. `python -m pip` with cwd=checkout would execute pip/__main__.py.
+        INSTALLER.install(self.root)
+        self.assertGreater(len(self.run.call_args_list), 0)
+        for call in self.run.call_args_list:
+            argv = call.args[0]
+            self.assertEqual(argv[1:4], ['-P', '-m', 'pip'])
+            self.assertEqual(Path(call.kwargs['cwd']).resolve(), self.runner_temp.resolve())
+            self.assertNotEqual(Path(call.kwargs['cwd']).resolve(), self.root.resolve())
+
+    def test_pip_cwd_falls_back_when_runner_temp_is_the_checkout(self):
+        outside = Path(INSTALLER.tempfile.gettempdir()).resolve()
+        try:
+            outside.relative_to(self.root.resolve())
+        except ValueError:
+            pass
+        else:
+            self.skipTest('tempdir is inside the fixture checkout')
+        with patch.dict(os.environ, {'RUNNER_TEMP': str(self.root)}):
+            cwd = INSTALLER.pip_cwd(self.root)
+        self.assertEqual(cwd.resolve(), outside)
+
+    def test_pip_cwd_fails_closed_when_every_candidate_is_the_checkout(self):
+        with patch.dict(os.environ, {'RUNNER_TEMP': str(self.root)}), \
+             patch.object(INSTALLER.tempfile, 'gettempdir', return_value=str(self.root)):
+            with self.assertRaisesRegex(ValueError, 'pip cwd must not be inside the checkout'):
+                INSTALLER.pip_cwd(self.root)
 
 
 if __name__ == '__main__':
