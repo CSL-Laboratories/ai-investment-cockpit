@@ -608,10 +608,17 @@ class WorkflowStructureTests(unittest.TestCase):
             self.assertIn("Bash(git push:*)", job.split("--disallowedTools", 1)[1])
             self.assertNotIn("HEAD:refs/heads/", job)
 
-    def test_setup_python_cache_uses_app_manifest(self) -> None:
-        devin = self._job("devin-review-fix")
-        self.assertIn("cache-dependency-path:", devin)
-        self.assertIn("app/pyproject.toml", devin)
+    def test_setup_python_does_not_enable_pip_cache(self) -> None:
+        # CSL-471 REVIEW-D8 J3: cache: pip on a PR/model job poisons the
+        # default-branch Actions cache by prefix restore (including the
+        # conflict writer that holds the OAuth token).
+        for job_name in ("claude-mention", "devin-review-fix"):
+            body = self._job(job_name)
+            self.assertNotIn("cache: pip", body, job_name)
+            self.assertNotIn("cache-dependency-path:", body, job_name)
+        writer = WRITER_WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertNotIn("cache: pip", writer)
+        self.assertNotIn("cache-dependency-path:", writer)
 
     def test_prompt_treats_review_and_files_as_untrusted(self) -> None:
         self.assertIn("UNTRUSTED DATA", self.text)

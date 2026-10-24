@@ -450,15 +450,18 @@ jobs:
         uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master 2026-10-09
         with:
           toolchain: "1.83.0"
+      - name: Install maturin for batch parity
+        if: hashFiles('rust/cockpit-py/Cargo.toml') != ''
+        working-directory: ${{ runner.temp }}
+        run: python -P -m pip install -U maturin
       - name: Batch parity against the Rust extension
         if: hashFiles('rust/cockpit-py/Cargo.toml') != ''
         run: |
           set -euo pipefail
-          python -m pip install -U maturin
-          python -m maturin build --release --manifest-path rust/cockpit-py/Cargo.toml
-          python -c "import glob, subprocess, sys; wheels = glob.glob('rust/target/wheels/cockpit_quant-*.whl'); assert wheels, 'no wheel built'; subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--force-reinstall', *wheels])"
+          python -P -m maturin build --release --manifest-path rust/cockpit-py/Cargo.toml
+          python -P -c "import glob, os, subprocess, sys; root = os.environ['GITHUB_WORKSPACE']; wheels = glob.glob(os.path.join(root, 'rust', 'target', 'wheels', 'cockpit_quant-*.whl')); assert wheels, 'no wheel built'; subprocess.check_call([sys.executable, '-P', '-m', 'pip', 'install', '--force-reinstall', *wheels], cwd=os.environ['RUNNER_TEMP'])"
           cd app
-          python -m pytest -q tests/quant/book/test_book_batch.py -ra | tee "$RUNNER_TEMP/batch-parity.txt"
+          python -P -m pytest -q tests/quant/book/test_book_batch.py -ra | tee "$RUNNER_TEMP/batch-parity.txt"
           if grep -q 'skipped' "$RUNNER_TEMP/batch-parity.txt"; then
             echo "batch parity skipped; cockpit_quant did not load"
             exit 1
@@ -835,10 +838,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: app/benchmarks/requirements.txt
       - name: Install benchmark dependencies
-        run: python -m pip install -r app/benchmarks/requirements.txt
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          req="${RUNNER_TEMP}/bench-requirements.txt"
+          # CSL-471 / REVIEW-D7 I5: the PR checkout must not choose packages.
+          cp "${GITHUB_WORKSPACE}/_bench_base/app/benchmarks/requirements.txt" "$req"
+          python -P -m pip install -r "$req"
       - name: Compare hot paths with the base tree
         working-directory: app
         run: |
