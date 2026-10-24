@@ -165,7 +165,7 @@ meanwhile ("paused" or other proceed-list work, never the option you are asking
 about or work that presupposes one). A stuck review thread instead goes in the
 PR's roll-up, found only by its `<!-- stuck-pr-threads:owner/repo#N -->` marker,
 in your own block; product and architecture questions stay on the work issue.
-For a decision or direction issue you are assigned or have claimed, the Parallel Task API brief in
+For a decision or direction issue you are assigned or have claimed, the research requirement in
 [Linear-first workflow](#linear-first-workflow) still comes first, and Grok Bots do
 not research or resolve decision issues. Then release your claim, if you hold one, with a release
 record and take only other admitted work that is next under the human-approved
@@ -337,20 +337,30 @@ provisioned.
    and prefer inspecting the failure (as `orchestrator/halt.py` does) over branching on
    `os.name`. See `DEC-09` in `docs/REGISTER.md`.
 
-## Web lookups
+## Research
 
-Prefer the project `parallel-search` MCP server (`web_search` / `web_fetch`) for web lookups.
-It is declared in `.cursor/mcp.json` (Cursor) and `.mcp.json` (Claude Code); no API key is required.
-Search/Extract is for lookups. Decision/direction work by the assignee or the claimant also needs the Task API — see Linear-first.
-Use the `exa` MCP server only for substantial deep research (multi-source investigations,
-`agent_run` research tasks); Parallel stays the default for quick lookups and current web facts.
-Exa is billable and capped; see the Exa MCP entry below.
+Every issue and every execution step is grounded in research before the work.
+This applies to decision issues and implementation alike. Size the research to
+the task. No specific tool is required, and there is no separate mandatory
+research pipeline. Use whatever research resources you already have access to.
+Examples include ChatGPT Pro Deep Research, Claude Max research, Exa, Parallel,
+current library docs (for example Context7), the web, and primary sources and
+repo evidence; none of these is required.
+
+Prefer already-paid subscriptions. Keep the standing no-pay-per-token-API rule:
+only already-paid subscriptions or existing allowances are used. Metered tools
+such as Exa and Parallel stay within their existing per-person ceilings. No new
+pay-per-token spend. Scheduled routines never start metered or paid research on
+their own.
+
+Record which source or tool produced each piece of evidence, with the date and
+the key sources, in the issue or the evidence so the research can be checked.
 
 ## Engineering stack (Oct 2026)
 
 - **Parallel Search MCP** — web search and fetch at https://search.parallel.ai/mcp (no key).
 - **Context7 MCP** — up-to-date library docs at https://mcp.context7.com/mcp (works without a key).
-- **Exa MCP** — substantial deep research: multi-source investigations and `agent_run` research tasks. Parallel stays the default for quick lookups and current web facts. Declared in `.cursor/mcp.json` and `.mcp.json` (https://mcp.exa.ai/mcp). The key goes in the `x-api-key` header from env var `EXA_API_KEY` (Cursor `${env:EXA_API_KEY}`, Claude Code `${EXA_API_KEY:-}`, so a missing key falls back to Exa's free rate-limited mode instead of breaking the file) and lives only in each environment's secret settings, never in tracked files, prompts, chat or logs. Capped at $50 per person per month (Lucas's decision, CSL-378 comment ff7227ac). Start a billable run only when it keeps you under the cap, and record each run's cost in its research record. Same query rules as Parallel: keep queries generic, with no secrets, proprietary code or private data.
+- **Exa MCP** — available research source at https://mcp.exa.ai/mcp. Declared in `.cursor/mcp.json` and `.mcp.json`. The key goes in the `x-api-key` header from env var `EXA_API_KEY` (Cursor `${env:EXA_API_KEY}`, Claude Code `${EXA_API_KEY:-}`, so a missing key falls back to Exa's free rate-limited mode instead of breaking the file) and lives only in each environment's secret settings, never in tracked files, prompts, chat or logs. Capped at $50 per person per month (Lucas's decision, CSL-378 comment ff7227ac). Start a billable run only when it keeps you under the cap, and record each run's cost in its research record. Same query rules as Parallel: keep queries generic, with no secrets, proprietary code or private data.
 - **Linear MCP** — issues, comments, and status at https://mcp.linear.app/mcp (or the Devin Linear integration).
 - **Linear** — source of truth for work. Workspace **CSL laboratories**, team key **CSL**, project **ai-investment-cockpit**.
 - **GitHub** — org **CSL-Laboratories**.
@@ -377,10 +387,11 @@ Agents trigger CI and reviews via these commands/tools or the `ci:full` label.
 
 Agents must stay Linear-aware and proactive. Linear is the source of truth for execution: the assignee (the human owner), claim records, status and discussion. `docs/REGISTER.md` remains the package record: it allocates package IDs and holds package claims, scope and completion contracts. These are separate records, and neither replaces the other. An agent's execution claim is its Linear claim record; neither it nor the assignment allocates, replaces or closes a REGISTER package claim, and a runtime `claim_id` remains the existing REGISTER package ID. Process work with no package says so and does not mint an ID. Cycle decisions stay with [CSL-8](https://linear.app/csl-laboratories/issue/CSL-8); this section sets no cycle. Admission, blocker, claim-release, resume and evidence rules are in [Bounded issue execution and shared evidence](#bounded-issue-execution-and-shared-evidence). Releasing a blocked execution claim does not release the hold. After a blocker, take only a separately admitted issue that is next under an explicit human-approved order; if no such order exists or it is ambiguous, propose the next choice on Linear and wait.
 
-- **Before starting work**, find or create the Linear issue (team **CSL**, project **ai-investment-cockpit**) via the Linear MCP or the Devin Linear integration. Do not start a change without a `CSL-N`.
-- **When you are the assignee or the claimant** (developer or their coding agent working in the repo) of an issue that needs a decision or sets direction, run Parallel Task API deep research before proposing or deciding, in addition to Search/Extract. Post the cited brief (options, tradeoffs, recommendation, target metrics) on the Linear issue, then decide or @mention for approval. Grok Bots do not research or resolve decision issues.
+- **Before starting work**, find or create the Linear issue (team **CSL**, project **ai-investment-cockpit**) via the Linear MCP or the Devin Linear integration. Do not start a change without a `CSL-N`. Ground the issue and each execution step in research first; size it to the task (see [Research](#research)).
+- **When you are the assignee or the claimant** (developer or their coding agent working in the repo) of an issue that needs a decision or sets direction, post a cited brief (options, tradeoffs, recommendation, target metrics) on the Linear issue after the research that grounds the work, then decide or @mention for approval. Grok Bots do not research or resolve decision issues.
 - Branch names come from Linear's copied branch name, so the PR auto-links. PR title includes `CSL-N`. One issue per PR; keep PRs small and stackable.
 - In the PR body, write `Related to CSL-N` by default; use a closing keyword (`Fixes CSL-N`) only when this PR completes the issue's acceptance criteria. Name the REGISTER package ID, or `none` for process work. Linear automation moving an issue to **Done**, a merge, or an AI PASS is not acceptance evidence.
+- **Formal review requests.** Every review ask needs both (a) an @mention on the Linear issue (`samirshahahmed`, `chaandansaini101`) and (b) a formal GitHub review request: `gh pr edit <n> --add-reviewer samir-shah-ahmed,CDanTheMan` (whichever apply). This is mandatory for agents too.
 - Comment progress on the issue. Move it to **In Progress** once your claim record is confirmed, then **In Review** when the PR is up. A hosted agent without Linear access reports its blocker on the PR to the PR author through its existing channel; the author relays it to the current Linear owner. The hosted agent does not invent API access, and this guide changes no workflow prompts.
 - Grok Bots must read the Linear PR-sync comment (`<!-- pr-sync:<repo>#<n> -->`, written by [`.github/workflows/linear-pr-sync.yml`](.github/workflows/linear-pr-sync.yml)) on the issue before touching shared files. Three people work this repo at once; that comment is the live PR link, mergeable/conflict state, head SHA, and top files.
 - When work reveals follow-ups, bugs, or next steps, create new **Triage** issues with one Type label, the repo label `ai-investment-cockpit`, the project, and a link back to the parent issue or PR — not drive-by changes.
