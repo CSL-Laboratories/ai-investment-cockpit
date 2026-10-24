@@ -146,6 +146,110 @@ class NativeArgvTests(unittest.TestCase):
         self.assertIn("CSL_MCP_EMPTY_PATH", src)
 
 
+def _ke(flag: str, value: str) -> str:
+    """sdk.mjs 0.3.306: function Ke(e,t){return`${e}=${t}`}."""
+    return f"{flag}={value}"
+
+
+class SdkArgvTests(unittest.TestCase):
+    """Argv built the way @anthropic-ai/claude-agent-sdk 0.3.306 sdk.mjs builds it.
+
+    parse-sdk-options converts --max-turns, --allowedTools, --disallowedTools
+    and --setting-sources to SDK options, so Ke() always emits the = form.
+    extraArgs (--mcp-config, --append-system-prompt, --strict-mcp-config) stay
+    two-token because their values do not start with '-'.
+    """
+
+    WS = "/home/runner/work/ai-investment-cockpit/ai-investment-cockpit"
+    TEMP = "/home/runner/work/_temp"
+    DISALLOWED = (
+        "WebSearch,WebFetch,Bash(git diff --no-index:*),Bash(git push:*),"
+        "Bash(git config:*),Bash(git difftool:*),Bash(gh api:*),Bash(curl:*),"
+        "Bash(wget:*),Bash(env:*),Bash(printenv:*)"
+    )
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.tmp = tempfile.TemporaryDirectory()
+        dest = Path(cls.tmp.name)
+        probe_c = dest / "argv_probe.c"
+        probe_c.write_text(
+            '#include "sandbox_argv.h"\n'
+            "int main(int argc, char **argv) {\n"
+            "    return csl_argv_allow(argc, argv) == 0 ? 0 : 1;\n"
+            "}\n",
+            encoding="ascii",
+        )
+        cls.probe = dest / "argv-probe"
+        subprocess.run(
+            [
+                "gcc", "-o", str(cls.probe), str(probe_c),
+                str(SRC / "sandbox_argv.c"), str(SRC / "sandbox_common.c"),
+                f"-I{SRC}", "-static", "-O2", "-Wall", "-Werror",
+            ],
+            check=True,
+            cwd=SRC,
+        )
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.tmp.cleanup()
+
+    def _allowed(self) -> str:
+        return (
+            f"Edit(/{self.WS}/**),Write(/{self.WS}/**),Read,Glob,Grep,"
+            f"Bash(python3 {self.TEMP}/claude-fixer-guard/model-api --:*)"
+        )
+
+    def _sdk_argv(self, **overrides: str) -> list[str]:
+        allowed = overrides.get("allowed", self._allowed())
+        turns = overrides.get("turns", "30")
+        sources = overrides.get("sources", "user")
+        disallowed = overrides.get("disallowed", self.DISALLOWED)
+        return [
+            str(self.probe),
+            _ke("--max-turns", turns),
+            _ke("--allowedTools", allowed),
+            _ke("--disallowedTools", disallowed),
+            _ke("--setting-sources", sources),
+            "--output-format", "stream-json",
+            "--verbose",
+            "--input-format", "stream-json",
+            "--mcp-config", "/opt/csl-claude/mcp.empty.json",
+            "--append-system-prompt", "Linear-first (CSL-88)",
+            "--strict-mcp-config",
+        ]
+
+    def test_sdk_mjs_ke_form_is_allowed(self) -> None:
+        proc = subprocess.run(self._sdk_argv(), capture_output=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_two_token_form_still_allowed(self) -> None:
+        argv = [
+            str(self.probe),
+            "--max-turns", "30",
+            "--allowedTools", self._allowed(),
+            "--disallowedTools", self.DISALLOWED,
+            "--setting-sources", "user",
+            "--output-format", "stream-json",
+            "--verbose",
+            "--input-format", "stream-json",
+            "--mcp-config", "{}",
+            "--append-system-prompt", "Linear-first (CSL-88)",
+            "--strict-mcp-config",
+        ]
+        proc = subprocess.run(argv, capture_output=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_ke_wrong_turns_refused(self) -> None:
+        proc = subprocess.run(self._sdk_argv(turns="31"), capture_output=True)
+        self.assertNotEqual(proc.returncode, 0)
+
+    def test_ke_project_sources_refused(self) -> None:
+        proc = subprocess.run(self._sdk_argv(sources="user,project"), capture_output=True)
+        self.assertNotEqual(proc.returncode, 0)
+
+
 class NativeRelayOneShotTests(unittest.TestCase):
     def test_no_end_then_success_then_already_ran(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -274,6 +378,34 @@ class EmbedPinTests(unittest.TestCase):
             if name in want:
                 self.assertEqual(digest, want[name], f"embed {name}")
             self.assertGreaterEqual(yml.count(f"<<'{tag}'"), 2)
+
+
+class R3ContractTests(unittest.TestCase):
+    def test_launcher_hash_compares_against_pin_file(self) -> None:
+        capture = (SRC / "sandbox_capture.c").read_text(encoding="utf-8")
+        self.assertIn("CSL_LAUNCH_SHA_PATH", capture)
+        self.assertNotIn("csl_sha256_file(CSL_LAUNCH_PATH, want)", capture)
+        common = (SRC / "sandbox_common.h").read_text(encoding="utf-8")
+        self.assertIn("launch.sha256", common)
+        self.assertIn("CSL_WORKSPACE_DEFAULT", common)
+
+    def test_empty_workspace_refuses_f1_arm(self) -> None:
+        capture = (SRC / "sandbox_capture.c").read_text(encoding="utf-8")
+        self.assertIn("if (cn == 0)", capture)
+
+    def test_fifo_hup_stops_polling_fifo_r(self) -> None:
+        capture = (SRC / "sandbox_capture.c").read_text(encoding="utf-8")
+        self.assertIn("fifo_hup", capture)
+
+    def test_n14_waits_process_group(self) -> None:
+        launch = (SRC / "sandbox_launch.c").read_text(encoding="utf-8")
+        self.assertIn("setpgid(0, 0)", launch)
+        self.assertIn("waitpid(-child", launch)
+
+    def test_relay_sudo_parent_is_exact(self) -> None:
+        relay = (SRC / "sandbox_relay.c").read_text(encoding="utf-8")
+        self.assertNotIn('strstr(exe, "/sudo")', relay)
+        self.assertIn('strcmp(exe, "/usr/bin/sudo")', relay)
 
 
 if __name__ == "__main__":

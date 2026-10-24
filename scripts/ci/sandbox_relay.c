@@ -117,7 +117,7 @@ static const char *f4a_parent(void)
     if (csl_proc_exe(ppid, exe, sizeof exe) < 0) {
         exe[0] = 0;
     }
-    if (strstr(exe, "/sudo") || strcmp(exe, "/usr/bin/sudo") == 0 ||
+    if (strcmp(exe, "/usr/bin/sudo") == 0 ||
         strcmp(exe, "/usr/sbin/sudo") == 0 || strcmp(exe, "/bin/sudo") == 0) {
         /* sudo forks: sudo's ppid must equal Worker pidfd. */
         char statp[64], buf[4096];

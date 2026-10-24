@@ -2244,7 +2244,9 @@ jobs:
           #define CSL_PAIR_PATH CSL_STATE_DIR "/pair.closed"
           #define CSL_WORKER_PID_PATH CSL_STATE_DIR "/worker.pid"
           #define CSL_WORKSPACE_PATH CSL_STATE_DIR "/workspace"
+          #define CSL_LAUNCH_SHA_PATH CSL_STATE_DIR "/launch.sha256"
           #define CSL_BUN_TOFU_PATH CSL_STATE_DIR "/bun.tofu"
+          #define CSL_WORKSPACE_DEFAULT "/home/runner/work/ai-investment-cockpit/ai-investment-cockpit"
           #define CSL_ACTION_DIR "/home/runner/work/_actions/anthropics/claude-code-action/a5a423f75c251dcbff8a74e99f83b2cb03c72bfa"
           #ifdef CSL_PREFIX
           #define CSL_RUNNER_TEMP CSL_PREFIX "/tmp"
@@ -3099,6 +3101,28 @@ jobs:
               return strncmp(s, p, strlen(p)) == 0;
           }
 
+          /* SDK 0.3.306 emits Ke("--flag", v) as a single "--flag=v" token for
+           * max-turns, allowedTools, disallowedTools, and setting-sources. YAML
+           * two-token form is still accepted with the same value checks. */
+          static int take_eq_or_next(const char *a, const char *flag, int *i, int argc,
+                                     char **argv, const char **value)
+          {
+              size_t flen = strlen(flag);
+              if (strcmp(a, flag) == 0) {
+                  if (*i + 1 >= argc) {
+                      return -1;
+                  }
+                  (*i)++;
+                  *value = argv[*i];
+                  return 1;
+              }
+              if (starts_with(a, flag) && a[flen] == '=') {
+                  *value = a + flen + 1;
+                  return 1;
+              }
+              return 0;
+          }
+
           static void free_tools(char **tools, int n)
           {
               while (n > 0) {
@@ -3175,7 +3199,7 @@ jobs:
               char helper[768];
               char *tools[64];
               int ntools = 0;
-              const char *ws = "/home/runner/work/ai-investment-cockpit/ai-investment-cockpit";
+              const char *ws = CSL_WORKSPACE_DEFAULT;
               char wsbuf[512];
               size_t n = 0;
 
@@ -3243,47 +3267,83 @@ jobs:
                       saw_perm = 1;
                       continue;
                   }
-                  if (strcmp(a, "--max-turns") == 0) {
-                      if (saw_turns || i + 1 >= argc || strcmp(argv[i + 1], "30") != 0) {
+                  {
+                      const char *val = NULL;
+                      int t = take_eq_or_next(a, "--max-turns", &i, argc, argv, &val);
+                      if (t < 0) {
                           free_tools(tools, ntools);
                           return -1;
                       }
-                      i++;
-                      saw_turns = 1;
-                      continue;
+                      if (t > 0) {
+                          if (saw_turns || strcmp(val, "30") != 0) {
+                              free_tools(tools, ntools);
+                              return -1;
+                          }
+                          saw_turns = 1;
+                          continue;
+                      }
                   }
-                  if (strcmp(a, "--setting-sources") == 0) {
-                      if (saw_sources || i + 1 >= argc || strcmp(argv[i + 1], "user") != 0) {
+                  {
+                      const char *val = NULL;
+                      int t = take_eq_or_next(a, "--setting-sources", &i, argc, argv, &val);
+                      if (t < 0) {
                           free_tools(tools, ntools);
                           return -1;
                       }
-                      i++;
-                      saw_sources = 1;
-                      continue;
+                      if (t > 0) {
+                          if (saw_sources || strcmp(val, "user") != 0) {
+                              free_tools(tools, ntools);
+                              return -1;
+                          }
+                          saw_sources = 1;
+                          continue;
+                      }
                   }
-                  if (strcmp(a, "--allowedTools") == 0 || strcmp(a, "--allowed-tools") == 0) {
-                      int extra;
-                      if (saw_allowed || i + 1 >= argc) {
+                  {
+                      const char *val = NULL;
+                      int t = take_eq_or_next(a, "--allowedTools", &i, argc, argv, &val);
+                      if (t == 0) {
+                          t = take_eq_or_next(a, "--allowed-tools", &i, argc, argv, &val);
+                      }
+                      if (t < 0) {
                           free_tools(tools, ntools);
                           return -1;
                       }
-                      extra = split_tools(argv[i + 1], tools + ntools, 64 - ntools);
-                      if (extra < 0) {
-                          return -1;
+                      if (t > 0) {
+                          int extra;
+                          if (saw_allowed) {
+                              free_tools(tools, ntools);
+                              return -1;
+                          }
+                          extra = split_tools(val, tools + ntools, 64 - ntools);
+                          if (extra < 0) {
+                              free_tools(tools, ntools);
+                              return -1;
+                          }
+                          ntools += extra;
+                          saw_allowed = 1;
+                          continue;
                       }
-                      ntools += extra;
-                      saw_allowed = 1;
-                      i++;
-                      continue;
                   }
-                  if (strcmp(a, "--disallowedTools") == 0 || strcmp(a, "--disallowed-tools") == 0) {
-                      if (saw_disallowed || i + 1 >= argc) {
+                  {
+                      const char *val = NULL;
+                      int t = take_eq_or_next(a, "--disallowedTools", &i, argc, argv, &val);
+                      if (t == 0) {
+                          t = take_eq_or_next(a, "--disallowed-tools", &i, argc, argv, &val);
+                      }
+                      if (t < 0) {
                           free_tools(tools, ntools);
                           return -1;
                       }
-                      i++;
-                      saw_disallowed = 1;
-                      continue;
+                      if (t > 0) {
+                          if (saw_disallowed) {
+                              free_tools(tools, ntools);
+                              return -1;
+                          }
+                          (void)val;
+                          saw_disallowed = 1;
+                          continue;
+                      }
                   }
                   if (strcmp(a, "--append-system-prompt") == 0) {
                       if (saw_append || i + 1 >= argc) {
@@ -3751,6 +3811,9 @@ jobs:
                   refuse("fork");
               }
               if (child == 0) {
+                  if (setpgid(0, 0) < 0) {
+                      _exit(1);
+                  }
                   if (prctl(PR_SET_PDEATHSIG, SIGKILL) < 0) {
                       _exit(1);
                   }
@@ -3773,10 +3836,15 @@ jobs:
               }
               close(sink);
               close(claude_fd);
+              (void)setpgid(child, child);
               if (waitpid(child, &status, 0) < 0) {
                   status = 1;
               }
-              /* N14: END only if the direct child exited (not killed). */
+              /* N14: wait remaining process-group members (grandchildren that did
+               * not setsid). Writer veto covers setsid. END only if the direct
+               * child exited (not killed). */
+              while (waitpid(-child, NULL, 0) > 0) {
+              }
               if (WIFEXITED(status)) {
                   dummy = 'E';
                   (void)csl_write_all(pair[0], "END\n", 4);
@@ -3808,6 +3876,7 @@ jobs:
           static int fifo_r = -1, fifo_w_held = -1, listen_fd = -1, control_fd = -1;
           static int cap_fd = -1, pair_fd = -1, worker_pidfd = -1;
           static int f1_armed;
+          static int fifo_hup;
           static unsigned char capture_buf[CSL_CAP_BYTES];
           static size_t captured;
           static unsigned extra_handoffs;
@@ -4123,6 +4192,9 @@ jobs:
               while (cn && (cwdwant[cn - 1] == '\n' || cwdwant[cn - 1] == ' ')) {
                   cwdwant[--cn] = 0;
               }
+              if (cn == 0) {
+                  return;
+              }
               d = opendir("/proc");
               if (!d) {
                   return;
@@ -4157,7 +4229,7 @@ jobs:
                       }
                       cwd[n] = 0;
                   }
-                  if (cn && strcmp(cwd, cwdwant) != 0) {
+                  if (strcmp(cwd, cwdwant) != 0) {
                       continue;
                   }
                   b = proc_ppid(x);
@@ -4359,7 +4431,9 @@ jobs:
                   int peerpidfd = -1;
                   socklen_t sl = sizeof peerpidfd;
                   char exe[PATH_MAX];
-                  unsigned char dig[32], want[32];
+                  unsigned char dig[32];
+                  char pinhex[80];
+                  size_t pn = 0;
                   pid_t pfd_pid = 0;
                   if (getsockopt(cfd, SOL_SOCKET, SO_PEERPIDFD, &peerpidfd, &sl) < 0) {
                       close(cfd);
@@ -4385,8 +4459,18 @@ jobs:
                       return;
                   }
                   if (csl_sha256_file(exe, dig) != 0 ||
-                      csl_sha256_file(CSL_LAUNCH_PATH, want) != 0 ||
-                      memcmp(dig, want, 32) != 0) {
+                      csl_read_file(CSL_LAUNCH_SHA_PATH, pinhex, sizeof pinhex, &pn) != 0 ||
+                      pn == 0) {
+                      close(peerpidfd);
+                      close(cfd);
+                      close(got_pair);
+                      return;
+                  }
+                  while (pn && (pinhex[pn - 1] == '\n' || pinhex[pn - 1] == '\r' ||
+                                pinhex[pn - 1] == ' ')) {
+                      pinhex[--pn] = 0;
+                  }
+                  if (!csl_hex_eq(dig, pinhex)) {
                       close(peerpidfd);
                       close(cfd);
                       close(got_pair);
@@ -4604,19 +4688,26 @@ jobs:
 
               for (;;) {
                   int nfd = 0;
+                  int fifo_idx = -1, listen_idx, control_idx, pair_idx = -1;
                   if (stop) {
                       break;
                   }
-                  pfds[nfd].fd = fifo_r;
-                  pfds[nfd].events = POLLIN | POLLHUP;
-                  nfd++;
+                  if (!fifo_hup) {
+                      fifo_idx = nfd;
+                      pfds[nfd].fd = fifo_r;
+                      pfds[nfd].events = POLLIN | POLLHUP;
+                      nfd++;
+                  }
+                  listen_idx = nfd;
                   pfds[nfd].fd = listen_fd;
                   pfds[nfd].events = POLLIN;
                   nfd++;
+                  control_idx = nfd;
                   pfds[nfd].fd = control_fd;
                   pfds[nfd].events = POLLIN;
                   nfd++;
                   if (pair_fd >= 0) {
+                      pair_idx = nfd;
                       pfds[nfd].fd = pair_fd;
                       pfds[nfd].events = POLLIN | POLLHUP;
                       nfd++;
@@ -4630,16 +4721,20 @@ jobs:
                       }
                       break;
                   }
-                  if (pfds[0].revents & (POLLIN | POLLHUP)) {
+                  if (fifo_idx >= 0 && (pfds[fifo_idx].revents & (POLLIN | POLLHUP))) {
                       drain_fifo(got_end || captured >= CSL_CAP_BYTES);
+                      if (pfds[fifo_idx].revents & POLLHUP) {
+                          drain_fifo(got_end || captured >= CSL_CAP_BYTES);
+                          fifo_hup = 1;
+                      }
                   }
-                  if (pfds[1].revents & POLLIN) {
+                  if (pfds[listen_idx].revents & POLLIN) {
                       accept_handoff();
                   }
-                  if (pfds[2].revents & POLLIN) {
+                  if (pfds[control_idx].revents & POLLIN) {
                       handle_control();
                   }
-                  if (nfd > 3 && (pfds[3].revents & (POLLIN | POLLHUP))) {
+                  if (pair_idx >= 0 && (pfds[pair_idx].revents & (POLLIN | POLLHUP))) {
                       read_pair();
                   }
               }
@@ -4766,7 +4861,7 @@ jobs:
               if (csl_proc_exe(ppid, exe, sizeof exe) < 0) {
                   exe[0] = 0;
               }
-              if (strstr(exe, "/sudo") || strcmp(exe, "/usr/bin/sudo") == 0 ||
+              if (strcmp(exe, "/usr/bin/sudo") == 0 ||
                   strcmp(exe, "/usr/sbin/sudo") == 0 || strcmp(exe, "/bin/sudo") == 0) {
                   /* sudo forks: sudo's ppid must equal Worker pidfd. */
                   char statp[64], buf[4096];
@@ -4973,15 +5068,15 @@ jobs:
           }
           CSL_C_RELAY
           cat > /opt/csl-claude/lib/sandbox_c.pin <<'CSL_C_PIN'
-          8d5911bf178d7a545c50e730ccd88bd90a88c478de155204bce5e19723da2874  sandbox_common.h
+          b99690d0f3b848e3c7d04f1755470e78c29e004b77aac10487a58038c1cc955c  sandbox_common.h
           ed36a4ceaf1602cf7f9d8d93d6988e3365dca0c57cd8df41c85858827a99570d  sandbox_common.c
           098eb6177463294e2585fca35a21a93575ae9b162185d5646bd156d0f9b04996  sandbox_filter.h
           c7d218317d057037e4c3712af5e79ea38b5763f67a6bfe1e6bcb55d31f29eb45  sandbox_filter.c
           24fafd315646846decbea02390ebef80b45c767aabee2c4733dcce04c122e41a  sandbox_argv.h
-          8892d520c57d0b08f651920fa718c3d9a1c09800c3f50666544b9325495e7ade  sandbox_argv.c
-          15db71059f0e3532d9bc0871b7ea3a727e69893d4a98cd21a26ff1c238cfdb87  sandbox_launch.c
-          5a86361e0b582fc484fcdc9dd21061222109e9176bb59cd0573c6975b51d7c40  sandbox_capture.c
-          591385d6acfea3925e17c5622785186a7d173c81b18b8126cf5efff7a0cf137a  sandbox_relay.c
+          20b71024ba6695073e939c0a6776500c3415b16d0d6ff9324db7cf8fb2f2d4e1  sandbox_argv.c
+          0b14afb7eb4546d01273ce13e18b7fa259b4c3ccc4963f9b19ce0e5a0fe324df  sandbox_launch.c
+          314468cf71d54907394e0040f37c02362809e408c5729072ccd8e7009980a23c  sandbox_capture.c
+          5497efe24944dc3a792a9b1b96679af39bf4c89b8251119f8f79f30be1a137b0  sandbox_relay.c
           CSL_C_PIN
           cat > /opt/csl-claude/lib/sandbox_e3_cli_pin.sh <<'CSL_E3_CLI_PIN'
           set -euo pipefail
@@ -5183,7 +5278,7 @@ jobs:
           fi
           printf '%s\n' "$WORKER_PID" > "$STATE/worker.pid"
           chmod 0600 "$STATE/worker.pid"
-          readlink /proc/"$WORKER_PID"/ns/mnt > "$STATE/ns.mnt"
+          readlink /proc/self/ns/mnt > "$STATE/ns.mnt"
           chmod 0600 "$STATE/ns.mnt"
           cat /proc/"$WORKER_PID"/status > "$STATE/worker.status"
           chmod 0600 "$STATE/worker.status"
@@ -5214,9 +5309,13 @@ jobs:
             /opt/csl-relay/bin/relay /opt/csl-relay/bin/filter
           chmod 0755 /opt/csl-claude/launch /opt/csl-relay/bin/capture-start \
             /opt/csl-relay/bin/relay /opt/csl-relay/bin/filter
+          sha256sum /opt/csl-claude/launch | awk '{print $1}' > "$STATE/launch.sha256"
+          chown root:root "$STATE/launch.sha256"
+          chmod 0600 "$STATE/launch.sha256"
           # Directory containing launch only (plus lib/src which are not in the launch dir).
           test -x /opt/csl-claude/launch
           test -x /opt/csl-relay/bin/relay
+          test -s "$STATE/launch.sha256"
 
           if ! command -v bun >/dev/null 2>&1; then
             echo "e3-0b: bun missing after setup-bun" >&2
@@ -5230,8 +5329,9 @@ jobs:
           "$PYTHON" -I "$LIB/sandbox_e3_bind.py" empty-bun-bin
           "$PYTHON" -I "$LIB/sandbox_e3_bind.py" hash-setup-bun
 
-          # 0b step 2: fixer helper already written by the workflow YAML into RUNNER_TEMP.
-          GUARD="${RUNNER_TEMP:?}/claude-fixer-guard"
+          # 0b step 2: fixer helper already written by the workflow YAML into the
+          # compiled-in runner temp (same constant as CSL_RUNNER_TEMP; not from env).
+          GUARD="/home/runner/work/_temp/claude-fixer-guard"
           if [ -f "$GUARD/model-api" ]; then
             "$PYTHON" -I "$GUARD/model-api" install
             chown -R root:root "$GUARD"
@@ -5325,8 +5425,10 @@ jobs:
           mount -o remount,bind,ro "$AP"
 
           awk '$5=="'"$AP"'" || $5=="/home/runner/work" || $5=="/home/runner/work/_actions" || $5=="/home/runner/work/_actions/anthropics" || $5=="/home/runner/work/_actions/anthropics/claude-code-action"' /proc/self/mountinfo > "$STATE/mountinfo"
-          # Worker ns/mnt must equal 0b's (fail closed, H4).
+          # Worker ns/mnt must equal 0b's (fail closed, H4). Compare Worker with
+          # this process, not Worker with an earlier snapshot of itself.
           test -s "$STATE/ns.mnt"
+          test "$(readlink /proc/self/ns/mnt)" = "$(readlink /proc/"$WORKER_PID"/ns/mnt)"
           test "$(readlink /proc/"$WORKER_PID"/ns/mnt)" = "$(cat "$STATE/ns.mnt")"
           "$PYTHON" -I "$LIB/sandbox_e3_bind.py" record-inodes
 
@@ -5356,7 +5458,7 @@ jobs:
           # Inventory extras as veto-only records (G1(d)).
           ps -eo pid,user,args --no-headers | awk '$2=="root"{print}' > "$STATE/sweep.root" || true
           crontab -u runner -l > "$STATE/cron.runner" 2>/dev/null || true
-          printf '%s\n' "${GITHUB_WORKSPACE:-}" > "$STATE/workspace"
+          printf '%s\n' "/home/runner/work/ai-investment-cockpit/ai-investment-cockpit" > "$STATE/workspace"
           chmod 0644 "$STATE/workspace"
 
           # Start capture daemon (empty argv, not in sudoers) then bind 0600.
@@ -9734,7 +9836,9 @@ jobs:
           #define CSL_PAIR_PATH CSL_STATE_DIR "/pair.closed"
           #define CSL_WORKER_PID_PATH CSL_STATE_DIR "/worker.pid"
           #define CSL_WORKSPACE_PATH CSL_STATE_DIR "/workspace"
+          #define CSL_LAUNCH_SHA_PATH CSL_STATE_DIR "/launch.sha256"
           #define CSL_BUN_TOFU_PATH CSL_STATE_DIR "/bun.tofu"
+          #define CSL_WORKSPACE_DEFAULT "/home/runner/work/ai-investment-cockpit/ai-investment-cockpit"
           #define CSL_ACTION_DIR "/home/runner/work/_actions/anthropics/claude-code-action/a5a423f75c251dcbff8a74e99f83b2cb03c72bfa"
           #ifdef CSL_PREFIX
           #define CSL_RUNNER_TEMP CSL_PREFIX "/tmp"
@@ -10589,6 +10693,28 @@ jobs:
               return strncmp(s, p, strlen(p)) == 0;
           }
 
+          /* SDK 0.3.306 emits Ke("--flag", v) as a single "--flag=v" token for
+           * max-turns, allowedTools, disallowedTools, and setting-sources. YAML
+           * two-token form is still accepted with the same value checks. */
+          static int take_eq_or_next(const char *a, const char *flag, int *i, int argc,
+                                     char **argv, const char **value)
+          {
+              size_t flen = strlen(flag);
+              if (strcmp(a, flag) == 0) {
+                  if (*i + 1 >= argc) {
+                      return -1;
+                  }
+                  (*i)++;
+                  *value = argv[*i];
+                  return 1;
+              }
+              if (starts_with(a, flag) && a[flen] == '=') {
+                  *value = a + flen + 1;
+                  return 1;
+              }
+              return 0;
+          }
+
           static void free_tools(char **tools, int n)
           {
               while (n > 0) {
@@ -10665,7 +10791,7 @@ jobs:
               char helper[768];
               char *tools[64];
               int ntools = 0;
-              const char *ws = "/home/runner/work/ai-investment-cockpit/ai-investment-cockpit";
+              const char *ws = CSL_WORKSPACE_DEFAULT;
               char wsbuf[512];
               size_t n = 0;
 
@@ -10733,47 +10859,83 @@ jobs:
                       saw_perm = 1;
                       continue;
                   }
-                  if (strcmp(a, "--max-turns") == 0) {
-                      if (saw_turns || i + 1 >= argc || strcmp(argv[i + 1], "30") != 0) {
+                  {
+                      const char *val = NULL;
+                      int t = take_eq_or_next(a, "--max-turns", &i, argc, argv, &val);
+                      if (t < 0) {
                           free_tools(tools, ntools);
                           return -1;
                       }
-                      i++;
-                      saw_turns = 1;
-                      continue;
+                      if (t > 0) {
+                          if (saw_turns || strcmp(val, "30") != 0) {
+                              free_tools(tools, ntools);
+                              return -1;
+                          }
+                          saw_turns = 1;
+                          continue;
+                      }
                   }
-                  if (strcmp(a, "--setting-sources") == 0) {
-                      if (saw_sources || i + 1 >= argc || strcmp(argv[i + 1], "user") != 0) {
+                  {
+                      const char *val = NULL;
+                      int t = take_eq_or_next(a, "--setting-sources", &i, argc, argv, &val);
+                      if (t < 0) {
                           free_tools(tools, ntools);
                           return -1;
                       }
-                      i++;
-                      saw_sources = 1;
-                      continue;
+                      if (t > 0) {
+                          if (saw_sources || strcmp(val, "user") != 0) {
+                              free_tools(tools, ntools);
+                              return -1;
+                          }
+                          saw_sources = 1;
+                          continue;
+                      }
                   }
-                  if (strcmp(a, "--allowedTools") == 0 || strcmp(a, "--allowed-tools") == 0) {
-                      int extra;
-                      if (saw_allowed || i + 1 >= argc) {
+                  {
+                      const char *val = NULL;
+                      int t = take_eq_or_next(a, "--allowedTools", &i, argc, argv, &val);
+                      if (t == 0) {
+                          t = take_eq_or_next(a, "--allowed-tools", &i, argc, argv, &val);
+                      }
+                      if (t < 0) {
                           free_tools(tools, ntools);
                           return -1;
                       }
-                      extra = split_tools(argv[i + 1], tools + ntools, 64 - ntools);
-                      if (extra < 0) {
-                          return -1;
+                      if (t > 0) {
+                          int extra;
+                          if (saw_allowed) {
+                              free_tools(tools, ntools);
+                              return -1;
+                          }
+                          extra = split_tools(val, tools + ntools, 64 - ntools);
+                          if (extra < 0) {
+                              free_tools(tools, ntools);
+                              return -1;
+                          }
+                          ntools += extra;
+                          saw_allowed = 1;
+                          continue;
                       }
-                      ntools += extra;
-                      saw_allowed = 1;
-                      i++;
-                      continue;
                   }
-                  if (strcmp(a, "--disallowedTools") == 0 || strcmp(a, "--disallowed-tools") == 0) {
-                      if (saw_disallowed || i + 1 >= argc) {
+                  {
+                      const char *val = NULL;
+                      int t = take_eq_or_next(a, "--disallowedTools", &i, argc, argv, &val);
+                      if (t == 0) {
+                          t = take_eq_or_next(a, "--disallowed-tools", &i, argc, argv, &val);
+                      }
+                      if (t < 0) {
                           free_tools(tools, ntools);
                           return -1;
                       }
-                      i++;
-                      saw_disallowed = 1;
-                      continue;
+                      if (t > 0) {
+                          if (saw_disallowed) {
+                              free_tools(tools, ntools);
+                              return -1;
+                          }
+                          (void)val;
+                          saw_disallowed = 1;
+                          continue;
+                      }
                   }
                   if (strcmp(a, "--append-system-prompt") == 0) {
                       if (saw_append || i + 1 >= argc) {
@@ -11242,6 +11404,9 @@ jobs:
                   refuse("fork");
               }
               if (child == 0) {
+                  if (setpgid(0, 0) < 0) {
+                      _exit(1);
+                  }
                   if (prctl(PR_SET_PDEATHSIG, SIGKILL) < 0) {
                       _exit(1);
                   }
@@ -11264,10 +11429,15 @@ jobs:
               }
               close(sink);
               close(claude_fd);
+              (void)setpgid(child, child);
               if (waitpid(child, &status, 0) < 0) {
                   status = 1;
               }
-              /* N14: END only if the direct child exited (not killed). */
+              /* N14: wait remaining process-group members (grandchildren that did
+               * not setsid). Writer veto covers setsid. END only if the direct
+               * child exited (not killed). */
+              while (waitpid(-child, NULL, 0) > 0) {
+              }
               if (WIFEXITED(status)) {
                   dummy = 'E';
                   (void)csl_write_all(pair[0], "END\n", 4);
@@ -11299,6 +11469,7 @@ jobs:
           static int fifo_r = -1, fifo_w_held = -1, listen_fd = -1, control_fd = -1;
           static int cap_fd = -1, pair_fd = -1, worker_pidfd = -1;
           static int f1_armed;
+          static int fifo_hup;
           static unsigned char capture_buf[CSL_CAP_BYTES];
           static size_t captured;
           static unsigned extra_handoffs;
@@ -11614,6 +11785,9 @@ jobs:
               while (cn && (cwdwant[cn - 1] == '\n' || cwdwant[cn - 1] == ' ')) {
                   cwdwant[--cn] = 0;
               }
+              if (cn == 0) {
+                  return;
+              }
               d = opendir("/proc");
               if (!d) {
                   return;
@@ -11648,7 +11822,7 @@ jobs:
                       }
                       cwd[n] = 0;
                   }
-                  if (cn && strcmp(cwd, cwdwant) != 0) {
+                  if (strcmp(cwd, cwdwant) != 0) {
                       continue;
                   }
                   b = proc_ppid(x);
@@ -11850,7 +12024,9 @@ jobs:
                   int peerpidfd = -1;
                   socklen_t sl = sizeof peerpidfd;
                   char exe[PATH_MAX];
-                  unsigned char dig[32], want[32];
+                  unsigned char dig[32];
+                  char pinhex[80];
+                  size_t pn = 0;
                   pid_t pfd_pid = 0;
                   if (getsockopt(cfd, SOL_SOCKET, SO_PEERPIDFD, &peerpidfd, &sl) < 0) {
                       close(cfd);
@@ -11876,8 +12052,18 @@ jobs:
                       return;
                   }
                   if (csl_sha256_file(exe, dig) != 0 ||
-                      csl_sha256_file(CSL_LAUNCH_PATH, want) != 0 ||
-                      memcmp(dig, want, 32) != 0) {
+                      csl_read_file(CSL_LAUNCH_SHA_PATH, pinhex, sizeof pinhex, &pn) != 0 ||
+                      pn == 0) {
+                      close(peerpidfd);
+                      close(cfd);
+                      close(got_pair);
+                      return;
+                  }
+                  while (pn && (pinhex[pn - 1] == '\n' || pinhex[pn - 1] == '\r' ||
+                                pinhex[pn - 1] == ' ')) {
+                      pinhex[--pn] = 0;
+                  }
+                  if (!csl_hex_eq(dig, pinhex)) {
                       close(peerpidfd);
                       close(cfd);
                       close(got_pair);
@@ -12095,19 +12281,26 @@ jobs:
 
               for (;;) {
                   int nfd = 0;
+                  int fifo_idx = -1, listen_idx, control_idx, pair_idx = -1;
                   if (stop) {
                       break;
                   }
-                  pfds[nfd].fd = fifo_r;
-                  pfds[nfd].events = POLLIN | POLLHUP;
-                  nfd++;
+                  if (!fifo_hup) {
+                      fifo_idx = nfd;
+                      pfds[nfd].fd = fifo_r;
+                      pfds[nfd].events = POLLIN | POLLHUP;
+                      nfd++;
+                  }
+                  listen_idx = nfd;
                   pfds[nfd].fd = listen_fd;
                   pfds[nfd].events = POLLIN;
                   nfd++;
+                  control_idx = nfd;
                   pfds[nfd].fd = control_fd;
                   pfds[nfd].events = POLLIN;
                   nfd++;
                   if (pair_fd >= 0) {
+                      pair_idx = nfd;
                       pfds[nfd].fd = pair_fd;
                       pfds[nfd].events = POLLIN | POLLHUP;
                       nfd++;
@@ -12121,16 +12314,20 @@ jobs:
                       }
                       break;
                   }
-                  if (pfds[0].revents & (POLLIN | POLLHUP)) {
+                  if (fifo_idx >= 0 && (pfds[fifo_idx].revents & (POLLIN | POLLHUP))) {
                       drain_fifo(got_end || captured >= CSL_CAP_BYTES);
+                      if (pfds[fifo_idx].revents & POLLHUP) {
+                          drain_fifo(got_end || captured >= CSL_CAP_BYTES);
+                          fifo_hup = 1;
+                      }
                   }
-                  if (pfds[1].revents & POLLIN) {
+                  if (pfds[listen_idx].revents & POLLIN) {
                       accept_handoff();
                   }
-                  if (pfds[2].revents & POLLIN) {
+                  if (pfds[control_idx].revents & POLLIN) {
                       handle_control();
                   }
-                  if (nfd > 3 && (pfds[3].revents & (POLLIN | POLLHUP))) {
+                  if (pair_idx >= 0 && (pfds[pair_idx].revents & (POLLIN | POLLHUP))) {
                       read_pair();
                   }
               }
@@ -12257,7 +12454,7 @@ jobs:
               if (csl_proc_exe(ppid, exe, sizeof exe) < 0) {
                   exe[0] = 0;
               }
-              if (strstr(exe, "/sudo") || strcmp(exe, "/usr/bin/sudo") == 0 ||
+              if (strcmp(exe, "/usr/bin/sudo") == 0 ||
                   strcmp(exe, "/usr/sbin/sudo") == 0 || strcmp(exe, "/bin/sudo") == 0) {
                   /* sudo forks: sudo's ppid must equal Worker pidfd. */
                   char statp[64], buf[4096];
@@ -12464,15 +12661,15 @@ jobs:
           }
           CSL_C_RELAY
           cat > /opt/csl-claude/lib/sandbox_c.pin <<'CSL_C_PIN'
-          8d5911bf178d7a545c50e730ccd88bd90a88c478de155204bce5e19723da2874  sandbox_common.h
+          b99690d0f3b848e3c7d04f1755470e78c29e004b77aac10487a58038c1cc955c  sandbox_common.h
           ed36a4ceaf1602cf7f9d8d93d6988e3365dca0c57cd8df41c85858827a99570d  sandbox_common.c
           098eb6177463294e2585fca35a21a93575ae9b162185d5646bd156d0f9b04996  sandbox_filter.h
           c7d218317d057037e4c3712af5e79ea38b5763f67a6bfe1e6bcb55d31f29eb45  sandbox_filter.c
           24fafd315646846decbea02390ebef80b45c767aabee2c4733dcce04c122e41a  sandbox_argv.h
-          8892d520c57d0b08f651920fa718c3d9a1c09800c3f50666544b9325495e7ade  sandbox_argv.c
-          15db71059f0e3532d9bc0871b7ea3a727e69893d4a98cd21a26ff1c238cfdb87  sandbox_launch.c
-          5a86361e0b582fc484fcdc9dd21061222109e9176bb59cd0573c6975b51d7c40  sandbox_capture.c
-          591385d6acfea3925e17c5622785186a7d173c81b18b8126cf5efff7a0cf137a  sandbox_relay.c
+          20b71024ba6695073e939c0a6776500c3415b16d0d6ff9324db7cf8fb2f2d4e1  sandbox_argv.c
+          0b14afb7eb4546d01273ce13e18b7fa259b4c3ccc4963f9b19ce0e5a0fe324df  sandbox_launch.c
+          314468cf71d54907394e0040f37c02362809e408c5729072ccd8e7009980a23c  sandbox_capture.c
+          5497efe24944dc3a792a9b1b96679af39bf4c89b8251119f8f79f30be1a137b0  sandbox_relay.c
           CSL_C_PIN
           cat > /opt/csl-claude/lib/sandbox_e3_cli_pin.sh <<'CSL_E3_CLI_PIN'
           set -euo pipefail
@@ -12675,7 +12872,7 @@ jobs:
           fi
           printf '%s\n' "$WORKER_PID" > "$STATE/worker.pid"
           chmod 0600 "$STATE/worker.pid"
-          readlink /proc/"$WORKER_PID"/ns/mnt > "$STATE/ns.mnt"
+          readlink /proc/self/ns/mnt > "$STATE/ns.mnt"
           chmod 0600 "$STATE/ns.mnt"
           cat /proc/"$WORKER_PID"/status > "$STATE/worker.status"
           chmod 0600 "$STATE/worker.status"
@@ -12706,9 +12903,13 @@ jobs:
             /opt/csl-relay/bin/relay /opt/csl-relay/bin/filter
           chmod 0755 /opt/csl-claude/launch /opt/csl-relay/bin/capture-start \
             /opt/csl-relay/bin/relay /opt/csl-relay/bin/filter
+          sha256sum /opt/csl-claude/launch | awk '{print $1}' > "$STATE/launch.sha256"
+          chown root:root "$STATE/launch.sha256"
+          chmod 0600 "$STATE/launch.sha256"
           # Directory containing launch only (plus lib/src which are not in the launch dir).
           test -x /opt/csl-claude/launch
           test -x /opt/csl-relay/bin/relay
+          test -s "$STATE/launch.sha256"
 
           if ! command -v bun >/dev/null 2>&1; then
             echo "e3-0b: bun missing after setup-bun" >&2
@@ -12722,8 +12923,9 @@ jobs:
           "$PYTHON" -I "$LIB/sandbox_e3_bind.py" empty-bun-bin
           "$PYTHON" -I "$LIB/sandbox_e3_bind.py" hash-setup-bun
 
-          # 0b step 2: fixer helper already written by the workflow YAML into RUNNER_TEMP.
-          GUARD="${RUNNER_TEMP:?}/claude-fixer-guard"
+          # 0b step 2: fixer helper already written by the workflow YAML into the
+          # compiled-in runner temp (same constant as CSL_RUNNER_TEMP; not from env).
+          GUARD="/home/runner/work/_temp/claude-fixer-guard"
           if [ -f "$GUARD/model-api" ]; then
             "$PYTHON" -I "$GUARD/model-api" install
             chown -R root:root "$GUARD"
@@ -12817,8 +13019,10 @@ jobs:
           mount -o remount,bind,ro "$AP"
 
           awk '$5=="'"$AP"'" || $5=="/home/runner/work" || $5=="/home/runner/work/_actions" || $5=="/home/runner/work/_actions/anthropics" || $5=="/home/runner/work/_actions/anthropics/claude-code-action"' /proc/self/mountinfo > "$STATE/mountinfo"
-          # Worker ns/mnt must equal 0b's (fail closed, H4).
+          # Worker ns/mnt must equal 0b's (fail closed, H4). Compare Worker with
+          # this process, not Worker with an earlier snapshot of itself.
           test -s "$STATE/ns.mnt"
+          test "$(readlink /proc/self/ns/mnt)" = "$(readlink /proc/"$WORKER_PID"/ns/mnt)"
           test "$(readlink /proc/"$WORKER_PID"/ns/mnt)" = "$(cat "$STATE/ns.mnt")"
           "$PYTHON" -I "$LIB/sandbox_e3_bind.py" record-inodes
 
@@ -12848,7 +13052,7 @@ jobs:
           # Inventory extras as veto-only records (G1(d)).
           ps -eo pid,user,args --no-headers | awk '$2=="root"{print}' > "$STATE/sweep.root" || true
           crontab -u runner -l > "$STATE/cron.runner" 2>/dev/null || true
-          printf '%s\n' "${GITHUB_WORKSPACE:-}" > "$STATE/workspace"
+          printf '%s\n' "/home/runner/work/ai-investment-cockpit/ai-investment-cockpit" > "$STATE/workspace"
           chmod 0644 "$STATE/workspace"
 
           # Start capture daemon (empty argv, not in sudoers) then bind 0600.

@@ -352,6 +352,9 @@ int main(int argc, char **argv)
         refuse("fork");
     }
     if (child == 0) {
+        if (setpgid(0, 0) < 0) {
+            _exit(1);
+        }
         if (prctl(PR_SET_PDEATHSIG, SIGKILL) < 0) {
             _exit(1);
         }
@@ -374,10 +377,15 @@ int main(int argc, char **argv)
     }
     close(sink);
     close(claude_fd);
+    (void)setpgid(child, child);
     if (waitpid(child, &status, 0) < 0) {
         status = 1;
     }
-    /* N14: END only if the direct child exited (not killed). */
+    /* N14: wait remaining process-group members (grandchildren that did
+     * not setsid). Writer veto covers setsid. END only if the direct
+     * child exited (not killed). */
+    while (waitpid(-child, NULL, 0) > 0) {
+    }
     if (WIFEXITED(status)) {
         dummy = 'E';
         (void)csl_write_all(pair[0], "END\n", 4);

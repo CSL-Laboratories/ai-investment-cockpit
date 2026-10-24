@@ -46,7 +46,7 @@ if [ -z "$WORKER_PID" ]; then
 fi
 printf '%s\n' "$WORKER_PID" > "$STATE/worker.pid"
 chmod 0600 "$STATE/worker.pid"
-readlink /proc/"$WORKER_PID"/ns/mnt > "$STATE/ns.mnt"
+readlink /proc/self/ns/mnt > "$STATE/ns.mnt"
 chmod 0600 "$STATE/ns.mnt"
 cat /proc/"$WORKER_PID"/status > "$STATE/worker.status"
 chmod 0600 "$STATE/worker.status"
@@ -77,9 +77,13 @@ chown root:root /opt/csl-claude/launch /opt/csl-relay/bin/capture-start \
   /opt/csl-relay/bin/relay /opt/csl-relay/bin/filter
 chmod 0755 /opt/csl-claude/launch /opt/csl-relay/bin/capture-start \
   /opt/csl-relay/bin/relay /opt/csl-relay/bin/filter
+sha256sum /opt/csl-claude/launch | awk '{print $1}' > "$STATE/launch.sha256"
+chown root:root "$STATE/launch.sha256"
+chmod 0600 "$STATE/launch.sha256"
 # Directory containing launch only (plus lib/src which are not in the launch dir).
 test -x /opt/csl-claude/launch
 test -x /opt/csl-relay/bin/relay
+test -s "$STATE/launch.sha256"
 
 if ! command -v bun >/dev/null 2>&1; then
   echo "e3-0b: bun missing after setup-bun" >&2
@@ -93,8 +97,9 @@ chmod 0644 "$STATE/bun.tofu"
 "$PYTHON" -I "$LIB/sandbox_e3_bind.py" empty-bun-bin
 "$PYTHON" -I "$LIB/sandbox_e3_bind.py" hash-setup-bun
 
-# 0b step 2: fixer helper already written by the workflow YAML into RUNNER_TEMP.
-GUARD="${RUNNER_TEMP:?}/claude-fixer-guard"
+# 0b step 2: fixer helper already written by the workflow YAML into the
+# compiled-in runner temp (same constant as CSL_RUNNER_TEMP; not from env).
+GUARD="/home/runner/work/_temp/claude-fixer-guard"
 if [ -f "$GUARD/model-api" ]; then
   "$PYTHON" -I "$GUARD/model-api" install
   chown -R root:root "$GUARD"
@@ -188,8 +193,10 @@ mount --bind "$AP" "$AP"
 mount -o remount,bind,ro "$AP"
 
 awk '$5=="'"$AP"'" || $5=="/home/runner/work" || $5=="/home/runner/work/_actions" || $5=="/home/runner/work/_actions/anthropics" || $5=="/home/runner/work/_actions/anthropics/claude-code-action"' /proc/self/mountinfo > "$STATE/mountinfo"
-# Worker ns/mnt must equal 0b's (fail closed, H4).
+# Worker ns/mnt must equal 0b's (fail closed, H4). Compare Worker with
+# this process, not Worker with an earlier snapshot of itself.
 test -s "$STATE/ns.mnt"
+test "$(readlink /proc/self/ns/mnt)" = "$(readlink /proc/"$WORKER_PID"/ns/mnt)"
 test "$(readlink /proc/"$WORKER_PID"/ns/mnt)" = "$(cat "$STATE/ns.mnt")"
 "$PYTHON" -I "$LIB/sandbox_e3_bind.py" record-inodes
 
@@ -219,7 +226,7 @@ ps -eo pid,user,ppid,args --no-headers | awk '$2=="runner"{print}' > "$STATE/swe
 # Inventory extras as veto-only records (G1(d)).
 ps -eo pid,user,args --no-headers | awk '$2=="root"{print}' > "$STATE/sweep.root" || true
 crontab -u runner -l > "$STATE/cron.runner" 2>/dev/null || true
-printf '%s\n' "${GITHUB_WORKSPACE:-}" > "$STATE/workspace"
+printf '%s\n' "/home/runner/work/ai-investment-cockpit/ai-investment-cockpit" > "$STATE/workspace"
 chmod 0644 "$STATE/workspace"
 
 # Start capture daemon (empty argv, not in sudoers) then bind 0600.
