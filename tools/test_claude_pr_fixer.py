@@ -1960,7 +1960,7 @@ class ClaudeCodeInstallerPinTests(unittest.TestCase):
             self.assertNotIn("claude.ai/install", text)
             self.assertNotRegex(text, r"uses:\s*[\"']?anthropics/claude-code-action@v\d")
             self.assertNotRegex(text, r"install\.sh\s*\|\s*bash")
-            self.assertNotIn("mkdir -m", text)
+            self.assertNotIn("mkdir -m 0700 -p", text)
             for step in re.split(r"uses:\s*[\"']?anthropics/claude-code-action@", text)[1:]:
                 steps.append((path.name, re.split(r"\n      - ", step, maxsplit=1)[0]))
         self.assertGreaterEqual(len(steps), 3)

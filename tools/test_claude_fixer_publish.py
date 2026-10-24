@@ -2382,11 +2382,13 @@ class ClaudeCodeInstallerPinTests(unittest.TestCase):
             self.assertIn(value, script)
         self.assertIn('DEST_DIR="/opt/csl-claude/${CLAUDE_VERSION}"', script)
         self.assertIn('echo "${EXPECTED_SHA256}  ${STAGING}/claude" | sha256sum -c -', script)
-        self.assertIn("gpg --batch --verify", script)
+        self.assertIn("gpg --batch --status-fd 1 --verify", script)
+        self.assertIn("[GNUPG:] VALIDSIG ${EXPECTED_FPR}", script)
         self.assertIn("sudo install -o root -g root -m 0755", script)
-        self.assertIn('mkdir -p "$STAGING"', script)
-        self.assertIn('chmod 0700 "$STAGING"', script)
-        self.assertNotIn("mkdir -m", script)
+        self.assertIn('mkdir -m 0700 "$STAGING"', script)
+        self.assertNotIn("mkdir -m 0700 -p", script)
+        self.assertNotIn('mkdir -p "$STAGING"', script)
+        self.assertIn("reference copy for tests", script)
         self.assertNotIn("install.sh", script)
         self.assertNotIn("| bash", script)
 
@@ -2415,7 +2417,7 @@ class ClaudeCodeInstallerPinTests(unittest.TestCase):
                 self.assertNotIn("claude.ai/install", text)
                 self.assertNotIn("bootstrap.sh", text)
                 self.assertNotRegex(text, r"install\.sh\s*\|\s*bash")
-                self.assertNotIn("mkdir -m", text)
+                self.assertNotIn("mkdir -m 0700 -p", text)
 
 
 if __name__ == "__main__":

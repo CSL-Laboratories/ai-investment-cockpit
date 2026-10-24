@@ -3,6 +3,10 @@ set -euo pipefail
 # path, then pass path_to_claude_code_executable so the action skips its
 # unpinned installer. Pin literals are inlined from the default-branch
 # workflow; scripts/ci/*.pin must match.
+# This file is a reference copy for tests. Workflows inline the same bytes;
+# do not execute it from GITHUB_WORKSPACE (the model-job checkout is untrusted).
+# Sunset: retire this skip-path when frozen D10 E3 hosted-byte provenance
+# lands. Rollback is revert of the install step and path_to input.
 
 CLAUDE_VERSION="2.1.306"
 PLATFORM="linux-x64"
@@ -29,8 +33,7 @@ cleanup() {
 trap cleanup EXIT
 
 rm -rf "$STAGING"
-mkdir -p "$STAGING"
-chmod 0700 "$STAGING"
+mkdir -m 0700 "$STAGING"
 
 curl -fsSL --retry 3 --retry-delay 2 -o "$STAGING/claude" \
   "${RELEASE_BASE}/${CLAUDE_VERSION}/${PLATFORM}/claude"
@@ -52,12 +55,14 @@ GNUPGHOME="$(mktemp -d)"
 chmod 700 "$GNUPGHOME"
 export GNUPGHOME
 gpg --batch --import "$STAGING/claude-code.asc"
-got_fpr="$(gpg --batch --with-colons --fingerprint | awk -F: '/^fpr:/ {print $10; exit}')"
-if [ "$got_fpr" != "$EXPECTED_FPR" ]; then
-  echo "release-signing fingerprint mismatch: got ${got_fpr}" >&2
-  exit 1
-fi
-gpg --batch --verify "$STAGING/manifest.json.sig" "$STAGING/manifest.json"
+status="$(gpg --batch --status-fd 1 --verify "$STAGING/manifest.json.sig" "$STAGING/manifest.json")"
+case "$status" in
+  *"[GNUPG:] VALIDSIG ${EXPECTED_FPR} "*) ;;
+  *)
+    echo "signed-manifest VALIDSIG mismatch" >&2
+    exit 1
+    ;;
+esac
 
 export CLAUDE_VERSION EXPECTED_SHA256 EXPECTED_BYTES
 STAGING="$STAGING" python3 -c '
