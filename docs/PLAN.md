@@ -7,7 +7,7 @@ supersedes:
   - integration-and-remote-operations-plan
   - cockpit-review-and-integrated-plan
   - remaining-work-session-plan
-last-verified: 2026-10-15
+last-verified: 2026-10-16
 ---
 
 # The plan
@@ -34,6 +34,18 @@ release qualification or live authority.
 ---
 
 Reconciled 2026-10-15 against `origin/main` `4a4308d`. Headings and status sentences that still described a merged package as claimed or unmerged are updated. Merge dates and `last-verified` added here are UTC calendar dates from GitHub `mergedAt` (PR #81 is 2026-09-08 UTC, which is still 2026-09-07 in US Eastern). Screen and evidence dates already in these sections keep the calendar dates they recorded. Historical intake text that a later sentence already marks as pre-merge stays as the implementation record. This pass does not close an empirical, paper-day, witness, selection, or pre-live gate.
+
+### RW-38 slice A daily NAV source contract — proposed 2026-10-16
+
+CSL-63 records the slice A memo after zero qualifying strategies.
+`qualify_count` stays 0. Four GET-only boards stay empty / date-not-ready
+with cohort 0≪30. The memo lists blocking evidence for each RW-27 name
+and proposes `RW-38`: Lucas authorizes or refuses a daily NAV source
+contract for `cef_discount`. The proposal is not an implementation claim
+and does not change delivery order. Do not start the contract, ingest a
+feed, lower the 30-identity gate, or edit the order path until Lucas
+authorizes the REGISTER row. Memo:
+[[research/csl-63-slice-a-memo-2026-10-16]]. Claim text: [[REGISTER]].
 
 ### RW-37 slice A 2026-09-15 Tuesday GET-only screen intake — merged 2026-09-16
 

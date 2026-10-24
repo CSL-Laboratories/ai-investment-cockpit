@@ -2,7 +2,7 @@
 title: Docs index — what to read, in what order, and what to ignore
 type: index
 status: live
-last-verified: 2026-10-15
+last-verified: 2026-10-16
 ---
 
 # Docs index
@@ -62,6 +62,10 @@ and merged in [PR #98](https://github.com/CSL-Laboratories/ai-investment-cockpit
 appends the same-day board (supported 32, cash 0) and merged in
 [PR #99](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/99)
 (`33156c9`) on 2026-09-16. The 30-identity gate stays closed. No empirical PASS.
+[CSL-63 slice A memo](research/csl-63-slice-a-memo-2026-10-16.md)
+lists each RW-27 name's blocking evidence after `qualify_count` 0 and
+proposes `RW-38` (daily NAV source contract) for Lucas to authorize or
+refuse. The proposal does not lower the cohort gate.
 
 ## Product contract ratified — 2026-09-09
 
@@ -361,6 +365,7 @@ defects got fixed twice on two branches.
 | [[research/rw35-empty-run-update-2026-09-15]] | RW-35 composed empty-run research update from retained RW-29/RW-31 inputs; merged with RW-34 in PR #97 (`8beb271`) on 2026-09-15; no empirical PASS |
 | [[research/rw36-screen-intake-2026-09-15]] | RW-36 third GET-only screen row: cash 1 BOW, still empty/date-not-ready; merged in PR #98 (`5a963ff`) on 2026-09-16; no PASS |
 | [[research/rw37-screen-intake-2026-09-15]] | RW-37 fourth GET-only screen row: Tue 2026-09-15, supported 32, cash 0; merged in PR #99 (`33156c9`) on 2026-09-16; the 30-identity gate stays closed; no PASS |
+| [[research/csl-63-slice-a-memo-2026-10-16]] | CSL-63 memo: per-candidate blocking evidence after zero qualify; RW-38 proposed, not authorized |
 | [[research-report]] · [[research-supplement]] · [[upside-and-roi]] | Original research inputs |
 | [[moving-targets-refresh-2026-07-06]] | A dated verification snapshot |
 
