@@ -57,9 +57,11 @@ def replace_or_note(text: str, tag: str, source: str) -> str:
         rf"(<<'{re.escape(tag)}'\n)(.*?)(\n[ \t]*{re.escape(tag)}\n)",
         re.S,
     )
-    body = indent_body(source) + "\n"
+    body = indent_body(source)
 
     def repl(match: re.Match[str]) -> str:
+        # group(3) already starts with the newline before TAG. Do not add
+        # another newline or the written file gains a trailing blank line (N3).
         return match.group(1) + body + match.group(3)
 
     return pattern.sub(repl, text)

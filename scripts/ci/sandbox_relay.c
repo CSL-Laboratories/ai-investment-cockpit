@@ -209,7 +209,11 @@ int main(int argc, char **argv)
         end = access(CSL_END_PATH, F_OK) == 0;
         pair = access(CSL_PAIR_PATH, F_OK) == 0;
         already = access(CSL_ALREADY_PATH, F_OK) == 0;
-        writers = 0;
+#ifdef CSL_PREFIX
+        writers = 0; /* file-based unit tests have no daemon */
+#else
+        writers = 1; /* N10: query fail must not fail open */
+#endif
     }
     if (already) {
         not_relayed("already_ran");
@@ -228,6 +232,11 @@ int main(int argc, char **argv)
                    &already);
         } else {
             pair = access(CSL_PAIR_PATH, F_OK) == 0;
+#ifdef CSL_PREFIX
+            writers = 0;
+#else
+            writers = 1;
+#endif
         }
     }
     if (!pair) {
@@ -243,7 +252,11 @@ int main(int argc, char **argv)
             sscanf(status, "end=%d pair=%d writers=%d already=%d", &end, &pair, &writers,
                    &already);
         } else {
+#ifdef CSL_PREFIX
             writers = 0;
+#else
+            writers = 1;
+#endif
         }
     }
     if (writers > 0) {
@@ -273,7 +286,8 @@ int main(int argc, char **argv)
     } else {
         snprintf(body, sizeof body, "%s\n", LINE_NOT_OBSERVED);
     }
-    if (csl_read_file(CSL_E3_RECORD_PATH, e3, sizeof e3, &e3n) == 0 && e3n) {
+    if (csl_read_file(CSL_E3_RECORD_PATH, e3, sizeof e3, &e3n) == 0 && e3n &&
+        csl_e3_record_ok(e3, e3n)) {
         strncat(body, e3, sizeof body - strlen(body) - 1);
         if (body[strlen(body) - 1] != '\n') {
             strncat(body, "\n", sizeof body - strlen(body) - 1);
@@ -288,9 +302,19 @@ int main(int argc, char **argv)
     {
         int fd = open(CSL_CAPTURE_PATH, O_RDWR | O_CLOEXEC);
         if (fd >= 0) {
+            struct stat st;
             unsigned char z[4096];
             memset(z, 0, sizeof z);
-            (void)csl_write_all(fd, z, sizeof z);
+            if (fstat(fd, &st) == 0) {
+                off_t left = st.st_size;
+                while (left > 0) {
+                    size_t chunk = left > (off_t)sizeof z ? sizeof z : (size_t)left;
+                    if (csl_write_all(fd, z, chunk) < 0) {
+                        break;
+                    }
+                    left -= (off_t)chunk;
+                }
+            }
             close(fd);
         }
         unlink(CSL_CAPTURE_PATH);

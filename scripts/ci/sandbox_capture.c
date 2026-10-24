@@ -21,6 +21,7 @@ static unsigned char capture_buf[CSL_CAP_BYTES];
 static size_t captured;
 static unsigned extra_handoffs;
 static pid_t worker_pid;
+static pid_t f1_bun_pid;
 
 static void handle_sig(int sig)
 {
@@ -57,9 +58,8 @@ static int bind_unix(const char *path, mode_t mode, int backlog)
 
 static int fifo_writers(void)
 {
-    /* After F4c the daemon has closed its write fd. Remaining writers are
-     * CLI fd 2. Best-effort: if the FIFO read would not block and we already
-     * saw END plus pair close, treat as no writer after a drain. */
+    /* After F4c the daemon has closed fifo_w_held. POLLHUP means no writer
+     * remains (CLI fd 2 gone). No POLLHUP means someone still holds a writer. */
     struct pollfd pfd;
     pfd.fd = fifo_r;
     pfd.events = POLLIN | POLLHUP;
@@ -69,7 +69,7 @@ static int fifo_writers(void)
     if (pfd.revents & POLLHUP) {
         return 0;
     }
-    return pair_closed ? 0 : 1;
+    return 1;
 }
 
 static int cmdline_tokens(pid_t pid, char tokens[][512], int cap)
@@ -94,26 +94,7 @@ static int cmdline_tokens(pid_t pid, char tokens[][512], int cap)
 
 static pid_t proc_ppid(pid_t pid)
 {
-    char path[64], buf[4096];
-    int fd;
-    char *rparen;
-    char state = 0;
-    int pp = 0;
-    snprintf(path, sizeof path, "/proc/%d/stat", (int)pid);
-    fd = open(path, O_RDONLY | O_CLOEXEC);
-    if (fd < 0) {
-        return 0;
-    }
-    if (read(fd, buf, sizeof buf - 1) <= 0) {
-        close(fd);
-        return 0;
-    }
-    close(fd);
-    rparen = strrchr(buf, ')');
-    if (!rparen || sscanf(rparen + 2, "%c %d", &state, &pp) != 2) {
-        return 0;
-    }
-    return (pid_t)pp;
+    return csl_proc_ppid(pid);
 }
 
 static int count_children(pid_t parent)
@@ -189,7 +170,7 @@ static int bash_b_ok(pid_t b, pid_t x)
     char exe[PATH_MAX];
     char tokens[12][512];
     int ntok;
-    const char *temp = getenv("RUNNER_TEMP");
+    const char *temp = CSL_RUNNER_TEMP;
     pid_t bpp;
     if (csl_proc_exe(b, exe, sizeof exe) < 0) {
         return 0;
@@ -258,6 +239,83 @@ static int bun_tofu_match(pid_t pid)
     return strncmp(hex, want, 64) == 0;
 }
 
+static int bun_name_recorded(const char *name)
+{
+    char buf[4096];
+    size_t n = 0, off = 0;
+    if (csl_read_file(CSL_STATE_DIR "/bun.names", buf, sizeof buf, &n) != 0) {
+        return 0;
+    }
+    while (off < n) {
+        char *nl = strchr(buf + off, '\n');
+        size_t len = nl ? (size_t)(nl - (buf + off)) : strlen(buf + off);
+        if (len == strlen(name) && memcmp(buf + off, name, len) == 0) {
+            return 1;
+        }
+        if (!nl) {
+            break;
+        }
+        off += len + 1;
+    }
+    return 0;
+}
+
+static int x_environ_ok(pid_t pid)
+{
+    char path[64], buf[65536];
+    int fd;
+    ssize_t n;
+    size_t off = 0;
+    snprintf(path, sizeof path, "/proc/%d/environ", (int)pid);
+    fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        return 0;
+    }
+    n = read(fd, buf, sizeof buf - 1);
+    close(fd);
+    if (n <= 0) {
+        return 0;
+    }
+    buf[n] = 0;
+    while (off < (size_t)n) {
+        const char *e = buf + off;
+        size_t elen = strlen(e);
+        if (strncmp(e, "LD_PRELOAD=", 11) == 0 && e[11]) {
+            return 0;
+        }
+        if (strncmp(e, "LD_AUDIT=", 9) == 0 && e[9]) {
+            return 0;
+        }
+        if (strncmp(e, "LD_LIBRARY_PATH=", 16) == 0 && e[16]) {
+            return 0;
+        }
+        if (strncmp(e, "SRT_DEBUG=", 10) == 0 ||
+            strncmp(e, "DEBUG_CLAUDE_AGENT_SDK=", 23) == 0 ||
+            strncmp(e, "ACTIONS_STEP_DEBUG=", 19) == 0) {
+            return 0;
+        }
+        if (strncmp(e, "BUN_", 4) == 0) {
+            char key[128];
+            const char *eq = strchr(e, '=');
+            size_t klen;
+            if (!eq) {
+                return 0;
+            }
+            klen = (size_t)(eq - e);
+            if (klen >= sizeof key) {
+                return 0;
+            }
+            memcpy(key, e, klen);
+            key[klen] = 0;
+            if (!bun_name_recorded(key)) {
+                return 0;
+            }
+        }
+        off += elen + 1;
+    }
+    return 1;
+}
+
 /* F1: observe bun X under parent B, then chmod handoff 0666. */
 static void try_arm_f1(void)
 {
@@ -318,8 +376,12 @@ static void try_arm_f1(void)
         if (!bun_tofu_match(x)) {
             continue;
         }
+        if (!x_environ_ok(x)) {
+            continue;
+        }
         if (chmod(CSL_HANDOFF_SOCK, 0666) == 0) {
             f1_armed = 1;
+            f1_bun_pid = x;
             (void)csl_write_file(CSL_STATE_DIR "/f1.armed", "1\n", 2, 0600);
         }
         break;
@@ -337,8 +399,11 @@ static int f2_launcher_parent_is_bun(pid_t launcher)
     pid_t x, x2;
     int xfd;
     pid_t held = 0;
+    if (f1_bun_pid <= 0) {
+        return 0;
+    }
     x = proc_ppid(launcher);
-    if (x <= 0) {
+    if (x <= 0 || x != f1_bun_pid) {
         return 0;
     }
     xfd = csl_pidfd_open(x, 0);
@@ -394,6 +459,36 @@ static void drain_fifo(int discard)
     }
 }
 
+static void close_rights(struct msghdr *msg, int keep)
+{
+    struct cmsghdr *cmsg;
+    for (cmsg = CMSG_FIRSTHDR(msg); cmsg; cmsg = CMSG_NXTHDR(msg, cmsg)) {
+        if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
+            int nfds = (int)((cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int));
+            int *fds = (int *)CMSG_DATA(cmsg);
+            int i;
+            for (i = 0; i < nfds; i++) {
+                if (fds[i] != keep && fds[i] >= 0) {
+                    close(fds[i]);
+                }
+            }
+        }
+    }
+}
+
+static int peer_uid_ok(uid_t uid)
+{
+#ifdef CSL_PREFIX
+    return uid == getuid();
+#else
+    uid_t runner = 0;
+    if (csl_lookup_name("runner", &runner) != 0) {
+        return 0;
+    }
+    return uid == runner;
+#endif
+}
+
 static void accept_handoff(void)
 {
     int cfd = accept4(listen_fd, NULL, NULL, SOCK_CLOEXEC | SOCK_NONBLOCK);
@@ -403,6 +498,7 @@ static void accept_handoff(void)
     char dummy = 0;
     struct cmsghdr *cmsg;
     int got_pair = -1;
+    int saw_cred = 0;
     struct ucred peer;
     socklen_t plen = sizeof peer;
     int pass = 1;
@@ -411,12 +507,16 @@ static void accept_handoff(void)
         return;
     }
     extra_handoffs++;
-    unlink(CSL_HANDOFF_SOCK);
+    /* N11: do not unlink until the peer is verified. */
     if (setsockopt(cfd, SOL_SOCKET, SO_PASSCRED, &pass, sizeof pass) < 0) {
         close(cfd);
         return;
     }
     if (getsockopt(cfd, SOL_SOCKET, SO_PEERCRED, &peer, &plen) < 0) {
+        close(cfd);
+        return;
+    }
+    if (!peer_uid_ok(peer.uid)) {
         close(cfd);
         return;
     }
@@ -431,23 +531,35 @@ static void accept_handoff(void)
         close(cfd);
         return;
     }
+    if (msg.msg_flags & MSG_CTRUNC) {
+        close_rights(&msg, -1);
+        close(cfd);
+        return;
+    }
     for (cmsg = CMSG_FIRSTHDR(&msg); cmsg; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
         if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
-            memcpy(&got_pair, CMSG_DATA(cmsg), sizeof got_pair);
+            int nfds = (int)((cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int));
+            int *fds = (int *)CMSG_DATA(cmsg);
+            if (nfds != 1 || got_pair >= 0) {
+                close_rights(&msg, -1);
+                close(cfd);
+                return;
+            }
+            got_pair = fds[0];
         }
         if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_CREDENTIALS) {
             struct ucred scm;
             memcpy(&scm, CMSG_DATA(cmsg), sizeof scm);
             if (scm.pid != peer.pid || scm.uid != peer.uid) {
+                close_rights(&msg, -1);
                 close(cfd);
-                if (got_pair >= 0) {
-                    close(got_pair);
-                }
                 return;
             }
+            saw_cred = 1;
         }
     }
-    if (got_pair < 0) {
+    if (got_pair < 0 || !saw_cred) {
+        close_rights(&msg, -1);
         close(cfd);
         return;
     }
@@ -456,7 +568,7 @@ static void accept_handoff(void)
         int peerpidfd = -1;
         socklen_t sl = sizeof peerpidfd;
         char exe[PATH_MAX];
-        unsigned char dig[32];
+        unsigned char dig[32], want[32];
         pid_t pfd_pid = 0;
         if (getsockopt(cfd, SOL_SOCKET, SO_PEERPIDFD, &peerpidfd, &sl) < 0) {
             close(cfd);
@@ -481,7 +593,9 @@ static void accept_handoff(void)
             close(got_pair);
             return;
         }
-        if (csl_sha256_file(exe, dig) != 0) {
+        if (csl_sha256_file(exe, dig) != 0 ||
+            csl_sha256_file(CSL_LAUNCH_PATH, want) != 0 ||
+            memcmp(dig, want, 32) != 0) {
             close(peerpidfd);
             close(cfd);
             close(got_pair);
@@ -495,6 +609,7 @@ static void accept_handoff(void)
         }
         close(peerpidfd);
     }
+    unlink(CSL_HANDOFF_SOCK);
     /* Send FIFO write fd over the pair only (F4c: close our write copy after). */
     {
         int wfd = open(CSL_FIFO_PATH, O_WRONLY | O_CLOEXEC);
@@ -526,7 +641,11 @@ static void accept_handoff(void)
             close(got_pair);
             return;
         }
-        close(wfd); /* F4c */
+        close(wfd); /* F4c send copy */
+        if (fifo_w_held >= 0) {
+            close(fifo_w_held);
+            fifo_w_held = -1;
+        }
     }
     pair_fd = got_pair;
     extra_handoffs--; /* first successful peer is the launcher */
@@ -591,37 +710,34 @@ static void handle_control(void)
     close(cfd);
 }
 
-static pid_t discover_worker(void)
+static pid_t load_worker(void)
 {
-    /* 0b is Worker -> sudo -> bash. If sudo execs, ppid is Worker.
-     * If sudo forks, ppid is sudo and grandparent is Worker. */
-    pid_t ppid = getppid();
-    char exe[PATH_MAX];
-    if (csl_proc_exe(ppid, exe, sizeof exe) == 0) {
-        if (strstr(exe, "sudo")) {
-            char statp[64], buf[4096];
-            int fd;
-            snprintf(statp, sizeof statp, "/proc/%d/stat", (int)ppid);
-            fd = open(statp, O_RDONLY | O_CLOEXEC);
-            if (fd >= 0) {
-                ssize_t n = read(fd, buf, sizeof buf - 1);
-                close(fd);
-                if (n > 0) {
-                    char *rparen = strrchr(buf, ')');
-                    int pid_i = 0;
-                    char state = 0;
-                    int pp = 0;
-                    buf[n] = 0;
-                    if (rparen && sscanf(rparen + 2, "%c %d", &state, &pp) == 2) {
-                        (void)pid_i;
-                        (void)state;
-                        return (pid_t)pp;
-                    }
-                }
-            }
-        }
+    char buf[64], exe[PATH_MAX];
+    size_t n = 0;
+    pid_t pid;
+    const char *base;
+    if (csl_read_file(CSL_WORKER_PID_PATH, buf, sizeof buf, &n) != 0 || n == 0) {
+        return 0;
     }
-    return ppid;
+    pid = (pid_t)atoi(buf);
+    if (pid <= 0) {
+        return 0;
+    }
+#ifdef CSL_PREFIX
+    (void)exe;
+    (void)base;
+    return pid;
+#else
+    if (csl_proc_exe(pid, exe, sizeof exe) < 0) {
+        return 0;
+    }
+    base = strrchr(exe, '/');
+    base = base ? base + 1 : exe;
+    if (strcmp(base, "Runner.Worker") != 0) {
+        return 0;
+    }
+    return pid;
+#endif
 }
 
 int main(int argc, char **argv)
@@ -664,13 +780,17 @@ int main(int argc, char **argv)
     /* Hold a write fd so readers do not see EOF before the launcher connects.
      * Closed after the first hand-off send (F4c uses a separate write fd). */
     fifo_w_held = open(CSL_FIFO_PATH, O_WRONLY | O_NONBLOCK | O_CLOEXEC);
+    if (fifo_w_held < 0) {
+        csl_die(1, "fifo_w");
+    }
 
-    worker_pid = discover_worker();
+    worker_pid = load_worker();
+    if (worker_pid <= 0) {
+        csl_die(1, "worker");
+    }
     worker_pidfd = csl_pidfd_open(worker_pid, 0);
-    {
-        char pbuf[32];
-        int n = snprintf(pbuf, sizeof pbuf, "%d\n", (int)worker_pid);
-        (void)csl_write_file(CSL_WORKER_PID_PATH, pbuf, (size_t)n, 0600);
+    if (worker_pidfd < 0) {
+        csl_die(1, "worker_pidfd");
     }
 
     listen_fd = bind_unix(CSL_HANDOFF_SOCK, 0600, 1);
@@ -720,7 +840,7 @@ int main(int argc, char **argv)
             break;
         }
         if (pfds[0].revents & (POLLIN | POLLHUP)) {
-            drain_fifo(captured >= CSL_CAP_BYTES);
+            drain_fifo(got_end || captured >= CSL_CAP_BYTES);
         }
         if (pfds[1].revents & POLLIN) {
             accept_handoff();
