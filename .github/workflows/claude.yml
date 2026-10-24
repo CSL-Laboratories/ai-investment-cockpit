@@ -824,13 +824,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: |
-            app/pyproject.toml
-            .github/actions/run-gates/action.yml
       - name: Install acceptance-gate deps
-        working-directory: app
-        run: python -m pip install -U pip pydantic pydantic-settings keyring pyyaml jsonschema sqlalchemy pyarrow duckdb fastapi "uvicorn[standard]" httpx websockets apscheduler boto3 discord.py pytest ruff
+        working-directory: ${{ runner.temp }}
+        run: python -P -m pip install -U pip pydantic pydantic-settings keyring pyyaml jsonschema sqlalchemy pyarrow duckdb fastapi "uvicorn[standard]" httpx websockets apscheduler boto3 discord.py pytest ruff
       - name: Install model API outbox helper
         id: outbox
         env:
@@ -2322,8 +2318,13 @@ jobs:
                                        "tools/test_claude_fixer_guard.py", "tools/test_claude_fixer_publish.py",
                                        "tools/test_claude_fixer_receipts.py"})
           PROTECTED_NAMES = frozenset({"codeowners", "agents.md", "claude.md", ".mcp.json",
-                                       ".netrc", "_netrc", ".npmrc", ".pypirc"})
-          PROTECTED_DIRS = frozenset({".claude", ".claude-fixer-out", ".claude-fixer-replies"})
+                                       ".netrc", "_netrc", ".npmrc", ".pypirc",
+                                       # CSL-471: interpreter start-up and pip-module shadows.
+                                       "sitecustomize.py", "sitecustomize.pyc", "sitecustomize",
+                                       "usercustomize.py", "usercustomize.pyc", "usercustomize",
+                                       "pip.py", "pip.pyc"})
+          PROTECTED_DIRS = frozenset({".claude", ".claude-fixer-out", ".claude-fixer-replies",
+                                      "pip"})
           # GitHub and Anthropic token shapes. The model job can read its own read-only job token
           # (the helper's read-token); a copy in the candidate or outbox is refused, not redacted.
           CREDENTIAL = re.compile(r"gh[opsuvr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}|sk-ant-[A-Za-z0-9_-]{20,}")
@@ -2624,6 +2625,9 @@ jobs:
               if any(part.startswith(".git") or part.startswith(".env") or part in PROTECTED_DIRS for part in parts):
                   return True
               if parts[-1] in PROTECTED_NAMES:
+                  return True
+              # CSL-471: a checkout `.pth` is imported on interpreter start.
+              if any(part.endswith(".pth") for part in parts):
                   return True
               return folded.startswith("scripts/ci/") or folded in PROTECTED_FILES
 
@@ -4052,13 +4056,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: |
-            app/pyproject.toml
-            .github/actions/run-gates/action.yml
       - name: Install acceptance-gate deps
-        working-directory: app
-        run: python -m pip install -U pip pydantic pydantic-settings keyring pyyaml jsonschema sqlalchemy pyarrow duckdb fastapi "uvicorn[standard]" httpx websockets apscheduler boto3 discord.py pytest ruff
+        working-directory: ${{ runner.temp }}
+        run: python -P -m pip install -U pip pydantic pydantic-settings keyring pyyaml jsonschema sqlalchemy pyarrow duckdb fastapi "uvicorn[standard]" httpx websockets apscheduler boto3 discord.py pytest ruff
       - name: "Fixer attempt ${{ needs.fixer-prepare.outputs.attempt_key }}"
         id: outbox
         env:
@@ -5549,8 +5549,13 @@ jobs:
                                        "tools/test_claude_fixer_guard.py", "tools/test_claude_fixer_publish.py",
                                        "tools/test_claude_fixer_receipts.py"})
           PROTECTED_NAMES = frozenset({"codeowners", "agents.md", "claude.md", ".mcp.json",
-                                       ".netrc", "_netrc", ".npmrc", ".pypirc"})
-          PROTECTED_DIRS = frozenset({".claude", ".claude-fixer-out", ".claude-fixer-replies"})
+                                       ".netrc", "_netrc", ".npmrc", ".pypirc",
+                                       # CSL-471: interpreter start-up and pip-module shadows.
+                                       "sitecustomize.py", "sitecustomize.pyc", "sitecustomize",
+                                       "usercustomize.py", "usercustomize.pyc", "usercustomize",
+                                       "pip.py", "pip.pyc"})
+          PROTECTED_DIRS = frozenset({".claude", ".claude-fixer-out", ".claude-fixer-replies",
+                                      "pip"})
           # GitHub and Anthropic token shapes. The model job can read its own read-only job token
           # (the helper's read-token); a copy in the candidate or outbox is refused, not redacted.
           CREDENTIAL = re.compile(r"gh[opsuvr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}|sk-ant-[A-Za-z0-9_-]{20,}")
@@ -5851,6 +5856,9 @@ jobs:
               if any(part.startswith(".git") or part.startswith(".env") or part in PROTECTED_DIRS for part in parts):
                   return True
               if parts[-1] in PROTECTED_NAMES:
+                  return True
+              # CSL-471: a checkout `.pth` is imported on interpreter start.
+              if any(part.endswith(".pth") for part in parts):
                   return True
               return folded.startswith("scripts/ci/") or folded in PROTECTED_FILES
 
