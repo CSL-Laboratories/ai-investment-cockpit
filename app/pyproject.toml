@@ -8,6 +8,9 @@ requires-python = ">=3.11"
 # Pin + hash-lock before install — supply-chain hardening (docs/security-architecture §7).
 dependencies = [
   "fastapi",
+  # HTTP_422_UNPROCESSABLE_CONTENT arrived in Starlette 0.48.0. FastAPI 0.143.3
+  # only requires starlette>=0.46.0, so an older Starlette still satisfies it.
+  "starlette>=0.48.0",
   "uvicorn[standard]",
   "discord.py",
   "apscheduler",

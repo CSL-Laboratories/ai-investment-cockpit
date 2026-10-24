@@ -29,6 +29,7 @@ DIRECT_PACKAGES = (
     'pyarrow',
     'duckdb',
     'fastapi',
+    'starlette',
     'uvicorn[standard]',
     'httpx',
     'websockets',

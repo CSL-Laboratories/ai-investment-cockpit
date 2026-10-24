@@ -152,7 +152,7 @@ settings are activated by this code.
 
 ```bash
 cd app
-python -m pip install -U pip pydantic pydantic-settings keyring pyyaml jsonschema sqlalchemy pyarrow duckdb fastapi "uvicorn[standard]" httpx websockets apscheduler boto3 discord.py pytest ruff
+python -m pip install -U pip pydantic pydantic-settings keyring pyyaml jsonschema sqlalchemy pyarrow duckdb fastapi "starlette>=0.48.0" "uvicorn[standard]" httpx websockets apscheduler boto3 discord.py pytest ruff
 python -m pytest -q      # incl. Invariant-1 call-site / no-LLM-in-risk / secrets-grep gates
 ruff check .
 ```

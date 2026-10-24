@@ -461,7 +461,7 @@ def create_app(state, *, auth: ApiKeyAuth | None = None,
                 kind="limits_ceiling_breach",
             ).value
             return JSONResponse(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 content={"rejected": "ceiling_exceeded", "fields": over,
                          "hard_ceilings": {k: str(bounds[k]) for k in over},
                          "mode_after": mode_after},
