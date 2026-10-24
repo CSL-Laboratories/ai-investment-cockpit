@@ -242,5 +242,98 @@ class BindPinTests(unittest.TestCase):
             self.assertEqual(ids["/home/runner/work"], "99")
 
 
+class EnvironM1Tests(unittest.TestCase):
+    def test_ld_library_path_must_be_empty_or_absent(self) -> None:
+        worker = {"PATH": "/usr/bin", "FOO": "1"}
+        path = environ.expected_job_path("/usr/bin")
+        b_env = {"PATH": path, "FOO": "1"}
+        x_ok = {"PATH": path, "FOO": "1", "PWD": "/workspace", "SHLVL": "1", "_": "/opt/csl-bun/bun"}
+        self.assertTrue(
+            environ.check_environ(
+                proc_env=x_ok, worker_env=worker, b_env=b_env, on_x=True,
+                workspace="/workspace", worker_path="/usr/bin",
+            ).ok
+        )
+        x_empty = dict(x_ok)
+        x_empty["LD_LIBRARY_PATH"] = ""
+        self.assertTrue(
+            environ.check_environ(
+                proc_env=x_empty, worker_env=worker, b_env=b_env, on_x=True,
+                workspace="/workspace", worker_path="/usr/bin",
+            ).ok
+        )
+        x_bad = dict(x_ok)
+        x_bad["LD_LIBRARY_PATH"] = "/opt/hostedtoolcache/Python/3.12/lib"
+        self.assertFalse(
+            environ.check_environ(
+                proc_env=x_bad, worker_env=worker, b_env=b_env, on_x=True,
+                workspace="/workspace", worker_path="/usr/bin",
+            ).ok
+        )
+
+    def test_bun_star_only_recorded_names(self) -> None:
+        worker = {"PATH": "/usr/bin"}
+        path = environ.expected_job_path("/usr/bin")
+        b_env = {"PATH": path}
+        x = {"PATH": path, "PWD": "/workspace", "SHLVL": "1", "_": "/opt/csl-bun/bun", "BUN_INSTALL": "/opt"}
+        self.assertFalse(
+            environ.check_environ(
+                proc_env=x, worker_env=worker, b_env=b_env, on_x=True,
+                workspace="/workspace", worker_path="/usr/bin",
+            ).ok
+        )
+        self.assertTrue(
+            environ.check_environ(
+                proc_env=x, worker_env=worker, b_env=b_env, on_x=True,
+                workspace="/workspace", worker_path="/usr/bin",
+                recorded_bun={"BUN_INSTALL": "/opt"},
+            ).ok
+        )
+
+
+class GitTreeTests(unittest.TestCase):
+    def test_git_tree_rejects_extra_and_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "action.yml").write_text("name: pin\n", encoding="utf-8")
+            blob = bind.git_blob_sha1(str(Path(tmp) / "action.yml"))
+            ls = f"100644 blob {blob}\taction.yml\n"
+            bind.check_git_tree(tmp, ls, skip_dirs=())
+            (Path(tmp) / "extra.txt").write_text("x\n", encoding="utf-8")
+            with self.assertRaises(bind.BindError):
+                bind.check_git_tree(tmp, ls, skip_dirs=())
+            extra = bind.tree_digest(tmp)
+            self.assertEqual(len(extra), 64)
+
+
+class BootstrapContractTests(unittest.TestCase):
+    def test_sudoers_and_negative_controls_are_in_0b(self) -> None:
+        text = (SCRIPTS / "sandbox_e3_bootstrap.sh").read_text(encoding="utf-8")
+        self.assertIn('Defaults env_reset', text)
+        self.assertIn('Defaults secure_path="/usr/sbin:/usr/bin:/sbin:/bin"', text)
+        self.assertIn("runner ALL=(root) NOPASSWD: /opt/csl-relay/bin/relay", text)
+        self.assertNotIn("%sudo   ALL=(ALL:ALL) NOPASSWD:ALL", text)
+        self.assertIn("NOPASSWD:ALL remains", text)  # fail-closed check, not a grant
+        self.assertIn("sudo -n /bin/true", text)
+        self.assertIn("sudo -n -u nobody /bin/true", text)
+        self.assertIn("sudo -n -u nobody /opt/csl-relay/bin/relay", text)
+        self.assertIn("sudo -n -E /opt/csl-relay/bin/relay", text)
+        self.assertIn("sudo -n FOO=1 /opt/csl-relay/bin/relay", text)
+        self.assertIn("sudo -n /opt/csl-relay/bin/filter", text)
+        self.assertIn("sudo -n /opt/csl-claude/launch", text)
+        self.assertIn("kernel.yama.ptrace_scope=2", text)
+        self.assertIn("systemctl stop", text)
+        self.assertIn("systemctl mask", text)
+        self.assertIn("-static", text)
+        self.assertIn('"$GCC" -static', text)
+        self.assertIn("/opt/csl-relay/bin/capture-start", text)
+        self.assertIn("visudo -cf", text)
+        self.assertNotIn("CSL_ACTION_DIR", text)
+        self.assertNotIn("CSL_RELAY_STATE", text)
+        self.assertIn("hash-git-tree", text)
+        self.assertIn("hash-node-modules", text)
+        self.assertIn("hash-setup-bun", text)
+        self.assertIn("sandbox_e3_cli_pin.sh", text)
+
+
 if __name__ == "__main__":
     unittest.main()

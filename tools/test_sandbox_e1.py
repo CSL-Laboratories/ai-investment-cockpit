@@ -12,7 +12,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import textwrap
 import unittest
 from pathlib import Path
 
@@ -140,7 +139,7 @@ class U16U18HookTests(unittest.TestCase):
         )
         self.assertTrue(hooks.accept_parent_shape("sudo_fork"))
         self.assertTrue(hooks.accept_parent_shape("sudo_exec"))
-        self.assertTrue(hooks.accept_parent_shape("unproven"))
+        self.assertFalse(hooks.accept_parent_shape("unproven"))
         self.assertFalse(hooks.accept_parent_shape("bad_parent"))
         self.assertEqual(
             hooks.classify_parent(uid=1000, euid=1000, ppid_exe="/bin/bash", self_exe="/usr/bin/python3"),
@@ -181,11 +180,14 @@ class MentionDenySpellingTests(unittest.TestCase):
             "Edit(//opt/csl-relay/**)",
             "Read(//var/lib/csl-relay/**)",
             "Edit(//var/lib/csl-relay/**)",
+            "Read(//home/runner/work/_actions/**)",
             "Edit(//home/runner/work/_actions/**)",
             "Edit(//opt/hostedtoolcache/**)",
             "Edit(//proc/**)",
             "Edit(//dev/fd/**)",
             "Edit(//dev/stderr)",
+            "Read(//dev/stdout)",
+            "Edit(//dev/stdout)",
         ):
             self.assertIn(rule, deny)
         # Never flatten // to a single slash on host paths; never triple-slash the temp var.
@@ -216,29 +218,15 @@ class MentionDenySpellingTests(unittest.TestCase):
 
 
 class EmbeddedAndPinTests(unittest.TestCase):
-    def test_embedded_e1_helpers_match_source_files(self) -> None:
+    def test_production_launcher_and_relay_are_static_c_not_python_embeds(self) -> None:
         mention = WORKFLOW.read_text(encoding="utf-8").split("  claude-mention:", 1)[1].split(
             "  mention-publish:", 1
         )[0]
-        mapping = {
-            "CSL_E1_FILTER": SCRIPTS / "sandbox_debug_filter.py",
-            "CSL_E1_HOOKS": SCRIPTS / "sandbox_e1_hooks.py",
-            "CSL_E1_RELAY": SCRIPTS / "sandbox_relay.py",
-            "CSL_E1_LAUNCH": SCRIPTS / "sandbox_launcher.py",
-            "CSL_E1_INSTALL": SCRIPTS / "sandbox_e1_install.sh",
-        }
-        for tag, path in mapping.items():
-            start = f"<<'{tag}'\n"
-            self.assertIn(start, mention, tag)
-            after = mention.split(start, 1)[1]
-            body_lines = []
-            for line in after.splitlines():
-                if line.strip() == tag:
-                    break
-                body_lines.append(line)
-            embedded = textwrap.dedent("\n".join(body_lines)).rstrip("\n")
-            source = path.read_text(encoding="utf-8").rstrip("\n")
-            self.assertEqual(embedded, source, tag)
+        for tag in ("CSL_C_LAUNCH", "CSL_C_RELAY", "CSL_C_CAPTURE"):
+            self.assertIn(f"<<'{tag}'\n", mention, tag)
+        for tag in ("CSL_E1_LAUNCH", "CSL_E1_RELAY", "CSL_E1_INSTALL"):
+            self.assertNotIn(f"<<'{tag}'\n", mention, tag)
+        self.assertIn('"$GCC" -static', mention)
 
     def test_relay_and_launcher_sha256_match_pin_files(self) -> None:
         for name in ("sandbox_relay", "sandbox_launcher"):

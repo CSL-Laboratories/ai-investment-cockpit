@@ -52,11 +52,11 @@ def classify_parent(
         return "sudo_fork"
     if self_real == RELAY_PATH or os.path.basename(self_real) == "relay":
         return "sudo_exec"
-    return "unproven"
+    return "bad_parent"
 
 
 def accept_parent_shape(shape: str) -> bool:
-    return shape in ACCEPTED_SHAPES or shape == "unproven"
+    return shape in ACCEPTED_SHAPES
 
 
 def u16_inventory() -> dict[str, str]:

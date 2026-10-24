@@ -181,6 +181,14 @@ class FilterAgreeTests(unittest.TestCase):
         self.assertNotIn("\0", result.reconstructed or "")
         self.assertEqual(len(filt.capture_buffer(b"abc")), filt.CAP_BYTES)
 
+    def test_trailing_nul_padding_does_not_make_last_line_overlong(self) -> None:
+        # L-c: a wrap line with no newline plus CAP_BYTES NUL pad is still observed.
+        raw = matching(("env",)).encode("utf-8")
+        result = filt.filter_capture(raw)
+        self.assertEqual(result.status, filt.STATUS_OBSERVED)
+        self.assertEqual(result.overlong, 0)
+        self.assertEqual(result.reconstructed, filt.reconstruct_line(frozenset({"env"})))
+
 
 class FilterDoesNotWireDebugTests(unittest.TestCase):
     def test_workflow_does_not_set_srt_debug(self) -> None:
