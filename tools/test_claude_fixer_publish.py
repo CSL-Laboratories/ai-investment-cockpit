@@ -2053,7 +2053,7 @@ class WorkflowWiringTests(unittest.TestCase):
                 self.assertEqual(action["env"], {"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1",
                                                  "DISABLE_UPDATES": "1"})
                 self.assertEqual(action["with"]["path_to_claude_code_executable"],
-                                 "/opt/csl-claude/2.1.306/claude")
+                                 "/opt/csl-claude/2.1.310/claude")
                 # Chaandan's review at 95de346: any value keeps the job token out of the origin URL
                 # in .git/config; one no GitHub login can match keeps every actor's write check.
                 self.assertEqual(action["with"]["github_token"], "${{ github.token }}")
@@ -2337,11 +2337,11 @@ def jobs_any(name):
     return yaml.load((ROOT / ".github/workflows" / name).read_text(encoding="utf-8"), Loader=yaml.BaseLoader)["jobs"]
 
 
-PIN_PATH = ROOT / "scripts/ci/claude-code-2.1.306-linux-x64.pin"
+PIN_PATH = ROOT / "scripts/ci/claude-code-2.1.310-linux-x64.pin"
 FINGERPRINT_PATH = ROOT / "scripts/ci/claude-code-release-signing.fingerprint"
 INSTALL_SCRIPT = ROOT / "scripts/ci/install_pinned_claude_code.sh"
 INSTALL_STEP = "Install hash-pinned Claude Code CLI"
-CLAUDE_BIN = "/opt/csl-claude/2.1.306/claude"
+CLAUDE_BIN = "/opt/csl-claude/2.1.310/claude"
 
 
 def parse_pin(path=PIN_PATH):
@@ -2368,14 +2368,14 @@ def normalize_script(text):
 class ClaudeCodeInstallerPinTests(unittest.TestCase):
     """CSL-473 interim E3-1: skip the action's unpinned installer."""
 
-    def test_committed_pin_matches_action_256_and_signing_key(self):
+    def test_committed_pin_matches_action_262_and_signing_key(self):
         pin = parse_pin()
-        self.assertEqual(pin["version"], "2.1.306")
+        self.assertEqual(pin["version"], "2.1.310")
         self.assertEqual(pin["platform"], "linux-x64")
-        self.assertEqual(pin["sha256"], "520bc6c1f40af466bd03a278b5ae1af1a2938bc7de5b9e5cb15526da20d71cfe")
-        self.assertEqual(pin["bytes"], "290532720")
+        self.assertEqual(pin["sha256"], "b73676430af12f97316a798b8371f81d640f90a58bdcb8f3ce56a835bb47df56")
+        self.assertEqual(pin["bytes"], "291638640")
         self.assertEqual(pin["install_path"], CLAUDE_BIN)
-        self.assertEqual(pin["url"], "https://downloads.claude.ai/claude-code-releases/2.1.306/linux-x64/claude")
+        self.assertEqual(pin["url"], "https://downloads.claude.ai/claude-code-releases/2.1.310/linux-x64/claude")
         self.assertEqual(committed_fingerprint(), "31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE")
         script = INSTALL_SCRIPT.read_text(encoding="utf-8")
         for value in (pin["version"], pin["sha256"], pin["bytes"], committed_fingerprint()):
@@ -2424,7 +2424,7 @@ class ClaudeCodeInstallerPinTests(unittest.TestCase):
                 self.assertEqual(action["with"]["path_to_claude_code_executable"], CLAUDE_BIN)
                 self.assertEqual(action["env"].get("DISABLE_UPDATES"), "1")
                 self.assertTrue(str(action.get("uses", "")).endswith(
-                    "a5a423f75c251dcbff8a74e99f83b2cb03c72bfa"))
+                    "925afb53776cf1a2b738c6bdbed37b4d4000ef13"))
 
     def test_workflows_do_not_pipe_an_unpinned_claude_installer(self):
         for path in sorted((ROOT / ".github/workflows").glob("*.y*ml")):

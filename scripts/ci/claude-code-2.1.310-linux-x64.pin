@@ -1,0 +1,9 @@
+# CSL-476: hash-pinned Claude Code CLI. Matches
+# anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 (v1.0.262).
+# Workflows inline these values so a PR checkout cannot swap the pin.
+version=2.1.310
+platform=linux-x64
+sha256=b73676430af12f97316a798b8371f81d640f90a58bdcb8f3ce56a835bb47df56
+bytes=291638640
+url=https://downloads.claude.ai/claude-code-releases/2.1.310/linux-x64/claude
+install_path=/opt/csl-claude/2.1.310/claude

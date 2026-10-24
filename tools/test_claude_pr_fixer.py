@@ -1966,7 +1966,7 @@ class ClaudeCodeInstallerPinTests(unittest.TestCase):
         self.assertGreaterEqual(len(steps), 3)
         for index, (name, inputs) in enumerate(steps):
             with self.subTest(workflow=name, step=index):
-                self.assertIn("\n          path_to_claude_code_executable: /opt/csl-claude/2.1.306/claude\n", inputs)
+                self.assertIn("\n          path_to_claude_code_executable: /opt/csl-claude/2.1.310/claude\n", inputs)
                 self.assertIn("DISABLE_UPDATES", inputs)
 
 

@@ -147,7 +147,7 @@ broken across lines) would pass that scan; the job token it could carry is read-
 already revoked when the model job ends, before publish runs. The action's
 credential helper and its exact-match permission bypass are its own behaviour,
 so every `anthropics/claude-code-action` use is pinned to a full commit SHA
-(v1.0.256, CSL-412). The fixer-failure escalation binds to that same reference,
+(v1.0.262, CSL-412/CSL-476). The fixer-failure escalation binds to that same reference,
 and a bump must recheck both behaviours. Each model job's package step also fails the
 package (`package_status=failed`, so publish refuses everything) when any git
 config scope it can list holds a credential: a token or userinfo in a URL, an

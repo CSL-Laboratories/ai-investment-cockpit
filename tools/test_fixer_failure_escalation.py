@@ -342,7 +342,7 @@ class EvidenceTests(unittest.TestCase):
         self.assertGreaterEqual(len(steps), 3)
         for index, (name, body) in enumerate(steps):
             with self.subTest(workflow=name, step=index):
-                self.assertIn("\n          path_to_claude_code_executable: /opt/csl-claude/2.1.306/claude\n", body)
+                self.assertIn("\n          path_to_claude_code_executable: /opt/csl-claude/2.1.310/claude\n", body)
                 self.assertIn("\n          DISABLE_UPDATES:", body)
 
     def test_workflow_emits_context_from_actual_locked_eligibility_and_embeds_consumer(self):

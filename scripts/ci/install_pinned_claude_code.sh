@@ -10,10 +10,10 @@ set -euo pipefail
 # Sunset: retire this skip-path when frozen D10 E3 hosted-byte provenance
 # lands. Rollback is revert of the install step and path_to input.
 
-CLAUDE_VERSION="2.1.306"
+CLAUDE_VERSION="2.1.310"
 PLATFORM="linux-x64"
-EXPECTED_SHA256="520bc6c1f40af466bd03a278b5ae1af1a2938bc7de5b9e5cb15526da20d71cfe"
-EXPECTED_BYTES="290532720"
+EXPECTED_SHA256="b73676430af12f97316a798b8371f81d640f90a58bdcb8f3ce56a835bb47df56"
+EXPECTED_BYTES="291638640"
 EXPECTED_FPR="31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE"
 RELEASE_BASE="https://downloads.claude.ai/claude-code-releases"
 KEY_URL="https://downloads.claude.ai/keys/claude-code.asc"
