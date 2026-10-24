@@ -176,8 +176,9 @@ jobs:
           git merge --no-ff --no-commit "$BASE_SHA" || true
           git status --short
       - uses: actions/setup-python@v5
-        # CSL-467 / CSL-450 REVIEW-D8 J3: no cache: pip. The post-step would
-        # save ~/.cache/pip after the model into the default-branch cache.
+        # CSL-467 / CSL-450 REVIEW-D8 J3: do not enable setup-python pip
+        # caching. The post-step would save ~/.cache/pip after the model
+        # into the default-branch cache.
         with:
           python-version: "3.12"
       - name: Install acceptance-gate deps

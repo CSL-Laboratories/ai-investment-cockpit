@@ -609,16 +609,19 @@ class WorkflowStructureTests(unittest.TestCase):
             self.assertNotIn("HEAD:refs/heads/", job)
 
     def test_setup_python_does_not_enable_pip_cache(self) -> None:
-        # CSL-471 REVIEW-D8 J3: cache: pip on a PR/model job poisons the
-        # default-branch Actions cache by prefix restore (including the
-        # conflict writer that holds the OAuth token).
+        # CSL-471 REVIEW-D8 J3: a YAML `cache: pip` key on a PR/model job
+        # poisons the default-branch Actions cache by prefix restore
+        # (including the conflict writer that holds the OAuth token).
+        # Comments may mention the banned key; match YAML keys only.
+        pip_cache_line = re.compile(r"^[ \t]*cache:[ \t]*pip[ \t]*$", re.M)
+        cache_dep_line = re.compile(r"^[ \t]*cache-dependency-path:", re.M)
         for job_name in ("claude-mention", "devin-review-fix"):
             body = self._job(job_name)
-            self.assertNotIn("cache: pip", body, job_name)
-            self.assertNotIn("cache-dependency-path:", body, job_name)
+            self.assertIsNone(pip_cache_line.search(body), job_name)
+            self.assertIsNone(cache_dep_line.search(body), job_name)
         writer = WRITER_WORKFLOW_PATH.read_text(encoding="utf-8")
-        self.assertNotIn("cache: pip", writer)
-        self.assertNotIn("cache-dependency-path:", writer)
+        self.assertIsNone(pip_cache_line.search(writer), writer)
+        self.assertIsNone(cache_dep_line.search(writer), writer)
 
     def test_prompt_treats_review_and_files_as_untrusted(self) -> None:
         self.assertIn("UNTRUSTED DATA", self.text)
