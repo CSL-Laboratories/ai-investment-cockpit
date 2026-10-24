@@ -158,6 +158,32 @@ def _pack_and_quiet(n: int) -> None:
     LimitOrderBook("S").apply_quiet(_mutate_ops(n))
 
 
+def _paper_oms():
+    """Two live quotes and a few hundred terminal ids, the market-maker shape."""
+    from quant.events import Side
+    from quant.oms import NewOrder, OMS
+
+    oms = OMS()
+    for i in range(400):
+        oms.register(
+            NewOrder(client_id=str(i), symbol="S", side=Side.BUY, qty=10, price_ticks=100),
+            strategy="mm",
+        )
+        if i < 398:
+            oms.on_cancelled(str(i))
+    return oms
+
+
+def _scan_every_order(oms, repeats: int) -> None:
+    for _ in range(repeats):
+        [order for order in oms._orders.values() if order.is_live]
+
+
+def _read_live_index(oms, repeats: int) -> None:
+    for _ in range(repeats):
+        oms.live_orders()
+
+
 def _time(fn, repeats: int = 5) -> float:
     samples = []
     for _ in range(repeats):
@@ -209,6 +235,15 @@ def main() -> None:
     print(row(f"pick one of {pick_n}, {picks} times", via_at, via_index))
     if via_index / via_at < 1.0:
         sys.exit("resting_at regressed below copying the order index")
+    oms = _paper_oms()
+    reads = 5_000
+    _scan_every_order(oms, 4)
+    _read_live_index(oms, 4)
+    scanned = _time(lambda: _scan_every_order(oms, reads))
+    indexed = _time(lambda: _read_live_index(oms, reads))
+    print(row(f"live orders, 2 of 400, {reads} reads", indexed, scanned))
+    if scanned / indexed < 1.0:
+        sys.exit("live-order index regressed below scanning every order")
 
 
 if __name__ == "__main__":
