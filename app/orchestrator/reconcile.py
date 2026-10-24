@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Callable
 
 from schemas.models.agent_job import AgentJob
@@ -180,6 +181,114 @@ def _order_landed(history, order_id) -> bool:
     return False
 
 
+# Statuses that settle a broker order. American "canceled" is the same word.
+# Anything else, including an open "accepted"/"submitted" reply, is not
+# confirmation that a locally terminal row has left the broker.
+_BROKER_TERMINAL_STATUSES = frozenset({
+    "cancelled", "canceled", "rejected", "filled", "expired",
+})
+
+
+def _parsed_history_time(value) -> datetime | None:
+    """An aware UTC instant, or None when ``value`` is not a usable timestamp.
+
+    ``Z`` and ``+00:00`` are the same instant. Fractional seconds are kept.
+    A naive value, or text ``datetime.fromisoformat`` cannot parse, is not
+    usable: the caller keeps the landed block.
+    """
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text = str(value).strip()
+        if text.endswith(("Z", "z")):
+            text = text[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+    if parsed.tzinfo is None or parsed.tzinfo.utcoffset(parsed) is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _broker_order_is_terminal(history, order_id) -> bool:
+    """True only when the latest history record for this order id is terminal.
+
+    An earlier cancel does not confirm a later reopen. Records that carry
+    ``updated_at`` are ordered by the parsed instant, not by the raw string
+    or by list position. A parse failure, a mix of timestamped and
+    untimestamped records, or a tie for the newest instant is not
+    confirmation, so the landed block stays. When no matched record has a
+    timestamp, list order is the order and the last match is the latest.
+    An error, an empty reply, a non-dict, or a record for a different order
+    is not confirmation either.
+    """
+    if not history or isinstance(history, BaseException):
+        return False
+    records = history if isinstance(history, (list, tuple)) else [history]
+    matched = [
+        rec for rec in records
+        if isinstance(rec, dict) and rec.get("order_id") == order_id
+    ]
+    if not matched:
+        return False
+    instants: list[datetime | None] = []
+    saw_timestamp = False
+    for rec in matched:
+        raw = rec.get("updated_at")
+        if raw is None or raw == "":
+            instants.append(None)
+            continue
+        saw_timestamp = True
+        instant = _parsed_history_time(raw)
+        if instant is None:
+            return False
+        instants.append(instant)
+    if not saw_timestamp:
+        latest = matched[-1]
+    else:
+        if any(instant is None for instant in instants):
+            return False
+        newest = max(instant for instant in instants if instant is not None)
+        leaders = [
+            rec for rec, instant in zip(matched, instants) if instant == newest
+        ]
+        if len(leaders) != 1:
+            return False
+        latest = leaders[0]
+    status = str(latest.get("status", "")).strip().lower()
+    return status in _BROKER_TERMINAL_STATUSES
+
+
+def _signed_open_exposure(st, order_id) -> bool:
+    """True when the latest verified transition says this order is open.
+
+    The mutable ``order.state`` column is not evidence. An unverified
+    transition for the order fails closed.
+    """
+    from orchestrator.state import EVENT_ORDER_TRANSITION
+    from sqlalchemy import select
+
+    open_states = {"approved", "submitted", "partially_filled"}
+    with st.session_factory() as session:
+        rows = session.execute(
+            select(AuditEntry)
+            .where(AuditEntry.event_type == EVENT_ORDER_TRANSITION)
+            .order_by(AuditEntry.seq)
+        ).scalars().all()
+    latest_to = None
+    for row in rows:
+        marked = str((row.refs or {}).get("row_id") or "")
+        if marked != str(order_id):
+            continue
+        if not st.audit.verify_entry(row):
+            return False
+        to_state = (row.payload or {}).get("to")
+        if to_state:
+            latest_to = to_state
+    return latest_to in open_states
+
+
 def reconcile_startup(
     st,
     *,
@@ -265,7 +374,38 @@ def reconcile_startup(
                     "AMBIGUOUS; confirm against the broker and cancel or settle the order."
                 )
 
+    # A landed send whose local row never became open leaves a sticky block.
+    # Clear it only when the rest of this report is clean AND either the
+    # verified chain says the order is open while the current row is still a
+    # counted open state, or the broker's latest status is terminal. A signed
+    # open transition whose row is now proposed does not clear: the pending
+    # scan can miss that row. The mutable state column alone is not enough,
+    # and a report that is already not ok does not discharge the block.
+    from brokers.gateway import UNRECONCILED_LANDED_EXPOSURE
+
+    stuck_landed = False
+    with st.session_factory() as s:
+        landed_rows = s.execute(
+            select(AuditEntry)
+            .where(AuditEntry.event_type == UNRECONCILED_LANDED_EXPOSURE)
+            .order_by(AuditEntry.seq)
+        ).scalars().all()
+    latest_landed: dict[str, dict] = {}
+    for landed in landed_rows:
+        if not audit.verify_entry(landed):
+            stuck_landed = True
+            alerter(
+                "#system reconcile: an unreconciled-landed marker failed verification — "
+                "new risk-increasing orders stay refused."
+            )
+            continue
+        payload = landed.payload or {}
+        order_id = str((landed.refs or {}).get("order_id") or payload.get("order_id") or "")
+        if order_id:
+            latest_landed[order_id] = payload
+
     # 1:1 completeness gate — orphan results + uncovered domain rows (bypassed record_state_change).
+    # Computed before any clear: a report that is already not ok keeps the block.
     orphans = tuple(audit.orphan_results())
     for oseq in orphans:
         alerter(f"#system reconcile: orphan result seq {oseq} has no matching intent.")
@@ -280,7 +420,54 @@ def reconcile_startup(
                 f"audit entry (state change bypassed record_state_change): {list(gaps)}"
             )
 
-    ok = not alerted and not orphans and not uncovered and not ambiguous
+    otherwise_ok = not alerted and not orphans and not uncovered and not ambiguous
+
+    def _clear_landed(order_id: str, payload: dict) -> None:
+        audit.append(
+            UNRECONCILED_LANDED_EXPOSURE,
+            actor="reconcile",
+            refs={"order_id": order_id},
+            payload={
+                "kind": "clear",
+                "order_id": order_id,
+                "notional": payload.get("notional"),
+            },
+        )
+
+    for order_id, payload in latest_landed.items():
+        if payload.get("kind") != "block":
+            continue
+        with st.session_factory() as s:
+            order_row = s.get(Order, order_id)
+        state = None if order_row is None else order_row.state
+        confirmed = False
+        counted = {"approved", "submitted", "partially_filled"}
+        if otherwise_ok:
+            if state in counted and _signed_open_exposure(st, order_id):
+                confirmed = True
+            else:
+                history = None
+                if broker_history_fn is not None:
+                    try:
+                        history = broker_history_fn(order_id)
+                    except Exception as exc:  # a history failure keeps the block
+                        log.warning(
+                            "reconcile: broker history read failed for landed order %s: %s",
+                            order_id, exc,
+                        )
+                        history = None
+                confirmed = _broker_order_is_terminal(history, order_id)
+        if confirmed:
+            _clear_landed(order_id, payload)
+            continue
+        stuck_landed = True
+        alerter(
+            f"#system reconcile: order {order_id} landed but local exposure is still "
+            f"unreconciled (state={state!r}) — new risk-increasing orders stay refused "
+            "until the order is settled."
+        )
+
+    ok = otherwise_ok and not stuck_landed
     return ReconcileReport(
         healed=tuple(healed),
         alerted=tuple(alerted),

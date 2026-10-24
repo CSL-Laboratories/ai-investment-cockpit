@@ -92,10 +92,61 @@ def default_halt_path() -> Path:
     return Path(base) / "ai-investment-cockpit" / "HALT"
 
 
+def _directory_open_flags() -> int:
+    """Flags for a read-only directory handle. ``O_DIRECTORY`` when the OS has it."""
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    return flags
+
+
+def _fsync_directory(directory: Path) -> bool:
+    """Best-effort flush of the directory entry. True only when it was fsynced.
+
+    The file fsync is the required durability. Windows often cannot open a
+    directory, and a directory fsync that raises ``OSError`` is ignored.
+    ``set_halt`` still returns after the file fsync. Restart-closed durability
+    of the sentinel is that file fsync, not this directory flush.
+    """
+    try:
+        fd = os.open(os.fspath(directory), _directory_open_flags())
+    except OSError:
+        return False
+    try:
+        try:
+            os.fsync(fd)
+        except OSError:
+            return False
+    finally:
+        os.close(fd)
+    return True
+
+
 def set_halt(path: Path | str, reason: str = "killswitch") -> Path:
+    """Write the HALT sentinel and fsync the file.
+
+    The file fsync is mandatory: a short write or a file-fsync error
+    propagates, and the sentinel is not claimed durable. The directory fsync
+    runs only when this platform can open the directory. If that open or
+    fsync fails, this function still returns; the file fsync is what a later
+    restart relies on. If this write fails and the audit block write failed
+    too, ``admit_integrity_failure`` does not survive a restart and the
+    sentinel is absent. A required safety session cannot record a clean close
+    while that denial is set, so the next start sees an unclosed session and
+    stays in startup hold. The process restarts closed.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"{datetime.now(timezone.utc).isoformat()} {reason}\n", encoding="utf-8")
+    payload = f"{datetime.now(timezone.utc).isoformat()} {reason}\n".encode("utf-8")
+    fd = os.open(os.fspath(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    try:
+        written = os.write(fd, payload)
+        if written != len(payload):
+            raise OSError("HALT sentinel write was short")
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    _fsync_directory(path.parent)
     return path
 
 
