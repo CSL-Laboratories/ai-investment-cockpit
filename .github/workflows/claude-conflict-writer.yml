@@ -603,11 +603,13 @@ jobs:
         run: |
           set -euo pipefail
           # CSL-473 interim E3-1: install a hash-verified Claude Code CLI to a root-owned
-          # path, then pass path_to_claude_code_executable so the action skips its
-          # unpinned installer. Pin literals are inlined from the default-branch
-          # workflow; scripts/ci/*.pin must match.
-          # This file is a reference copy for tests. Workflows inline the same bytes;
-          # do not execute it from GITHUB_WORKSPACE (the model-job checkout is untrusted).
+          # path, then pass path_to_claude_code_executable so the action skips
+          # installClaudeCode() (its unpinned CLI bootstrap). The rest of the action
+          # still runs (token mint, prompt, tools). Pin literals are inlined from the
+          # default-branch workflow; scripts/ci/*.pin must match.
+          # Trusted installer bytes. scripts/ci/install_pinned_claude_code.sh is the
+          # test reference copy; workflows inline the same bytes because the model-job
+          # checkout is untrusted. Do not execute the copy from GITHUB_WORKSPACE.
           # Sunset: retire this skip-path when frozen D10 E3 hosted-byte provenance
           # lands. Rollback is revert of the install step and path_to input.
           
@@ -620,12 +622,18 @@ jobs:
           KEY_URL="https://downloads.claude.ai/keys/claude-code.asc"
           DEST_DIR="/opt/csl-claude/${CLAUDE_VERSION}"
           DEST="${DEST_DIR}/claude"
+          CURL=/usr/bin/curl
+          GPG=/usr/bin/gpg
+          SUDO=/usr/bin/sudo
           
-          command -v curl >/dev/null
-          command -v gpg >/dev/null
+          for bin in "$CURL" "$GPG" "$SUDO"; do
+            if [ ! -x "$bin" ]; then
+              echo "missing executable: ${bin}" >&2
+              exit 1
+            fi
+          done
           command -v python3 >/dev/null
           command -v sha256sum >/dev/null
-          command -v sudo >/dev/null
           
           STAGING="${RUNNER_TEMP:?}/csl-claude-staging"
           GNUPGHOME=""
@@ -638,7 +646,7 @@ jobs:
           rm -rf "$STAGING"
           mkdir -m 0700 "$STAGING"
           
-          curl -fsSL --retry 3 --retry-delay 2 -o "$STAGING/claude" \
+          "$CURL" -fsSL --retry 3 --retry-delay 2 -o "$STAGING/claude" \
             "${RELEASE_BASE}/${CLAUDE_VERSION}/${PLATFORM}/claude"
           
           bytes="$(stat -c %s "$STAGING/claude")"
@@ -648,17 +656,17 @@ jobs:
           fi
           echo "${EXPECTED_SHA256}  ${STAGING}/claude" | sha256sum -c -
           
-          curl -fsSL --retry 3 --retry-delay 2 -o "$STAGING/manifest.json" \
+          "$CURL" -fsSL --retry 3 --retry-delay 2 -o "$STAGING/manifest.json" \
             "${RELEASE_BASE}/${CLAUDE_VERSION}/manifest.json"
-          curl -fsSL --retry 3 --retry-delay 2 -o "$STAGING/manifest.json.sig" \
+          "$CURL" -fsSL --retry 3 --retry-delay 2 -o "$STAGING/manifest.json.sig" \
             "${RELEASE_BASE}/${CLAUDE_VERSION}/manifest.json.sig"
-          curl -fsSL --retry 3 --retry-delay 2 -o "$STAGING/claude-code.asc" "$KEY_URL"
+          "$CURL" -fsSL --retry 3 --retry-delay 2 -o "$STAGING/claude-code.asc" "$KEY_URL"
           
           GNUPGHOME="$(mktemp -d)"
           chmod 700 "$GNUPGHOME"
           export GNUPGHOME
-          gpg --batch --import "$STAGING/claude-code.asc"
-          status="$(gpg --batch --status-fd 1 --verify "$STAGING/manifest.json.sig" "$STAGING/manifest.json")"
+          "$GPG" --batch --import "$STAGING/claude-code.asc"
+          status="$("$GPG" --batch --status-fd 1 --verify "$STAGING/manifest.json.sig" "$STAGING/manifest.json")"
           case "$status" in
             *"[GNUPG:] VALIDSIG ${EXPECTED_FPR} "*) ;;
             *)
@@ -666,6 +674,21 @@ jobs:
               exit 1
               ;;
           esac
+          case "$status" in
+            *"[GNUPG:] GOODSIG "*) ;;
+            *)
+              echo "signed-manifest missing GOODSIG" >&2
+              exit 1
+              ;;
+          esac
+          for bad in EXPKEYSIG REVKEYSIG EXPSIG KEYEXPIRED KEYREVOKED BADSIG ERRSIG; do
+            case "$status" in
+              *"[GNUPG:] ${bad}"*)
+                echo "signed-manifest rejected: ${bad}" >&2
+                exit 1
+                ;;
+            esac
+          done
           
           export CLAUDE_VERSION EXPECTED_SHA256 EXPECTED_BYTES
           STAGING="$STAGING" python3 -c '
@@ -684,14 +707,38 @@ jobs:
               sys.exit(1)
           '
           
-          sudo mkdir -p "$DEST_DIR"
-          sudo chown root:root /opt/csl-claude "$DEST_DIR"
-          sudo chmod 0755 /opt/csl-claude "$DEST_DIR"
-          sudo install -o root -g root -m 0755 "$STAGING/claude" "$DEST"
+          if [ -L /opt/csl-claude ] || [ -L "$DEST_DIR" ] || [ -L "$DEST" ]; then
+            echo "install path is a symlink" >&2
+            exit 1
+          fi
+          if [ -e "$DEST_DIR" ]; then
+            if [ ! -d "$DEST_DIR" ]; then
+              echo "install path exists and is not a directory" >&2
+              exit 1
+            fi
+            leftover="$(find "$DEST_DIR" -mindepth 1 -maxdepth 1 -print)"
+            if [ -n "$leftover" ]; then
+              echo "install dir contains extra files" >&2
+              exit 1
+            fi
+          fi
+          "$SUDO" mkdir -p "$DEST_DIR"
+          "$SUDO" chown root:root /opt/csl-claude "$DEST_DIR"
+          "$SUDO" chmod 0755 /opt/csl-claude "$DEST_DIR"
+          "$SUDO" install -o root -g root -m 0755 "$STAGING/claude" "$DEST"
           test "$(stat -c %U:%G:%a "$DEST")" = "root:root:755"
           test -x "$DEST"
           if [ -w "$DEST" ] || [ -w "$DEST_DIR" ]; then
             echo "install path is writable by the runner" >&2
+            exit 1
+          fi
+          if [ -L "$DEST" ] || [ -L "$DEST_DIR" ] || [ -L /opt/csl-claude ]; then
+            echo "install path became a symlink" >&2
+            exit 1
+          fi
+          leftover="$(find "$DEST_DIR" -mindepth 1 -maxdepth 1 ! -name claude -print)"
+          if [ -n "$leftover" ]; then
+            echo "install dir contains extra files" >&2
             exit 1
           fi
       - id: claude
