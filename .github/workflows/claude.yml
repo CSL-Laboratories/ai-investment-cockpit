@@ -43,6 +43,9 @@ on:
       - "scripts/ci/codex_gate.py"
       - "tools/test_claude_pr_fixer.py"
       - "tools/test_sandbox_e3.py"
+      - "tools/test_sandbox_e2.py"
+      - "scripts/ci/sandbox_debug_filter.py"
+      - "scripts/ci/sandbox_debug_filter.pin"
       - "tools/test_sandbox_native.py"
       - "scripts/ci/sandbox_e3_environ.py"
       - "scripts/ci/sandbox_e3_record.py"
@@ -523,6 +526,7 @@ jobs:
         run: |
           python3 -X utf8 -B tools/test_claude_pr_fixer.py
           python3 -X utf8 -B tools/test_sandbox_e3.py
+          python3 -X utf8 -B tools/test_sandbox_e2.py
           python3 -X utf8 -B tools/test_sandbox_native.py
           python3 -X utf8 -B tools/test_claude_fixer_receipts.py
           python3 -X utf8 -B tools/test_claude_fixer_guard.py
