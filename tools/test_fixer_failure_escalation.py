@@ -328,6 +328,23 @@ class EvidenceTests(unittest.TestCase):
         self.assertGreaterEqual(len(uses), 3)
         self.assertEqual(set(uses), {m.ACTION_USES})
 
+    def test_every_claude_action_use_pins_a_hash_verified_executable(self):
+        # CSL-473: path_to_claude_code_executable skips the action's unpinned installer.
+        import re
+        steps = []
+        for path in sorted((ROOT / ".github/workflows").glob("*.y*ml")):
+            text = path.read_text(encoding="utf-8")
+            self.assertNotRegex(text, r"uses:\s*[\"']?anthropics/claude-code-action@v\d")
+            self.assertNotIn("claude.ai/install", text)
+            self.assertNotRegex(text, r"install\.sh\s*\|\s*bash")
+            for step in re.split(r"uses:\s*[\"']?anthropics/claude-code-action@", text)[1:]:
+                steps.append((path.name, re.split(r"\n      - ", step, maxsplit=1)[0]))
+        self.assertGreaterEqual(len(steps), 3)
+        for index, (name, body) in enumerate(steps):
+            with self.subTest(workflow=name, step=index):
+                self.assertIn("\n          path_to_claude_code_executable: /opt/csl-claude/2.1.306/claude\n", body)
+                self.assertIn("\n          DISABLE_UPDATES:", body)
+
     def test_workflow_emits_context_from_actual_locked_eligibility_and_embeds_consumer(self):
         import re
         import textwrap
