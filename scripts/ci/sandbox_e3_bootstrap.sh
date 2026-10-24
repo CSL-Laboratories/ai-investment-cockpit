@@ -25,21 +25,36 @@ mkdir -p /opt/csl-bun /opt/csl-claude/lib /opt/csl-claude/src /opt/csl-relay/bin
 chmod 0711 "$STATE"
 chown root:root "$STATE"
 
-# Record Worker pid now (this process's parent chain) before further forks.
-WORKER_PID=$PPID
-if [ -r "/proc/$PPID/exe" ]; then
-  case "$(readlink "/proc/$PPID/exe" || true)" in
-    *sudo*)
-      WORKER_PID="$(awk -F')' '{print $2}' "/proc/$PPID/stat" | awk '{print $2}')"
-      ;;
-  esac
+# Walk $$ → ppid until exe basename is Runner.Worker (N2). Do not persist
+# /proc/PID/environ (may contain GH_TOKEN). worker.status is 0600.
+WORKER_PID=""
+cur=$$
+for _ in 1 2 3 4 5 6 7 8; do
+  pp="$(awk -F')' '{print $2}' "/proc/$cur/stat" | awk '{print $2}')"
+  [ -n "$pp" ] && [ "$pp" != "0" ] || break
+  exe="$(readlink "/proc/$pp/exe" || true)"
+  base="${exe##*/}"
+  if [ "$base" = "Runner.Worker" ]; then
+    WORKER_PID="$pp"
+    break
+  fi
+  cur="$pp"
+done
+if [ -z "$WORKER_PID" ]; then
+  echo "e3-0b: Runner.Worker not found in parent chain" >&2
+  exit 1
 fi
 printf '%s\n' "$WORKER_PID" > "$STATE/worker.pid"
 chmod 0600 "$STATE/worker.pid"
 readlink /proc/"$WORKER_PID"/ns/mnt > "$STATE/ns.mnt"
 chmod 0600 "$STATE/ns.mnt"
-cat /proc/"$WORKER_PID"/status > "$STATE/worker.status" || true
-tr '\0' '\n' < /proc/"$WORKER_PID"/environ > "$STATE/worker.environ" || true
+cat /proc/"$WORKER_PID"/status > "$STATE/worker.status"
+chmod 0600 "$STATE/worker.status"
+
+# Launcher-owned empty MCP (N1). Exact bytes, root 0444.
+printf '%s\n' '{"mcpServers":{}}' > /opt/csl-claude/mcp.empty.json
+chown root:root /opt/csl-claude/mcp.empty.json
+chmod 0444 /opt/csl-claude/mcp.empty.json
 
 # 0b step 1: compile static binaries from workflow-embedded sources. Pin check.
 test -d "$SRC" || { echo "e3-0b: C sources missing" >&2; exit 1; }
@@ -49,9 +64,8 @@ for f in sandbox_common.h sandbox_common.c sandbox_filter.h sandbox_filter.c \
   test -f "$SRC/$f" || { echo "e3-0b: missing $f" >&2; exit 1; }
 done
 # Runtime .pin enforcement (H1): sha256 of embedded sources vs committed pins.
-if [ -f "$LIB/sandbox_c.pin" ]; then
-  (cd "$SRC" && sha256sum -c "$LIB/sandbox_c.pin")
-fi
+test -f "$LIB/sandbox_c.pin" || { echo "e3-0b: sandbox_c.pin missing" >&2; exit 1; }
+(cd "$SRC" && sha256sum -c "$LIB/sandbox_c.pin")
 "$GCC" -static -O2 -Wall -Werror -o /opt/csl-claude/launch \
   "$SRC/sandbox_launch.c" "$SRC/sandbox_argv.c" "$SRC/sandbox_common.c" -I"$SRC"
 "$GCC" -static -O2 -Wall -Werror -o /opt/csl-relay/bin/capture-start \
@@ -109,17 +123,25 @@ sysctl -w kernel.yama.ptrace_scope=2
 # 0b step 5: nsswitch / sudo.conf (U-16).
 "$PYTHON" -I "$LIB/sandbox_e3_bind.py" check-u16
 
-# 0b step 6: drop runner from sudo/adm/lxd/docker (G10). Limit: existing
-# supplementary groups on Listener/Worker are not dropped.
-if getent group sudo >/dev/null; then gpasswd -d runner sudo || true; fi
-if getent group adm >/dev/null; then gpasswd -d runner adm || true; fi
-if getent group lxd >/dev/null; then gpasswd -d runner lxd || true; fi
-if getent group docker >/dev/null; then gpasswd -d runner docker || true; fi
-id runner | tee "$STATE/id.runner" | grep -qvE 'sudo|adm|lxd|docker' || {
-  # id may still list groups held by this process; record and continue to
-  # socket assertion below.
-  true
+# 0b step 6: drop runner from sudo/adm/lxd/docker (G10). Fail closed if still
+# listed in the group file after the drop.
+drop_group() {
+  local g="$1"
+  if getent group "$g" >/dev/null; then
+    if getent group "$g" | grep -qE '[:,]runner(,|$)'; then
+      gpasswd -d runner "$g"
+    fi
+    if getent group "$g" | grep -qE '[:,]runner(,|$)'; then
+      echo "e3-0b: runner still in $g" >&2
+      exit 1
+    fi
+  fi
 }
+drop_group sudo
+drop_group adm
+drop_group lxd
+drop_group docker
+id runner | tee "$STATE/id.runner" >/dev/null
 for sock in /var/run/docker.sock /var/snap/lxd/common/lxd/unix.socket \
             /run/containerd/containerd.sock /run/podman/podman.sock; do
   if [ -S "$sock" ]; then
@@ -133,27 +155,25 @@ done
 test -d "$AP" || { echo "e3-0b: pinned action dir missing" >&2; exit 1; }
 
 # 0b step 8: E3-1 CLI pin then E3-3 bun install, before sudoers.
-if [ -f "$LIB/sandbox_e3_cli_pin.sh" ]; then
-  /bin/bash --noprofile --norc -e -o pipefail "$LIB/sandbox_e3_cli_pin.sh"
-fi
+test -f "$LIB/sandbox_e3_cli_pin.sh" || { echo "e3-0b: cli_pin missing" >&2; exit 1; }
+/bin/bash --noprofile --norc -e -o pipefail "$LIB/sandbox_e3_cli_pin.sh"
 if [ -f "$AP/package.json" ]; then
   (cd "$AP" && "$BUN_DST" install --frozen-lockfile --production --ignore-scripts)
 fi
 
 # 0b step 9: git-tree hash, extra-file check, node_modules digest, then bind.
-if command -v git >/dev/null 2>&1; then
-  REF="$STATE/cca.git"
-  git init --bare "$REF"
-  git -C "$REF" fetch --depth 1 https://github.com/anthropics/claude-code-action.git \
-    a5a423f75c251dcbff8a74e99f83b2cb03c72bfa
-  git -C "$REF" ls-tree -r FETCH_HEAD > "$STATE/cca.ls-tree"
-  "$PYTHON" -I "$LIB/sandbox_e3_bind.py" hash-git-tree
-  BUNREF="$STATE/setup-bun.git"
-  git init --bare "$BUNREF"
-  git -C "$BUNREF" fetch --depth 1 https://github.com/oven-sh/setup-bun.git \
-    0c5077e51419868618aeaa5fe8019c62421857d6
-  git -C "$BUNREF" ls-tree -r FETCH_HEAD > "$STATE/setup-bun.ls-tree"
-fi
+command -v git >/dev/null 2>&1 || { echo "e3-0b: git missing" >&2; exit 1; }
+REF="$STATE/cca.git"
+git init --bare "$REF"
+git -C "$REF" fetch --depth 1 https://github.com/anthropics/claude-code-action.git \
+  a5a423f75c251dcbff8a74e99f83b2cb03c72bfa
+git -C "$REF" ls-tree -r FETCH_HEAD > "$STATE/cca.ls-tree"
+"$PYTHON" -I "$LIB/sandbox_e3_bind.py" hash-git-tree
+BUNREF="$STATE/setup-bun.git"
+git init --bare "$BUNREF"
+git -C "$BUNREF" fetch --depth 1 https://github.com/oven-sh/setup-bun.git \
+  0c5077e51419868618aeaa5fe8019c62421857d6
+git -C "$BUNREF" ls-tree -r FETCH_HEAD > "$STATE/setup-bun.ls-tree"
 "$PYTHON" -I "$LIB/sandbox_e3_bind.py" verify-pins
 "$PYTHON" -I "$LIB/sandbox_e3_bind.py" hash-node-modules
 chown -R root:root "$AP"
@@ -207,22 +227,25 @@ chmod 0644 "$STATE/workspace"
 echo $! > "$STATE/daemon.pid"
 sleep 0.2
 test -S "$STATE/handoff.sock"
-# Socket stays 0600 until F1 observation (Python observe + chmod 0666).
-chmod 0600 "$STATE/handoff.sock" || true
+# Socket stays 0600 until F1 observation (daemon chmod 0666).
+chmod 0600 "$STATE/handoff.sock"
 
 # Apparmor sysctl AFTER the sweep (J2(d)).
 if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
   sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 fi
 
-# Invoke environ/record so they are not dead (H4).
+# Invoke environ/record so they are not dead (H4 / N8). C also checks bun X
+# environ in F1 without writing /proc/PID/environ (N9).
 "$PYTHON" -I "$LIB/sandbox_e3_bind.py" observe
+"$PYTHON" -I "$LIB/sandbox_e3_environ.py" check-ld
+"$PYTHON" -I "$LIB/sandbox_e3_record.py" write
 
-# 0b step 13: negative controls. Step fails if any still succeeds (T3/T7).
+# 0b step 13: negative controls as runner (T3/T7). Step fails if any succeeds.
 fail_closed() {
   local desc="$1"
   shift
-  if "$@" >/dev/null 2>&1; then
+  if runuser -u runner -- "$@" >/dev/null 2>&1; then
     echo "e3-0b: negative control succeeded (want fail): $desc" >&2
     exit 1
   fi
@@ -234,7 +257,7 @@ fail_closed "sudo -n -E relay" sudo -n -E /opt/csl-relay/bin/relay
 fail_closed "sudo -n FOO=1 relay" sudo -n FOO=1 /opt/csl-relay/bin/relay
 fail_closed "sudo -n filter" sudo -n /opt/csl-relay/bin/filter
 fail_closed "sudo -n launch" sudo -n /opt/csl-claude/launch
-sudo -l > "$STATE/sudo.l"
+runuser -u runner -- sudo -l > "$STATE/sudo.l"
 grep -q 'NOPASSWD: ALL' "$STATE/sudo.l" && { echo "e3-0b: NOPASSWD:ALL remains" >&2; exit 1; }
 grep -q SETENV "$STATE/sudo.l" && { echo "e3-0b: SETENV remains" >&2; exit 1; }
 grep -q '/opt/csl-relay/bin/relay' "$STATE/sudo.l" || {
@@ -242,9 +265,14 @@ grep -q '/opt/csl-relay/bin/relay' "$STATE/sudo.l" || {
   exit 1
 }
 
-# 0b step 14: does not leave NOPASSWD:ALL (also asserted above).
-grep -qv 'NOPASSWD:ALL' /etc/sudoers
+# 0b step 14: exact sudoers bytes (not a vacuous grep -qv).
+printf '%s' "$SUDOERS_TEXT" > "$STATE/sudoers.want"
+cmp -s /etc/sudoers "$STATE/sudoers.want" || {
+  echo "e3-0b: /etc/sudoers does not match compiled-in text" >&2
+  exit 1
+}
 grep -q 'NOPASSWD: /opt/csl-relay/bin/relay' /etc/sudoers
+grep -q 'NOPASSWD: ALL' /etc/sudoers && { echo "e3-0b: NOPASSWD:ALL in sudoers" >&2; exit 1; }
 
 # U-18 parent-shape hook: record ppid chain. Do not pick fork vs exec here.
 tr '\0' ' ' < /proc/$$/cmdline > "$STATE/u18.self.cmdline" || true

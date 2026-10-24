@@ -39,6 +39,9 @@ static char **build_child_env(char *home, char *user)
     int n = 0;
 #define ADD(k, v)                                                              \
     do {                                                                       \
+        if (n >= 63) {                                                         \
+            refuse("env");                                                     \
+        }                                                                      \
         snprintf(storage[n], sizeof storage[n], "%s=%s", k, v);                \
         envp[n] = storage[n];                                                  \
         n++;                                                                   \
@@ -72,9 +75,7 @@ static char **build_child_env(char *home, char *user)
     if (getenv("GH_TOKEN")) {
         ADD("GH_TOKEN", getenv("GH_TOKEN"));
     }
-    if (getenv("RUNNER_TEMP")) {
-        ADD("RUNNER_TEMP", getenv("RUNNER_TEMP"));
-    }
+    ADD("RUNNER_TEMP", CSL_RUNNER_TEMP);
     if (getenv("RUNNER_OS")) {
         ADD("RUNNER_OS", getenv("RUNNER_OS"));
     }
@@ -95,6 +96,9 @@ static char **build_child_env(char *home, char *user)
                     strncmp(name, "GITHUB_STATE=", 13) == 0 ||
                     strncmp(name, "GITHUB_STEP_SUMMARY=", 20) == 0) {
                     continue;
+                }
+                if (n >= 63) {
+                    refuse("env");
                 }
                 snprintf(storage[n], sizeof storage[n], "%s", *e);
                 envp[n] = storage[n];
@@ -155,6 +159,25 @@ static int claude_dir_ok(const char *home)
     return saw_settings;
 }
 
+static int mcp_empty_ok(void)
+{
+    char buf[64];
+    size_t n = 0;
+    size_t want = strlen(CSL_MCP_EMPTY_BYTES);
+    if (csl_read_file(CSL_MCP_EMPTY_PATH, buf, sizeof buf, &n) != 0) {
+        return 0;
+    }
+    if (n != want || memcmp(buf, CSL_MCP_EMPTY_BYTES, want) != 0) {
+        return 0;
+    }
+#ifndef CSL_PREFIX
+    if (!csl_ancestors_root_owned(CSL_MCP_EMPTY_PATH)) {
+        return 0;
+    }
+#endif
+    return 1;
+}
+
 static int connect_handoff(void)
 {
     int fd;
@@ -173,10 +196,28 @@ static int connect_handoff(void)
     return fd;
 }
 
+static void close_cmsg_fds(struct msghdr *msg, int keep)
+{
+    struct cmsghdr *cmsg;
+    for (cmsg = CMSG_FIRSTHDR(msg); cmsg; cmsg = CMSG_NXTHDR(msg, cmsg)) {
+        if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
+            int nfds = (int)((cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int));
+            int *fds = (int *)CMSG_DATA(cmsg);
+            int i;
+            for (i = 0; i < nfds; i++) {
+                if (fds[i] != keep && fds[i] >= 0) {
+                    close(fds[i]);
+                }
+            }
+        }
+    }
+}
+
 int main(int argc, char **argv)
 {
     char home[256], user[64];
     char **child_env;
+    char *cargv[64];
     int pair[2], handoff, sink = -1;
     unsigned char digest[32];
     int claude_fd;
@@ -188,7 +229,11 @@ int main(int argc, char **argv)
     struct cmsghdr *cmsg;
     char dummy = 'H';
     struct ucred cred;
+    int rewritten = 0;
 
+    if (argc > 62) {
+        refuse("argc");
+    }
     if (getenv("LD_PRELOAD") || getenv("LD_AUDIT")) {
         refuse("ld");
     }
@@ -196,6 +241,9 @@ int main(int argc, char **argv)
         refuse("u15");
     }
     if (csl_argv_allow(argc, argv) != 0) {
+        refuse("bad_argv");
+    }
+    if (csl_argv_rewrite(argc, argv, cargv, 64, &rewritten) != 0 || rewritten > 62) {
         refuse("bad_argv");
     }
     if (csl_lookup_user(getuid(), user, sizeof user, home, sizeof home) != 0) {
@@ -206,10 +254,14 @@ int main(int argc, char **argv)
     }
     child_env = build_child_env(home, user);
 
-    /* F6: restored tree must not have cwd .mcp.json / .claude/settings*. */
-    if (mcp_exists("/.mcp.json") || mcp_exists("/.claude/settings.json") ||
-        mcp_exists("/.claude/settings.local.json")) {
-        /* DR-4: fail closed. Honest runs fail until base drops these. */
+    /* N1: cwd .mcp.json / .claude/settings.json are ignored because the
+     * child is exec'd with --setting-sources user and injected
+     * --strict-mcp-config --mcp-config CSL_MCP_EMPTY_PATH. Still refuse
+     * settings.local.json (not covered by those flags). */
+    if (mcp_exists("/.claude/settings.local.json")) {
+        refuse("mcp");
+    }
+    if (!mcp_empty_ok()) {
         refuse("mcp");
     }
     if (!claude_dir_ok(home)) {
@@ -261,9 +313,23 @@ int main(int argc, char **argv)
     if (recvmsg(pair[0], &msg, 0) < 0) {
         refuse("recvmsg");
     }
-    for (cmsg = CMSG_FIRSTHDR(&msg); cmsg; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
-        if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
-            memcpy(&sink, CMSG_DATA(cmsg), sizeof sink);
+    if (msg.msg_flags & MSG_CTRUNC) {
+        close_cmsg_fds(&msg, -1);
+        refuse("ctrunc");
+    }
+    {
+        int nfds_total = 0;
+        for (cmsg = CMSG_FIRSTHDR(&msg); cmsg; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+            if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
+                int nfds = (int)((cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int));
+                int *fds = (int *)CMSG_DATA(cmsg);
+                if (nfds != 1 || nfds_total != 0) {
+                    close_cmsg_fds(&msg, -1);
+                    refuse("fds");
+                }
+                sink = fds[0];
+                nfds_total = 1;
+            }
         }
     }
     if (sink < 0) {
@@ -286,8 +352,6 @@ int main(int argc, char **argv)
         refuse("fork");
     }
     if (child == 0) {
-        char *cargv[64];
-        int i;
         if (prctl(PR_SET_PDEATHSIG, SIGKILL) < 0) {
             _exit(1);
         }
@@ -302,10 +366,6 @@ int main(int argc, char **argv)
         }
         close(pair[0]);
         cargv[0] = (char *)CSL_CLAUDE_PATH;
-        for (i = 1; i < argc && i < 62; i++) {
-            cargv[i] = argv[i];
-        }
-        cargv[i] = NULL;
         if (lseek(claude_fd, 0, SEEK_SET) < 0) {
             _exit(1);
         }
@@ -317,8 +377,11 @@ int main(int argc, char **argv)
     if (waitpid(child, &status, 0) < 0) {
         status = 1;
     }
-    dummy = 'E';
-    (void)csl_write_all(pair[0], "END\n", 4);
+    /* N14: END only if the direct child exited (not killed). */
+    if (WIFEXITED(status)) {
+        dummy = 'E';
+        (void)csl_write_all(pair[0], "END\n", 4);
+    }
     close(pair[0]);
     if (WIFEXITED(status)) {
         return WEXITSTATUS(status);
