@@ -1,0 +1,110 @@
+{
+      "fixture_id": "neg_voided_market_unreconciled",
+      "book": {
+            "book_id": "event",
+            "currency": "USD",
+            "scale": 6
+      },
+      "instruments": [
+            {
+                  "instrument_id": "ev-void",
+                  "family": "event_contract",
+                  "venue_id": "venue-event-candidate",
+                  "venue_symbol": "VOID-EXAMPLE",
+                  "currency": "USD",
+                  "unit": "contract",
+                  "contract_style": "binary",
+                  "outcome_side": "yes",
+                  "collateral_model": "fully_collateralized"
+            }
+      ],
+      "orders": [
+            {
+                  "order_id": "ord-void",
+                  "instrument_id": "ev-void",
+                  "family": "event",
+                  "side": "buy",
+                  "qty": 10,
+                  "state": "filled",
+                  "checkpoint_filled_qty": 10
+            }
+      ],
+      "fills": [],
+      "journal": [
+            {
+                  "entry_id": "j-payout",
+                  "sequence": 2,
+                  "idempotency_key": "payout-void",
+                  "strategy_id": "s-event",
+                  "reason": "settlement_payout",
+                  "lines": [
+                        {
+                              "account": "cash_available",
+                              "side": "dr",
+                              "amount_minor": 10000000,
+                              "instrument_id": "ev-void"
+                        },
+                        {
+                              "account": "realized_pnl",
+                              "side": "cr",
+                              "amount_minor": 10000000,
+                              "instrument_id": "ev-void"
+                        }
+                  ]
+            }
+      ],
+      "markets": [
+            {
+                  "instrument_id": "ev-void",
+                  "state": "voided"
+            }
+      ],
+      "corporate_actions": [],
+      "corrections": [],
+      "evidence": [],
+      "checkpoint": {
+            "sequence": 1,
+            "applied_keys": [
+                  "fill-v1"
+            ],
+            "cash_available": 9996000000,
+            "collateral_reserved": 4000000,
+            "positions": [
+                  {
+                        "instrument_id": "ev-void",
+                        "qty": 10
+                  }
+            ],
+            "open_reservations": [
+                  {
+                        "reservation_id": "reserve-void",
+                        "instrument_id": "ev-void",
+                        "amount_minor": 4000000
+                  }
+            ]
+      },
+      "reported": {
+            "cash_available": 10006000000,
+            "collateral_reserved": 4000000,
+            "positions": [
+                  {
+                        "instrument_id": "ev-void",
+                        "qty": 10
+                  }
+            ],
+            "open_reservations": [
+                  {
+                        "reservation_id": "reserve-void",
+                        "instrument_id": "ev-void",
+                        "amount_minor": 4000000
+                  }
+            ],
+            "attribution": [
+                  {
+                        "strategy_id": "s-event",
+                        "realized_pnl_minor": 10000000,
+                        "fees_minor": 0
+                  }
+            ]
+      }
+}
