@@ -2277,9 +2277,10 @@ class WorkflowWiringTests(unittest.TestCase):
     def test_pr_and_model_jobs_do_not_enable_setup_python_pip_cache(self):
         # CSL-471 REVIEW-D8 J3: setup-python's post-step would save a PR-poisoned
         # ~/.cache/pip into the default-branch cache scope; later jobs restore by
-        # prefix. claude-conflict-writer.yml is owned by #258 and is not asserted.
+        # prefix (including the conflict writer that holds the OAuth token).
         pip_cache_line = re.compile(r"^[ \t]*cache:[ \t]*pip[ \t]*$", re.M)
-        names = ("claude.yml", "ci.yml", "rust.yml", "codex-gate.yml")
+        names = ("claude.yml", "ci.yml", "rust.yml", "codex-gate.yml",
+                 "claude-conflict-writer.yml")
         checked = 0
         for name in names:
             path = ROOT / ".github/workflows" / name

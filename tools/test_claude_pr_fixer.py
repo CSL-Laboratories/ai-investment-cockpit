@@ -610,11 +610,15 @@ class WorkflowStructureTests(unittest.TestCase):
 
     def test_setup_python_does_not_enable_pip_cache(self) -> None:
         # CSL-471 REVIEW-D8 J3: cache: pip on a PR/model job poisons the
-        # default-branch Actions cache by prefix restore.
+        # default-branch Actions cache by prefix restore (including the
+        # conflict writer that holds the OAuth token).
         for job_name in ("claude-mention", "devin-review-fix"):
             body = self._job(job_name)
             self.assertNotIn("cache: pip", body, job_name)
             self.assertNotIn("cache-dependency-path:", body, job_name)
+        writer = WRITER_WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertNotIn("cache: pip", writer)
+        self.assertNotIn("cache-dependency-path:", writer)
 
     def test_prompt_treats_review_and_files_as_untrusted(self) -> None:
         self.assertIn("UNTRUSTED DATA", self.text)
