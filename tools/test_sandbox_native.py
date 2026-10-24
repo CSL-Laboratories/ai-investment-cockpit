@@ -343,6 +343,67 @@ class SdkArgvTests(unittest.TestCase):
         self.assertEqual(rc, 2)
         self.assertEqual(out, [])
 
+    def test_settings_eq_as_append_value_refused(self) -> None:
+        argv = [
+            str(self.probe),
+            _ke("--max-turns", "30"),
+            _ke("--setting-sources", "user"),
+            _ke("--allowedTools", self._allowed()),
+            "--append-system-prompt", "--settings={\"hooks\":{}}",
+        ]
+        rc, out = self._rewritten(argv)
+        self.assertEqual(rc, 2)
+        self.assertEqual(out, [])
+
+    def test_settings_eq_as_disallowed_value_refused(self) -> None:
+        argv = [
+            str(self.probe),
+            _ke("--max-turns", "30"),
+            _ke("--setting-sources", "user"),
+            _ke("--allowedTools", self._allowed()),
+            "--disallowedTools", "--settings={\"permissions\":{}}",
+        ]
+        rc, out = self._rewritten(argv)
+        self.assertEqual(rc, 2)
+        self.assertEqual(out, [])
+
+    def test_setting_sources_eq_as_append_value_refused(self) -> None:
+        argv = [
+            str(self.probe),
+            _ke("--max-turns", "30"),
+            _ke("--setting-sources", "user"),
+            _ke("--allowedTools", self._allowed()),
+            "--append-system-prompt", "--setting-sources=user,project,local",
+        ]
+        rc, out = self._rewritten(argv)
+        self.assertEqual(rc, 2)
+        self.assertEqual(out, [])
+
+    def test_setting_sources_eq_smuggled_as_disallowed_value_refused(self) -> None:
+        argv = [
+            str(self.probe),
+            _ke("--max-turns", "30"),
+            _ke("--setting-sources", "user"),
+            _ke("--allowedTools", self._allowed()),
+            "--disallowedTools", "--setting-sources=user",
+        ]
+        rc, out = self._rewritten(argv)
+        self.assertEqual(rc, 2)
+        self.assertEqual(out, [])
+
+    def test_dash_prefixed_system_prompt_eq_form_refused(self) -> None:
+        argv = self._sdk_argv()
+        for i, tok in enumerate(argv):
+            if tok == "--append-system-prompt":
+                argv[i] = _ke("--append-system-prompt", "-Linear-first")
+                del argv[i + 1]
+                break
+        else:
+            self.fail("append flag missing")
+        rc, out = self._rewritten(argv)
+        self.assertEqual(rc, 2)
+        self.assertEqual(out, [])
+
 
 class NativeRelayOneShotTests(unittest.TestCase):
     def test_no_end_then_success_then_already_ran(self) -> None:
@@ -495,7 +556,11 @@ class R3ContractTests(unittest.TestCase):
         launch = (SRC / "sandbox_launch.c").read_text(encoding="utf-8")
         self.assertIn("PR_SET_CHILD_SUBREAPER", launch)
         self.assertIn("waitpid(-1", launch)
+        self.assertIn("WNOHANG", launch)
+        self.assertIn("kill(-child, SIGKILL)", launch)
+        self.assertIn("CLOCK_MONOTONIC", launch)
         self.assertIn("setpgid(0, 0)", launch)
+        self.assertNotIn("Bound so a fork bomb cannot hang forever", launch)
 
     def test_relay_sudo_parent_is_exact(self) -> None:
         relay = (SRC / "sandbox_relay.c").read_text(encoding="utf-8")

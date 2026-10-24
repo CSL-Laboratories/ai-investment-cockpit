@@ -8,6 +8,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <time.h>
 
 extern char **environ;
 
@@ -194,6 +195,117 @@ static int connect_handoff(void)
         return -1;
     }
     return fd;
+}
+
+static long monotonic_ms(void)
+{
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+        return -1;
+    }
+    return ts.tv_sec * 1000L + ts.tv_nsec / 1000000L;
+}
+
+static void sleep_ms(long ms)
+{
+    struct timespec sl;
+    sl.tv_sec = ms / 1000;
+    sl.tv_nsec = (ms % 1000) * 1000000L;
+    (void)nanosleep(&sl, NULL);
+}
+
+static int parse_ppid(pid_t pid, pid_t *ppid)
+{
+    char path[64];
+    char buf[512];
+    size_t n = 0;
+    char *rparen;
+    char *p;
+    char *end = NULL;
+    long v;
+    snprintf(path, sizeof path, "/proc/%ld/stat", (long)pid);
+    if (csl_read_file(path, buf, sizeof buf, &n) != 0 || n == 0) {
+        return -1;
+    }
+    if (n >= sizeof buf) {
+        n = sizeof buf - 1;
+    }
+    buf[n] = 0;
+    rparen = strrchr(buf, ')');
+    if (!rparen) {
+        return -1;
+    }
+    p = rparen + 1;
+    while (*p == ' ') {
+        p++;
+    }
+    if (!*p) {
+        return -1;
+    }
+    while (*p && *p != ' ') {
+        p++;
+    }
+    while (*p == ' ') {
+        p++;
+    }
+    v = strtol(p, &end, 10);
+    if (!end || end == p || v <= 0) {
+        return -1;
+    }
+    *ppid = (pid_t)v;
+    return 0;
+}
+
+static int kill_remaining_children(void)
+{
+    DIR *d;
+    struct dirent *e;
+    pid_t self = getpid();
+    int killed = 0;
+    d = opendir("/proc");
+    if (!d) {
+        return 0;
+    }
+    while ((e = readdir(d))) {
+        char *end = NULL;
+        pid_t pid;
+        pid_t ppid;
+        if (e->d_name[0] < '1' || e->d_name[0] > '9') {
+            continue;
+        }
+        pid = (pid_t)strtol(e->d_name, &end, 10);
+        if (!end || *end || pid <= 1 || pid == self) {
+            continue;
+        }
+        if (parse_ppid(pid, &ppid) != 0 || ppid != self) {
+            continue;
+        }
+        if (kill(pid, SIGKILL) == 0) {
+            killed++;
+        }
+    }
+    closedir(d);
+    return killed;
+}
+
+static void reap_wnohang_until(long deadline_ms, int cap)
+{
+    int left = cap;
+    int st = 0;
+    while (left-- > 0) {
+        pid_t r = waitpid(-1, &st, WNOHANG);
+        if (r < 0) {
+            break;
+        }
+        if (r == 0) {
+            long now = monotonic_ms();
+            if (now < 0 || now >= deadline_ms) {
+                break;
+            }
+            sleep_ms(10);
+            continue;
+        }
+    }
 }
 
 static void close_cmsg_fds(struct msghdr *msg, int keep)
@@ -388,17 +500,25 @@ int main(int argc, char **argv)
     if (waitpid(child, &status, 0) < 0) {
         status = 1;
     }
-    /* N14: as subreaper, reap grandchildren (waitpid children only)
-     * before END. Bound so a fork bomb cannot hang forever. Writer
-     * veto covers setsid processes that keep fd 2. */
+    /* N14 / R5-L1: subreaper reaps orphaned descendants (including
+     * setsid) outside a nested pid namespace. WNOHANG until a few
+     * seconds, then SIGKILL the process group and remaining children,
+     * then a final bounded WNOHANG reap. Never block forever. Writer
+     * veto covers fd 2 leftovers after that; not a cgroup. */
     {
-        int left = 256;
-        int st = 0;
-        while (left-- > 0) {
-            if (waitpid(-1, &st, 0) <= 0) {
+        long start = monotonic_ms();
+        long deadline = (start < 0) ? 0 : start + 3000;
+        int round;
+        reap_wnohang_until(deadline, 256);
+        (void)kill(-child, SIGKILL);
+        for (round = 0; round < 32; round++) {
+            if (kill_remaining_children() == 0) {
                 break;
             }
         }
+        start = monotonic_ms();
+        deadline = (start < 0) ? 0 : start + 200;
+        reap_wnohang_until(deadline, 256);
     }
     if (WIFEXITED(status)) {
         dummy = 'E';
