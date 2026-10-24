@@ -786,6 +786,9 @@ jobs:
       queue: max
       cancel-in-progress: false
     runs-on: ubuntu-latest
+    # CSL-467: Edit denies for /home/runner/work/_actions and
+    # /home/runner/externals are ubuntu-latest paths. If this job
+    # changes runner image, those deny paths must be updated.
     timeout-minutes: 30
     # Untrusted (CSL-377): the model and PR code run here with a read-only job
     # token, no id-token and no persisted checkout credential. Its only output
@@ -1276,6 +1279,13 @@ jobs:
           # filesystem-root form. sandbox.allowUnsandboxedCommands defaults true
           # and an allow rule auto-approves the unsandboxed retry. Existing
           # Write(...) cockpit rules stay; tests pin them, and they are no-ops.
+          # network.allowedDomains is what the helper's `gh api`/`graphql`
+          # calls need (api.github.com plus github.com for auth/redirects).
+          # WebFetch is disallowed, so nothing else feeds the list.
+          # strictAllowlist is honored in user settings (~/.claude/settings.json)
+          # so unlisted hosts are refused instead of prompted or auto-allowed
+          # in bypassPermissions. Live helper + Edit-deny evidence still needs
+          # a human-triggered run; this session does not dispatch workflows.
           settings: |
             {
               "sandbox": {
@@ -1289,6 +1299,13 @@ jobs:
                     "/home/runner/work/_actions",
                     "/home/runner/externals"
                   ]
+                },
+                "network": {
+                  "allowedDomains": [
+                    "api.github.com",
+                    "github.com"
+                  ],
+                  "strictAllowlist": true
                 }
               },
               "permissions": {
@@ -1404,7 +1421,14 @@ jobs:
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
           # CSL-467: step env overrides GITHUB_ENV for these names. Blank
           # loader/shell hooks the model could write via file commands.
-          # PATH pins over GITHUB_PATH prepends when step env wins.
+          # GITHUB_PATH typically prepends over step PATH (actions/toolkit#655);
+          # whether step PATH wins is unverified. Call python3 via PYTHON3.
+          # PATH=/usr/bin:/bin is belt-and-suspenders only. This report is
+          # stdlib-only JSON/re, so /usr/bin/python3 on ubuntu-latest is enough
+          # (setup-python's 3.12 is not required).
+          PYTHON3: "/usr/bin/python3"
+          GIT: "/usr/bin/git"
+          JQ: "/usr/bin/jq"
           BASH_ENV: ""
           ENV: ""
           LD_PRELOAD: ""
@@ -1417,7 +1441,7 @@ jobs:
           NODE_OPTIONS: ""
           PATH: "/usr/bin:/bin"
         run: |
-          python3 - "$EXECUTION_FILE" <<'CLAUDE_DENIALS_REPORT'
+          "${PYTHON3:-python3}" - "$EXECUTION_FILE" <<'CLAUDE_DENIALS_REPORT'
           #!/usr/bin/env python3
           """Report Claude Code tool-permission denials from the execution file.
 
@@ -1549,8 +1573,17 @@ jobs:
         env:
           HEAD_SHA: ${{ needs.mention-prepare.outputs.head_sha }}
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
-          # CSL-467: pin env so a poisoned GITHUB_ENV/GITHUB_PATH cannot
-          # control this step. Publish still revalidates the artifact.
+          # CSL-467: step env overrides GITHUB_ENV for these names. Blank
+          # loader/shell hooks the model could write via file commands.
+          # GITHUB_PATH typically prepends over step PATH (actions/toolkit#655);
+          # whether step PATH wins is unverified. Call git/jq via GIT/JQ
+          # absolute paths so a poisoned GITHUB_PATH entry cannot win.
+          # PATH=/usr/bin:/bin is belt-and-suspenders only. Publish still
+          # revalidates the artifact. Scripts use ${GIT:-git} so local PATH
+          # shims in wiring tests still work when GIT is unset.
+          GIT: "/usr/bin/git"
+          PYTHON3: "/usr/bin/python3"
+          JQ: "/usr/bin/jq"
           BASH_ENV: ""
           ENV: ""
           LD_PRELOAD: ""
@@ -1566,6 +1599,8 @@ jobs:
           set -uo pipefail
           # Everything packaged here is untrusted model/PR output; the publish
           # job revalidates it. The model transcript itself is never uploaded.
+          git_bin="${GIT:-git}"
+          jq_bin="${JQ:-jq}"
           out="$RUNNER_TEMP/claude-writer-out"
           rm -rf "$out"
           mkdir -p "$out"
@@ -1573,11 +1608,11 @@ jobs:
           # The publish job refuses every queued write unless this status matches the artifact,
           # so a failed bundle never looks like a run without commits.
           status=failed
-          head="$(git -c core.hooksPath=/dev/null rev-parse --verify -q HEAD || true)"
+          head="$("$git_bin" -c core.hooksPath=/dev/null rev-parse --verify -q HEAD || true)"
           if [ -n "$head" ] && [ "$head" = "$HEAD_SHA" ]; then
             status=unchanged
           elif [ -n "$head" ]; then
-            if git -c core.hooksPath=/dev/null bundle create "$out/candidate.bundle" HEAD "^$HEAD_SHA"; then
+            if "$git_bin" -c core.hooksPath=/dev/null bundle create "$out/candidate.bundle" HEAD "^$HEAD_SHA"; then
               status=bundled
             else
               rm -f "$out/candidate.bundle"
@@ -1586,7 +1621,7 @@ jobs:
           # CSL-412: allowed_non_write_users keeps the job token out of git config, where Read
           # could open it. A credential in any config scope fails the package; publish then refuses.
           # No pipe: under pipefail a `grep -q` hit could SIGPIPE git and read as clean.
-          if ! config="$(git config --list --includes 2>/dev/null)"; then
+          if ! config="$("$git_bin" config --list --includes 2>/dev/null)"; then
             echo "::error::The checkout's git config could not be read; nothing from this run is published."
             status=failed
             rm -f "$out/candidate.bundle"
@@ -1601,7 +1636,7 @@ jobs:
             cp .claude-fixer-out/outbox.jsonl "$out/outbox.jsonl"
           fi
           if [ -n "${EXECUTION_FILE:-}" ] && [ -f "$EXECUTION_FILE" ] && [ ! -L "$EXECUTION_FILE" ]; then
-            jq -c '[(if type == "array" then .[] else . end) | select(type == "object" and .type == "result")
+            "$jq_bin" -c '[(if type == "array" then .[] else . end) | select(type == "object" and .type == "result")
               | {type, subtype, num_turns, is_error,
                  permission_denials: ((.permission_denials // []) | if type == "array" and length > 0 then [1] else [] end)}]' \
               "$EXECUTION_FILE" > "$out/result.json" || rm -f "$out/result.json"
@@ -1613,6 +1648,11 @@ jobs:
         env:
           # CSL-467: JS actions use the runner's bundled node; LD_* still
           # applies. PATH pin is belt-and-suspenders if node is looked up.
+          # GIT/PYTHON3/JQ are unused here; pinned so a GITHUB_PATH poison
+          # cannot supply those names if a later post: handler looks them up.
+          GIT: "/usr/bin/git"
+          PYTHON3: "/usr/bin/python3"
+          JQ: "/usr/bin/jq"
           BASH_ENV: ""
           ENV: ""
           LD_PRELOAD: ""
@@ -3974,6 +4014,9 @@ jobs:
       queue: max
       cancel-in-progress: false
     runs-on: ubuntu-latest
+    # CSL-467: Edit denies for /home/runner/work/_actions and
+    # /home/runner/externals are ubuntu-latest paths. If this job
+    # changes runner image, those deny paths must be updated.
     timeout-minutes: 30
     # Untrusted (CSL-377): the model and PR code run here with a read-only job
     # token, no id-token and no persisted checkout credential. Its only output
@@ -4467,6 +4510,13 @@ jobs:
           # filesystem-root form. sandbox.allowUnsandboxedCommands defaults true
           # and an allow rule auto-approves the unsandboxed retry. Existing
           # Write(...) cockpit rules stay; tests pin them, and they are no-ops.
+          # network.allowedDomains is what the helper's `gh api`/`graphql`
+          # calls need (api.github.com plus github.com for auth/redirects).
+          # WebFetch is disallowed, so nothing else feeds the list.
+          # strictAllowlist is honored in user settings (~/.claude/settings.json)
+          # so unlisted hosts are refused instead of prompted or auto-allowed
+          # in bypassPermissions. Live helper + Edit-deny evidence still needs
+          # a human-triggered run; this session does not dispatch workflows.
           settings: |
             {
               "sandbox": {
@@ -4480,6 +4530,13 @@ jobs:
                     "/home/runner/work/_actions",
                     "/home/runner/externals"
                   ]
+                },
+                "network": {
+                  "allowedDomains": [
+                    "api.github.com",
+                    "github.com"
+                  ],
+                  "strictAllowlist": true
                 }
               },
               "permissions": {
@@ -4590,7 +4647,14 @@ jobs:
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
           # CSL-467: step env overrides GITHUB_ENV for these names. Blank
           # loader/shell hooks the model could write via file commands.
-          # PATH pins over GITHUB_PATH prepends when step env wins.
+          # GITHUB_PATH typically prepends over step PATH (actions/toolkit#655);
+          # whether step PATH wins is unverified. Call python3 via PYTHON3.
+          # PATH=/usr/bin:/bin is belt-and-suspenders only. This report is
+          # stdlib-only JSON/re, so /usr/bin/python3 on ubuntu-latest is enough
+          # (setup-python's 3.12 is not required).
+          PYTHON3: "/usr/bin/python3"
+          GIT: "/usr/bin/git"
+          JQ: "/usr/bin/jq"
           BASH_ENV: ""
           ENV: ""
           LD_PRELOAD: ""
@@ -4603,7 +4667,7 @@ jobs:
           NODE_OPTIONS: ""
           PATH: "/usr/bin:/bin"
         run: |
-          python3 - "$EXECUTION_FILE" <<'CLAUDE_DENIALS_REPORT'
+          "${PYTHON3:-python3}" - "$EXECUTION_FILE" <<'CLAUDE_DENIALS_REPORT'
           #!/usr/bin/env python3
           """Report Claude Code tool-permission denials from the execution file.
 
@@ -4735,8 +4799,17 @@ jobs:
         env:
           HEAD_SHA: ${{ needs.fixer-prepare.outputs.head_sha }}
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
-          # CSL-467: pin env so a poisoned GITHUB_ENV/GITHUB_PATH cannot
-          # control this step. Publish still revalidates the artifact.
+          # CSL-467: step env overrides GITHUB_ENV for these names. Blank
+          # loader/shell hooks the model could write via file commands.
+          # GITHUB_PATH typically prepends over step PATH (actions/toolkit#655);
+          # whether step PATH wins is unverified. Call git/jq via GIT/JQ
+          # absolute paths so a poisoned GITHUB_PATH entry cannot win.
+          # PATH=/usr/bin:/bin is belt-and-suspenders only. Publish still
+          # revalidates the artifact. Scripts use ${GIT:-git} so local PATH
+          # shims in wiring tests still work when GIT is unset.
+          GIT: "/usr/bin/git"
+          PYTHON3: "/usr/bin/python3"
+          JQ: "/usr/bin/jq"
           BASH_ENV: ""
           ENV: ""
           LD_PRELOAD: ""
@@ -4752,6 +4825,8 @@ jobs:
           set -uo pipefail
           # Everything packaged here is untrusted model/PR output; the publish
           # job revalidates it. The model transcript itself is never uploaded.
+          git_bin="${GIT:-git}"
+          jq_bin="${JQ:-jq}"
           out="$RUNNER_TEMP/claude-writer-out"
           rm -rf "$out"
           mkdir -p "$out"
@@ -4759,11 +4834,11 @@ jobs:
           # The publish job refuses every queued write unless this status matches the artifact,
           # so a failed bundle never looks like a run without commits.
           status=failed
-          head="$(git -c core.hooksPath=/dev/null rev-parse --verify -q HEAD || true)"
+          head="$("$git_bin" -c core.hooksPath=/dev/null rev-parse --verify -q HEAD || true)"
           if [ -n "$head" ] && [ "$head" = "$HEAD_SHA" ]; then
             status=unchanged
           elif [ -n "$head" ]; then
-            if git -c core.hooksPath=/dev/null bundle create "$out/candidate.bundle" HEAD "^$HEAD_SHA"; then
+            if "$git_bin" -c core.hooksPath=/dev/null bundle create "$out/candidate.bundle" HEAD "^$HEAD_SHA"; then
               status=bundled
             else
               rm -f "$out/candidate.bundle"
@@ -4772,7 +4847,7 @@ jobs:
           # CSL-412: allowed_non_write_users keeps the job token out of git config, where Read
           # could open it. A credential in any config scope fails the package; publish then refuses.
           # No pipe: under pipefail a `grep -q` hit could SIGPIPE git and read as clean.
-          if ! config="$(git config --list --includes 2>/dev/null)"; then
+          if ! config="$("$git_bin" config --list --includes 2>/dev/null)"; then
             echo "::error::The checkout's git config could not be read; nothing from this run is published."
             status=failed
             rm -f "$out/candidate.bundle"
@@ -4787,7 +4862,7 @@ jobs:
             cp .claude-fixer-out/outbox.jsonl "$out/outbox.jsonl"
           fi
           if [ -n "${EXECUTION_FILE:-}" ] && [ -f "$EXECUTION_FILE" ] && [ ! -L "$EXECUTION_FILE" ]; then
-            jq -c '[(if type == "array" then .[] else . end) | select(type == "object" and .type == "result")
+            "$jq_bin" -c '[(if type == "array" then .[] else . end) | select(type == "object" and .type == "result")
               | {type, subtype, num_turns, is_error,
                  permission_denials: ((.permission_denials // []) | if type == "array" and length > 0 then [1] else [] end)}]' \
               "$EXECUTION_FILE" > "$out/result.json" || rm -f "$out/result.json"
@@ -4799,6 +4874,11 @@ jobs:
         env:
           # CSL-467: JS actions use the runner's bundled node; LD_* still
           # applies. PATH pin is belt-and-suspenders if node is looked up.
+          # GIT/PYTHON3/JQ are unused here; pinned so a GITHUB_PATH poison
+          # cannot supply those names if a later post: handler looks them up.
+          GIT: "/usr/bin/git"
+          PYTHON3: "/usr/bin/python3"
+          JQ: "/usr/bin/jq"
           BASH_ENV: ""
           ENV: ""
           LD_PRELOAD: ""

@@ -2012,6 +2012,10 @@ class WorkflowWiringTests(unittest.TestCase):
                     output = root / "output"
                     env = dict(git_env(), PATH=f"{shim}{os.pathsep}{os.environ['PATH']}", RUNNER_TEMP=str(root),
                                GITHUB_OUTPUT=str(output), HEAD_SHA=head, BASE_SHA=head, EXECUTION_FILE="")
+                    # Package uses ${GIT:-git}; a host GIT= would skip the PATH shim.
+                    env.pop("GIT", None)
+                    env.pop("JQ", None)
+                    env.pop("PYTHON3", None)
                     subprocess.run(["bash", "-c", script], cwd=work.path, env=env, check=True, capture_output=True)
                     expected = ("failed" if case in ISOLATED_CREDENTIALS else
                                 {"credential": "failed", "helper": "bundled", "big": "failed",
@@ -2086,7 +2090,9 @@ class WorkflowWiringTests(unittest.TestCase):
         "BASH_ENV": "", "ENV": "", "LD_PRELOAD": "", "LD_AUDIT": "", "LD_LIBRARY_PATH": "",
         "GCONV_PATH": "", "PYTHONPATH": "", "PYTHONHOME": "", "PYTHONSTARTUP": "",
         "NODE_OPTIONS": "", "PATH": "/usr/bin:/bin",
+        "GIT": "/usr/bin/git", "PYTHON3": "/usr/bin/python3", "JQ": "/usr/bin/jq",
     }
+    HELPER_NETWORK = ("api.github.com", "github.com")
     POST_CLAUDE = ("Report tool-permission denials", "Package untrusted model output",
                    "Upload untrusted model output")
 
@@ -2107,6 +2113,9 @@ class WorkflowWiringTests(unittest.TestCase):
                              "/home/runner/work/_actions", "/home/runner/externals"):
                     self.assertIn(path, deny_write)
                     self.assertNotIn("*", path)  # Linux denyWrite skips wildcard entries
+                network = settings["sandbox"]["network"]
+                self.assertEqual(network["allowedDomains"], list(self.HELPER_NETWORK))
+                self.assertEqual(network["strictAllowlist"], True)
                 deny = settings["permissions"]["deny"]
                 for rule in self.FILE_COMMAND_DENIES:
                     self.assertIn(rule, deny)
@@ -2115,10 +2124,21 @@ class WorkflowWiringTests(unittest.TestCase):
                 names = [s.get("name") or s.get("id") for s in model["steps"]]
                 claude = names.index("claude")
                 self.assertEqual(names[claude + 1:claude + 4], list(self.POST_CLAUDE))
+                denials = step(model, "Report tool-permission denials")
+                self.assertIn('"${PYTHON3:-python3}" - "$EXECUTION_FILE"', denials["run"])
+                package = step(model, "Package untrusted model output")
+                self.assertIn('git_bin="${GIT:-git}"', package["run"])
+                self.assertIn('jq_bin="${JQ:-jq}"', package["run"])
+                self.assertNotIn("/usr/bin/git", package["run"])  # PATH shims in this file's tests
                 for step_name in self.POST_CLAUDE:
                     env = step(model, step_name)["env"]
                     for key, value in self.PINNED_ENV.items():
                         self.assertEqual(env[key], value, (step_name, key))
+                    self.assertNotIn("PATH pins over GITHUB_PATH", yaml.dump(env))
+        workflow = WORKFLOWS["claude.yml"].read_text(encoding="utf-8")
+        self.assertGreaterEqual(
+            workflow.count("# CSL-467: Edit denies for /home/runner/work/_actions and"), 2)
+        self.assertNotIn("PATH pins over GITHUB_PATH prepends when step env wins.", workflow)
 
     @unittest.skipIf(os.name == "nt", "POSIX shell fixture")
     def test_helper_install_fails_closed_when_it_cannot_root_own_the_helper(self):
