@@ -620,6 +620,66 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertNotIn("cache: pip", writer)
         self.assertNotIn("cache-dependency-path:", writer)
 
+    def test_mention_e3_prefix_pins_and_embeds_helpers(self) -> None:
+        # CSL-474 E3: 0a/0b before checkout; no SRT_DEBUG; no E3-1 CLI pin (CSL-473).
+        mention = self._job("claude-mention")
+        fixer = self._job("devin-review-fix")
+        steps = mention.split("    steps:", 1)[1]
+        self.assertTrue(steps.lstrip().startswith("- name: E3-0-early setup-bun"), steps[:200])
+        self.assertIn(
+            "uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6",
+            mention,
+        )
+        self.assertIn("bun-version: \"1.3.14\"", mention)
+        self.assertIn("no-cache: true", mention)
+        self.assertIn("E3-0-early root bootstrap", mention)
+        self.assertIn(
+            "shell: /usr/bin/sudo -n /bin/bash --noprofile --norc -e -o pipefail {0}",
+            mention,
+        )
+        self.assertIn(
+            "uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+            mention,
+        )
+        self.assertNotIn("uses: actions/checkout@v4", mention)
+        self.assertIn("path_to_bun_executable: /opt/csl-bun/bun", mention)
+        self.assertNotIn("path_to_claude_code_executable", mention)
+        self.assertNotIn("install_pinned_claude_code.sh", mention)
+        self.assertNotIn("SRT_DEBUG:", mention)
+        self.assertNotIn("show_full_output", mention)
+        self.assertNotIn("/opt/csl-relay/bin/relay", mention)
+        self.assertNotIn("background: true", mention)
+        self.assertNotIn("isBackground", mention)
+        bootstrap = mention.split("E3-0-early root bootstrap", 1)[1].split(
+            "uses: actions/checkout@", 1
+        )[0]
+        self.assertNotIn("sysctl -w kernel.apparmor_restrict_unprivileged_userns=0", bootstrap)
+        self.assertIn("sysctl -w kernel.apparmor_restrict_unprivileged_userns=0", mention)
+        # Fixer is not a mechanical copy this PR; 473 owns both jobs' CLI pin.
+        self.assertNotIn("E3-0-early setup-bun", fixer)
+        self.assertNotIn("path_to_bun_executable", fixer)
+
+    def test_embedded_e3_helpers_match_source_files(self) -> None:
+        mention = self._job("claude-mention")
+        mapping = {
+            "CSL_E3_ENVIRON": ROOT / "scripts" / "ci" / "sandbox_e3_environ.py",
+            "CSL_E3_RECORD": ROOT / "scripts" / "ci" / "sandbox_e3_record.py",
+            "CSL_E3_BIND": ROOT / "scripts" / "ci" / "sandbox_e3_bind.py",
+            "CSL_E3_BOOTSTRAP": ROOT / "scripts" / "ci" / "sandbox_e3_bootstrap.sh",
+        }
+        for tag, path in mapping.items():
+            start = f"<<'{tag}'\n"
+            self.assertIn(start, mention, tag)
+            after = mention.split(start, 1)[1]
+            body_lines = []
+            for line in after.splitlines():
+                if line.strip() == tag:
+                    break
+                body_lines.append(line)
+            embedded = textwrap.dedent("\n".join(body_lines)).rstrip("\n")
+            source = path.read_text(encoding="utf-8").rstrip("\n")
+            self.assertEqual(embedded, source, tag)
+
     def test_prompt_treats_review_and_files_as_untrusted(self) -> None:
         self.assertIn("UNTRUSTED DATA", self.text)
         self.assertIn("untrusted", self.text.lower())

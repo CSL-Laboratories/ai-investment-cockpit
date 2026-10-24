@@ -2088,6 +2088,39 @@ class WorkflowWiringTests(unittest.TestCase):
                 tail = outbox["run"].split("\nCLAUDE_FIXER_OUTBOX\n", 1)[1]
                 self.assertEqual([line for line in tail.splitlines() if line and not line.startswith("#")], ROOT_OWN)
 
+    def test_mention_e3_prefix_keeps_sandbox_immediately_before_claude(self):
+        # CSL-474 E3 lands 0a/0b first so CSL-473 can still insert the CLI pin
+        # between the sandbox step and `id: claude`.
+        model = jobs("claude.yml")["claude-mention"]
+        names = [s.get("name") or s.get("id") or s.get("uses") for s in model["steps"]]
+        self.assertEqual(names[0], "E3-0-early setup-bun")
+        self.assertEqual(names[1], "E3-0-early root bootstrap")
+        sandbox = step(model, "Install the subprocess sandbox for Claude's commands")
+        self.assertEqual(names.index("claude") - 1, names.index(sandbox["name"]))
+        action = [s for s in model["steps"] if s.get("id") == "claude"][0]
+        self.assertEqual(action["env"], {"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1"})
+        self.assertEqual(action["with"]["path_to_bun_executable"], "/opt/csl-bun/bun")
+        self.assertNotIn("path_to_claude_code_executable", action["with"])
+        self.assertNotIn("SRT_DEBUG", action.get("env", {}))
+        self.assertNotIn("DISABLE_UPDATES", action.get("env", {}))
+        setup = step(model, "E3-0-early setup-bun")
+        self.assertEqual(
+            setup["uses"],
+            "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6",
+        )
+        self.assertEqual(setup["with"]["bun-version"], "1.3.14")
+        self.assertIn(str(setup["with"]["no-cache"]).lower(), {"true", "yes"})
+        bootstrap = step(model, "E3-0-early root bootstrap")
+        self.assertEqual(
+            bootstrap["shell"],
+            "/usr/bin/sudo -n /bin/bash --noprofile --norc -e -o pipefail {0}",
+        )
+        checkout = [s for s in model["steps"] if str(s.get("uses", "")).startswith("actions/checkout@")]
+        self.assertEqual(
+            checkout[0]["uses"],
+            "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+        )
+
     @unittest.skipIf(os.name == "nt", "POSIX shell fixture")
     def test_helper_install_fails_closed_when_it_cannot_root_own_the_helper(self):
         for name, _prep, model, _pub, _group, ids in self.pipelines():

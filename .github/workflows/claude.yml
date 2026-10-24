@@ -42,6 +42,11 @@ on:
       - "scripts/ci/claude_conflict_scan.py"
       - "scripts/ci/codex_gate.py"
       - "tools/test_claude_pr_fixer.py"
+      - "tools/test_sandbox_e3.py"
+      - "scripts/ci/sandbox_e3_environ.py"
+      - "scripts/ci/sandbox_e3_record.py"
+      - "scripts/ci/sandbox_e3_bind.py"
+      - "scripts/ci/sandbox_e3_bootstrap.sh"
       - "tools/test_codex_gate.py"
       - "tools/test_codex_gate_identity.py"
 
@@ -512,6 +517,7 @@ jobs:
       - name: Event-matrix gate
         run: |
           python3 -X utf8 -B tools/test_claude_pr_fixer.py
+          python3 -X utf8 -B tools/test_sandbox_e3.py
           python3 -X utf8 -B tools/test_claude_fixer_receipts.py
           python3 -X utf8 -B tools/test_claude_fixer_guard.py
           python3 -X utf8 -B tools/test_claude_fixer_publish.py
@@ -798,7 +804,784 @@ jobs:
       claude_outcome: ${{ steps.claude.outcome }}
       package_status: ${{ steps.package.outputs.package_status }}
     steps:
-      - uses: actions/checkout@v4
+      - name: E3-0-early setup-bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.3.14"
+          no-cache: true
+      - name: E3-0-early root bootstrap
+        shell: /usr/bin/sudo -n /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          BASH_ENV: ""
+          LD_PRELOAD: ""
+          LD_LIBRARY_PATH: ""
+        run: |
+          set -euo pipefail
+          mkdir -p /opt/csl-claude/lib /opt/csl-bun /var/lib/csl-relay
+          cat > /opt/csl-claude/lib/sandbox_e3_environ.py <<'CSL_E3_ENVIRON'
+          #!/usr/bin/env python3
+          """J1 three-set environ check with K1 PATH and K2/L1/L2 X-only names (CSL-450 D10).
+
+          Classification order is frozen DESIGN L259, unchanged by the L1/L2 addendum:
+          (1) exact Set-2 name, (2) Set-3 prefix or CI or PATH, (3) on X only, K2 names
+          PWD / SHLVL / _ / OLDPWD, (4) Set-1 Worker pair. Fail closed on any other name.
+
+          L1 (addendum): on X, OLDPWD is absent or equal to the Worker's OLDPWD.
+          L2 (addendum): PWD / SHLVL / _ may appear on B as Set-1 Worker pairs; on X the
+          K2 value rules apply. The check is unchanged; only the wording was.
+          """
+          from __future__ import annotations
+
+          from dataclasses import dataclass
+          from typing import Dict, Mapping, Optional, Sequence, Tuple
+
+          # D10 §1.5 H1.2 Set 2: 81 names from action.yml:288–392 at pin a5a423f7.
+          SET2_NAMES: Tuple[str, ...] = (
+              "MODE",
+              "PROMPT",
+              "TRIGGER_PHRASE",
+              "ASSIGNEE_TRIGGER",
+              "LABEL_TRIGGER",
+              "BASE_BRANCH",
+              "BRANCH_PREFIX",
+              "BRANCH_NAME_TEMPLATE",
+              "OVERRIDE_GITHUB_TOKEN",
+              "ALLOWED_BOTS",
+              "ALLOWED_NON_WRITE_USERS",
+              "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB",
+              "CLAUDE_CODE_SCRIPT_CAPS",
+              "INCLUDE_COMMENTS_BY_ACTOR",
+              "EXCLUDE_COMMENTS_BY_ACTOR",
+              "GITHUB_RUN_ID",
+              "USE_STICKY_COMMENT",
+              "CLASSIFY_INLINE_COMMENTS",
+              "DEFAULT_WORKFLOW_TOKEN",
+              "USE_COMMIT_SIGNING",
+              "SSH_SIGNING_KEY",
+              "BOT_ID",
+              "BOT_NAME",
+              "TRACK_PROGRESS",
+              "INCLUDE_FIX_LINKS",
+              "ADDITIONAL_PERMISSIONS",
+              "CLAUDE_ARGS",
+              "ALL_INPUTS",
+              "INPUT_PROMPT_FILE",
+              "INPUT_SETTINGS",
+              "INPUT_EXPERIMENTAL_SLASH_COMMANDS_DIR",
+              "INPUT_PATH_TO_CLAUDE_CODE_EXECUTABLE",
+              "INPUT_PATH_TO_BUN_EXECUTABLE",
+              "INPUT_SHOW_FULL_OUTPUT",
+              "DISPLAY_REPORT",
+              "INPUT_PLUGINS",
+              "INPUT_PLUGIN_MARKETPLACES",
+              "PATH_TO_CLAUDE_CODE_EXECUTABLE",
+              "NODE_VERSION",
+              "ANTHROPIC_API_KEY",
+              "CLAUDE_CODE_OAUTH_TOKEN",
+              "ANTHROPIC_FEDERATION_RULE_ID",
+              "ANTHROPIC_ORGANIZATION_ID",
+              "ANTHROPIC_SERVICE_ACCOUNT_ID",
+              "ANTHROPIC_WORKSPACE_ID",
+              "ANTHROPIC_OIDC_AUDIENCE",
+              "ANTHROPIC_BASE_URL",
+              "ANTHROPIC_CUSTOM_HEADERS",
+              "CLAUDE_CODE_USE_BEDROCK",
+              "CLAUDE_CODE_USE_VERTEX",
+              "CLAUDE_CODE_USE_FOUNDRY",
+              "AWS_REGION",
+              "AWS_ACCESS_KEY_ID",
+              "AWS_SECRET_ACCESS_KEY",
+              "AWS_SESSION_TOKEN",
+              "AWS_BEARER_TOKEN_BEDROCK",
+              "ANTHROPIC_BEDROCK_BASE_URL",
+              "ANTHROPIC_VERTEX_PROJECT_ID",
+              "CLOUD_ML_REGION",
+              "GOOGLE_APPLICATION_CREDENTIALS",
+              "ANTHROPIC_VERTEX_BASE_URL",
+              "VERTEX_REGION_CLAUDE_3_5_HAIKU",
+              "VERTEX_REGION_CLAUDE_3_5_SONNET",
+              "VERTEX_REGION_CLAUDE_3_7_SONNET",
+              "ANTHROPIC_FOUNDRY_RESOURCE",
+              "ANTHROPIC_FOUNDRY_BASE_URL",
+              "ANTHROPIC_DEFAULT_SONNET_MODEL",
+              "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+              "ANTHROPIC_DEFAULT_OPUS_MODEL",
+              "MCP_TIMEOUT",
+              "MCP_TOOL_TIMEOUT",
+              "MAX_MCP_OUTPUT_TOKENS",
+              "CLAUDE_CODE_ENABLE_TELEMETRY",
+              "OTEL_METRICS_EXPORTER",
+              "OTEL_LOGS_EXPORTER",
+              "OTEL_EXPORTER_OTLP_PROTOCOL",
+              "OTEL_EXPORTER_OTLP_ENDPOINT",
+              "OTEL_EXPORTER_OTLP_HEADERS",
+              "OTEL_METRIC_EXPORT_INTERVAL",
+              "OTEL_LOGS_EXPORT_INTERVAL",
+              "OTEL_RESOURCE_ATTRIBUTES",
+          )
+          SET2 = frozenset(SET2_NAMES)
+
+          SET3_PREFIXES: Tuple[str, ...] = (
+              "GITHUB_",
+              "RUNNER_",
+              "ACTIONS_",
+              "INPUT_",
+          )
+          SET3_EXACT = frozenset({"CI", "PATH"})
+          K2_NAMES = frozenset({"PWD", "SHLVL", "_", "OLDPWD"})
+
+          BUN_DIR = "/opt/csl-bun"
+          BUN_HOME_BIN = "/home/runner/.bun/bin"
+          LAUNCHER = "/opt/csl-claude/launch"
+          BUN_EXE = "/opt/csl-bun/bun"
+          SYS_BIN = "/usr/bin"
+          BIN_DIR = "/bin"
+
+          # Set-2 value rules (D10 H1.2).
+          SET2_VALUE_RULES = {
+              "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1",
+              "PATH_TO_CLAUDE_CODE_EXECUTABLE": LAUNCHER,
+              "INPUT_PATH_TO_CLAUDE_CODE_EXECUTABLE": LAUNCHER,
+              "INPUT_PATH_TO_BUN_EXECUTABLE": BUN_EXE,
+              "ANTHROPIC_BASE_URL": "",
+              "ANTHROPIC_CUSTOM_HEADERS": "",
+              "GOOGLE_APPLICATION_CREDENTIALS": "",
+          }
+
+          FORBIDDEN_ANY = frozenset(
+              {"NODE_OPTIONS", "BASH_ENV", "ENV", "LD_PRELOAD", "LD_AUDIT"}
+          )
+
+          # Exact Run-step shell line (D10 H5 / K2 fixture): Worker execs bash with these.
+          RUN_STEP_BASH_ARGV: Tuple[str, ...] = (
+              "--noprofile",
+              "--norc",
+              "-e",
+              "-o",
+              "pipefail",
+          )
+
+
+          @dataclass(frozen=True)
+          class EnvironVerdict:
+              ok: bool
+              reason: str = ""
+
+
+          def prepend_path(base: str, lines: Sequence[str]) -> str:
+              """Runner PrependPath: RemoveAll(x == line); Add(line); then reverse-join.
+
+              De-dupe is only inside PrependPath. The suffix is the unmodified Worker PATH
+              (K1). Newest-first after reverse.
+              """
+              prepend: list[str] = []
+              for line in lines:
+                  prepend = [x for x in prepend if x != line]
+                  prepend.append(line)
+              head = ":".join(reversed(prepend))
+              if not base:
+                  return head
+              if not head:
+                  return base
+              return head + ":" + base
+
+
+          def expected_job_path(worker_path: str) -> str:
+              """K1 exact expected PATH for B and X.
+
+              Writers before the Run step, in job order: setup-bun ~/.bun/bin, custom bun
+              /opt/csl-bun, then /usr/bin and /bin. Newest-first:
+              ``/bin:/usr/bin:/opt/csl-bun:/home/runner/.bun/bin:<Worker PATH>``.
+              """
+              return prepend_path(
+                  worker_path,
+                  (BUN_HOME_BIN, BUN_DIR, SYS_BIN, BIN_DIR),
+              )
+
+
+          def classify_name(name: str, *, on_x: bool) -> str:
+              """First matching rule. Returns set1 / set2 / set3 / k2 / reject."""
+              if name in SET2:
+                  return "set2"
+              if name in SET3_EXACT or name.startswith(SET3_PREFIXES):
+                  return "set3"
+              if on_x and name in K2_NAMES:
+                  return "k2"
+              if not on_x and name in K2_NAMES:
+                  # L2: on B these are Set-1 pairs if the Worker carried them (rule 4).
+                  return "set1"
+              return "set1"
+
+
+          def _decimal_shlvl(value: str) -> Optional[int]:
+              if not value or not value.isdigit():
+                  return None
+              if value != str(int(value)):
+                  return None
+              return int(value)
+
+
+          def check_k2_x(
+              x_env: Mapping[str, str],
+              b_env: Mapping[str, str],
+              worker_env: Mapping[str, str],
+              workspace: str,
+          ) -> Optional[str]:
+              """K2 value rules on X, with L1 OLDPWD amendment."""
+              if x_env.get("PWD") != workspace:
+                  return "pwd"
+              b_shlvl = b_env.get("SHLVL")
+              expected = 1 if b_shlvl is None else None
+              if b_shlvl is not None:
+                  parsed = _decimal_shlvl(b_shlvl)
+                  if parsed is None:
+                      return "b_shlvl"
+                  expected = parsed + 1
+              got = _decimal_shlvl(x_env.get("SHLVL", ""))
+              if got is None or got != expected:
+                  return "shlvl"
+              if x_env.get("_") != BUN_EXE:
+                  return "underscore"
+              # L1: absent, or equal to the Worker's OLDPWD.
+              if "OLDPWD" in x_env:
+                  if "OLDPWD" not in worker_env or x_env["OLDPWD"] != worker_env["OLDPWD"]:
+                      return "oldpwd"
+              return None
+
+
+          def check_environ(
+              *,
+              proc_env: Mapping[str, str],
+              worker_env: Mapping[str, str],
+              b_env: Mapping[str, str],
+              on_x: bool,
+              workspace: str,
+              worker_path: str,
+          ) -> EnvironVerdict:
+              """Allowlist ``proc_env`` (X or B) against the three sets plus K1/K2."""
+              for name in FORBIDDEN_ANY:
+                  if name in proc_env and proc_env[name] != "":
+                      return EnvironVerdict(False, name)
+              expected_path = expected_job_path(worker_path)
+              if proc_env.get("PATH") != expected_path:
+                  return EnvironVerdict(False, "path")
+
+              for name, value in proc_env.items():
+                  kind = classify_name(name, on_x=on_x)
+                  if kind == "set2":
+                      if name in SET2_VALUE_RULES and value != SET2_VALUE_RULES[name]:
+                          return EnvironVerdict(False, name)
+                      continue
+                  if kind == "set3":
+                      continue
+                  if kind == "k2":
+                      continue
+                  # set1: Worker pair equality, except names already in set2/set3/k2.
+                  if name not in worker_env or worker_env[name] != value:
+                      return EnvironVerdict(False, name)
+
+              if on_x:
+                  reason = check_k2_x(proc_env, b_env, worker_env, workspace)
+                  if reason:
+                      return EnvironVerdict(False, reason)
+
+              # Set-1 names the Worker had must still be present unless classified away.
+              for name, value in worker_env.items():
+                  kind = classify_name(name, on_x=on_x)
+                  if kind != "set1":
+                      continue
+                  if proc_env.get(name) != value:
+                      return EnvironVerdict(False, name)
+
+              return EnvironVerdict(True)
+
+
+          def parse_environ_bytes(data: bytes) -> Dict[str, str]:
+              """NUL-separated ``/proc/*/environ`` dump."""
+              out: Dict[str, str] = {}
+              for item in data.split(b"\0"):
+                  if not item:
+                      continue
+                  if b"=" not in item:
+                      raise ValueError("environ")
+                  key, value = item.split(b"=", 1)
+                  name = key.decode("ascii")
+                  out[name] = value.decode("utf-8", "strict")
+              return out
+
+
+          def run_step_argv(script_path: str, bash: str = "/bin/bash") -> Tuple[str, ...]:
+              """Exact Run-step argv[0..6] shape (H5), for the K2 fixture test."""
+              return (bash, *RUN_STEP_BASH_ARGV, script_path)
+          CSL_E3_ENVIRON
+          cat > /opt/csl-claude/lib/sandbox_e3_record.py <<'CSL_E3_RECORD'
+          #!/usr/bin/env python3
+          """E3-5 public record: reconstruct from structured fields, never from capture bytes.
+
+          D10 §1.5 E3-5. Hex fields are public release / apt digests, not secrets. Unknown
+          keys, wrong shapes, or non-hex are rejected so a capture cannot smuggle text
+          into the trusted print.
+          """
+          from __future__ import annotations
+
+          import re
+          from typing import Dict, Mapping, Optional, Tuple
+
+          HEX64 = re.compile(r"^[0-9a-f]{64}$")
+          BOOLS = frozenset({"true", "false"})
+          INT = re.compile(r"^[0-9]{1,10}$")
+
+          CLAUDE_SHA256 = "520bc6c1f40af466bd03a278b5ae1af1a2938bc7de5b9e5cb15526da20d71cfe"
+          SDK_MJS_SHA256 = "48480d49d4493e2aec28227d8db8f8432743c7aa32facbdb9a7ce0a0363f7503"
+          ACTION_YML_SHA256 = "87b706489e63483c9c32c12af36467dd34e309becca35f7a8ead4d1e0664c4df"
+          RELEASE_FINGERPRINT = "31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE"
+          CLAUDE_SIZE = 290532720
+          SDK_SOURCE = "downloaded-action-dir-frozen-lockfile-ignore-scripts"
+          REALPATH_CLASS = "pinned"
+
+          # Official 2.1.306 linux-x64 object (D10 §1.3). Proposed D-1; not a founder decision here.
+          CLAUDE_URL = (
+              "https://downloads.claude.ai/claude-code-releases/2.1.306/linux-x64/claude"
+          )
+
+          FIELD_ORDER: Tuple[str, ...] = (
+              "claude_sha256",
+              "claude_realpath_class",
+              "sdk_mjs_sha256",
+              "sdk_source",
+              "sdk_disk_match",
+              "bun_tofu_sha256",
+              "bwrap_sha256",
+              "socat_sha256",
+              "bash_sha256",
+              "match",
+              "handoff_count",
+              "handoff_conflict",
+          )
+
+          HEX_FIELDS = frozenset(
+              {
+                  "claude_sha256",
+                  "sdk_mjs_sha256",
+                  "bun_tofu_sha256",
+                  "bwrap_sha256",
+                  "socat_sha256",
+                  "bash_sha256",
+              }
+          )
+          BOOL_FIELDS = frozenset({"sdk_disk_match", "match", "handoff_conflict"})
+
+
+          class E3RecordError(ValueError):
+              """Invalid E3 record; callers must not copy the raw input into the log."""
+
+
+          def _require_hex64(name: str, value: str) -> str:
+              if not HEX64.fullmatch(value):
+                  raise E3RecordError(name)
+              return value
+
+
+          def parse_e3_fields(fields: Mapping[str, str]) -> Dict[str, str]:
+              """Accept only the E3-5 names and value grammars. Reject extras and gaps."""
+              extra = set(fields) - set(FIELD_ORDER)
+              if extra:
+                  raise E3RecordError("extra")
+              missing = [name for name in FIELD_ORDER if name not in fields]
+              if missing:
+                  raise E3RecordError("missing")
+              out: Dict[str, str] = {}
+              for name in FIELD_ORDER:
+                  value = fields[name]
+                  if not isinstance(value, str):
+                      raise E3RecordError(name)
+                  if "\n" in value or "\r" in value or "\0" in value:
+                      raise E3RecordError(name)
+                  if name in HEX_FIELDS:
+                      out[name] = _require_hex64(name, value)
+                  elif name in BOOL_FIELDS:
+                      if value not in BOOLS:
+                          raise E3RecordError(name)
+                      out[name] = value
+                  elif name == "claude_realpath_class":
+                      if value != REALPATH_CLASS:
+                          raise E3RecordError(name)
+                      out[name] = REALPATH_CLASS
+                  elif name == "sdk_source":
+                      if value != SDK_SOURCE:
+                          raise E3RecordError(name)
+                      out[name] = SDK_SOURCE
+                  elif name == "handoff_count":
+                      if not INT.fullmatch(value):
+                          raise E3RecordError(name)
+                      out[name] = str(int(value))
+                  else:
+                      raise E3RecordError(name)
+              return out
+
+
+          def reconstruct_e3_record(fields: Mapping[str, str]) -> str:
+              """One fixed-schema record, lines built from names + validated values."""
+              parsed = parse_e3_fields(fields)
+              return "\n".join(f"{name}={parsed[name]}" for name in FIELD_ORDER)
+
+
+          def parse_e3_text(text: str) -> Dict[str, str]:
+              """Parse a daemon-written E3 record. No capture bytes; ``k=v`` lines only."""
+              if not text or text.endswith("\n\n"):
+                  raise E3RecordError("empty")
+              body = text[:-1] if text.endswith("\n") else text
+              fields: Dict[str, str] = {}
+              for line in body.split("\n"):
+                  if "=" not in line or line.startswith("="):
+                      raise E3RecordError("line")
+                  name, value = line.split("=", 1)
+                  if name in fields:
+                      raise E3RecordError("dup")
+                  fields[name] = value
+              return parse_e3_fields(fields)
+
+
+          def compare_pinned_cli(sha256: str, size: Optional[int] = None) -> bool:
+              """Fail-closed pin for the official 2.1.306 linux-x64 object."""
+              if not HEX64.fullmatch(sha256):
+                  return False
+              if size is not None and size != CLAUDE_SIZE:
+                  return False
+              return sha256 == CLAUDE_SHA256
+
+
+          def compare_pinned_sdk(sha256: str) -> bool:
+              if not HEX64.fullmatch(sha256):
+                  return False
+              return sha256 == SDK_MJS_SHA256
+          CSL_E3_RECORD
+          cat > /opt/csl-claude/lib/sandbox_e3_bind.py <<'CSL_E3_BIND'
+          #!/usr/bin/env python3
+          """E3-0-early I3/I4 bind-mount order, pin hashes, and U-16 record hooks (CSL-474 D10).
+
+          Reviewed grammar for the mention-job 0b prefix. Hosted 0b embeds this file from
+          the workflow YAML (not PR-tree ``app/``) and runs it with system
+          ``/usr/bin/python3 -I``. E3-1 (signed CLI pin under ``/opt/csl-claude/<ver>``)
+          is CSL-473's PR; this module does not download or install that binary.
+
+          U-16/U-18 hosted values stay ``[A]``: this records files and parent pids; it
+          does not claim the GitHub-hosted image matches the actions/runner Dockerfile.
+          """
+          from __future__ import annotations
+
+          import hashlib
+          import os
+          import stat
+          import sys
+          from pathlib import Path
+          from typing import Dict, List, Mapping, Sequence, Tuple
+
+          ACTION_PIN = "a5a423f75c251dcbff8a74e99f83b2cb03c72bfa"
+          ACTION_DIR = (
+              "/home/runner/work/_actions/anthropics/claude-code-action/" + ACTION_PIN
+          )
+          SETUP_BUN_PIN = "0c5077e51419868618aeaa5fe8019c62421857d6"
+          SETUP_BUN_USES = f"oven-sh/setup-bun@{SETUP_BUN_PIN}"
+          BUN_VERSION = "1.3.14"
+          CHECKOUT_PIN = "11d5960a326750d5838078e36cf38b85af677262"
+          CHECKOUT_USES = f"actions/checkout@{CHECKOUT_PIN}"
+          BUN_EXE = "/opt/csl-bun/bun"
+          BUN_HOME_BIN = "/home/runner/.bun/bin"
+          RELAY_STATE = "/var/lib/csl-relay"
+          LIB_DIR = "/opt/csl-claude/lib"
+
+          # D10 §1.3 / E3-5. Same constants as sandbox_e3_record.py.
+          ACTION_YML_SHA256 = "87b706489e63483c9c32c12af36467dd34e309becca35f7a8ead4d1e0664c4df"
+          SDK_MJS_SHA256 = "48480d49d4493e2aec28227d8db8f8432743c7aa32facbdb9a7ce0a0363f7503"
+
+          # J2: outermost first; $AP last, then remount ro. Ancestors stay rw.
+          BIND_ORDER: Tuple[str, ...] = (
+              "/home/runner/work",
+              "/home/runner/work/_actions",
+              "/home/runner/work/_actions/anthropics",
+              "/home/runner/work/_actions/anthropics/claude-code-action",
+              ACTION_DIR,
+          )
+
+          class BindError(RuntimeError):
+              """Fail closed. Callers must not copy untrusted paths into the public log."""
+
+
+          def sha256_file(path: str) -> str:
+              digest = hashlib.sha256()
+              with open(path, "rb") as handle:
+                  for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                      digest.update(chunk)
+              return digest.hexdigest()
+
+
+          def find_sdk_mjs(action_dir: str) -> str:
+              """Exactly one ``sdk.mjs`` under the pinned action dir, or fail closed."""
+              matches: List[str] = []
+              root = Path(action_dir)
+              if not root.is_dir():
+                  raise BindError("action_dir")
+              for path in root.rglob("sdk.mjs"):
+                  if path.is_file() and not path.is_symlink():
+                      matches.append(str(path))
+              if len(matches) != 1:
+                  raise BindError("sdk_mjs")
+              return matches[0]
+
+
+          def verify_pins(
+              *,
+              action_dir: str,
+              action_yml_sha256: str = ACTION_YML_SHA256,
+              sdk_mjs_sha256: str = SDK_MJS_SHA256,
+          ) -> Dict[str, str]:
+              yml = os.path.join(action_dir, "action.yml")
+              if not os.path.isfile(yml):
+                  raise BindError("action_yml")
+              got_yml = sha256_file(yml)
+              if got_yml != action_yml_sha256:
+                  raise BindError("action_yml_hash")
+              sdk = find_sdk_mjs(action_dir)
+              got_sdk = sha256_file(sdk)
+              if got_sdk != sdk_mjs_sha256:
+                  raise BindError("sdk_mjs_hash")
+              return {
+                  "action_yml_sha256": got_yml,
+                  "sdk_mjs_sha256": got_sdk,
+                  "sdk_mjs_path": sdk,
+                  "sdk_source": "downloaded-action-dir-frozen-lockfile-ignore-scripts",
+                  "sdk_disk_match": "true",
+              }
+
+
+          def inode_of(path: str) -> Tuple[int, int]:
+              info = os.lstat(path)
+              return (info.st_dev, info.st_ino)
+
+
+          def parse_mountinfo(text: str) -> List[Dict[str, str]]:
+              """Minimal ``/proc/self/mountinfo`` parse: mount_id, parent_id, target, options."""
+              rows: List[Dict[str, str]] = []
+              for line in text.splitlines():
+                  if not line.strip():
+                      continue
+                  left, _sep, right = line.partition(" - ")
+                  fields = left.split()
+                  if len(fields) < 6:
+                      raise BindError("mountinfo")
+                  rows.append(
+                      {
+                          "mount_id": fields[0],
+                          "parent_id": fields[1],
+                          "target": fields[4],
+                          "options": fields[5],
+                      }
+                  )
+              return rows
+
+
+          def bind_ids_for(targets: Sequence[str], rows: Sequence[Mapping[str, str]]) -> Dict[str, str]:
+              """Last mountinfo row whose target matches, per D10 J2 record."""
+              found: Dict[str, str] = {}
+              for row in rows:
+                  if row["target"] in targets:
+                      found[row["target"]] = row["mount_id"]
+              missing = [path for path in targets if path not in found]
+              if missing:
+                  raise BindError("mount_ids")
+              return found
+
+
+          def nsswitch_sudoers_ok(text: str) -> bool:
+              """D10 0b step 5: fail closed on sudoers: ldap/sss."""
+              for raw in text.splitlines():
+                  line = raw.split("#", 1)[0].strip()
+                  if not line.lower().startswith("sudoers:"):
+                      continue
+                  rest = line.split(":", 1)[1].lower()
+                  if "ldap" in rest or "sss" in rest:
+                      return False
+              return True
+
+
+          def sudo_conf_plugin_ok(text: str) -> bool:
+              """D10 0b step 5: fail closed if sudo.conf loads a Plugin that overrides policy."""
+              for raw in text.splitlines():
+                  line = raw.split("#", 1)[0].strip()
+                  if line.lower().startswith("plugin"):
+                      return False
+              return True
+
+
+          def record_u16(state_dir: str, sudoers: str, nsswitch: str, sudo_conf: str) -> str:
+              """Write hashes and a marker. Does not claim the hosted image matches [A]."""
+              os.makedirs(state_dir, exist_ok=True)
+              payload = (
+                  "u16_status=[A]\n"
+                  f"sudoers_sha256={hashlib.sha256(sudoers.encode('utf-8', 'replace')).hexdigest()}\n"
+                  f"nsswitch_sha256={hashlib.sha256(nsswitch.encode('utf-8', 'replace')).hexdigest()}\n"
+                  f"sudo_conf_sha256={hashlib.sha256(sudo_conf.encode('utf-8', 'replace')).hexdigest()}\n"
+                  "image_match=unproven\n"
+                  "see=f-u16.md\n"
+              )
+              path = os.path.join(state_dir, "u16.record")
+              with open(path, "w", encoding="ascii") as handle:
+                  handle.write(payload)
+              os.chmod(path, 0o600)
+              return path
+
+
+          def _read_text(path: str) -> str:
+              try:
+                  return Path(path).read_text(encoding="utf-8")
+              except OSError:
+                  return ""
+
+
+          def check_u16_policy(*, nsswitch_path: str = "/etc/nsswitch.conf", sudo_conf_path: str = "/etc/sudo.conf") -> None:
+              nsswitch = _read_text(nsswitch_path)
+              if not nsswitch_sudoers_ok(nsswitch):
+                  raise BindError("nsswitch")
+              sudo_conf = _read_text(sudo_conf_path)
+              if not sudo_conf_plugin_ok(sudo_conf):
+                  raise BindError("sudo_conf")
+
+
+          def record_path_inode(path: str, dest: str) -> None:
+              dev, ino = inode_of(path)
+              Path(dest).write_text(f"dev={dev}\nino={ino}\nmode={stat.S_IMODE(os.lstat(path).st_mode):o}\n", encoding="ascii")
+
+
+          def empty_root_owned_dir(
+              path: str, *, uid: int | None = None, gid: int | None = None, mode: int = 0o755
+          ) -> None:
+              """K1: ``~/.bun/bin`` empty, root-owned 0755 after copying bun to /opt/csl-bun.
+
+              Hosted 0b is already root, so euid/egid are 0. Tests pass through the
+              current ids so they can run unprivileged.
+              """
+              if uid is None:
+                  uid = os.geteuid()
+              if gid is None:
+                  gid = os.getegid()
+              os.makedirs(path, exist_ok=True)
+              for name in os.listdir(path):
+                  target = os.path.join(path, name)
+                  if os.path.isdir(target) and not os.path.islink(target):
+                      raise BindError("bun_bin_nested")
+                  os.remove(target)
+              os.chown(path, uid, gid)
+              os.chmod(path, mode)
+              if os.listdir(path):
+                  raise BindError("bun_bin_not_empty")
+
+
+          def main(argv: Sequence[str]) -> int:
+              sys.tracebacklimit = 0
+              cmd = argv[1] if len(argv) > 1 else ""
+              action_dir = os.environ.get("CSL_ACTION_DIR", ACTION_DIR)
+              state_dir = os.environ.get("CSL_RELAY_STATE", RELAY_STATE)
+              if cmd == "empty-bun-bin":
+                  empty_root_owned_dir(os.environ.get("CSL_BUN_BIN", BUN_HOME_BIN))
+                  return 0
+              if cmd == "verify-pins":
+                  pins = verify_pins(action_dir=action_dir)
+                  sys.stdout.write(f"sdk_disk_match={pins['sdk_disk_match']}\n")
+                  return 0
+              if cmd == "check-u16":
+                  check_u16_policy()
+                  record_u16(
+                      state_dir,
+                      _read_text("/etc/sudoers"),
+                      _read_text("/etc/nsswitch.conf"),
+                      _read_text("/etc/sudo.conf"),
+                  )
+                  return 0
+              if cmd == "record-inodes":
+                  os.makedirs(state_dir, exist_ok=True)
+                  record_path_inode(BUN_EXE, os.path.join(state_dir, "bun.inode"))
+                  record_path_inode(BUN_HOME_BIN, os.path.join(state_dir, "bun-bin.inode"))
+                  record_path_inode(action_dir, os.path.join(state_dir, "ap.inode"))
+                  return 0
+              raise BindError("argv")
+
+
+          if __name__ == "__main__":
+              raise SystemExit(main(sys.argv))
+          CSL_E3_BIND
+          cat > /opt/csl-claude/lib/sandbox_e3_bootstrap.sh <<'CSL_E3_BOOTSTRAP'
+          #!/bin/bash
+          # E3-0-early 0b body (CSL-474 D10). Already root via:
+          #   shell: /usr/bin/sudo -n /bin/bash --noprofile --norc -e -o pipefail {0}
+          # Does not install the Claude CLI (CSL-473 E3-1), does not rewrite sudoers
+          # (would break that pin install), does not set SRT_DEBUG, and does not start
+          # the fd-2 relay (E1). Apparmor sysctl stays in the later sandbox step, after
+          # these binds.
+          set -euo pipefail
+
+          AP="${CSL_ACTION_DIR:-/home/runner/work/_actions/anthropics/claude-code-action/a5a423f75c251dcbff8a74e99f83b2cb03c72bfa}"
+          STATE="${CSL_RELAY_STATE:-/var/lib/csl-relay}"
+          LIB="${CSL_E3_LIB:-/opt/csl-claude/lib}"
+          BUN_DST=/opt/csl-bun/bun
+          BUN_BIN=/home/runner/.bun/bin
+          PYTHON="${PYTHON3:-/usr/bin/python3}"
+
+          umask 022
+          mkdir -p /opt/csl-bun "$BUN_BIN" "$STATE" "$LIB"
+
+          if ! command -v bun >/dev/null 2>&1; then
+            echo "e3-0b: bun missing after setup-bun" >&2
+            exit 1
+          fi
+          BUN_SRC="$(command -v bun)"
+          install -D -m0755 -o root -g root "$BUN_SRC" "$BUN_DST"
+          sha256sum "$BUN_DST" | awk '{print $1}' > "$STATE/bun.tofu"
+          # K1: empty runner-owned ~/.bun/bin after the copy; root:root 0755.
+          CSL_BUN_BIN="$BUN_BIN" "$PYTHON" -I "$LIB/sandbox_e3_bind.py" empty-bun-bin
+
+          test -d "$AP" || { echo "e3-0b: pinned action dir missing" >&2; exit 1; }
+
+          # E3-3: materialize node_modules (I4) so sdk.mjs exists to hash. Ignore-scripts.
+          # CSL-473 does not own this; it pins the CLI object, not the action tree.
+          if [ -f "$AP/package.json" ]; then
+            (cd "$AP" && "$BUN_DST" install --frozen-lockfile --production --ignore-scripts)
+          fi
+
+          "$PYTHON" -I "$LIB/sandbox_e3_bind.py" verify-pins
+          "$PYTHON" -I "$LIB/sandbox_e3_bind.py" check-u16
+
+          chown -R root:root "$AP"
+          # I4: drop group/other write on the action tree including node_modules.
+          chmod -R go-w "$AP"
+
+          # J2 bind order, outermost first. $AP last, then remount ro.
+          mount --bind /home/runner/work /home/runner/work
+          mount --bind /home/runner/work/_actions /home/runner/work/_actions
+          mount --bind /home/runner/work/_actions/anthropics /home/runner/work/_actions/anthropics
+          mount --bind /home/runner/work/_actions/anthropics/claude-code-action /home/runner/work/_actions/anthropics/claude-code-action
+          mount --bind "$AP" "$AP"
+          mount -o remount,bind,ro "$AP"
+
+          awk '$5=="'"$AP"'" || $5=="/home/runner/work" || $5=="/home/runner/work/_actions" || $5=="/home/runner/work/_actions/anthropics" || $5=="/home/runner/work/_actions/anthropics/claude-code-action"' /proc/self/mountinfo > "$STATE/mountinfo"
+          readlink /proc/self/ns/mnt > "$STATE/ns.mnt" || true
+          "$PYTHON" -I "$LIB/sandbox_e3_bind.py" record-inodes
+
+          # U-18 parent-shape hook: record ppid chain. Do not pick fork vs exec here.
+          tr '\0' ' ' < /proc/$$/cmdline > "$STATE/u18.self.cmdline" || true
+          if [ -r "/proc/$PPID/cmdline" ]; then
+            tr '\0' ' ' < "/proc/$PPID/cmdline" > "$STATE/u18.ppid.cmdline" || true
+            readlink "/proc/$PPID/exe" > "$STATE/u18.ppid.exe" || true
+          fi
+          printf 'u18_status=[A]\nsee=f-u18.md\n' > "$STATE/u18.record"
+
+          # Do not set kernel.apparmor_restrict_unprivileged_userns here (J2(d)).
+          # Do not rewrite /etc/sudoers (CSL-473 still needs sudo for the CLI pin).
+          # Do not start capture or set SRT_DEBUG.
+          CSL_E3_BOOTSTRAP
+          chmod 0755 /opt/csl-claude/lib/sandbox_e3_bootstrap.sh
+          /bin/bash --noprofile --norc -e -o pipefail /opt/csl-claude/lib/sandbox_e3_bootstrap.sh
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ needs.mention-prepare.outputs.head_sha }}
           fetch-depth: 0
@@ -1256,6 +2039,7 @@ jobs:
           # CSL-383: no post-step that publishes the model-writable inline-comment
           # buffer (/tmp/inline-comments-buffer.jsonl) with a write token.
           classify_inline_comments: "false"
+          path_to_bun_executable: /opt/csl-bun/bun
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Read-only job token: no OIDC App-token exchange in this job.
           github_token: ${{ github.token }}
