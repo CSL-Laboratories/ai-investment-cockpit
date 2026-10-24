@@ -2231,8 +2231,6 @@ class WorkflowWiringTests(unittest.TestCase):
 
     def test_no_pip_call_runs_with_checkout_cwd(self):
         # CSL-471: python -m pip from a checkout cwd can run app/pip/__main__.py as runner.
-        # claude-conflict-writer.yml is owned by another agent; its install step is an open item.
-        skip = {"claude-conflict-writer.yml"}
         found = 0
         for path in sorted((ROOT / ".github" / "workflows").glob("*.y*ml")):
             data = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
@@ -2240,13 +2238,11 @@ class WorkflowWiringTests(unittest.TestCase):
                 for index, step in enumerate(job.get("steps") or []):
                     run = step.get("run") or ""
                     # Ignore embedded sources: a comment in publish.py is not a pip invocation.
-                    run = re.sub(r"<<'([A-Z_]+)'\n.*?\n[ \t]*\1(?:\n|$)", "<<heredoc\n",
+                    run = re.sub(r"<<'([A-Z0-9_]+)'\n.*?\n[ \t]*\1(?:\n|$)", "<<heredoc\n",
                                  run, flags=re.DOTALL)
                     if not _has_pip_module_install(run):
                         continue
                     found += 1
-                    if path.name in skip:
-                        continue
                     wd = "".join((step.get("working-directory") or "").split())
                     with self.subTest(workflow=path.name, job=job_name, step=index):
                         self.assertTrue(_pip_uses_safe_path_flag(run), run)
@@ -2257,12 +2253,24 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertGreater(found, 0)
 
     def test_claude_acceptance_gate_pip_uses_runner_temp(self):
-        for job_name in ("claude-mention", "devin-review-fix"):
-            install = step(jobs("claude.yml")[job_name], "Install acceptance-gate deps")
-            with self.subTest(job=job_name):
+        targets = (
+            ("claude.yml", "claude-mention"),
+            ("claude.yml", "devin-review-fix"),
+            ("claude-conflict-writer.yml", "model"),
+        )
+        for workflow, job_name in targets:
+            install = step(jobs(workflow)[job_name], "Install acceptance-gate deps")
+            run = install["run"]
+            with self.subTest(workflow=workflow, job=job_name):
                 self.assertEqual(install["working-directory"], "${{ runner.temp }}")
-                self.assertTrue(install["run"].lstrip().startswith("python -P -m pip "))
+                self.assertIn("python -P -m pip install --require-hashes", run)
+                self.assertIn("--only-binary=:all:", run)
+                self.assertIn("--no-deps", run)
+                self.assertIn("<<'CSL_PIP_HASH_LOCK'", run)
+                self.assertIn("$RUNNER_TEMP/csl471-pip.lock", run)
                 self.assertNotIn("working-directory: app", yaml.dump(install))
+                self.assertNotIn("requirements.txt", run)
+                self.assertNotIn("git show", run)
 
     def test_benchmarks_requirements_come_from_the_base_tree(self):
         # CSL-471 / REVIEW-D7 I5: a PR-controlled requirements file still chooses packages.

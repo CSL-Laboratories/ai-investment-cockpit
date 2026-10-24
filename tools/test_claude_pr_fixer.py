@@ -620,6 +620,85 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertNotIn("cache: pip", writer)
         self.assertNotIn("cache-dependency-path:", writer)
 
+    def test_write_token_pip_uses_inline_hashed_lock(self) -> None:
+        # CSL-471 J6 (4): pip while passwordless sudo is on must install from a
+        # workflow-YAML heredoc with --require-hashes, never a checkout file.
+        marker = "CSL_PIP_HASH_LOCK"
+        writer = WRITER_WORKFLOW_PATH.read_text(encoding="utf-8")
+        jobs = (
+            ("claude.yml", "claude-mention", self._job("claude-mention")),
+            ("claude.yml", "devin-review-fix", self._job("devin-review-fix")),
+            ("claude-conflict-writer.yml", "model", self._job_text(writer, "model")),
+        )
+        locks: list[str] = []
+        pip_line = (
+            'python -P -m pip install --require-hashes --only-binary=:all: '
+            '--no-deps -r "$lock"'
+        )
+        for filename, job_name, body in jobs:
+            with self.subTest(workflow=filename, job=job_name):
+                step = self._named_step(body, "Install acceptance-gate deps")
+                self.assertIn("working-directory: ${{ runner.temp }}", step)
+                self.assertNotIn("working-directory: app", step)
+                self.assertIn(f"cat > \"$lock\" <<'{marker}'", step)
+                self.assertIn(f"lock=\"$RUNNER_TEMP/csl471-pip.lock\"", step)
+                self.assertIn(pip_line, step)
+                self.assertNotIn("git show", step)
+                self.assertNotIn("github.workspace", step)
+                self.assertNotIn("requirements.txt", step)
+                self.assertNotIn("-U pip", step)
+                start = step.find(f"<<'{marker}'\n")
+                self.assertGreaterEqual(start, 0, step)
+                after = step[start + len(f"<<'{marker}'\n"):]
+                closer = after.find(f"\n{marker}\n")
+                if closer < 0:
+                    closer = after.find(f"\n          {marker}\n")
+                self.assertGreater(closer, 0, after[:200])
+                lock = textwrap.dedent(after[:closer]).strip()
+                self.assertTrue(lock, job_name)
+                hashes = 0
+                packages = 0
+                pending = False
+                for raw in lock.splitlines():
+                    line = raw.strip().rstrip("\\").strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if line.startswith("--hash=sha256:"):
+                        self.assertRegex(line, r"^--hash=sha256:[0-9a-f]{64}$")
+                        hashes += 1
+                        pending = False
+                        continue
+                    self.assertIn("==", line, line)
+                    packages += 1
+                    pending = True
+                self.assertFalse(pending, "lock ended on a continuation")
+                self.assertGreaterEqual(packages, 60, packages)
+                self.assertGreaterEqual(hashes, packages, (hashes, packages))
+                self.assertIn("pydantic==", lock)
+                self.assertIn("pip==", lock)
+                locks.append(lock)
+        self.assertEqual(len(set(locks)), 1)
+
+    @staticmethod
+    def _job_text(text: str, name: str) -> str:
+        marker = f"  {name}:"
+        start = text.find(marker)
+        if start < 0:
+            raise AssertionError(name)
+        nxt = text.find("\n  ", start + len(marker))
+        while nxt != -1 and text[nxt + 3 : nxt + 4] in (" ", "\t"):
+            nxt = text.find("\n  ", nxt + 1)
+        return text[start:] if nxt == -1 else text[start:nxt]
+
+    @staticmethod
+    def _named_step(job: str, name: str) -> str:
+        marker = f"      - name: {name}\n"
+        start = job.find(marker)
+        if start < 0:
+            raise AssertionError(name)
+        nxt = job.find("\n      - ", start + len(marker))
+        return job[start:] if nxt == -1 else job[start:nxt]
+
     def test_prompt_treats_review_and_files_as_untrusted(self) -> None:
         self.assertIn("UNTRUSTED DATA", self.text)
         self.assertIn("untrusted", self.text.lower())
