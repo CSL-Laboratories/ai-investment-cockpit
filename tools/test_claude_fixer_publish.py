@@ -2047,12 +2047,17 @@ class WorkflowWiringTests(unittest.TestCase):
             with self.subTest(workflow=name, job=ids[1]):
                 names = [s.get("name") or s.get("id") for s in model["steps"]]
                 sandbox = step(model, "Install the subprocess sandbox for Claude's commands")
-                self.assertEqual(names.index("claude") - 1, names.index(sandbox["name"]))
+                install = step(model, "Install hash-pinned Claude Code CLI")
+                self.assertEqual(names.index(install["name"]) - 1, names.index(sandbox["name"]))
+                self.assertEqual(names.index("claude") - 1, names.index(install["name"]))
                 self.assertIn("apt-get install -y --no-install-recommends bubblewrap socat", sandbox["run"])
                 self.assertIn("\ncommand -v bwrap\n", sandbox["run"])
                 self.assertNotIn("continue-on-error", sandbox)
                 action = [s for s in model["steps"] if s.get("id") == "claude"][0]
-                self.assertEqual(action["env"], {"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1"})
+                self.assertEqual(action["env"], {"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1",
+                                                 "DISABLE_UPDATES": "1"})
+                self.assertEqual(action["with"]["path_to_claude_code_executable"],
+                                 "/opt/csl-claude/2.1.306/claude")
                 # Chaandan's review at 95de346: any value keeps the job token out of the origin URL
                 # in .git/config; one no GitHub login can match keeps every actor's write check.
                 self.assertEqual(action["with"]["github_token"], "${{ github.token }}")
@@ -2334,6 +2339,125 @@ def _pip_uses_safe_path_flag(run):
 
 def jobs_any(name):
     return yaml.load((ROOT / ".github/workflows" / name).read_text(encoding="utf-8"), Loader=yaml.BaseLoader)["jobs"]
+
+
+PIN_PATH = ROOT / "scripts/ci/claude-code-2.1.306-linux-x64.pin"
+FINGERPRINT_PATH = ROOT / "scripts/ci/claude-code-release-signing.fingerprint"
+INSTALL_SCRIPT = ROOT / "scripts/ci/install_pinned_claude_code.sh"
+INSTALL_STEP = "Install hash-pinned Claude Code CLI"
+CLAUDE_BIN = "/opt/csl-claude/2.1.306/claude"
+
+
+def parse_pin(path=PIN_PATH):
+    data = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        data[key] = value
+    return data
+
+
+def committed_fingerprint(path=FINGERPRINT_PATH):
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line and not line.startswith("#"):
+            return line.strip()
+    raise AssertionError("fingerprint file has no fingerprint line")
+
+
+def normalize_script(text):
+    return "\n".join(line.rstrip() for line in text.splitlines()).strip()
+
+
+class ClaudeCodeInstallerPinTests(unittest.TestCase):
+    """CSL-473 interim E3-1: skip the action's unpinned installer."""
+
+    def test_committed_pin_matches_action_256_and_signing_key(self):
+        pin = parse_pin()
+        self.assertEqual(pin["version"], "2.1.306")
+        self.assertEqual(pin["platform"], "linux-x64")
+        self.assertEqual(pin["sha256"], "520bc6c1f40af466bd03a278b5ae1af1a2938bc7de5b9e5cb15526da20d71cfe")
+        self.assertEqual(pin["bytes"], "290532720")
+        self.assertEqual(pin["install_path"], CLAUDE_BIN)
+        self.assertEqual(pin["url"], "https://downloads.claude.ai/claude-code-releases/2.1.306/linux-x64/claude")
+        self.assertEqual(committed_fingerprint(), "31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE")
+        script = INSTALL_SCRIPT.read_text(encoding="utf-8")
+        for value in (pin["version"], pin["sha256"], pin["bytes"], committed_fingerprint()):
+            self.assertIn(value, script)
+        self.assertIn('DEST_DIR="/opt/csl-claude/${CLAUDE_VERSION}"', script)
+        self.assertIn('echo "${EXPECTED_SHA256}  ${STAGING}/claude" | sha256sum -c -', script)
+        self.assertIn('CURL=/usr/bin/curl', script)
+        self.assertIn('GPG=/usr/bin/gpg', script)
+        self.assertIn('SUDO=/usr/bin/sudo', script)
+        self.assertIn('"$GPG" --batch --status-fd 1 --verify', script)
+        self.assertIn("[GNUPG:] VALIDSIG ${EXPECTED_FPR}", script)
+        self.assertIn("[GNUPG:] GOODSIG", script)
+        self.assertIn("EXPKEYSIG", script)
+        self.assertIn("REVKEYSIG", script)
+        self.assertIn('"$SUDO" install -o root -g root -m 0755', script)
+        self.assertIn('mkdir -m 0700 "$STAGING"', script)
+        self.assertNotIn("mkdir -m 0700 -p", script)
+        self.assertNotIn('mkdir -p "$STAGING"', script)
+        self.assertIn("install path is a symlink", script)
+        self.assertIn("install dir contains extra files", script)
+        self.assertIn("skips", script)
+        self.assertIn("installClaudeCode()", script)
+        self.assertIn("python3 -I -c", script)
+        self.assertNotIn("python3 -c '", script)
+        self.assertIn("reference copy", script)
+        self.assertIn("scripts/ci/install_pinned_claude_code.sh is the", script)
+        self.assertIn("Do not execute that", script)
+        self.assertIn("copy from GITHUB_WORKSPACE", script)
+        self.assertNotIn("Do not execute the copy from GITHUB_WORKSPACE", script)
+        self.assertNotIn("install.sh", script)
+        self.assertNotIn("| bash", script)
+
+    def test_every_model_job_installs_the_pinned_cli_before_the_action(self):
+        pin = parse_pin()
+        source = normalize_script(INSTALL_SCRIPT.read_text(encoding="utf-8"))
+        for name, _prep, model, _pub, _group, ids in WorkflowWiringTests().pipelines():
+            with self.subTest(workflow=name, job=ids[1]):
+                install = step(model, INSTALL_STEP)
+                action = [s for s in model["steps"] if s.get("id") == "claude"][0]
+                self.assertEqual(normalize_script(install["run"]), source)
+                self.assertIn(pin["sha256"], install["run"])
+                self.assertIn(pin["bytes"], install["run"])
+                self.assertIn(committed_fingerprint(), install["run"])
+                self.assertIn('DEST_DIR="/opt/csl-claude/${CLAUDE_VERSION}"', install["run"])
+                self.assertIn(f'CLAUDE_VERSION="{pin["version"]}"', install["run"])
+                self.assertEqual(action["with"]["path_to_claude_code_executable"], CLAUDE_BIN)
+                self.assertEqual(action["env"].get("DISABLE_UPDATES"), "1")
+                self.assertTrue(str(action.get("uses", "")).endswith(
+                    "a5a423f75c251dcbff8a74e99f83b2cb03c72bfa"))
+
+    def test_workflows_do_not_pipe_an_unpinned_claude_installer(self):
+        for path in sorted((ROOT / ".github/workflows").glob("*.y*ml")):
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(workflow=path.name):
+                self.assertNotIn("claude.ai/install", text)
+                self.assertNotIn("bootstrap.sh", text)
+                self.assertNotRegex(text, r"install\.sh\s*\|\s*bash")
+                self.assertNotIn("mkdir -m 0700 -p", text)
+
+    def test_inlined_installer_yaml_has_no_trailing_whitespace(self):
+        """Blank lines in the inlined installer must not be indent-only (git diff --check)."""
+        marker = "      - name: Install hash-pinned Claude Code CLI"
+        for name in ("claude.yml", "claude-conflict-writer.yml"):
+            path = ROOT / ".github/workflows" / name
+            text = path.read_text(encoding="utf-8")
+            lines = text.splitlines(keepends=True)
+            starts = [i for i, line in enumerate(lines) if line.startswith(marker)]
+            self.assertTrue(starts, msg=f"{name} missing installer step")
+            for start in starts:
+                for i in range(start, len(lines)):
+                    line = lines[i]
+                    if i > start and line.startswith("      - "):
+                        break
+                    body = line[:-1] if line.endswith("\n") else line
+                    self.assertEqual(
+                        body, body.rstrip(" \t"),
+                        msg=f"{name}:{i + 1} installer trailing whitespace",
+                    )
 
 
 if __name__ == "__main__":
