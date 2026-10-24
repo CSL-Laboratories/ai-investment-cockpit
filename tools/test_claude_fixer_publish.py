@@ -1892,6 +1892,10 @@ ROOT_OWN = [f"python3 {GUARD}/model-api\" install",
             f"sudo chmod 0644 {GUARD}/context.json\"",
             f"if [ -e {GUARD}/read-token\" ]; then sudo chmod 0644 {GUARD}/read-token\"; fi",
             f"test \"$(stat -c %U {GUARD}/model-api\")\" = root"]
+# After B3, 0b (already root) owns the helper; later steps cannot sudo.
+ROOT_OWN_VERIFY = [
+            f"test -x {GUARD}/model-api\"",
+            f"test \"$(stat -c %U {GUARD}/model-api\")\" = root"]
 RECEIPTS_STEP = "Install trusted receipt helper"
 
 
@@ -2059,11 +2063,21 @@ class WorkflowWiringTests(unittest.TestCase):
             with self.subTest(workflow=name, job=ids[1]):
                 names = [s.get("name") or s.get("id") for s in model["steps"]]
                 sandbox = step(model, "Install the subprocess sandbox for Claude's commands")
-                install = step(model, "Install hash-pinned Claude Code CLI")
-                self.assertEqual(names.index(install["name"]) - 1, names.index(sandbox["name"]))
-                self.assertEqual(names.index("claude") - 1, names.index(install["name"]))
-                self.assertIn("apt-get install -y --no-install-recommends bubblewrap socat", sandbox["run"])
-                self.assertIn("\ncommand -v bwrap\n", sandbox["run"])
+                if name == "claude.yml":
+                    self.assertFalse(
+                        any(s.get("name") == "Install hash-pinned Claude Code CLI"
+                            for s in model["steps"]),
+                    )
+                    self.assertEqual(names.index("claude") - 1, names.index(sandbox["name"]))
+                    self.assertIn("command -v bwrap", sandbox["run"])
+                    self.assertIn("command -v socat", sandbox["run"])
+                    self.assertNotIn("apt-get install", sandbox["run"])
+                else:
+                    install = step(model, "Install hash-pinned Claude Code CLI")
+                    self.assertEqual(names.index(install["name"]) - 1, names.index(sandbox["name"]))
+                    self.assertEqual(names.index("claude") - 1, names.index(install["name"]))
+                    self.assertIn("apt-get install -y --no-install-recommends bubblewrap socat", sandbox["run"])
+                    self.assertIn("\ncommand -v bwrap\n", sandbox["run"])
                 self.assertNotIn("continue-on-error", sandbox)
                 action = [s for s in model["steps"] if s.get("id") == "claude"][0]
                 self.assertEqual(action["env"], {"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1",
@@ -2120,8 +2134,14 @@ class WorkflowWiringTests(unittest.TestCase):
                 self.assertEqual(outbox["env"]["GH_TOKEN"], "${{ github.token }}")
                 # The helper is root-owned and read-only before Claude runs; any failure fails the step.
                 self.assertTrue(outbox["run"].startswith("set -euo pipefail\n"))
-                tail = outbox["run"].split("\nCLAUDE_FIXER_OUTBOX\n", 1)[1]
-                self.assertEqual([line for line in tail.splitlines() if line and not line.startswith("#")], ROOT_OWN)
+                if name == "claude.yml":
+                    self.assertNotIn("CLAUDE_FIXER_OUTBOX", outbox["run"])
+                    lines = [line for line in outbox["run"].splitlines()
+                             if line and not line.startswith("#") and line != "set -euo pipefail"]
+                    self.assertEqual(lines, ROOT_OWN_VERIFY)
+                else:
+                    tail = outbox["run"].split("\nCLAUDE_FIXER_OUTBOX\n", 1)[1]
+                    self.assertEqual([line for line in tail.splitlines() if line and not line.startswith("#")], ROOT_OWN)
 
     def test_mention_e3_prefix_keeps_sandbox_immediately_before_claude(self):
         # CSL-474 E3 lands 0a/0b first. #262 E3-1 pin is merged in; E1 later
@@ -2129,7 +2149,11 @@ class WorkflowWiringTests(unittest.TestCase):
         model = jobs("claude.yml")["claude-mention"]
         names = [s.get("name") or s.get("id") or s.get("uses") for s in model["steps"]]
         self.assertEqual(names[0], "E3-0-early setup-bun")
-        self.assertEqual(names[1], "E3-0-early root bootstrap")
+        self.assertEqual(names[1], "E3-0-early write helper")
+        self.assertIn("E3-0-early write python helpers", names)
+        self.assertIn("E3-0-early write C sources A", names)
+        self.assertIn("E3-0-early write C sources B", names)
+        self.assertEqual(names[5], "E3-0-early root bootstrap")
         sandbox = step(model, "Install the subprocess sandbox for Claude's commands")
         self.assertEqual(names.index("claude") - 1, names.index(sandbox["name"]))
         action = [s for s in model["steps"] if s.get("id") == "claude"][0]
@@ -2328,6 +2352,16 @@ class WorkflowWiringTests(unittest.TestCase):
             outbox = [s for s in model["steps"] if s.get("id") == "outbox"][0]
             with self.subTest(workflow=name, job=ids[1]), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
+                if name == "claude.yml":
+                    # 0b already-root chown; later outbox only verifies root ownership.
+                    bootstrap = step(model, "E3-0-early root bootstrap")
+                    self.assertIn('chown -R root:root "$GUARD"', bootstrap["run"])
+                    self.assertNotIn("chown -R root:root \"$GUARD\" || true", bootstrap["run"])
+                    result = subprocess.run(["bash", "-c", outbox["run"]], cwd=root, env={
+                        **os.environ, "RUNNER_TEMP": str(root),
+                    }, capture_output=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    continue
                 shim = root / "bin"
                 shim.mkdir()
                 (shim / "python3").write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
@@ -2491,12 +2525,11 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertGreater(found, 0)
 
     def test_claude_acceptance_gate_pip_uses_runner_temp(self):
+        # Preferred I5: mention/fixer no longer install pip deps before uses:.
         for job_name in ("claude-mention", "devin-review-fix"):
-            install = step(jobs("claude.yml")[job_name], "Install acceptance-gate deps")
             with self.subTest(job=job_name):
-                self.assertEqual(install["working-directory"], "${{ runner.temp }}")
-                self.assertTrue(install["run"].lstrip().startswith("python -P -m pip "))
-                self.assertNotIn("working-directory: app", yaml.dump(install))
+                names = [s.get("name") for s in jobs("claude.yml")[job_name]["steps"]]
+                self.assertNotIn("Install acceptance-gate deps", names)
 
     def test_benchmarks_requirements_come_from_the_base_tree(self):
         # CSL-471 / REVIEW-D7 I5: a PR-controlled requirements file still chooses packages.
@@ -2638,14 +2671,24 @@ class ClaudeCodeInstallerPinTests(unittest.TestCase):
         source = normalize_script(INSTALL_SCRIPT.read_text(encoding="utf-8"))
         for name, _prep, model, _pub, _group, ids in WorkflowWiringTests().pipelines():
             with self.subTest(workflow=name, job=ids[1]):
-                install = step(model, INSTALL_STEP)
                 action = [s for s in model["steps"] if s.get("id") == "claude"][0]
-                self.assertEqual(normalize_script(install["run"]), source)
-                self.assertIn(pin["sha256"], install["run"])
-                self.assertIn(pin["bytes"], install["run"])
-                self.assertIn(committed_fingerprint(), install["run"])
-                self.assertIn('DEST_DIR="/opt/csl-claude/${CLAUDE_VERSION}"', install["run"])
-                self.assertIn(f'CLAUDE_VERSION="{pin["version"]}"', install["run"])
+                if name == "claude.yml":
+                    self.assertFalse(any(s.get("name") == INSTALL_STEP for s in model["steps"]))
+                    bootstrap = step(model, "E3-0-early root bootstrap")
+                    cli_step = step(model, "E3-0-early write C sources B")
+                    self.assertIn("sandbox_e3_cli_pin.sh", bootstrap["run"])
+                    self.assertIn("sandbox_e3_cli_pin.sh", cli_step["run"])
+                    self.assertIn(pin["sha256"], cli_step["run"])
+                    self.assertIn(committed_fingerprint(), cli_step["run"])
+                    self.assertIn('EXPECTED_SHA256="520bc6c1f40af466bd03a278b5ae1af1a2938bc7de5b9e5cb15526da20d71cfe"', cli_step["run"])
+                else:
+                    install = step(model, INSTALL_STEP)
+                    self.assertEqual(normalize_script(install["run"]), source)
+                    self.assertIn(pin["sha256"], install["run"])
+                    self.assertIn(pin["bytes"], install["run"])
+                    self.assertIn(committed_fingerprint(), install["run"])
+                    self.assertIn('DEST_DIR="/opt/csl-claude/${CLAUDE_VERSION}"', install["run"])
+                    self.assertIn(f'CLAUDE_VERSION="{pin["version"]}"', install["run"])
                 self.assertEqual(action["with"]["path_to_claude_code_executable"], CLAUDE_BIN)
                 self.assertEqual(action["env"].get("DISABLE_UPDATES"), "1")
                 self.assertTrue(str(action.get("uses", "")).endswith(
@@ -2656,7 +2699,7 @@ class ClaudeCodeInstallerPinTests(unittest.TestCase):
             text = path.read_text(encoding="utf-8")
             with self.subTest(workflow=path.name):
                 self.assertNotIn("claude.ai/install", text)
-                self.assertNotIn("bootstrap.sh", text)
+                self.assertNotRegex(text, r"https?://\S*bootstrap\.sh")
                 self.assertNotRegex(text, r"install\.sh\s*\|\s*bash")
                 self.assertNotIn("mkdir -m 0700 -p", text)
 

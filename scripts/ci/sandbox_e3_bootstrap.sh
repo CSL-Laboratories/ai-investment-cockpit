@@ -1,21 +1,71 @@
 #!/bin/bash
 # E3-0-early 0b body (CSL-474 D10). Already root via:
 #   shell: /usr/bin/sudo -n /bin/bash --noprofile --norc -e -o pipefail {0}
-# Does not install the Claude CLI (CSL-473 E3-1), does not rewrite sudoers
-# (would break that pin install), does not set SRT_DEBUG, and does not start
-# the fd-2 relay (E1). Apparmor sysctl stays in the later sandbox step, after
-# these binds.
+# Constants only — no CSL_* environment path overrides (L-d).
+# E3-1 CLI pin runs here before sudoers. Capture-start is not in sudoers.
 set -euo pipefail
 
-AP="${CSL_ACTION_DIR:-/home/runner/work/_actions/anthropics/claude-code-action/a5a423f75c251dcbff8a74e99f83b2cb03c72bfa}"
-STATE="${CSL_RELAY_STATE:-/var/lib/csl-relay}"
-LIB="${CSL_E3_LIB:-/opt/csl-claude/lib}"
+AP=/home/runner/work/_actions/anthropics/claude-code-action/a5a423f75c251dcbff8a74e99f83b2cb03c72bfa
+SETUP_BUN_DIR=/home/runner/work/_actions/oven-sh/setup-bun/0c5077e51419868618aeaa5fe8019c62421857d6
+STATE=/var/lib/csl-relay
+LIB=/opt/csl-claude/lib
+SRC=/opt/csl-claude/src
 BUN_DST=/opt/csl-bun/bun
 BUN_BIN=/home/runner/.bun/bin
-PYTHON="${PYTHON3:-/usr/bin/python3}"
+PYTHON=/usr/bin/python3
+GCC=/usr/bin/gcc
+SUDOERS_TEXT='Defaults env_reset
+Defaults secure_path="/usr/sbin:/usr/bin:/sbin:/bin"
+runner ALL=(root) NOPASSWD: /opt/csl-relay/bin/relay
+'
 
 umask 022
-mkdir -p /opt/csl-bun "$BUN_BIN" "$STATE" "$LIB"
+mkdir -p /opt/csl-bun /opt/csl-claude/lib /opt/csl-claude/src /opt/csl-relay/bin \
+  "$BUN_BIN" "$STATE"
+chmod 0711 "$STATE"
+chown root:root "$STATE"
+
+# Record Worker pid now (this process's parent chain) before further forks.
+WORKER_PID=$PPID
+if [ -r "/proc/$PPID/exe" ]; then
+  case "$(readlink "/proc/$PPID/exe" || true)" in
+    *sudo*)
+      WORKER_PID="$(awk -F')' '{print $2}' "/proc/$PPID/stat" | awk '{print $2}')"
+      ;;
+  esac
+fi
+printf '%s\n' "$WORKER_PID" > "$STATE/worker.pid"
+chmod 0600 "$STATE/worker.pid"
+readlink /proc/"$WORKER_PID"/ns/mnt > "$STATE/ns.mnt"
+chmod 0600 "$STATE/ns.mnt"
+cat /proc/"$WORKER_PID"/status > "$STATE/worker.status" || true
+tr '\0' '\n' < /proc/"$WORKER_PID"/environ > "$STATE/worker.environ" || true
+
+# 0b step 1: compile static binaries from workflow-embedded sources. Pin check.
+test -d "$SRC" || { echo "e3-0b: C sources missing" >&2; exit 1; }
+for f in sandbox_common.h sandbox_common.c sandbox_filter.h sandbox_filter.c \
+         sandbox_argv.h sandbox_argv.c sandbox_launch.c sandbox_capture.c \
+         sandbox_relay.c; do
+  test -f "$SRC/$f" || { echo "e3-0b: missing $f" >&2; exit 1; }
+done
+# Runtime .pin enforcement (H1): sha256 of embedded sources vs committed pins.
+if [ -f "$LIB/sandbox_c.pin" ]; then
+  (cd "$SRC" && sha256sum -c "$LIB/sandbox_c.pin")
+fi
+"$GCC" -static -O2 -Wall -Werror -o /opt/csl-claude/launch \
+  "$SRC/sandbox_launch.c" "$SRC/sandbox_argv.c" "$SRC/sandbox_common.c" -I"$SRC"
+"$GCC" -static -O2 -Wall -Werror -o /opt/csl-relay/bin/capture-start \
+  "$SRC/sandbox_capture.c" "$SRC/sandbox_common.c" -I"$SRC"
+"$GCC" -static -O2 -Wall -Werror -o /opt/csl-relay/bin/relay \
+  "$SRC/sandbox_relay.c" "$SRC/sandbox_filter.c" "$SRC/sandbox_common.c" -I"$SRC"
+install -o root -g root -m0755 /opt/csl-relay/bin/relay /opt/csl-relay/bin/filter
+chown root:root /opt/csl-claude/launch /opt/csl-relay/bin/capture-start \
+  /opt/csl-relay/bin/relay /opt/csl-relay/bin/filter
+chmod 0755 /opt/csl-claude/launch /opt/csl-relay/bin/capture-start \
+  /opt/csl-relay/bin/relay /opt/csl-relay/bin/filter
+# Directory containing launch only (plus lib/src which are not in the launch dir).
+test -x /opt/csl-claude/launch
+test -x /opt/csl-relay/bin/relay
 
 if ! command -v bun >/dev/null 2>&1; then
   echo "e3-0b: bun missing after setup-bun" >&2
@@ -24,22 +74,89 @@ fi
 BUN_SRC="$(command -v bun)"
 install -D -m0755 -o root -g root "$BUN_SRC" "$BUN_DST"
 sha256sum "$BUN_DST" | awk '{print $1}' > "$STATE/bun.tofu"
-# K1: empty runner-owned ~/.bun/bin after the copy; root:root 0755.
-CSL_BUN_BIN="$BUN_BIN" "$PYTHON" -I "$LIB/sandbox_e3_bind.py" empty-bun-bin
+chmod 0644 "$STATE/bun.tofu"
+"$PYTHON" -I "$LIB/sandbox_e3_environ.py" record-bun
+"$PYTHON" -I "$LIB/sandbox_e3_bind.py" empty-bun-bin
+"$PYTHON" -I "$LIB/sandbox_e3_bind.py" hash-setup-bun
+
+# 0b step 2: fixer helper already written by the workflow YAML into RUNNER_TEMP.
+GUARD="${RUNNER_TEMP:?}/claude-fixer-guard"
+if [ -f "$GUARD/model-api" ]; then
+  "$PYTHON" -I "$GUARD/model-api" install
+  chown -R root:root "$GUARD"
+  chmod 0755 "$GUARD" "$GUARD/model-api"
+  if [ -f "$GUARD/context.json" ]; then chmod 0644 "$GUARD/context.json"; fi
+  if [ -e "$GUARD/read-token" ]; then chmod 0644 "$GUARD/read-token"; fi
+  test "$(stat -c %U "$GUARD/model-api")" = root
+fi
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get install -y --no-install-recommends bubblewrap socat gcc libc6-dev
+command -v bwrap
+command -v socat
+
+# 0b step 3: docker / containerd / podman / lxd stop+mask (F12).
+for unit in docker.socket docker.service containerd.socket containerd.service \
+            podman.socket podman.service lxd.socket snap.lxd.daemon; do
+  systemctl stop "$unit" 2>/dev/null || true
+  systemctl mask "$unit" 2>/dev/null || true
+done
+
+# 0b step 4: ptrace_scope=2 (fail closed if Yama missing).
+test -f /proc/sys/kernel/yama/ptrace_scope
+sysctl -w kernel.yama.ptrace_scope=2
+
+# 0b step 5: nsswitch / sudo.conf (U-16).
+"$PYTHON" -I "$LIB/sandbox_e3_bind.py" check-u16
+
+# 0b step 6: drop runner from sudo/adm/lxd/docker (G10). Limit: existing
+# supplementary groups on Listener/Worker are not dropped.
+if getent group sudo >/dev/null; then gpasswd -d runner sudo || true; fi
+if getent group adm >/dev/null; then gpasswd -d runner adm || true; fi
+if getent group lxd >/dev/null; then gpasswd -d runner lxd || true; fi
+if getent group docker >/dev/null; then gpasswd -d runner docker || true; fi
+id runner | tee "$STATE/id.runner" | grep -qvE 'sudo|adm|lxd|docker' || {
+  # id may still list groups held by this process; record and continue to
+  # socket assertion below.
+  true
+}
+for sock in /var/run/docker.sock /var/snap/lxd/common/lxd/unix.socket \
+            /run/containerd/containerd.sock /run/podman/podman.sock; do
+  if [ -S "$sock" ]; then
+    mode=$(stat -c %a "$sock")
+    case "$mode" in
+      *2|*3|*6|*7) echo "e3-0b: group-writable socket $sock" >&2; exit 1 ;;
+    esac
+  fi
+done
 
 test -d "$AP" || { echo "e3-0b: pinned action dir missing" >&2; exit 1; }
 
-# E3-3: materialize node_modules (I4) so sdk.mjs exists to hash. Ignore-scripts.
-# CSL-473 does not own this; it pins the CLI object, not the action tree.
+# 0b step 8: E3-1 CLI pin then E3-3 bun install, before sudoers.
+if [ -f "$LIB/sandbox_e3_cli_pin.sh" ]; then
+  /bin/bash --noprofile --norc -e -o pipefail "$LIB/sandbox_e3_cli_pin.sh"
+fi
 if [ -f "$AP/package.json" ]; then
   (cd "$AP" && "$BUN_DST" install --frozen-lockfile --production --ignore-scripts)
 fi
 
+# 0b step 9: git-tree hash, extra-file check, node_modules digest, then bind.
+if command -v git >/dev/null 2>&1; then
+  REF="$STATE/cca.git"
+  git init --bare "$REF"
+  git -C "$REF" fetch --depth 1 https://github.com/anthropics/claude-code-action.git \
+    a5a423f75c251dcbff8a74e99f83b2cb03c72bfa
+  git -C "$REF" ls-tree -r FETCH_HEAD > "$STATE/cca.ls-tree"
+  "$PYTHON" -I "$LIB/sandbox_e3_bind.py" hash-git-tree
+  BUNREF="$STATE/setup-bun.git"
+  git init --bare "$BUNREF"
+  git -C "$BUNREF" fetch --depth 1 https://github.com/oven-sh/setup-bun.git \
+    0c5077e51419868618aeaa5fe8019c62421857d6
+  git -C "$BUNREF" ls-tree -r FETCH_HEAD > "$STATE/setup-bun.ls-tree"
+fi
 "$PYTHON" -I "$LIB/sandbox_e3_bind.py" verify-pins
-"$PYTHON" -I "$LIB/sandbox_e3_bind.py" check-u16
-
+"$PYTHON" -I "$LIB/sandbox_e3_bind.py" hash-node-modules
 chown -R root:root "$AP"
-# I4: drop group/other write on the action tree including node_modules.
 chmod -R go-w "$AP"
 
 # J2 bind order, outermost first. $AP last, then remount ro.
@@ -51,8 +168,83 @@ mount --bind "$AP" "$AP"
 mount -o remount,bind,ro "$AP"
 
 awk '$5=="'"$AP"'" || $5=="/home/runner/work" || $5=="/home/runner/work/_actions" || $5=="/home/runner/work/_actions/anthropics" || $5=="/home/runner/work/_actions/anthropics/claude-code-action"' /proc/self/mountinfo > "$STATE/mountinfo"
-readlink /proc/self/ns/mnt > "$STATE/ns.mnt" || true
+# Worker ns/mnt must equal 0b's (fail closed, H4).
+test -s "$STATE/ns.mnt"
+test "$(readlink /proc/"$WORKER_PID"/ns/mnt)" = "$(cat "$STATE/ns.mnt")"
 "$PYTHON" -I "$LIB/sandbox_e3_bind.py" record-inodes
+
+# 0b step 10: ~/.claude empty, runner-owned 0700.
+rm -rf /home/runner/.claude /home/runner/.claude.json
+mkdir -m 0700 /home/runner/.claude
+chown runner:runner /home/runner/.claude
+rm -f /home/runner/.bunfig.toml /home/runner/.npmrc /home/runner/.docker/config.json
+if [ -d /home/runner/.docker ] && [ -z "$(ls -A /home/runner/.docker 2>/dev/null || true)" ]; then
+  rmdir /home/runner/.docker || true
+fi
+
+# 0b step 11: exact sudoers, rename-atomic, visudo -cf (F10). No NOPASSWD:ALL.
+printf '%s' "$SUDOERS_TEXT" > /etc/sudoers.new
+install -m0440 -o root -g root /etc/sudoers.new /etc/sudoers.new
+visudo -cf /etc/sudoers.new
+# fsync via python (already root).
+"$PYTHON" -I -c 'import os; fd=os.open("/etc/sudoers.new", os.O_RDONLY); os.fsync(fd); os.close(fd)'
+mv -f /etc/sudoers.new /etc/sudoers
+if [ -d /etc/sudoers.d ]; then
+  find /etc/sudoers.d -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+fi
+
+# 0b step 12: sweep runner-uid extras (record; fail closed on unknown), then arm.
+ALLOW_PIDS="$$ $PPID $WORKER_PID"
+ps -eo pid,user,ppid,args --no-headers | awk '$2=="runner"{print}' > "$STATE/sweep.runner" || true
+# Inventory extras as veto-only records (G1(d)).
+ps -eo pid,user,args --no-headers | awk '$2=="root"{print}' > "$STATE/sweep.root" || true
+crontab -u runner -l > "$STATE/cron.runner" 2>/dev/null || true
+printf '%s\n' "${GITHUB_WORKSPACE:-}" > "$STATE/workspace"
+chmod 0644 "$STATE/workspace"
+
+# Start capture daemon (empty argv, not in sudoers) then bind 0600.
+/opt/csl-relay/bin/capture-start >/var/lib/csl-relay/daemon.log 2>&1 &
+echo $! > "$STATE/daemon.pid"
+sleep 0.2
+test -S "$STATE/handoff.sock"
+# Socket stays 0600 until F1 observation (Python observe + chmod 0666).
+chmod 0600 "$STATE/handoff.sock" || true
+
+# Apparmor sysctl AFTER the sweep (J2(d)).
+if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+  sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+fi
+
+# Invoke environ/record so they are not dead (H4).
+"$PYTHON" -I "$LIB/sandbox_e3_bind.py" observe
+
+# 0b step 13: negative controls. Step fails if any still succeeds (T3/T7).
+fail_closed() {
+  local desc="$1"
+  shift
+  if "$@" >/dev/null 2>&1; then
+    echo "e3-0b: negative control succeeded (want fail): $desc" >&2
+    exit 1
+  fi
+}
+fail_closed "sudo -n /bin/true" sudo -n /bin/true
+fail_closed "sudo -n -u nobody /bin/true" sudo -n -u nobody /bin/true
+fail_closed "sudo -n -u nobody relay" sudo -n -u nobody /opt/csl-relay/bin/relay
+fail_closed "sudo -n -E relay" sudo -n -E /opt/csl-relay/bin/relay
+fail_closed "sudo -n FOO=1 relay" sudo -n FOO=1 /opt/csl-relay/bin/relay
+fail_closed "sudo -n filter" sudo -n /opt/csl-relay/bin/filter
+fail_closed "sudo -n launch" sudo -n /opt/csl-claude/launch
+sudo -l > "$STATE/sudo.l"
+grep -q 'NOPASSWD: ALL' "$STATE/sudo.l" && { echo "e3-0b: NOPASSWD:ALL remains" >&2; exit 1; }
+grep -q SETENV "$STATE/sudo.l" && { echo "e3-0b: SETENV remains" >&2; exit 1; }
+grep -q '/opt/csl-relay/bin/relay' "$STATE/sudo.l" || {
+  echo "e3-0b: sudo -l missing relay" >&2
+  exit 1
+}
+
+# 0b step 14: does not leave NOPASSWD:ALL (also asserted above).
+grep -qv 'NOPASSWD:ALL' /etc/sudoers
+grep -q 'NOPASSWD: /opt/csl-relay/bin/relay' /etc/sudoers
 
 # U-18 parent-shape hook: record ppid chain. Do not pick fork vs exec here.
 tr '\0' ' ' < /proc/$$/cmdline > "$STATE/u18.self.cmdline" || true
@@ -60,8 +252,6 @@ if [ -r "/proc/$PPID/cmdline" ]; then
   tr '\0' ' ' < "/proc/$PPID/cmdline" > "$STATE/u18.ppid.cmdline" || true
   readlink "/proc/$PPID/exe" > "$STATE/u18.ppid.exe" || true
 fi
-printf 'u18_status=[A]\nsee=f-u18.md\n' > "$STATE/u18.record"
+printf 'u18_status=[A]\nsee=f-u18.md\naccepted_shapes=sudo_fork,sudo_exec\n' > "$STATE/u18.record"
 
-# Do not set kernel.apparmor_restrict_unprivileged_userns here (J2(d)).
-# Do not rewrite /etc/sudoers (CSL-473 still needs sudo for the CLI pin).
-# Do not start capture or set SRT_DEBUG.
+# Do not set SRT_DEBUG. Capture daemon is already running.

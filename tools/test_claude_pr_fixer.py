@@ -43,6 +43,14 @@ def load_gate():
 gate = load_gate()
 
 
+def claude_args_allow(body: str) -> str:
+    """Slice the action ``--allowedTools`` list, not C-source flag names in 0b."""
+    marker = '--allowedTools "'
+    if marker not in body:
+        raise AssertionError("missing claude_args --allowedTools")
+    return body.split(marker, 1)[1].split("--disallowedTools", 1)[0]
+
+
 def pr_payload(
     *,
     number: int = 42,
@@ -603,7 +611,7 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn(attach, devin)
         # CSL-377: the model job cannot push; the publish job pushes.
         for job in (mention, devin):
-            allow = job.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0]
+            allow = claude_args_allow(job)
             self.assertNotIn("git push", allow)
             self.assertIn("Bash(git push:*)", job.split("--disallowedTools", 1)[1])
             self.assertNotIn("HEAD:refs/heads/", job)
@@ -621,7 +629,8 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertNotIn("cache-dependency-path:", writer)
 
     def test_mention_e3_prefix_pins_and_embeds_helpers(self) -> None:
-        # CSL-474 E3: 0a/0b before checkout; no SRT_DEBUG; no E3-1 CLI pin (CSL-473).
+        # CSL-474 E3 after #262 merge: 0a/0b before checkout; E3-1 folded into
+        # 0b (cli_pin); no SRT_DEBUG; fixer gets the same prefix (M3).
         mention = self._job("claude-mention")
         fixer = self._job("devin-review-fix")
         steps = mention.split("    steps:", 1)[1]
@@ -643,21 +652,28 @@ class WorkflowStructureTests(unittest.TestCase):
         )
         self.assertNotIn("uses: actions/checkout@v4", mention)
         self.assertIn("path_to_bun_executable: /opt/csl-bun/bun", mention)
-        self.assertNotIn("path_to_claude_code_executable", mention)
-        self.assertNotIn("install_pinned_claude_code.sh", mention)
+        self.assertIn(
+            "path_to_claude_code_executable: /opt/csl-claude/2.1.306/claude",
+            mention,
+        )
+        self.assertIn("sandbox_e3_cli_pin.sh", mention)
         self.assertNotIn("SRT_DEBUG:", mention)
         self.assertNotIn("show_full_output", mention)
-        self.assertNotIn("/opt/csl-relay/bin/relay", mention)
+        self.assertIn("/opt/csl-relay/bin/relay", mention)
+        self.assertIn("/opt/csl-relay/bin/capture-start", mention)
+        self.assertIn("/opt/csl-claude/launch", mention)
         self.assertNotIn("background: true", mention)
         self.assertNotIn("isBackground", mention)
         bootstrap = mention.split("E3-0-early root bootstrap", 1)[1].split(
             "uses: actions/checkout@", 1
         )[0]
-        self.assertNotIn("sysctl -w kernel.apparmor_restrict_unprivileged_userns=0", bootstrap)
-        self.assertIn("sysctl -w kernel.apparmor_restrict_unprivileged_userns=0", mention)
-        # Fixer is not a mechanical copy this PR; 473 owns both jobs' CLI pin.
-        self.assertNotIn("E3-0-early setup-bun", fixer)
-        self.assertNotIn("path_to_bun_executable", fixer)
+        self.assertIn("sysctl -w kernel.apparmor_restrict_unprivileged_userns=0", bootstrap)
+        self.assertIn("NOPASSWD: /opt/csl-relay/bin/relay", bootstrap)
+        self.assertNotIn("%sudo   ALL=(ALL:ALL) NOPASSWD:ALL", bootstrap)
+        self.assertIn('"$GCC" -static', bootstrap)
+        self.assertIn("E3-0-early setup-bun", fixer)
+        self.assertIn("path_to_bun_executable", fixer)
+        self.assertIn("sandbox_e3_cli_pin.sh", fixer)
 
     def test_embedded_e3_helpers_match_source_files(self) -> None:
         mention = self._job("claude-mention")
@@ -666,6 +682,14 @@ class WorkflowStructureTests(unittest.TestCase):
             "CSL_E3_RECORD": ROOT / "scripts" / "ci" / "sandbox_e3_record.py",
             "CSL_E3_BIND": ROOT / "scripts" / "ci" / "sandbox_e3_bind.py",
             "CSL_E3_BOOTSTRAP": ROOT / "scripts" / "ci" / "sandbox_e3_bootstrap.sh",
+            "CSL_E3_CLI_PIN": ROOT / "scripts" / "ci" / "sandbox_e3_cli_pin.sh",
+            "CSL_C_LAUNCH": ROOT / "scripts" / "ci" / "sandbox_launch.c",
+            "CSL_C_CAPTURE": ROOT / "scripts" / "ci" / "sandbox_capture.c",
+            "CSL_C_RELAY": ROOT / "scripts" / "ci" / "sandbox_relay.c",
+            "CSL_C_ARGV_C": ROOT / "scripts" / "ci" / "sandbox_argv.c",
+            "CSL_C_FILTER_C": ROOT / "scripts" / "ci" / "sandbox_filter.c",
+            "CSL_C_COMMON_C": ROOT / "scripts" / "ci" / "sandbox_common.c",
+            "CSL_C_PIN": ROOT / "scripts" / "ci" / "sandbox_c.pin",
         }
         for tag, path in mapping.items():
             start = f"<<'{tag}'\n"
@@ -711,10 +735,10 @@ class WorkflowStructureTests(unittest.TestCase):
         # The model job runs no repository code next to its credentials (Chaandan, 5f904c3);
         # linux-gates tests the pushed commit.
         self.assertIn("linux-gates job lints and tests the pushed commit", devin)
-        self.assertNotIn("python -m pytest", devin.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0])
+        self.assertNotIn("python -m pytest", claude_args_allow(devin))
         # The prompt names tools/ci_gate.py as a protected path (CSL-377);
         # it is never an allowed gate command.
-        self.assertNotIn("tools/ci_gate.py", devin.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0])
+        self.assertNotIn("tools/ci_gate.py", claude_args_allow(devin))
 
     def test_embedded_gate_matches_source_file(self) -> None:
         start = f"python3 - <<'{HEREDOC}'\n"
@@ -864,7 +888,7 @@ class FixerGateAndPromptTests(unittest.TestCase):
         for job in ("claude-mention", "devin-review-fix"):
             body = self._job(job)
             # CSL-377 (Samir, acecb2b): the fixed helper is the only Bash rule; no gate commands.
-            allow = body.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0]
+            allow = claude_args_allow(body)
             self.assertEqual(re.findall(r"Bash\([^)]*\)", allow), [self.HELPER], job)
             self.assertIn("Edit(/${{ github.workspace }}/**)", allow, job)
             self.assertIn("Write(/${{ github.workspace }}/**)", allow, job)
@@ -885,7 +909,7 @@ class FixerGateAndPromptTests(unittest.TestCase):
             self.assertIn("commit SHA", body, job)
             self.assertIn("do NOT resolve the thread", body, job)
             self.assertIn("claude-fixer-guard/model-api -- reply COMMENT_ID BODY_FILE", body, job)
-            allow = body.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0]
+            allow = claude_args_allow(body)
             self.assertIn("Bash(python3 ${{ runner.temp }}/claude-fixer-guard/model-api --:*)", allow, job)
             self.assertNotIn("resolveReviewThread", allow, job)
             self.assertNotIn("fix or a rationale", body, job)
@@ -927,9 +951,12 @@ class FixerGateAndPromptTests(unittest.TestCase):
             self.assertNotIn("show_full_output", body, job)
 
     def test_mention_job_installs_gate_deps(self) -> None:
+        # Preferred I5: no setup-python/pip before uses:. Gates run in linux-gates.
         mention = self._job("claude-mention")
-        self.assertIn("actions/setup-python@v5", mention)
-        self.assertIn("Install acceptance-gate deps", mention)
+        fixer = self._job("devin-review-fix")
+        for body in (mention, fixer):
+            self.assertNotIn("actions/setup-python@", body)
+            self.assertNotIn("Install acceptance-gate deps", body)
         self.assertNotIn("ruff check app", mention)
         self.assertIn("linux-gates job lints and tests the pushed commit", mention)
         self.assertNotIn("Bash(python -m pytest -q app/tests)", mention)
