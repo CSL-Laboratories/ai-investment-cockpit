@@ -131,6 +131,9 @@ FORBIDDEN_ANY = frozenset(
     {"NODE_OPTIONS", "BASH_ENV", "ENV", "LD_PRELOAD", "LD_AUDIT"}
 )
 
+# D10:261: LD_LIBRARY_PATH unset or empty under preferred I5 (no setup-python
+# before uses:). BUN_* only names recorded from the root-owned bun at 0a.
+
 # Exact Run-step shell line (D10 H5 / K2 fixture): Worker execs bash with these.
 RUN_STEP_BASH_ARGV: Tuple[str, ...] = (
     "--noprofile",
@@ -228,6 +231,27 @@ def check_k2_x(
     return None
 
 
+def check_ld_library_path(proc_env: Mapping[str, str]) -> Optional[str]:
+    """Preferred I5: unset or empty. Non-empty fails every honest run."""
+    if "LD_LIBRARY_PATH" not in proc_env:
+        return None
+    if proc_env["LD_LIBRARY_PATH"] != "":
+        return "LD_LIBRARY_PATH"
+    return None
+
+
+def check_bun_names(
+    proc_env: Mapping[str, str], recorded_bun: Mapping[str, str]
+) -> Optional[str]:
+    """BUN_* only names recorded from the root-owned bun at 0a."""
+    for name, value in proc_env.items():
+        if not name.startswith("BUN_"):
+            continue
+        if name not in recorded_bun or recorded_bun[name] != value:
+            return name
+    return None
+
+
 def check_environ(
     *,
     proc_env: Mapping[str, str],
@@ -236,16 +260,28 @@ def check_environ(
     on_x: bool,
     workspace: str,
     worker_path: str,
+    recorded_bun: Optional[Mapping[str, str]] = None,
 ) -> EnvironVerdict:
     """Allowlist ``proc_env`` (X or B) against the three sets plus K1/K2."""
     for name in FORBIDDEN_ANY:
         if name in proc_env and proc_env[name] != "":
             return EnvironVerdict(False, name)
+    reason = check_ld_library_path(proc_env)
+    if reason:
+        return EnvironVerdict(False, reason)
+    bun = recorded_bun or {}
+    reason = check_bun_names(proc_env, bun)
+    if reason:
+        return EnvironVerdict(False, reason)
     expected_path = expected_job_path(worker_path)
     if proc_env.get("PATH") != expected_path:
         return EnvironVerdict(False, "path")
 
     for name, value in proc_env.items():
+        if name == "LD_LIBRARY_PATH":
+            continue
+        if name.startswith("BUN_"):
+            continue
         kind = classify_name(name, on_x=on_x)
         if kind == "set2":
             if name in SET2_VALUE_RULES and value != SET2_VALUE_RULES[name]:
@@ -292,3 +328,48 @@ def parse_environ_bytes(data: bytes) -> Dict[str, str]:
 def run_step_argv(script_path: str, bash: str = "/bin/bash") -> Tuple[str, ...]:
     """Exact Run-step argv[0..6] shape (H5), for the K2 fixture test."""
     return (bash, *RUN_STEP_BASH_ARGV, script_path)
+
+
+def main(argv: Sequence[str]) -> int:
+    """Hosted 0b/observation entry. Constants only; no env path overrides."""
+    import json
+    import os
+    from pathlib import Path
+
+    cmd = argv[1] if len(argv) > 1 else ""
+    state = Path("/var/lib/csl-relay")
+    if cmd == "check":
+        worker = parse_environ_bytes((state / "worker.environ").read_bytes())
+        proc = parse_environ_bytes((state / "x.environ").read_bytes())
+        b_env = parse_environ_bytes((state / "b.environ").read_bytes())
+        bun = {}
+        bun_path = state / "bun.env"
+        if bun_path.is_file():
+            bun = json.loads(bun_path.read_text(encoding="ascii"))
+        workspace = (state / "workspace").read_text(encoding="ascii").strip()
+        worker_path = worker.get("PATH", "")
+        verdict = check_environ(
+            proc_env=proc,
+            worker_env=worker,
+            b_env=b_env,
+            on_x=True,
+            workspace=workspace,
+            worker_path=worker_path,
+            recorded_bun=bun,
+        )
+        if not verdict.ok:
+            raise SystemExit("environ")
+        return 0
+    if cmd == "record-bun":
+        recorded = {k: v for k, v in os.environ.items() if k.startswith("BUN_")}
+        state.mkdir(parents=True, exist_ok=True)
+        (state / "bun.env").write_text(json.dumps(recorded, sort_keys=True), encoding="ascii")
+        return 0
+    raise SystemExit("argv")
+
+
+if __name__ == "__main__":
+    import os
+    import sys
+
+    raise SystemExit(main(sys.argv))

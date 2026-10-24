@@ -24,6 +24,9 @@ ACTION_DIR = (
 )
 SETUP_BUN_PIN = "0c5077e51419868618aeaa5fe8019c62421857d6"
 SETUP_BUN_USES = f"oven-sh/setup-bun@{SETUP_BUN_PIN}"
+SETUP_BUN_DIR = (
+    "/home/runner/work/_actions/oven-sh/setup-bun/" + SETUP_BUN_PIN
+)
 BUN_VERSION = "1.3.14"
 CHECKOUT_PIN = "11d5960a326750d5838078e36cf38b85af677262"
 CHECKOUT_USES = f"actions/checkout@{CHECKOUT_PIN}"
@@ -218,13 +221,85 @@ def empty_root_owned_dir(
         raise BindError("bun_bin_not_empty")
 
 
+def git_blob_sha1(path: str) -> str:
+    data = Path(path).read_bytes()
+    header = f"blob {len(data)}\0".encode("ascii")
+    return hashlib.sha1(header + data).hexdigest()
+
+
+def parse_ls_tree(text: str) -> Dict[str, str]:
+    """``git ls-tree -r`` → path to blob sha1."""
+    out: Dict[str, str] = {}
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        meta, path = line.split("\t", 1)
+        _mode, kind, sha = meta.split()
+        if kind != "blob":
+            continue
+        out[path] = sha
+    return out
+
+
+def walk_files(root: str, *, skip_dirs: Sequence[str] = ()) -> List[str]:
+    skip = set(skip_dirs)
+    found: List[str] = []
+    base = Path(root)
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in skip]
+        for name in filenames:
+            full = Path(dirpath) / name
+            if full.is_symlink():
+                raise BindError("symlink")
+            rel = str(full.relative_to(base)).replace("\\", "/")
+            found.append(rel)
+    return sorted(found)
+
+
+def check_git_tree(action_dir: str, ls_tree: str, *, skip_dirs: Sequence[str] = ("node_modules",)) -> Dict[str, str]:
+    """Fail closed on blob mismatch or extra files (D10:204). ``bin/`` is not excluded."""
+    expected = parse_ls_tree(ls_tree)
+    on_disk = walk_files(action_dir, skip_dirs=skip_dirs)
+    extra = [p for p in on_disk if p not in expected]
+    missing = [p for p in expected if p not in on_disk]
+    if extra or missing:
+        raise BindError("git_tree")
+    for rel, sha in expected.items():
+        got = git_blob_sha1(os.path.join(action_dir, rel))
+        if got != sha:
+            raise BindError("git_tree_hash")
+    return {"files": str(len(expected))}
+
+
+def tree_digest(root: str) -> str:
+    """Ordered path+sha256 digest of every regular file under root."""
+    digest = hashlib.sha256()
+    base = Path(root)
+    if not base.is_dir():
+        raise BindError("tree")
+    files = walk_files(root)
+    for rel in files:
+        full = base / rel
+        digest.update(rel.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(sha256_file(str(full)).encode("ascii"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def worker_ns_mnt(path: str, expected: str) -> None:
+    got = Path(path).read_text(encoding="ascii").strip()
+    if not got or got != expected.strip():
+        raise BindError("ns_mnt")
+
+
 def main(argv: Sequence[str]) -> int:
     sys.tracebacklimit = 0
     cmd = argv[1] if len(argv) > 1 else ""
-    action_dir = os.environ.get("CSL_ACTION_DIR", ACTION_DIR)
-    state_dir = os.environ.get("CSL_RELAY_STATE", RELAY_STATE)
+    action_dir = ACTION_DIR
+    state_dir = RELAY_STATE
     if cmd == "empty-bun-bin":
-        empty_root_owned_dir(os.environ.get("CSL_BUN_BIN", BUN_HOME_BIN))
+        empty_root_owned_dir(BUN_HOME_BIN)
         return 0
     if cmd == "verify-pins":
         pins = verify_pins(action_dir=action_dir)
@@ -244,6 +319,28 @@ def main(argv: Sequence[str]) -> int:
         record_path_inode(BUN_EXE, os.path.join(state_dir, "bun.inode"))
         record_path_inode(BUN_HOME_BIN, os.path.join(state_dir, "bun-bin.inode"))
         record_path_inode(action_dir, os.path.join(state_dir, "ap.inode"))
+        return 0
+    if cmd == "hash-git-tree":
+        ls_tree = Path(os.path.join(state_dir, "cca.ls-tree")).read_text(encoding="utf-8")
+        check_git_tree(action_dir, ls_tree)
+        return 0
+    if cmd == "hash-node-modules":
+        digest = tree_digest(os.path.join(action_dir, "node_modules"))
+        Path(state_dir, "node_modules.digest").write_text(digest + "\n", encoding="ascii")
+        return 0
+    if cmd == "hash-setup-bun":
+        digest = tree_digest(SETUP_BUN_DIR)
+        Path(state_dir, "setup-bun.digest").write_text(digest + "\n", encoding="ascii")
+        return 0
+    if cmd == "observe":
+        pins = verify_pins(action_dir=action_dir)
+        sys.stdout.write(f"sdk_disk_match={pins['sdk_disk_match']}\n")
+        nm = Path(state_dir, "node_modules.digest").read_text(encoding="ascii").strip()
+        if tree_digest(os.path.join(action_dir, "node_modules")) != nm:
+            raise BindError("node_modules")
+        bun = Path(state_dir, "setup-bun.digest").read_text(encoding="ascii").strip()
+        if tree_digest(SETUP_BUN_DIR) != bun:
+            raise BindError("setup_bun")
         return 0
     raise BindError("argv")
 
