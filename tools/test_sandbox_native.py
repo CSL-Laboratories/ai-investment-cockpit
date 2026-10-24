@@ -560,7 +560,36 @@ class R3ContractTests(unittest.TestCase):
         self.assertIn("kill(-child, SIGKILL)", launch)
         self.assertIn("CLOCK_MONOTONIC", launch)
         self.assertIn("setpgid(0, 0)", launch)
+        self.assertIn("csl_reap_leftover_descendants", launch)
         self.assertNotIn("Bound so a fork bomb cannot hang forever", launch)
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = Path(tmp)
+            probe = prefix / "n14-reap"
+            subprocess.run(
+                [
+                    "gcc",
+                    "-DCSL_N14_TEST",
+                    f'-DCSL_PREFIX="{prefix}"',
+                    "-o", str(probe),
+                    str(ROOT / "tools" / "n14_reap_test.c"),
+                    str(SRC / "sandbox_launch.c"),
+                    str(SRC / "sandbox_argv.c"),
+                    str(SRC / "sandbox_common.c"),
+                    f"-I{SRC}",
+                    "-static", "-O2", "-Wall", "-Werror",
+                    "-Wno-unused-function",
+                ],
+                check=True,
+                cwd=SRC,
+            )
+            started = time.monotonic()
+            proc = subprocess.run([str(probe)], capture_output=True, timeout=8)
+            elapsed = time.monotonic() - started
+            self.assertEqual(
+                proc.returncode, 0,
+                f"rc={proc.returncode} stderr={proc.stderr!r} stdout={proc.stdout!r}",
+            )
+            self.assertLess(elapsed, 5.0)
 
     def test_relay_sudo_parent_is_exact(self) -> None:
         relay = (SRC / "sandbox_relay.c").read_text(encoding="utf-8")

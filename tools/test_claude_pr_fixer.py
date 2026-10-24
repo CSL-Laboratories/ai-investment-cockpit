@@ -641,7 +641,13 @@ class WorkflowStructureTests(unittest.TestCase):
         )
         self.assertIn("bun-version: \"1.3.14\"", mention)
         self.assertIn("no-cache: true", mention)
+        self.assertIn("id: setup-bun", mention)
+        self.assertIn("E3-0-early record bun-path", mention)
+        self.assertIn("steps.setup-bun.outputs.bun-path", mention)
+        self.assertIn("/home/runner/work/_temp/csl-e3-bun-path", mention)
         self.assertIn("E3-0-early root bootstrap", mention)
+        self.assertIn("C6.2 stub", mention)
+        self.assertIn("printf '%s\\n' .claude-fixer-out/ .claude-fixer-replies/", mention)
         self.assertIn(
             "shell: /usr/bin/sudo -n /bin/bash --noprofile --norc -e -o pipefail {0}",
             mention,
@@ -672,6 +678,8 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertNotIn("%sudo   ALL=(ALL:ALL) NOPASSWD:ALL", bootstrap)
         self.assertIn('"$GCC" -static', bootstrap)
         self.assertIn("E3-0-early setup-bun", fixer)
+        self.assertIn("E3-0-early record bun-path", fixer)
+        self.assertIn("C6.2 stub", fixer)
         self.assertIn("path_to_bun_executable", fixer)
         self.assertIn("sandbox_e3_cli_pin.sh", fixer)
 
@@ -773,7 +781,22 @@ class WorkflowStructureTests(unittest.TestCase):
                 for line in header.splitlines()
                 if line.strip().startswith("runs-on:")
             ]
-            self.assertEqual(runners, ["runs-on: ubuntu-latest"], name)
+            self.assertEqual(runners, ["runs-on: ubuntu-24.04"], name)
+
+    def test_stack_sandbox_jobs_pin_ubuntu_24_04(self) -> None:
+        # Lucas 2026-10-24 1:36pm PT: pin ubuntu-24.04; 26.04 is a later PR.
+        for path in (
+            WORKFLOW_PATH,
+            WRITER_WORKFLOW_PATH,
+            ROOT / ".github" / "workflows" / "csl-474-p9-probes.yml",
+        ):
+            runners = [
+                line.strip()
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip().startswith("runs-on:")
+            ]
+            self.assertTrue(runners, path.name)
+            self.assertEqual(set(runners), {"runs-on: ubuntu-24.04"}, path.name)
 
     def _job(self, name: str) -> str:
         marker = f"  {name}:"
@@ -926,6 +949,10 @@ class FixerGateAndPromptTests(unittest.TestCase):
             self.assertNotIn("the gate result", body, job)
             self.assertIn("that linux-gates checks the pushed commit", body, job)
             self.assertIn("If you cannot complete the fix, or a command you need is denied", body, job)
+            self.assertNotIn("Read them when you need them", body, job)
+            self.assertIn("must not be Read", body, job)
+            self.assertIn('"agents-md@builtin"', body, job)
+            self.assertIn('"instructionFiles": "claude-md"', body, job)
 
     def test_denials_are_reported_after_each_fixer(self) -> None:
         for job in ("claude-mention", "devin-review-fix"):
@@ -1381,7 +1408,7 @@ class ConflictJobStructureTests(unittest.TestCase):
         prepare = writer.split("\n  prepare:\n", 1)[1].split("\n  model:\n", 1)[0]
         job = writer.split("\n  model:\n", 1)[1].split("\n  publish:\n", 1)[0]
         for part in (prepare, job):
-            self.assertIn("runs-on: ubuntu-latest", part.split("steps:")[0])
+            self.assertIn("runs-on: ubuntu-24.04", part.split("steps:")[0])
             self.assertNotIn("blacksmith", part.split("steps:")[0])
             self.assertIn("group: claude-${{ inputs.pr_number }}", part)
             self.assertIn("cancel-in-progress: false", part)
@@ -1390,6 +1417,10 @@ class ConflictJobStructureTests(unittest.TestCase):
         self.assertIn("merge --no-ff --no-commit", job)
         self.assertNotIn("--no-edit", job)
         self.assertIn('git config user.name "claude[bot]"', job)
+        self.assertIn("C6.2 stub", job)
+        self.assertIn('"agents-md@builtin"', job)
+        self.assertIn('"instructionFiles": "claude-md"', job)
+        self.assertIn("must not be Read", job)
         self.assertIn("needs.prepare.outputs.skip == 'false'", job.split("steps:")[0])
         self.assertIn('"open $HEAD_SHA dirty $REPO"', prepare)
         self.assertIn(".head.repo.full_name", prepare)
@@ -2095,6 +2126,28 @@ class ClaudeCodeInstallerPinTests(unittest.TestCase):
             with self.subTest(workflow=name, step=index):
                 self.assertIn("\n          path_to_claude_code_executable: /opt/csl-claude/2.1.306/claude\n", inputs)
                 self.assertIn("DISABLE_UPDATES", inputs)
+
+
+class P9ProbeWorkflowTests(unittest.TestCase):
+    """CSL-474 P9 workflow_dispatch probes live next to the sandbox writers."""
+
+    def test_p9_probe_workflow_is_dispatch_only_and_pinned(self) -> None:
+        path = ROOT / ".github" / "workflows" / "csl-474-p9-probes.yml"
+        text = path.read_text(encoding="utf-8")
+        header = text.split("\njobs:", 1)[0]
+        self.assertIn("workflow_dispatch:", header)
+        self.assertNotIn("\npull_request:", header)
+        self.assertNotIn("\npush:", header)
+        self.assertIn("contents: read", header)
+        self.assertIn("enable_probe2_oauth:", header)
+        self.assertIn("default: false", header)
+        self.assertIn("2.1.306", text)
+        self.assertIn("520bc6c1f40af466bd03a278b5ae1af1a2938bc7de5b9e5cb15526da20d71cfe", text)
+        self.assertIn("a5a423f75c251dcbff8a74e99f83b2cb03c72bfa", text)
+        self.assertIn("runs-on: ubuntu-24.04", text)
+        self.assertNotIn("runs-on: ubuntu-latest", text)
+        self.assertNotIn("anthropics/claude-code-action", text)
+        self.assertIn("if: ${{ inputs.enable_probe2_oauth }}", text)
 
 
 if __name__ == "__main__":

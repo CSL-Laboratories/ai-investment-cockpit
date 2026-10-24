@@ -1,0 +1,385 @@
+# CSL-474 P9 Probes 0 and 2. workflow_dispatch only. Do not schedule or
+# call this from another workflow. Lucas adds the file; Lucas dispatches.
+# This PR does not dispatch, add secrets, or add vars.
+#
+# Probe 0: sandbox/launcher host preconditions (cgroup v2, cgroup.kill,
+# runner cgroup.procs write, userns, sudo, ps).
+# Probe 2: 2.1.306 CLI facts for P1 settings.local.json / AGENTS.md and
+# empty-MCP immutability. Same pin as scripts/ci/claude-code-2.1.306-linux-x64.pin
+# (sha256 520bc6c1…, action pin a5a423f75c251dcbff8a74e99f83b2cb03c72bfa).
+# The OAuth invoke is behind enable_probe2_oauth (default false).
+name: CSL-474 P9 probes
+
+on:
+  workflow_dispatch:
+    inputs:
+      probe:
+        description: "Which probe to run: 0 (host facts), 2 (CLI/settings), both"
+        type: choice
+        options:
+          - "0"
+          - "2"
+          - "both"
+        default: "both"
+      enable_probe2_oauth:
+        description: "Allow Probe 2 to pass the existing fixer OAuth secret into a 1-turn CLI invoke. Defaults off. Leave off until Lucas explicitly asks for that dispatch."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  probe-0:
+    name: Probe 0 host facts
+    if: ${{ inputs.probe == '0' || inputs.probe == 'both' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Record sandbox/launcher preconditions
+        run: |
+          set -euo pipefail
+          fail=0
+          rec() { printf 'CSL_P9_PROBE0_%s=%s\n' "$1" "$2"; }
+          rec IMAGE "$(. /etc/os-release && printf '%s' "$PRETTY_NAME")"
+          rec KERNEL "$(uname -r)"
+          rec ID "$(id)"
+          rec SUDO_N "$(sudo -n true >/dev/null 2>&1 && echo ok || echo fail)"
+          if [ "$(sudo -n true >/dev/null 2>&1 && echo ok || echo fail)" != "ok" ]; then
+            fail=1
+          fi
+
+          if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+            rec CGROUP_V2 present
+            rec CGROUP_CONTROLLERS "$(tr '\n' ' ' < /sys/fs/cgroup/cgroup.controllers)"
+          else
+            rec CGROUP_V2 missing
+            fail=1
+          fi
+          rec CGROUP_SELF "$(cat /proc/self/cgroup)"
+          rec CGROUP_MOUNTS "$(findmnt -n -t cgroup,cgroup2 -o TARGET,FSTYPE,OPTIONS | tr '\n' ';')"
+
+          leaf="/sys/fs/cgroup/csl-p9-probe0"
+          rec CGROUP_KILL_FILE "$(test -f /sys/fs/cgroup/cgroup.kill && echo present || echo missing)"
+          if sudo -n mkdir "$leaf" 2>/tmp/csl-p9-cgroup-mkdir.err; then
+            rec CGROUP_LEAF_MKDIR_ROOT ok
+            rec CGROUP_LEAF_KILL_FILE "$(test -f "$leaf/cgroup.kill" && echo present || echo missing)"
+            if [ -f "$leaf/cgroup.kill" ]; then
+              if printf '1\n' | sudo -n tee "$leaf/cgroup.kill" >/dev/null; then
+                rec CGROUP_KILL_WRITE ok
+              else
+                rec CGROUP_KILL_WRITE fail
+              fi
+            else
+              rec CGROUP_KILL_WRITE missing
+            fi
+            if printf '%s\n' "$$" > "$leaf/cgroup.procs" 2>/tmp/csl-p9-cgroup-procs.err; then
+              rec RUNNER_CGROUP_PROCS_WRITE ok
+            else
+              rec RUNNER_CGROUP_PROCS_WRITE denied
+              rec RUNNER_CGROUP_PROCS_ERR "$(tr '\n' ' ' < /tmp/csl-p9-cgroup-procs.err)"
+            fi
+            sudo -n rmdir "$leaf" 2>/dev/null || true
+          else
+            rec CGROUP_LEAF_MKDIR_ROOT fail
+            rec CGROUP_LEAF_MKDIR_ERR "$(tr '\n' ' ' < /tmp/csl-p9-cgroup-mkdir.err)"
+          fi
+
+          rec USERNS_SYSCTL "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo missing)"
+          if unshare --user --pid --fork -- /bin/true >/dev/null 2>/tmp/csl-p9-unshare-before.err; then
+            rec UNSHARE_BEFORE ok
+          else
+            rec UNSHARE_BEFORE fail
+            rec UNSHARE_BEFORE_ERR "$(tr '\n' ' ' < /tmp/csl-p9-unshare-before.err)"
+          fi
+          if sudo -n sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 >/dev/null; then
+            rec USERNS_SYSCTL_FLIP ok
+            if unshare --user --pid --fork -- /bin/true >/dev/null 2>/tmp/csl-p9-unshare-after.err; then
+              rec UNSHARE_AFTER ok
+            else
+              rec UNSHARE_AFTER fail
+              rec UNSHARE_AFTER_ERR "$(tr '\n' ' ' < /tmp/csl-p9-unshare-after.err)"
+              fail=1
+            fi
+          else
+            rec USERNS_SYSCTL_FLIP fail
+            fail=1
+          fi
+
+          if systemd-run --user --scope /bin/true >/tmp/csl-p9-scope-before.out 2>/tmp/csl-p9-scope-before.err; then
+            rec SYSTEMD_USER_SCOPE_BEFORE ok
+          else
+            rec SYSTEMD_USER_SCOPE_BEFORE fail
+            rec SYSTEMD_USER_SCOPE_BEFORE_ERR "$(tr '\n' ' ' < /tmp/csl-p9-scope-before.err)"
+          fi
+          if sudo -n loginctl enable-linger "$(id -un)" >/dev/null 2>/tmp/csl-p9-linger.err; then
+            rec LINGER ok
+            export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+            if systemd-run --user --scope /bin/true >/tmp/csl-p9-scope-after.out 2>/tmp/csl-p9-scope-after.err; then
+              rec SYSTEMD_USER_SCOPE_AFTER ok
+            else
+              rec SYSTEMD_USER_SCOPE_AFTER fail
+              rec SYSTEMD_USER_SCOPE_AFTER_ERR "$(tr '\n' ' ' < /tmp/csl-p9-scope-after.err)"
+            fi
+          else
+            rec LINGER fail
+            rec LINGER_ERR "$(tr '\n' ' ' < /tmp/csl-p9-linger.err)"
+            rec SYSTEMD_USER_SCOPE_AFTER skipped
+          fi
+
+          rec PS "$(ps -eo pid,uid,user,ppid,stat,comm --no-headers | awk -v u="$(id -u)" '$2==u {print}' | tr '\n' '|')"
+          rec EXES "$(ps -eo pid,uid --no-headers | awk -v u="$(id -u)" '$2==u {print $1}' | while read -r p; do printf '%s:%s;' "$p" "$(readlink "/proc/$p/exe" 2>/dev/null || echo missing)"; done)"
+          rec FAIL "$fail"
+          if [ "$fail" != "0" ]; then
+            echo "probe 0 unexpected negative" >&2
+            exit 1
+          fi
+
+  probe-2:
+    name: Probe 2 CLI settings.local.json and AGENTS.md
+    if: ${{ inputs.probe == '2' || inputs.probe == 'both' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      CLAUDE_VERSION: "2.1.306"
+      PLATFORM: "linux-x64"
+      EXPECTED_SHA256: "520bc6c1f40af466bd03a278b5ae1af1a2938bc7de5b9e5cb15526da20d71cfe"
+      EXPECTED_BYTES: "290532720"
+      EXPECTED_FPR: "31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE"
+      RELEASE_BASE: "https://downloads.claude.ai/claude-code-releases"
+      KEY_URL: "https://downloads.claude.ai/keys/claude-code.asc"
+      ACTION_PIN: "a5a423f75c251dcbff8a74e99f83b2cb03c72bfa"
+    steps:
+      - name: Install pinned 2.1.306 CLI into throwaway dir
+        run: |
+          set -euo pipefail
+          printf 'CSL_P9_PROBE2_ACTION_PIN=%s\n' "$ACTION_PIN"
+          printf 'CSL_P9_PROBE2_CLI_VERSION=%s\n' "$CLAUDE_VERSION"
+          STAGING="${RUNNER_TEMP}/csl-p9-cli-staging"
+          DEST_DIR="${RUNNER_TEMP}/csl-p9-cli"
+          rm -rf "$STAGING" "$DEST_DIR"
+          mkdir -m 0700 "$STAGING"
+          mkdir -m 0700 "$DEST_DIR"
+          /usr/bin/curl -fsSL --retry 3 --retry-delay 2 -o "$STAGING/claude" \
+            "${RELEASE_BASE}/${CLAUDE_VERSION}/${PLATFORM}/claude"
+          bytes="$(stat -c %s "$STAGING/claude")"
+          if [ "$bytes" != "$EXPECTED_BYTES" ]; then
+            echo "size mismatch: got ${bytes} want ${EXPECTED_BYTES}" >&2
+            exit 1
+          fi
+          echo "${EXPECTED_SHA256}  ${STAGING}/claude" | sha256sum -c -
+          /usr/bin/curl -fsSL --retry 3 --retry-delay 2 -o "$STAGING/manifest.json" \
+            "${RELEASE_BASE}/${CLAUDE_VERSION}/manifest.json"
+          /usr/bin/curl -fsSL --retry 3 --retry-delay 2 -o "$STAGING/manifest.json.sig" \
+            "${RELEASE_BASE}/${CLAUDE_VERSION}/manifest.json.sig"
+          /usr/bin/curl -fsSL --retry 3 --retry-delay 2 -o "$STAGING/claude-code.asc" "$KEY_URL"
+          GNUPGHOME="$(mktemp -d)"
+          chmod 700 "$GNUPGHOME"
+          export GNUPGHOME
+          /usr/bin/gpg --batch --import "$STAGING/claude-code.asc"
+          status="$(/usr/bin/gpg --batch --status-fd 1 --verify "$STAGING/manifest.json.sig" "$STAGING/manifest.json")"
+          case "$status" in
+            *"[GNUPG:] VALIDSIG ${EXPECTED_FPR} "*) ;;
+            *)
+              echo "signed-manifest VALIDSIG mismatch" >&2
+              exit 1
+              ;;
+          esac
+          case "$status" in
+            *"[GNUPG:] GOODSIG "*) ;;
+            *)
+              echo "signed-manifest missing GOODSIG" >&2
+              exit 1
+              ;;
+          esac
+          for bad in EXPKEYSIG REVKEYSIG EXPSIG KEYEXPIRED KEYREVOKED BADSIG ERRSIG; do
+            case "$status" in
+              *"[GNUPG:] ${bad}"*)
+                echo "signed-manifest rejected: ${bad}" >&2
+                exit 1
+                ;;
+            esac
+          done
+          STAGING="$STAGING" CLAUDE_VERSION="$CLAUDE_VERSION" EXPECTED_SHA256="$EXPECTED_SHA256" EXPECTED_BYTES="$EXPECTED_BYTES" \
+            /usr/bin/python3 -I -c '
+          import json, os, sys
+          manifest = json.load(open(os.environ["STAGING"] + "/manifest.json", encoding="utf-8"))
+          plat = manifest["platforms"]["linux-x64"]
+          errors = []
+          if manifest.get("version") != os.environ["CLAUDE_VERSION"]:
+              errors.append("version")
+          if plat.get("checksum") != os.environ["EXPECTED_SHA256"]:
+              errors.append("checksum")
+          if int(plat.get("size", -1)) != int(os.environ["EXPECTED_BYTES"]):
+              errors.append("size")
+          if errors:
+              sys.stderr.write("signed manifest does not match committed pin: " + ",".join(errors) + "\n")
+              sys.exit(1)
+          '
+          install -m 0755 "$STAGING/claude" "$DEST_DIR/claude"
+          printf 'CSL_P9_PROBE2_CLI=%s\n' "$DEST_DIR/claude"
+          "$DEST_DIR/claude" --version | tee "${RUNNER_TEMP}/csl-p9-cli-version.txt"
+          rm -rf "$STAGING" "$GNUPGHOME"
+
+      - name: Probe 2 without OAuth
+        env:
+          ENABLE_OAUTH: ${{ inputs.enable_probe2_oauth }}
+        run: |
+          set -euo pipefail
+          rec() { printf 'CSL_P9_PROBE2_%s=%s\n' "$1" "$2"; }
+          CLI="${RUNNER_TEMP}/csl-p9-cli/claude"
+          WORK="${RUNNER_TEMP}/csl-p9-work"
+          MCP_RO="${RUNNER_TEMP}/csl-p9-mcp.empty.ro.json"
+          MCP_RW="${RUNNER_TEMP}/csl-p9-mcp.empty.rw.json"
+          rm -rf "$WORK"
+          mkdir -m 0700 "$WORK"
+          mkdir -p "$WORK/.claude"
+          printf '%s\n' '{"mcpServers":{}}' > "$MCP_RW"
+          sudo -n install -o root -g root -m 0444 "$MCP_RW" "$MCP_RO"
+          if printf 'x\n' >> "$MCP_RO" 2>/tmp/csl-p9-mcp-write.err; then
+            rec MCP_0444_WRITE allowed
+            echo "root 0444 empty MCP was writable by runner" >&2
+            exit 1
+          fi
+          rec MCP_0444_WRITE denied
+          rec MCP_0444_ERR "$(tr '\n' ' ' < /tmp/csl-p9-mcp-write.err)"
+          HASH_BEFORE="$(sha256sum "$MCP_RW" | awk '{print $1}')"
+
+          cat > "$WORK/.claude/settings.local.json" <<'JSON'
+          {
+            "env": {"CSL474_LOCAL_SETTINGS": "fired"},
+            "hooks": {
+              "PreToolUse": [
+                {
+                  "matcher": "*",
+                  "hooks": [
+                    {"type": "command", "command": "printf local > /tmp/csl-p9-local-hook"}
+                  ]
+                }
+              ]
+            }
+          }
+          JSON
+          cat > "$WORK/.claude/settings.json" <<'JSON'
+          {
+            "hooks": {
+              "PreToolUse": [
+                {
+                  "matcher": "*",
+                  "hooks": [
+                    {"type": "command", "command": "printf project > /tmp/csl-p9-project-hook"}
+                  ]
+                }
+              ]
+            }
+          }
+          JSON
+          printf '%s\n' '# CSL474_AGENTS_CANARY do not load this file' > "$WORK/AGENTS.md"
+          mkdir -p "$HOME/.claude"
+          cat > "$HOME/.claude/settings.json" <<'JSON'
+          {
+            "pluginConfigs": {
+              "agents-md@builtin": {
+                "options": {
+                  "instructionFiles": "claude-md"
+                }
+              }
+            }
+          }
+          JSON
+          rm -f /tmp/csl-p9-local-hook /tmp/csl-p9-project-hook
+          set +e
+          (cd "$WORK" && timeout 45 "$CLI" -p "reply with exactly P9PROBE2OK and nothing else" \
+            --setting-sources user \
+            --strict-mcp-config \
+            --mcp-config "$MCP_RW" \
+            --max-turns 1 \
+            --output-format text) \
+            >"${RUNNER_TEMP}/csl-p9-cli-out.txt" 2>"${RUNNER_TEMP}/csl-p9-cli-err.txt"
+          rc=$?
+          set -e
+          rec CLI_RC "$rc"
+          rec CLI_OUT_BYTES "$(wc -c < "${RUNNER_TEMP}/csl-p9-cli-out.txt" | tr -d ' ')"
+          rec CLI_ERR_BYTES "$(wc -c < "${RUNNER_TEMP}/csl-p9-cli-err.txt" | tr -d ' ')"
+          combined="$(cat "${RUNNER_TEMP}/csl-p9-cli-out.txt" "${RUNNER_TEMP}/csl-p9-cli-err.txt")"
+          case "$combined" in
+            *[Ll]ogin*|*[Aa]uthenticat*|*[Aa]pi\ [Kk]ey*|*[Oo]auth*|*[Nn]ot\ logged*)
+              rec NEEDS_OAUTH 1
+              rec CLI_STARTED 0
+              ;;
+            *)
+              if [ "$rc" -eq 0 ]; then
+                rec NEEDS_OAUTH 0
+                rec CLI_STARTED 1
+              else
+                rec NEEDS_OAUTH unknown
+                rec CLI_STARTED 0
+              fi
+              ;;
+          esac
+          rec PROJECT_HOOK "$(test -f /tmp/csl-p9-project-hook && echo present || echo absent)"
+          rec LOCAL_HOOK "$(test -f /tmp/csl-p9-local-hook && echo present || echo absent)"
+          case "$combined" in
+            *CSL474_AGENTS_CANARY*) rec AGENTS_CANARY present ;;
+            *) rec AGENTS_CANARY absent ;;
+          esac
+          HASH_AFTER="$(sha256sum "$MCP_RW" | awk '{print $1}')"
+          if [ "$HASH_BEFORE" = "$HASH_AFTER" ]; then
+            rec MCP_BYTES_UNCHANGED 1
+          else
+            rec MCP_BYTES_UNCHANGED 0
+            echo "writable empty MCP bytes changed" >&2
+            exit 1
+          fi
+          if [ -f /tmp/csl-p9-project-hook ] || [ -f /tmp/csl-p9-local-hook ]; then
+            echo "cwd hook fired under --setting-sources user" >&2
+            exit 1
+          fi
+          if [ "${ENABLE_OAUTH}" != "true" ]; then
+            rec OAUTH_STEP skipped
+          fi
+
+      - name: Probe 2 OAuth CLI invoke
+        if: ${{ inputs.enable_probe2_oauth }}
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          rec() { printf 'CSL_P9_PROBE2_OAUTH_%s=%s\n' "$1" "$2"; }
+          if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+            echo "enable_probe2_oauth was set but the fixer OAuth secret is empty" >&2
+            exit 1
+          fi
+          CLI="${RUNNER_TEMP}/csl-p9-cli/claude"
+          WORK="${RUNNER_TEMP}/csl-p9-work"
+          MCP_RW="${RUNNER_TEMP}/csl-p9-mcp.empty.rw.json"
+          rm -f /tmp/csl-p9-local-hook /tmp/csl-p9-project-hook
+          set +e
+          (cd "$WORK" && timeout 90 "$CLI" -p "reply with exactly P9PROBE2OK and nothing else" \
+            --setting-sources user \
+            --strict-mcp-config \
+            --mcp-config "$MCP_RW" \
+            --max-turns 1 \
+            --output-format text) \
+            >"${RUNNER_TEMP}/csl-p9-oauth-out.txt" 2>"${RUNNER_TEMP}/csl-p9-oauth-err.txt"
+          rc=$?
+          set -e
+          rec RC "$rc"
+          rec OUT_BYTES "$(wc -c < "${RUNNER_TEMP}/csl-p9-oauth-out.txt" | tr -d ' ')"
+          rec ERR_BYTES "$(wc -c < "${RUNNER_TEMP}/csl-p9-oauth-err.txt" | tr -d ' ')"
+          combined="$(cat "${RUNNER_TEMP}/csl-p9-oauth-out.txt" "${RUNNER_TEMP}/csl-p9-oauth-err.txt")"
+          rec PROJECT_HOOK "$(test -f /tmp/csl-p9-project-hook && echo present || echo absent)"
+          rec LOCAL_HOOK "$(test -f /tmp/csl-p9-local-hook && echo present || echo absent)"
+          case "$combined" in
+            *CSL474_AGENTS_CANARY*) rec AGENTS_CANARY present ;;
+            *) rec AGENTS_CANARY absent ;;
+          esac
+          if [ -f /tmp/csl-p9-project-hook ] || [ -f /tmp/csl-p9-local-hook ]; then
+            echo "cwd hook fired under --setting-sources user with OAuth" >&2
+            exit 1
+          fi
+          rec DONE 1

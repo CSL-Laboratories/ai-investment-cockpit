@@ -32,8 +32,8 @@ def drop_setup_python_and_pip(text: str) -> str:
 def helper_cat_block() -> str:
     body = indent_body(OUTBOX_SRC.read_text(encoding="utf-8"))
     return (
-        "          mkdir -p \"$RUNNER_TEMP/claude-fixer-guard\"\n"
-        "          cat > \"$RUNNER_TEMP/claude-fixer-guard/model-api\" <<'CLAUDE_FIXER_OUTBOX'\n"
+        "          mkdir -p /home/runner/work/_temp/claude-fixer-guard\n"
+        "          cat > /home/runner/work/_temp/claude-fixer-guard/model-api <<'CLAUDE_FIXER_OUTBOX'\n"
         f"{body}\n"
         "          CLAUDE_FIXER_OUTBOX\n"
     )
