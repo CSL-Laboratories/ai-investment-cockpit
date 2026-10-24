@@ -161,6 +161,21 @@ class ProtectedPathTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertFalse(p.is_protected(path))
 
+    def test_pip_and_interpreter_shadow_paths_are_protected(self):
+        # CSL-471: a model-written pip/ or sitecustomize must not land.
+        for path in ("pip/__main__.py", "app/pip/__main__.py", "APP/PIP/x.py", "lib/pip/foo.py",
+                     "pip.py", "app/pip.py", "PIP.PY", "pip.pyc",
+                     "sitecustomize.py", "app/sitecustomize.py", "SITECUSTOMIZE.py",
+                     "sitecustomize.pyc", "sitecustomize",
+                     "usercustomize.py", "pkg/usercustomize.py", "usercustomize.pyc", "usercustomize",
+                     "foo.pth", "app/foo.pth", "nested/bar.PTH", "evil.pth/x.py"):
+            with self.subTest(path=path):
+                self.assertTrue(p.is_protected(path))
+        for path in ("app/a.py", "app/pipeline.py", "docs/pip.md", "tools/pip_notes.txt",
+                     "sitecustomize.py.bak", "foo.pth.bak"):
+            with self.subTest(path=path):
+                self.assertFalse(p.is_protected(path))
+
 
 class LinearValidationTests(GitCase):
     def test_valid_linear_commits_pass(self):
@@ -171,7 +186,9 @@ class LinearValidationTests(GitCase):
     def test_protected_paths_are_refused_including_deletes_and_reverted_intermediates(self):
         for change in ({".github/workflows/ci.yml": "on: pull_request_target\n"}, {"AGENTS.md": "new rules\n"},
                        {"scripts/ci/new.py": "x\n"}, {".env": "SECRET=1\n"}, {"app/.gitattributes": "* -text\n"},
-                       {"docs/CODEOWNERS": "* @x\n"}, {".claude/settings.json": "{}\n"}):
+                       {"docs/CODEOWNERS": "* @x\n"}, {".claude/settings.json": "{}\n"},
+                       {"app/pip/__main__.py": "print(1)\n"}, {"sitecustomize.py": "x\n"},
+                       {"app/foo.pth": "import os\n"}):
             with self.subTest(change=change):
                 self.model.git("reset", "-q", "--hard", self.head)
                 self.model.commit(change)
@@ -2211,6 +2228,108 @@ class WorkflowWiringTests(unittest.TestCase):
             self.assertIn(f'git config user.name "{CLAUDE[0]}"', attach)
             self.assertIn(f'git config user.email "{CLAUDE[1]}"', attach)
             self.assertIn(".claude-fixer-out/", attach)
+
+    def test_no_pip_call_runs_with_checkout_cwd(self):
+        # CSL-471: python -m pip from a checkout cwd can run app/pip/__main__.py as runner.
+        # claude-conflict-writer.yml is owned by another agent; its install step is an open item.
+        skip = {"claude-conflict-writer.yml"}
+        found = 0
+        for path in sorted((ROOT / ".github" / "workflows").glob("*.y*ml")):
+            data = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+            for job_name, job in (data.get("jobs") or {}).items():
+                for index, step in enumerate(job.get("steps") or []):
+                    run = step.get("run") or ""
+                    # Ignore embedded sources: a comment in publish.py is not a pip invocation.
+                    run = re.sub(r"<<'([A-Z_]+)'\n.*?\n[ \t]*\1(?:\n|$)", "<<heredoc\n",
+                                 run, flags=re.DOTALL)
+                    if not _has_pip_module_install(run):
+                        continue
+                    found += 1
+                    if path.name in skip:
+                        continue
+                    wd = "".join((step.get("working-directory") or "").split())
+                    with self.subTest(workflow=path.name, job=job_name, step=index):
+                        self.assertTrue(_pip_uses_safe_path_flag(run), run)
+                        self.assertNotIn(wd, {"app", "rust", ".", "${{github.workspace}}"})
+                        uses_temp_wd = wd == "${{runner.temp}}"
+                        uses_temp_cwd = "cwd=os.environ['RUNNER_TEMP']" in run or 'cwd=os.environ["RUNNER_TEMP"]' in run
+                        self.assertTrue(uses_temp_wd or uses_temp_cwd, run)
+        self.assertGreater(found, 0)
+
+    def test_claude_acceptance_gate_pip_uses_runner_temp(self):
+        for job_name in ("claude-mention", "devin-review-fix"):
+            install = step(jobs("claude.yml")[job_name], "Install acceptance-gate deps")
+            with self.subTest(job=job_name):
+                self.assertEqual(install["working-directory"], "${{ runner.temp }}")
+                self.assertTrue(install["run"].lstrip().startswith("python -P -m pip "))
+                self.assertNotIn("working-directory: app", yaml.dump(install))
+
+    def test_benchmarks_requirements_come_from_the_base_tree(self):
+        # CSL-471 / REVIEW-D7 I5: a PR-controlled requirements file still chooses packages.
+        install = step(jobs_any("ci.yml")["benchmarks"], "Install benchmark dependencies")
+        run = install["run"]
+        self.assertEqual(install["working-directory"], "${{ runner.temp }}")
+        self.assertIn("_bench_base/app/benchmarks/requirements.txt", run)
+        self.assertIn("${RUNNER_TEMP}/bench-requirements.txt", run)
+        self.assertIn("python -P -m pip install -r", run)
+        self.assertNotIn("${{ github.workspace }}/app/benchmarks/requirements.txt", run)
+
+    def test_pr_and_model_jobs_do_not_enable_setup_python_pip_cache(self):
+        # CSL-471 REVIEW-D8 J3: setup-python's post-step would save a PR-poisoned
+        # ~/.cache/pip into the default-branch cache scope; later jobs restore by
+        # prefix (including the conflict writer that holds the OAuth token).
+        pip_cache_line = re.compile(r"^[ \t]*cache:[ \t]*pip[ \t]*$", re.M)
+        names = ("claude.yml", "ci.yml", "rust.yml", "codex-gate.yml",
+                 "claude-conflict-writer.yml")
+        checked = 0
+        for name in names:
+            path = ROOT / ".github/workflows" / name
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(workflow=name, kind="text"):
+                self.assertIsNone(pip_cache_line.search(text), text)
+            data = yaml.load(text, Loader=yaml.BaseLoader)
+            for job_name, job in (data.get("jobs") or {}).items():
+                for index, item in enumerate(job.get("steps") or []):
+                    uses = str(item.get("uses") or "")
+                    if not uses.startswith("actions/setup-python@"):
+                        continue
+                    checked += 1
+                    with_block = item.get("with") or {}
+                    with self.subTest(workflow=name, job=job_name, step=index):
+                        self.assertNotEqual(with_block.get("cache"), "pip")
+                        self.assertNotIn("cache-dependency-path", with_block)
+        action_path = ROOT / ".github/actions/run-gates/action.yml"
+        action_text = action_path.read_text(encoding="utf-8")
+        self.assertIsNone(pip_cache_line.search(action_text), action_text)
+        action = yaml.load(action_text, Loader=yaml.BaseLoader)
+        for index, item in enumerate((action.get("runs") or {}).get("steps") or []):
+            uses = str(item.get("uses") or "")
+            if not uses.startswith("actions/setup-python@"):
+                continue
+            checked += 1
+            with_block = item.get("with") or {}
+            self.assertNotEqual(with_block.get("cache"), "pip")
+            self.assertNotIn("cache-dependency-path", with_block)
+        self.assertGreater(checked, 0)
+
+
+def _has_pip_module_install(run):
+    return bool(re.search(r"-m\s+pip\b", run) or re.search(r"""['\"]-m['\"],\s*['\"]pip['\"]""", run))
+
+
+def _pip_uses_safe_path_flag(run):
+    """True when every pip module invocation opts out of cwd-on-sys.path (`-P`)."""
+    for match in re.finditer(r"-m\s+pip\b", run):
+        if "-P" not in run[max(0, match.start() - 80):match.start()]:
+            return False
+    for match in re.finditer(r"""['\"]-m['\"],\s*['\"]pip['\"]""", run):
+        if "-P" not in run[max(0, match.start() - 80):match.start()]:
+            return False
+    return True
+
+
+def jobs_any(name):
+    return yaml.load((ROOT / ".github/workflows" / name).read_text(encoding="utf-8"), Loader=yaml.BaseLoader)["jobs"]
 
 
 if __name__ == "__main__":
