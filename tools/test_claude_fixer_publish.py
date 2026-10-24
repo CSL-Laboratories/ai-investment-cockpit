@@ -1968,9 +1968,16 @@ class WorkflowWiringTests(unittest.TestCase):
                 for rule in ("Bash(git push:*)", "Bash(git config:*)", "Bash(gh api:*)"):
                     self.assertIn(rule, inputs["claude_args"].split("--disallowedTools", 1)[1])
                 deny = json.loads(inputs["settings"])["permissions"]["deny"]
-                for rule in ("Edit(.git/hooks/**)", "Write(.git/config)", "Edit(/${{ runner.temp }}/claude-fixer-guard/**)",
-                             "Write(/${{ runner.temp }}/claude-fixer-guard/**)"):
+                for rule in ("Edit(.git/hooks/**)", "Edit(/${{ runner.temp }}/claude-fixer-guard/**)"):
                     self.assertIn(rule, deny)
+                write_rules = ("Write(.git/config)", "Write(/${{ runner.temp }}/claude-fixer-guard/**)")
+                if name == "claude.yml":
+                    for rule in write_rules:
+                        self.assertNotIn(rule, deny)
+                    self.assertFalse([r for r in deny if r.startswith("Write(")], deny)
+                else:
+                    for rule in write_rules:
+                        self.assertIn(rule, deny)
                 # Deny rules become sandbox denies for Bash too: git must still write .git and read its
                 # config, and the helper must still read its own files.
                 self.assertFalse([r for r in deny if r in {"Edit(.git/**)", "Write(.git/**)", "Read(.git/config)"}
@@ -2028,7 +2035,16 @@ class WorkflowWiringTests(unittest.TestCase):
                     (shim / "git").chmod(0o755)
                     output = root / "output"
                     env = dict(git_env(), PATH=f"{shim}{os.pathsep}{os.environ['PATH']}", RUNNER_TEMP=str(root),
-                               GITHUB_OUTPUT=str(output), HEAD_SHA=head, BASE_SHA=head, EXECUTION_FILE="")
+                               GITHUB_OUTPUT=str(output), HEAD_SHA=head, BASE_SHA=head, EXECUTION_FILE="",
+                               HOME=str(root))
+                    # Package uses ${GIT:-git}; a host GIT= would skip the PATH shim.
+                    # claude.yml wraps Package in env -i PATH=/usr/bin:/bin, so the
+                    # shim has to be GIT=; conflict-writer still uses PATH.
+                    env.pop("GIT", None)
+                    env.pop("JQ", None)
+                    env.pop("PYTHON3", None)
+                    if "/usr/bin/env -i" in script:
+                        env["GIT"] = str(shim / "git")
                     subprocess.run(["bash", "-c", script], cwd=work.path, env=env, check=True, capture_output=True)
                     expected = ("failed" if case in ISOLATED_CREDENTIALS else
                                 {"credential": "failed", "helper": "bundled", "big": "failed",
@@ -2068,7 +2084,14 @@ class WorkflowWiringTests(unittest.TestCase):
                 self.assertEqual(re.findall(r"Bash\([^)]*\)", allow), [HELPER_RULE])
                 self.assertNotIn("git ", allow)
                 self.assertNotIn("ruff", allow)
-                self.assertEqual(allow.strip(), f'"Edit,Write,Read,Glob,Grep,{HELPER_RULE}"')
+                if name == "claude.yml":
+                    self.assertEqual(
+                        allow.strip(),
+                        f'"Edit(/${{{{ github.workspace }}}}/**),Write(/${{{{ github.workspace }}}}/**),Read,Glob,Grep,{HELPER_RULE}"',
+                    )
+                    self.assertNotIn('"Edit,Write,', allow)
+                else:
+                    self.assertEqual(allow.strip(), f'"Edit,Write,Read,Glob,Grep,{HELPER_RULE}"')
                 prompt = action["with"]["prompt"]
                 self.assertNotIn("python -m pytest", prompt)
                 self.assertIn("Do not run tests, linters or any repository code", prompt)
@@ -2077,16 +2100,235 @@ class WorkflowWiringTests(unittest.TestCase):
                 settings = json.loads(action["with"]["settings"])["permissions"]
                 self.assertEqual(set(settings), {"deny"})  # no settings-level allow rules either
                 deny = settings["deny"]
-                for rule in ("Edit(.claude/**)", "Write(.claude/**)", "Edit(~/.claude/**)", "Write(~/.claude/**)",
-                             "Read(~/.claude/**)", "Edit(~/.gitconfig)", "Write(~/.gitconfig)",
-                             "Edit(~/.config/git/**)", "Write(~/.config/git/**)"):
+                for rule in ("Edit(.claude/**)", "Edit(~/.claude/**)", "Read(~/.claude/**)",
+                             "Edit(~/.gitconfig)", "Edit(~/.config/git/**)"):
                     self.assertIn(rule, deny)
+                write_rules = ("Write(.claude/**)", "Write(~/.claude/**)", "Write(~/.gitconfig)",
+                               "Write(~/.config/git/**)")
+                if name == "claude.yml":
+                    for rule in write_rules:
+                        self.assertNotIn(rule, deny)
+                else:
+                    for rule in write_rules:
+                        self.assertIn(rule, deny)
                 outbox = [s for s in model["steps"] if s.get("id") == "outbox"][0]
                 self.assertEqual(outbox["env"]["GH_TOKEN"], "${{ github.token }}")
                 # The helper is root-owned and read-only before Claude runs; any failure fails the step.
                 self.assertTrue(outbox["run"].startswith("set -euo pipefail\n"))
                 tail = outbox["run"].split("\nCLAUDE_FIXER_OUTBOX\n", 1)[1]
                 self.assertEqual([line for line in tail.splitlines() if line and not line.startswith("#")], ROOT_OWN)
+
+    FILE_COMMAND_DENIES = (
+        "Bash(dangerouslyDisableSandbox:true)",
+        "Read(/${{ runner.temp }}/_runner_file_commands/**)",
+        "Edit(/${{ runner.temp }}/_runner_file_commands/**)",
+        "Read(/${{ runner.temp }}/_runner_file_commands/set_env_*)",
+        "Edit(/${{ runner.temp }}/_runner_file_commands/set_env_*)",
+        "Read(/${{ runner.temp }}/_runner_file_commands/add_path_*)",
+        "Edit(/${{ runner.temp }}/_runner_file_commands/add_path_*)",
+        "Edit(/${{ runner.tool_cache }}/**)",
+        "Edit(//home/runner/work/_actions/**)",
+        "Edit(//home/runner/runners/*/externals/**)",
+        "Edit(~/.bashrc)",
+        "Edit(~/.profile)",
+        "Edit(~/.bash_profile)",
+        "Edit(~/.bash_login)",
+    )
+    PINNED_ENV = {
+        "BASH_ENV": "", "ENV": "", "LD_PRELOAD": "", "LD_AUDIT": "", "LD_LIBRARY_PATH": "",
+        "GCONV_PATH": "", "PYTHONPATH": "", "PYTHONHOME": "", "PYTHONSTARTUP": "",
+        "NODE_OPTIONS": "", "PATH": "/usr/bin:/bin",
+        "GIT": "/usr/bin/git", "JQ": "/usr/bin/jq",
+    }
+    WORKSPACE_EDIT = "Edit(/${{ github.workspace }}/**)"
+    WORKSPACE_WRITE = "Write(/${{ github.workspace }}/**)"
+    HELPER_NETWORK = ("api.github.com", "github.com")
+    POST_CLAUDE = ("Report tool-permission denials", "Package untrusted model output",
+                   "Upload untrusted model output")
+
+    def test_claude_yml_model_jobs_block_file_command_poisoning(self):
+        # CSL-467: Write/Edit can reach $RUNNER_TEMP/_runner_file_commands. Mention
+        # and fixer model jobs in claude.yml close that; conflict-writer is separate.
+        for name, _prep, model, _pub, _group, ids in self.pipelines():
+            if name != "claude.yml":
+                continue
+            with self.subTest(job=ids[1]):
+                action = [s for s in model["steps"] if s.get("id") == "claude"][0]
+                settings = json.loads(action["with"]["settings"])
+                self.assertEqual(settings["sandbox"]["enabled"], True)
+                self.assertEqual(settings["sandbox"]["allowUnsandboxedCommands"], False)
+                self.assertEqual(settings["sandbox"]["autoAllowBashIfSandboxed"], False)
+                self.assertEqual(settings["sandbox"]["failIfUnavailable"], True)
+                deny_write = settings["sandbox"]["filesystem"]["denyWrite"]
+                for path in ("${{ runner.temp }}/_runner_file_commands", "${{ runner.tool_cache }}",
+                             "/home/runner/work/_actions"):
+                    self.assertIn(path, deny_write)
+                    self.assertNotIn("*", path)  # Linux denyWrite skips wildcard entries
+                self.assertNotIn("/home/runner/externals", deny_write)
+                network = settings["sandbox"]["network"]
+                self.assertEqual(network["allowedDomains"], list(self.HELPER_NETWORK))
+                self.assertEqual(network["strictAllowlist"], True)
+                deny = settings["permissions"]["deny"]
+                for rule in self.FILE_COMMAND_DENIES:
+                    self.assertIn(rule, deny)
+                self.assertFalse([r for r in deny if r.startswith("Write(")], deny)
+                self.assertNotIn("Edit(//home/runner/externals/**)", deny)
+                names = [s.get("name") or s.get("id") for s in model["steps"]]
+                ids = [s.get("id") for s in model["steps"]]
+                self.assertIn("pin-python", ids)
+                self.assertLess(ids.index("pin-python"), ids.index("claude"))
+                pin = [s for s in model["steps"] if s.get("id") == "pin-python"][0]
+                self.assertIn("readlink -f /usr/bin/python3", pin["run"])
+                claude = names.index("claude")
+                self.assertEqual(names[claude + 1:claude + 4], list(self.POST_CLAUDE))
+                allow = action["with"]["claude_args"].split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0]
+                self.assertIn(self.WORKSPACE_EDIT, allow)
+                self.assertIn(self.WORKSPACE_WRITE, allow)
+                self.assertNotIn('"Edit,Write,', allow)
+                denials = step(model, "Report tool-permission denials")
+                self.assertEqual(denials["env"]["PYTHON3"], "${{ steps.pin-python.outputs.python3 }}")
+                self.assertEqual(denials["env"]["PYTHONNOUSERSITE"], "1")
+                self.assertEqual(denials["env"]["PYTHONUSERBASE"], "")
+                self.assertIn('interpreter="${PYTHON3:?}"', denials["run"])
+                self.assertNotIn('python3="$PYTHON3"', denials["run"])
+                self.assertIn('"$interpreter" -I - "$EXECUTION_FILE"', denials["run"])
+                self.assertIn("/usr/bin/env -i PATH=\"/usr/bin:/bin\" PYTHONNOUSERSITE=1", denials["run"])
+                self.assertIn('GITHUB_STEP_SUMMARY="${GITHUB_STEP_SUMMARY:-}"', denials["run"])
+                self.assertIn('GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-}"', denials["run"])
+                isolated = denials["run"].split("/usr/bin/env -i", 1)[1].split("<<", 1)[0]
+                for leaked in ("PYTHONPATH=", "PYTHONHOME=", "PYTHONSTARTUP=",
+                               "PYTHONUSERBASE=", "PYTHON3="):
+                    self.assertNotIn(leaked, isolated)
+                self.assertIn("PYTHONNOUSERSITE=1", isolated)
+                self.assertIn("done < <(/usr/bin/env)", denials["run"])
+                self.assertNotIn("done < <(env)", denials["run"])
+                self.assertIn("PYTHON*) unset", denials["run"])
+                package = step(model, "Package untrusted model output")
+                self.assertIn("/usr/bin/env -i", package["run"])
+                self.assertIn('PATH="/usr/bin:/bin"', package["run"])
+                self.assertIn("GIT_CONFIG_COUNT=", package["run"])
+                self.assertIn("GIT_CONFIG_GLOBAL=", package["run"])
+                self.assertIn("GIT_CONFIG_SYSTEM=", package["run"])
+                self.assertIn("GIT_CONFIG_NOSYSTEM=", package["run"])
+                self.assertIn("GIT_CONFIG_PARAMETERS=", package["run"])
+                self.assertIn("GIT_EXEC_PATH=", package["run"])
+                self.assertIn('GIT="${GIT:-/usr/bin/git}"', package["run"])
+                self.assertIn("HOME=/home/runner", package["run"])
+                self.assertNotIn('HOME="${HOME:-/home/runner}"', package["run"])
+                self.assertIn("/home/runner/.gitconfig", package["run"])
+                self.assertIn("/home/runner/.config/git/config", package["run"])
+                self.assertIn("/etc/gitconfig", package["run"])
+                self.assertNotIn("A credential in any config scope fails the package", package["run"])
+                self.assertIn('git_bin="${GIT:-git}"', package["run"])
+                self.assertIn('jq_bin="${JQ:-jq}"', package["run"])
+                for step_name in self.POST_CLAUDE:
+                    env = step(model, step_name)["env"]
+                    for key, value in self.PINNED_ENV.items():
+                        self.assertEqual(env[key], value, (step_name, key))
+                    self.assertNotIn("PATH pins over GITHUB_PATH", yaml.dump(env))
+                self.assertEqual(package["env"]["PYTHON3"], "/usr/bin/python3")
+        workflow = WORKFLOWS["claude.yml"].read_text(encoding="utf-8")
+        self.assertGreaterEqual(
+            workflow.count("# CSL-467: Edit denies for /home/runner/work/_actions and"), 2)
+        self.assertGreaterEqual(workflow.count("/home/runner/runners/*/externals"), 2)
+        self.assertNotIn("PATH pins over GITHUB_PATH prepends when step env wins.", workflow)
+        self.assertGreaterEqual(workflow.count("U-8 (deny matching) is still unverified on hosted runners."), 2)
+
+    def test_package_env_i_blanks_git_config_and_exec_path(self):
+        # CSL-467 L2: GITHUB_ENV GIT_CONFIG_* / GIT_EXEC_PATH must not retarget
+        # Package git. env -i rebuilds a minimal env and blanks those names.
+        git_bin = shutil.which("git")
+        self.assertTrue(git_bin)
+        for name, _prep, model, _pub, _group, ids in self.pipelines():
+            if name != "claude.yml":
+                continue
+            script = [s for s in model["steps"] if s.get("name") == "Package untrusted model output"][0]["run"]
+            with self.subTest(job=ids[1]), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                work = Work(root / "repo")
+                subprocess.run(["git", "init", "-q", "-b", "main", str(work.path)], env=git_env(), check=True)
+                head = work.commit({"a.txt": "a\n"}, message="head")
+                work.git("remote", "add", "origin", "https://github.com/acme/example.git")
+                poison = root / "poison.gitconfig"
+                poison.write_text("[http]\n\textraheader = AUTHORIZATION: basic bm90YXRva2Vu\n",
+                                  encoding="utf-8")
+                evil = root / "evil-git-core"
+                evil.mkdir()
+                (evil / "git-rev-parse").write_text("#!/bin/sh\necho poisoned-rev-parse\n", encoding="utf-8")
+                (evil / "git-rev-parse").chmod(0o755)
+                output = root / "output"
+                env = dict(git_env(), PATH="/usr/bin:/bin", RUNNER_TEMP=str(root),
+                           GITHUB_OUTPUT=str(output), HEAD_SHA=head, EXECUTION_FILE="",
+                           HOME=str(root), GIT=git_bin,
+                           GIT_CONFIG_COUNT="1",
+                           GIT_CONFIG_KEY_0="include.path",
+                           GIT_CONFIG_VALUE_0=str(poison),
+                           GIT_CONFIG_PARAMETERS=f"include.path={poison}",
+                           GIT_EXEC_PATH=str(evil))
+                subprocess.run(["bash", "-c", script], cwd=work.path, env=env, check=True,
+                               capture_output=True)
+                self.assertEqual(output.read_text(), "package_status=unchanged\n")
+
+    def test_package_greps_blanked_global_and_system_gitconfig_files(self):
+        # Samir 5637688318: GIT_CONFIG_GLOBAL/SYSTEM blanking means
+        # `git config --list --includes` only sees local. Grep the files git
+        # ignores so a credential there still fails the package. Rewrite the
+        # hosted-runner paths onto a temp tree so this stays offline.
+        git_bin = shutil.which("git")
+        self.assertTrue(git_bin)
+        cases = (
+            ("home-gitconfig", ".gitconfig", None),
+            ("xdg", ".config/git/config", None),
+            ("etc", None, "etc-gitconfig"),
+        )
+        for name, _prep, model, _pub, _group, ids in self.pipelines():
+            if name != "claude.yml":
+                continue
+            script = [s for s in model["steps"] if s.get("name") == "Package untrusted model output"][0]["run"]
+            for case, home_rel, _etc_name in cases:
+                with self.subTest(job=ids[1], case=case), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    runner_home = root / "runner-home"
+                    (runner_home / ".config" / "git").mkdir(parents=True)
+                    etc = root / "etc-gitconfig"
+                    rewritten = (script.replace("/home/runner", str(runner_home))
+                                 .replace("/etc/gitconfig", str(etc)))
+                    work = Work(root / "repo")
+                    subprocess.run(["git", "init", "-q", "-b", "main", str(work.path)],
+                                   env=git_env(), check=True)
+                    head = work.commit({"a.txt": "a\n"}, message="head")
+                    work.git("remote", "add", "origin", "https://github.com/acme/example.git")
+                    poison = "[http]\n\textraheader = AUTHORIZATION: basic bm90YXRva2Vu\n"
+                    if home_rel:
+                        (runner_home / home_rel).write_text(poison, encoding="utf-8")
+                    else:
+                        etc.write_text(poison, encoding="utf-8")
+                    output = root / "output"
+                    env = dict(git_env(), PATH="/usr/bin:/bin", RUNNER_TEMP=str(root),
+                               GITHUB_OUTPUT=str(output), HEAD_SHA=head, EXECUTION_FILE="",
+                               HOME=str(root / "poison-home"), GIT=git_bin)
+                    subprocess.run(["bash", "-c", rewritten], cwd=work.path, env=env, check=True,
+                                   capture_output=True)
+                    self.assertEqual(output.read_text(), "package_status=failed\n")
+
+    @unittest.skipIf(os.name == "nt", "POSIX python -I")
+    def test_isolated_python_skips_user_site_usercustomize(self):
+        # CSL-467 U2: the denials reporter must not import a model-written
+        # usercustomize.py. env -i + -I is the workflow invocation.
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            site = base / "lib" / f"python{sys.version_info[0]}.{sys.version_info[1]}" / "site-packages"
+            site.mkdir(parents=True)
+            marker = base / "ran"
+            (site / "usercustomize.py").write_text(
+                f"open({str(marker)!r}, 'w').write('ran')\n", encoding="utf-8")
+            subprocess.run(
+                ["/usr/bin/env", "-i", "PATH=/usr/bin:/bin", "PYTHONNOUSERSITE=1",
+                 "PYTHONUSERBASE=" + str(base), "PYTHONPATH=" + str(site),
+                 sys.executable, "-I", "-c", "pass"],
+                check=True,
+            )
+            self.assertFalse(marker.exists(), "python -I loaded usercustomize.py")
 
     @unittest.skipIf(os.name == "nt", "POSIX shell fixture")
     def test_helper_install_fails_closed_when_it_cannot_root_own_the_helper(self):
