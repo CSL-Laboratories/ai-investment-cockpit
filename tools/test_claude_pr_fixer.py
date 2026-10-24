@@ -1981,6 +1981,13 @@ class ConflictWriterFileCommandHardeningTests(unittest.TestCase):
         self.assertTrue(install["run"].lstrip().startswith("python -P -m pip install"), install["run"])
         self.assertNotEqual(install.get("working-directory"), "app")
         self.assertNotIn("python -m pip", install["run"])
+        setup_python = [s for s in model["steps"] if str(s.get("uses", "")).startswith("actions/setup-python@")]
+        self.assertEqual(len(setup_python), 1)
+        self.assertNotIn("cache", setup_python[0].get("with", {}))
+        self.assertNotIn("cache-dependency-path", setup_python[0].get("with", {}))
+        dumped = yaml.dump(model)
+        self.assertNotIn("cache: pip", dumped)
+        self.assertNotIn("cache-dependency-path", dumped)
 
 
 class ClaudeActionInlineCommentTests(unittest.TestCase):
