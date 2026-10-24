@@ -26,6 +26,10 @@ EVENT_DEEP_ESCALATION_RELEASE = "deep_escalation_release"
 # EVENT_ESCALATION_DEFERRED reason when release() returns False. That is an empty
 # id, another event, another day, or an already-released row — not an HMAC failure.
 DEEP_BUDGET_RELEASE_NOOP = "deep_budget_release_noop"
+# EVENT_ESCALATION_DEFERRED reason when release() raises anything other than
+# BudgetIntegrityError. The unit stays spent (fail closed). Inv 7 — recorded,
+# never dropped; the caller's own exception still propagates.
+DEEP_BUDGET_RELEASE_ERROR = "deep_budget_release_error"
 # payload: {event_id, symbol, reason}
 EVENT_ESCALATION_DEFERRED = "escalation_deferred"
 # via record_state_change on BriefRecord

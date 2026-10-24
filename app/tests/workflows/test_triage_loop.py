@@ -716,6 +716,8 @@ def test_pre_dispatch_exception_releases_the_unit(st, clock, tmp_path):
         spend_row = s.execute(select(AuditEntry).where(
             AuditEntry.event_type == EVENT_DEEP_ESCALATION)).scalars().one()
     assert releases[0]["releases_entry_id"] == spend_row.id
+    # A successful refund is not a deferral (Inv 7 records failures only).
+    assert _deferred_reasons(st, ev.id) == []
 
     drafted: list[str] = []
 
@@ -730,6 +732,71 @@ def test_pre_dispatch_exception_releases_the_unit(st, clock, tmp_path):
     assert ev.id in second["escalated"]
     assert budget.spent(day) == 1
     assert budget.remaining(day) == 0
+
+
+def _raise_before_dispatch(state, clock_, **kw):
+    raise RuntimeError("template failed before dispatch")
+
+
+def test_pre_dispatch_integrity_error_defers_deep_budget_integrity(
+        st, clock, tmp_path, monkeypatch):
+    """BudgetIntegrityError on the unused-reservation release is an Inv 7 deferral.
+
+    The handler's RuntimeError still aborts the tick. The unit stays spent.
+    """
+    _budget_of_one(st)
+    ev = _one_filing(st, clock, tmp_path)
+
+    def boom(self, **kwargs):
+        raise BudgetIntegrityError("ledger tamper")
+
+    monkeypatch.setattr(DeepBudget, "release", boom)
+    with pytest.raises(RuntimeError, match="before dispatch"):
+        _escalation(st, clock, tmp_path, ev, _raise_before_dispatch)
+    assert _deferred_reasons(st, ev.id) == ["deep_budget_integrity"]
+    assert DeepBudget(st).spent(NOW.date()) == 1
+    assert _payloads(st, EVENT_DEEP_ESCALATION_RELEASE) == []
+
+
+def test_pre_dispatch_false_release_defers_noop(st, clock, tmp_path, monkeypatch):
+    """A refused pre-dispatch release is recorded as DEEP_BUDGET_RELEASE_NOOP.
+
+    False is an empty id, another event, or an already-released row — not an
+    HMAC failure. The handler exception still aborts and the unit stays spent.
+    """
+    _budget_of_one(st)
+    ev = _one_filing(st, clock, tmp_path)
+
+    def refused(self, **kwargs):
+        return False
+
+    monkeypatch.setattr(DeepBudget, "release", refused)
+    with pytest.raises(RuntimeError, match="before dispatch"):
+        _escalation(st, clock, tmp_path, ev, _raise_before_dispatch)
+    assert _deferred_reasons(st, ev.id) == [DEEP_BUDGET_RELEASE_NOOP]
+    assert DeepBudget(st).spent(NOW.date()) == 1
+    assert _payloads(st, EVENT_DEEP_ESCALATION_RELEASE) == []
+
+
+def test_pre_dispatch_release_error_defers_and_keeps_handler_exception(
+        st, clock, tmp_path, monkeypatch):
+    """Any other release exception is recorded and does not replace the handler error.
+
+    OSError from release becomes deep_budget_release_error. The tick still
+    aborts with the original RuntimeError, and the unit stays spent.
+    """
+    _budget_of_one(st)
+    ev = _one_filing(st, clock, tmp_path)
+
+    def boom(self, **kwargs):
+        raise OSError("release store unavailable")
+
+    monkeypatch.setattr(DeepBudget, "release", boom)
+    with pytest.raises(RuntimeError, match="before dispatch"):
+        _escalation(st, clock, tmp_path, ev, _raise_before_dispatch)
+    assert _deferred_reasons(st, ev.id) == ["deep_budget_release_error"]
+    assert DeepBudget(st).spent(NOW.date()) == 1
+    assert _payloads(st, EVENT_DEEP_ESCALATION_RELEASE) == []
 
 
 def test_preflight_refusal_before_spawn_releases_the_unit(st, clock, tmp_path):
