@@ -2213,7 +2213,7 @@ jobs:
                                        "tools/test_claude_fixer_receipts.py"})
           PROTECTED_NAMES = frozenset({"codeowners", "agents.md", "claude.md", ".mcp.json",
                                        ".netrc", "_netrc", ".npmrc", ".pypirc",
-                                       # CSL-471: interpreter start-up and `python -m pip` shadows.
+                                       # CSL-471: interpreter start-up and pip-module shadows.
                                        "sitecustomize.py", "sitecustomize.pyc", "sitecustomize",
                                        "usercustomize.py", "usercustomize.pyc", "usercustomize",
                                        "pip.py", "pip.pyc"})
@@ -5338,7 +5338,7 @@ jobs:
                                        "tools/test_claude_fixer_receipts.py"})
           PROTECTED_NAMES = frozenset({"codeowners", "agents.md", "claude.md", ".mcp.json",
                                        ".netrc", "_netrc", ".npmrc", ".pypirc",
-                                       # CSL-471: interpreter start-up and `python -m pip` shadows.
+                                       # CSL-471: interpreter start-up and pip-module shadows.
                                        "sitecustomize.py", "sitecustomize.pyc", "sitecustomize",
                                        "usercustomize.py", "usercustomize.pyc", "usercustomize",
                                        "pip.py", "pip.pyc"})

@@ -2239,6 +2239,9 @@ class WorkflowWiringTests(unittest.TestCase):
             for job_name, job in (data.get("jobs") or {}).items():
                 for index, step in enumerate(job.get("steps") or []):
                     run = step.get("run") or ""
+                    # Ignore embedded sources: a comment in publish.py is not a pip invocation.
+                    run = re.sub(r"<<'([A-Z_]+)'\n.*?\n[ \t]*\1(?:\n|$)", "<<heredoc\n",
+                                 run, flags=re.DOTALL)
                     if not _has_pip_module_install(run):
                         continue
                     found += 1
