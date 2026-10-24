@@ -7,6 +7,7 @@ fails the call.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import threading
 import time
@@ -64,21 +65,6 @@ def _killswitch_audit(st) -> dict:
             .order_by(AuditEntry.seq.desc()).limit(1)
         ).scalar_one()
         return dict(entry.payload or {})
-
-
-class _LockProbe:
-    """Count ``st.lock`` entries without changing the real lock."""
-
-    def __init__(self, inner):
-        self._inner = inner
-        self.entered = 0
-
-    def __enter__(self):
-        self.entered += 1
-        return self._inner.__enter__()
-
-    def __exit__(self, exc_type, exc, tb):
-        return self._inner.__exit__(exc_type, exc, tb)
 
 
 def test_killswitch_writes_halt_while_st_lock_is_held(st, tmp_path):
@@ -148,26 +134,45 @@ def test_killswitch_writes_halt_while_st_lock_is_held(st, tmp_path):
 
 
 def test_set_halt_error_still_completes_containment_then_raises(st, monkeypatch):
-    """A ``set_halt`` failure still cancels, disarms and audits, then propagates."""
+    """``set_halt`` OSError and CancelledError still finish containment, then propagate.
+
+    The mode drop takes ``st.lock`` again, so a lock-entry count is not the check.
+    """
     ladder = _arm_auto_veto(st)
-    probe = _LockProbe(st.lock)
-    st.lock = probe
-    cancelled: list[int] = []
+    for exc_type in (asyncio.CancelledError, OSError):
+        cancelled: list[int] = []
+        disconnected: list[str] = []
 
-    def boom(path, reason="killswitch"):
-        raise OSError("halt write failed")
+        def boom(path, reason="killswitch", _exc=exc_type):
+            raise _exc("halt write failed")
 
-    monkeypatch.setattr("orchestrator.killswitch.set_halt", boom)
-    with pytest.raises(OSError, match="halt write failed"):
-        killswitch(
-            st, actor="op", reason="disk", halt_path="unused",
-            cancel_hook=lambda: cancelled.append(1) or 1,
-        )
+        monkeypatch.setattr("orchestrator.killswitch.set_halt", boom)
+        with pytest.raises(exc_type, match="halt write failed"):
+            killswitch(
+                st, actor="op", reason="disk", halt_path="unused",
+                cancel_hook=lambda: cancelled.append(1) or 1,
+                disconnect_hook=lambda: disconnected.append("down"),
+            )
 
-    assert probe.entered == 1
-    assert cancelled == [1]
-    assert ladder.current() is Mode.review_live
-    assert _killswitch_audit(st)["halt_durable"] is False
+        assert cancelled == [1], exc_type.__name__
+        assert disconnected == ["down"], exc_type.__name__
+        assert ladder.current() is Mode.review_live
+        payload = _killswitch_audit(st)
+        assert payload["cancelled"] == 1
+        assert payload["mcp_disconnected"] is True
+        assert payload["mode_after"] == Mode.review_live.value
+        assert payload["halt_durable"] is False
+        assert payload["halt_failed"] is True
+        assert payload["halt_error"] == "halt write failed"
+        assert st.audit.verify_chain().ok
+        if exc_type is asyncio.CancelledError:
+            rearmed = ladder.arm_auto_mode(
+                Mode.auto_veto,
+                decision_stage_runtimes=["claude", "claude"],
+                gate_result=GateResult(unlockable=True, target="auto_veto"),
+                operator="op",
+            )
+            assert rearmed.armed and ladder.current() is Mode.auto_veto
 
 
 def _directory_openable(directory) -> bool:
