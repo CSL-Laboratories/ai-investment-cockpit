@@ -155,7 +155,7 @@ their own tests (`tools/test_codex_gate.py`, `app/tests/test_stuck_thread_watch.
 |---|---|
 | CI workflows, required checks, this runbook, the contract | CI lane (Lucas's session), founders approve |
 | `claude.yml`, `conflict-scan.yml`, `claude-conflict-writer.yml`, fixer scripts | Reliability lane, founders approve |
-| CI failure on `main` | Devin "Main CI failure fixer" automation (human-managed, AGENTS.md:472); a founder triages |
+| CI failure on `main` | Devin "Main CI failure fixer" automation (human-managed, AGENTS.md:491); a founder triages |
 | Rulesets and repository settings | Founders (admins) |
 
 Ownership changes over time; check the Linear assignee before acting.
