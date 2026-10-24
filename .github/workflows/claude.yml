@@ -1610,9 +1610,11 @@ jobs:
           # GITHUB_PATH typically prepends over step PATH (actions/toolkit#655);
           # whether step PATH wins is unverified. The run script wraps the
           # body in /usr/bin/env -i so GITHUB_PATH and GIT_CONFIG_* / GIT_EXEC_PATH
-          # from file commands cannot retarget git. GIT/JQ still default to
-          # /usr/bin; wiring tests point GIT at a shim. Publish still
-          # revalidates the artifact.
+          # from file commands cannot retarget git. HOME is pinned to
+          # /home/runner (not taken from the step env) so a GITHUB_ENV HOME
+          # cannot retarget ~/.gitconfig. GIT/JQ still default to /usr/bin;
+          # wiring tests point GIT at a shim. Publish still revalidates the
+          # artifact.
           GIT: "/usr/bin/git"
           PYTHON3: "/usr/bin/python3"
           JQ: "/usr/bin/jq"
@@ -1630,7 +1632,7 @@ jobs:
         run: |
           /usr/bin/env -i \
             PATH="/usr/bin:/bin" \
-            HOME="${HOME:-/home/runner}" \
+            HOME=/home/runner \
             GIT="${GIT:-/usr/bin/git}" \
             JQ="${JQ:-/usr/bin/jq}" \
             HEAD_SHA="${HEAD_SHA:-}" \
@@ -1667,17 +1669,32 @@ jobs:
             fi
           fi
           # CSL-412: allowed_non_write_users keeps the job token out of git config, where Read
-          # could open it. A credential in any config scope fails the package; publish then refuses.
+          # could open it. GIT_CONFIG_GLOBAL/SYSTEM are blanked above, so
+          # `git config --list --includes` sees the repo's local config (plus
+          # includes), which is where actions/checkout writes the credential.
+          # Files git ignores under that isolation (/home/runner/.gitconfig,
+          # /etc/gitconfig, /home/runner/.config/git/config) are grepped
+          # separately so a credential there still fails the package; publish
+          # then refuses.
           # No pipe: under pipefail a `grep -q` hit could SIGPIPE git and read as clean.
+          cred_re='x-access-token|://[^/[:space:]@]+@|gh[opsuvr]_[a-z0-9]{36}|github_pat_|authorization:'
           if ! config="$("$git_bin" config --list --includes 2>/dev/null)"; then
             echo "::error::The checkout's git config could not be read; nothing from this run is published."
             status=failed
             rm -f "$out/candidate.bundle"
-          elif grep -Ei 'x-access-token|://[^/[:space:]@]+@|gh[opsuvr]_[a-z0-9]{36}|github_pat_|authorization:' \
-              >/dev/null <<< "$config"; then
+          elif grep -Ei "$cred_re" >/dev/null <<< "$config"; then
             echo "::error::A credential is in the checkout's git config; nothing from this run is published."
             status=failed
             rm -f "$out/candidate.bundle"
+          else
+            for cfg in /home/runner/.gitconfig /home/runner/.config/git/config /etc/gitconfig; do
+              if [ -f "$cfg" ] && [ ! -L "$cfg" ] && grep -Ei "$cred_re" "$cfg" >/dev/null; then
+                echo "::error::A credential is in $cfg; nothing from this run is published."
+                status=failed
+                rm -f "$out/candidate.bundle"
+                break
+              fi
+            done
           fi
           echo "package_status=$status" >> "$GITHUB_OUTPUT"
           if [ -f .claude-fixer-out/outbox.jsonl ] && [ ! -L .claude-fixer-out/outbox.jsonl ]; then
@@ -4893,9 +4910,11 @@ jobs:
           # GITHUB_PATH typically prepends over step PATH (actions/toolkit#655);
           # whether step PATH wins is unverified. The run script wraps the
           # body in /usr/bin/env -i so GITHUB_PATH and GIT_CONFIG_* / GIT_EXEC_PATH
-          # from file commands cannot retarget git. GIT/JQ still default to
-          # /usr/bin; wiring tests point GIT at a shim. Publish still
-          # revalidates the artifact.
+          # from file commands cannot retarget git. HOME is pinned to
+          # /home/runner (not taken from the step env) so a GITHUB_ENV HOME
+          # cannot retarget ~/.gitconfig. GIT/JQ still default to /usr/bin;
+          # wiring tests point GIT at a shim. Publish still revalidates the
+          # artifact.
           GIT: "/usr/bin/git"
           PYTHON3: "/usr/bin/python3"
           JQ: "/usr/bin/jq"
@@ -4913,7 +4932,7 @@ jobs:
         run: |
           /usr/bin/env -i \
             PATH="/usr/bin:/bin" \
-            HOME="${HOME:-/home/runner}" \
+            HOME=/home/runner \
             GIT="${GIT:-/usr/bin/git}" \
             JQ="${JQ:-/usr/bin/jq}" \
             HEAD_SHA="${HEAD_SHA:-}" \
@@ -4950,17 +4969,32 @@ jobs:
             fi
           fi
           # CSL-412: allowed_non_write_users keeps the job token out of git config, where Read
-          # could open it. A credential in any config scope fails the package; publish then refuses.
+          # could open it. GIT_CONFIG_GLOBAL/SYSTEM are blanked above, so
+          # `git config --list --includes` sees the repo's local config (plus
+          # includes), which is where actions/checkout writes the credential.
+          # Files git ignores under that isolation (/home/runner/.gitconfig,
+          # /etc/gitconfig, /home/runner/.config/git/config) are grepped
+          # separately so a credential there still fails the package; publish
+          # then refuses.
           # No pipe: under pipefail a `grep -q` hit could SIGPIPE git and read as clean.
+          cred_re='x-access-token|://[^/[:space:]@]+@|gh[opsuvr]_[a-z0-9]{36}|github_pat_|authorization:'
           if ! config="$("$git_bin" config --list --includes 2>/dev/null)"; then
             echo "::error::The checkout's git config could not be read; nothing from this run is published."
             status=failed
             rm -f "$out/candidate.bundle"
-          elif grep -Ei 'x-access-token|://[^/[:space:]@]+@|gh[opsuvr]_[a-z0-9]{36}|github_pat_|authorization:' \
-              >/dev/null <<< "$config"; then
+          elif grep -Ei "$cred_re" >/dev/null <<< "$config"; then
             echo "::error::A credential is in the checkout's git config; nothing from this run is published."
             status=failed
             rm -f "$out/candidate.bundle"
+          else
+            for cfg in /home/runner/.gitconfig /home/runner/.config/git/config /etc/gitconfig; do
+              if [ -f "$cfg" ] && [ ! -L "$cfg" ] && grep -Ei "$cred_re" "$cfg" >/dev/null; then
+                echo "::error::A credential is in $cfg; nothing from this run is published."
+                status=failed
+                rm -f "$out/candidate.bundle"
+                break
+              fi
+            done
           fi
           echo "package_status=$status" >> "$GITHUB_OUTPUT"
           if [ -f .claude-fixer-out/outbox.jsonl ] && [ ! -L .claude-fixer-out/outbox.jsonl ]; then

@@ -2213,6 +2213,12 @@ class WorkflowWiringTests(unittest.TestCase):
                 self.assertIn("GIT_CONFIG_PARAMETERS=", package["run"])
                 self.assertIn("GIT_EXEC_PATH=", package["run"])
                 self.assertIn('GIT="${GIT:-/usr/bin/git}"', package["run"])
+                self.assertIn("HOME=/home/runner", package["run"])
+                self.assertNotIn('HOME="${HOME:-/home/runner}"', package["run"])
+                self.assertIn("/home/runner/.gitconfig", package["run"])
+                self.assertIn("/home/runner/.config/git/config", package["run"])
+                self.assertIn("/etc/gitconfig", package["run"])
+                self.assertNotIn("A credential in any config scope fails the package", package["run"])
                 self.assertIn('git_bin="${GIT:-git}"', package["run"])
                 self.assertIn('jq_bin="${JQ:-jq}"', package["run"])
                 for step_name in self.POST_CLAUDE:
@@ -2262,6 +2268,48 @@ class WorkflowWiringTests(unittest.TestCase):
                 subprocess.run(["bash", "-c", script], cwd=work.path, env=env, check=True,
                                capture_output=True)
                 self.assertEqual(output.read_text(), "package_status=unchanged\n")
+
+    def test_package_greps_blanked_global_and_system_gitconfig_files(self):
+        # Samir 5637688318: GIT_CONFIG_GLOBAL/SYSTEM blanking means
+        # `git config --list --includes` only sees local. Grep the files git
+        # ignores so a credential there still fails the package. Rewrite the
+        # hosted-runner paths onto a temp tree so this stays offline.
+        git_bin = shutil.which("git")
+        self.assertTrue(git_bin)
+        cases = (
+            ("home-gitconfig", ".gitconfig", None),
+            ("xdg", ".config/git/config", None),
+            ("etc", None, "etc-gitconfig"),
+        )
+        for name, _prep, model, _pub, _group, ids in self.pipelines():
+            if name != "claude.yml":
+                continue
+            script = [s for s in model["steps"] if s.get("name") == "Package untrusted model output"][0]["run"]
+            for case, home_rel, _etc_name in cases:
+                with self.subTest(job=ids[1], case=case), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    runner_home = root / "runner-home"
+                    (runner_home / ".config" / "git").mkdir(parents=True)
+                    etc = root / "etc-gitconfig"
+                    rewritten = (script.replace("/home/runner", str(runner_home))
+                                 .replace("/etc/gitconfig", str(etc)))
+                    work = Work(root / "repo")
+                    subprocess.run(["git", "init", "-q", "-b", "main", str(work.path)],
+                                   env=git_env(), check=True)
+                    head = work.commit({"a.txt": "a\n"}, message="head")
+                    work.git("remote", "add", "origin", "https://github.com/acme/example.git")
+                    poison = "[http]\n\textraheader = AUTHORIZATION: basic bm90YXRva2Vu\n"
+                    if home_rel:
+                        (runner_home / home_rel).write_text(poison, encoding="utf-8")
+                    else:
+                        etc.write_text(poison, encoding="utf-8")
+                    output = root / "output"
+                    env = dict(git_env(), PATH="/usr/bin:/bin", RUNNER_TEMP=str(root),
+                               GITHUB_OUTPUT=str(output), HEAD_SHA=head, EXECUTION_FILE="",
+                               HOME=str(root / "poison-home"), GIT=git_bin)
+                    subprocess.run(["bash", "-c", rewritten], cwd=work.path, env=env, check=True,
+                                   capture_output=True)
+                    self.assertEqual(output.read_text(), "package_status=failed\n")
 
     @unittest.skipIf(os.name == "nt", "POSIX python -I")
     def test_isolated_python_skips_user_site_usercustomize(self):

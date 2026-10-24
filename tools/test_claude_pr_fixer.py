@@ -864,6 +864,12 @@ class FixerGateAndPromptTests(unittest.TestCase):
             self.assertIn("Edit(~/.bash_login)", body, job)
             self.assertIn("Edit(//home/runner/runners/*/externals/**)", body, job)
             self.assertNotIn("Edit(//home/runner/externals/**)", body, job)
+            self.assertIn("HOME=/home/runner", body, job)
+            self.assertNotIn('HOME="${HOME:-/home/runner}"', body, job)
+            self.assertIn("/home/runner/.gitconfig", body, job)
+            self.assertIn("/home/runner/.config/git/config", body, job)
+            self.assertIn("/etc/gitconfig", body, job)
+            self.assertNotIn("A credential in any config scope fails the package", body, job)
             self.assertNotIn("show_full_output", body, job)
 
     def test_mention_job_installs_gate_deps(self) -> None:
