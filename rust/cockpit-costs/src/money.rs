@@ -92,10 +92,19 @@ impl Dec {
     }
 
     /// Render a form ``Decimal(text)`` in Python accepts without changing the value.
+    ///
+    /// Zero keeps its scale so the text matches ``format(d, "f")``: ``0.00`` when
+    /// the exponent is -2. A non-negative exponent matches CPython's fixed-point
+    /// form, which is ``"0"`` or ``"-0"`` (``format(Decimal("0E+2"), "f")`` is
+    /// ``"0"``, not a run of zeros and not scientific notation).
     pub fn to_plain_string(&self) -> String {
         let value = self.clone().canon();
-        if value.is_zero() {
-            return "0".to_string();
+        if value.is_zero() && value.exp >= 0 {
+            return if value.neg {
+                "-0".to_string()
+            } else {
+                "0".to_string()
+            };
         }
         let digits: String = value.digs.iter().map(|d| char::from(b'0' + d)).collect();
         let body = if value.exp >= 0 {
@@ -127,9 +136,12 @@ impl Dec {
     /// they *are* the scale (Python's Decimal keeps them too — multiplication
     /// keeps the operands' combined exponent and addition keeps the smaller
     /// one, instead of normalizing the coefficient down to its minimal form).
+    /// A zero collapses to a single coefficient digit but keeps its sign and
+    /// exponent. Equality already treats every zero as equal.
     fn canon(mut self) -> Self {
         if self.is_zero() {
-            return Self::zero();
+            self.digs = vec![0];
+            return self;
         }
         while self.digs.first() == Some(&0) && self.digs.len() > 1 {
             self.digs.remove(0);
@@ -153,9 +165,6 @@ impl Dec {
     /// Round half-even so the result's exponent is at least `target` (quantize).
     pub fn quantize_exp(&self, target: i32) -> Self {
         let value = self.clone().canon();
-        if value.is_zero() {
-            return Self::zero();
-        }
         if value.exp >= target {
             let mut digs = value.digs;
             digs.extend(std::iter::repeat(0).take((value.exp - target) as usize));
@@ -242,12 +251,9 @@ fn split_exp(body: &str) -> Option<(&str, i32)> {
 }
 
 pub fn add(left: &Dec, right: &Dec) -> Dec {
-    if left.is_zero() {
-        return right.clone().canon();
-    }
-    if right.is_zero() {
-        return left.clone().canon();
-    }
+    // A zero operand still contributes its exponent: ``0.00 + 5`` is ``5.00``.
+    // An exact cancel is a non-negative zero at ``min(left.exp, right.exp)``,
+    // which is what round-half-even does in CPython.
     let exp = left.exp.min(right.exp);
     let a = coeff_at(left, exp);
     let b = coeff_at(right, exp);
@@ -255,7 +261,13 @@ pub fn add(left: &Dec, right: &Dec) -> Dec {
         (left.neg, add_digits(&a, &b))
     } else {
         match cmp_digits(&a, &b) {
-            Ordering::Equal => return Dec::zero(),
+            Ordering::Equal => {
+                return Dec {
+                    neg: false,
+                    digs: vec![0],
+                    exp,
+                };
+            }
             Ordering::Greater => (left.neg, sub_digits(&a, &b)),
             Ordering::Less => (right.neg, sub_digits(&b, &a)),
         }
@@ -264,16 +276,21 @@ pub fn add(left: &Dec, right: &Dec) -> Dec {
 }
 
 pub fn sub(left: &Dec, right: &Dec) -> Dec {
+    // Flip the subtrahend the way ``copy_negate`` does, including a zero.
+    // ``-0.00 - 0.00`` stays negative; cancelling non-zero magnitudes still
+    // takes the non-negative zero from ``add``.
     let mut flipped = right.clone();
-    if !flipped.is_zero() {
-        flipped.neg = !flipped.neg;
-    }
+    flipped.neg = !flipped.neg;
     add(left, &flipped)
 }
 
 pub fn mul(left: &Dec, right: &Dec) -> Dec {
     if left.is_zero() || right.is_zero() {
-        return Dec::zero();
+        return Dec {
+            neg: left.neg ^ right.neg,
+            digs: vec![0],
+            exp: left.exp + right.exp,
+        };
     }
     let digs = mul_digits(&left.digs, &right.digs);
     let exp = left.exp + right.exp;
@@ -286,7 +303,12 @@ pub fn div(left: &Dec, right: &Dec) -> Result<Dec, String> {
         return Err("division by zero".to_string());
     }
     if left.is_zero() {
-        return Ok(Dec::zero());
+        // Ideal exponent of an exact zero quotient is ``left.exp - right.exp``.
+        return Ok(Dec {
+            neg: left.neg ^ right.neg,
+            digs: vec![0],
+            exp: left.exp - right.exp,
+        });
     }
     let neg = left.neg ^ right.neg;
     let mut need = (PREC + 4 + right.digs.len()).saturating_sub(left.digs.len());
@@ -824,7 +846,10 @@ mod tests {
         // the two have different exponents; `to_plain_string` must still show them
         // differently, since that string is what crosses the PyO3 bridge.
         assert_eq!(d("30003"), d("30003.00"));
-        assert_ne!(d("30003").to_plain_string(), d("30003.00").to_plain_string());
+        assert_ne!(
+            d("30003").to_plain_string(),
+            d("30003.00").to_plain_string()
+        );
     }
 
     #[test]
@@ -838,7 +863,10 @@ mod tests {
     fn mul_keeps_the_combined_exponent() {
         // 10000.00 (exponent -2) * 3 (exponent 0) keeps exponent -2, matching
         // Python: Decimal("10000.00") * Decimal(3) == Decimal("30000.00").
-        assert_eq!(mul(&d("10000.00"), &Dec::from_i64(3)).to_plain_string(), "30000.00");
+        assert_eq!(
+            mul(&d("10000.00"), &Dec::from_i64(3)).to_plain_string(),
+            "30000.00"
+        );
         // price * Decimal(qty): a plain integer quantity must not lose the
         // price's decimal places in the product.
         assert_eq!(
@@ -857,7 +885,65 @@ mod tests {
     #[test]
     fn sub_keeps_the_smaller_exponent() {
         // Mirrors add(): Decimal("30003.00") - Decimal("3.00") == Decimal("30000.00").
-        assert_eq!(sub(&d("30003.00"), &d("3.00")).to_plain_string(), "30000.00");
+        assert_eq!(
+            sub(&d("30003.00"), &d("3.00")).to_plain_string(),
+            "30000.00"
+        );
+    }
+
+    #[test]
+    fn zero_keeps_its_scale() {
+        // The five rows that diverged from CPython after a flat round-trip, plus
+        // the product and quotient scales from the CSL-315 fix plan.
+        assert_eq!(
+            sub(&d("30003.00"), &d("30003.00")).to_plain_string(),
+            "0.00"
+        );
+        assert_eq!(add(&d("-1.50"), &d("1.50")).to_plain_string(), "0.00");
+        assert_eq!(mul(&d("1.50"), &d("0")).to_plain_string(), "0.00");
+        assert_eq!(add(&d("0.00"), &d("5")).to_plain_string(), "5.00");
+        assert_eq!(add(&d("0"), &d("5.00")).to_plain_string(), "5.00");
+        assert_eq!(mul(&d("0.00"), &d("1.5")).to_plain_string(), "0.000");
+        assert_eq!(div(&d("0.00"), &d("2")).unwrap().to_plain_string(), "0.00");
+
+        // Negative zero keeps its sign. An exact cancel is non-negative.
+        assert_eq!(d("-0.00").to_plain_string(), "-0.00");
+        assert_eq!(d("-0").to_plain_string(), "-0");
+        assert_eq!(d("0E+2").to_plain_string(), "0");
+        assert_eq!(d("-0E+2").to_plain_string(), "-0");
+        assert_eq!(mul(&d("-1.50"), &d("0")).to_plain_string(), "-0.00");
+        assert_eq!(mul(&d("1.50"), &d("-0")).to_plain_string(), "-0.00");
+        assert_eq!(mul(&d("0.00"), &d("-1.50")).to_plain_string(), "-0.0000");
+        assert_eq!(add(&d("-0.00"), &d("-0.000")).to_plain_string(), "-0.000");
+        assert_eq!(add(&d("0.00"), &d("-0.000")).to_plain_string(), "0.000");
+        assert_eq!(sub(&d("-0.00"), &d("0.00")).to_plain_string(), "-0.00");
+        assert_eq!(sub(&d("-0.00"), &d("-0.00")).to_plain_string(), "0.00");
+        assert_eq!(sub(&d("1.500"), &d("1.50")).to_plain_string(), "0.000");
+        assert_eq!(
+            div(&d("-0.00"), &d("2")).unwrap().to_plain_string(),
+            "-0.00"
+        );
+        assert_eq!(
+            div(&d("0.00"), &d("-2")).unwrap().to_plain_string(),
+            "-0.00"
+        );
+        assert_eq!(div(&d("0.00"), &d("2.0")).unwrap().to_plain_string(), "0.0");
+
+        // Quantize moves a zero onto the target exponent and keeps its sign.
+        assert_eq!(d("0").quantize_exp(-2).to_plain_string(), "0.00");
+        assert_eq!(d("-0").quantize_exp(-2).to_plain_string(), "-0.00");
+        assert_eq!(d("-0.001").quantize_exp(-2).to_plain_string(), "-0.00");
+        assert_eq!(d("0.005").quantize_exp(-2).to_plain_string(), "0.00");
+
+        // Rescaling a 28-digit coefficient by a finer zero still rounds back
+        // through ``round_prec`` instead of growing a spurious scale.
+        let wide = "1234567890123456789012345678";
+        assert_eq!(add(&d(wide), &d("0.00")).to_plain_string(), wide);
+        assert_eq!(add(&d("0.00"), &d(wide)).to_plain_string(), wide);
+
+        // Equality still ignores scale and sign. The strings above do not.
+        assert_eq!(d("-0.00"), d("0"));
+        assert_eq!(sub(&d("30003.00"), &d("30003.00")), d("0"));
     }
 
     #[test]
