@@ -2072,7 +2072,14 @@ class WorkflowWiringTests(unittest.TestCase):
                 self.assertEqual(re.findall(r"Bash\([^)]*\)", allow), [HELPER_RULE])
                 self.assertNotIn("git ", allow)
                 self.assertNotIn("ruff", allow)
-                self.assertEqual(allow.strip(), f'"Edit,Write,Read,Glob,Grep,{HELPER_RULE}"')
+                if name == "claude.yml":
+                    self.assertEqual(
+                        allow.strip(),
+                        f'"Edit(/${{{{ github.workspace }}}}/**),Write(/${{{{ github.workspace }}}}/**),Read,Glob,Grep,{HELPER_RULE}"',
+                    )
+                    self.assertNotIn('"Edit,Write,', allow)
+                else:
+                    self.assertEqual(allow.strip(), f'"Edit,Write,Read,Glob,Grep,{HELPER_RULE}"')
                 prompt = action["with"]["prompt"]
                 self.assertNotIn("python -m pytest", prompt)
                 self.assertIn("Do not run tests, linters or any repository code", prompt)
@@ -2096,6 +2103,13 @@ class WorkflowWiringTests(unittest.TestCase):
         "Bash(dangerouslyDisableSandbox:true)",
         "Read(/${{ runner.temp }}/_runner_file_commands/**)",
         "Edit(/${{ runner.temp }}/_runner_file_commands/**)",
+        "Write(/${{ runner.temp }}/_runner_file_commands/**)",
+        "Read(/${{ runner.temp }}/_runner_file_commands/set_env_*)",
+        "Edit(/${{ runner.temp }}/_runner_file_commands/set_env_*)",
+        "Write(/${{ runner.temp }}/_runner_file_commands/set_env_*)",
+        "Read(/${{ runner.temp }}/_runner_file_commands/add_path_*)",
+        "Edit(/${{ runner.temp }}/_runner_file_commands/add_path_*)",
+        "Write(/${{ runner.temp }}/_runner_file_commands/add_path_*)",
         "Edit(/${{ runner.tool_cache }}/**)",
         "Edit(//home/runner/work/_actions/**)",
         "Edit(//home/runner/externals/**)",
@@ -2107,8 +2121,10 @@ class WorkflowWiringTests(unittest.TestCase):
         "BASH_ENV": "", "ENV": "", "LD_PRELOAD": "", "LD_AUDIT": "", "LD_LIBRARY_PATH": "",
         "GCONV_PATH": "", "PYTHONPATH": "", "PYTHONHOME": "", "PYTHONSTARTUP": "",
         "NODE_OPTIONS": "", "PATH": "/usr/bin:/bin",
-        "GIT": "/usr/bin/git", "PYTHON3": "/usr/bin/python3", "JQ": "/usr/bin/jq",
+        "GIT": "/usr/bin/git", "JQ": "/usr/bin/jq",
     }
+    WORKSPACE_EDIT = "Edit(/${{ github.workspace }}/**)"
+    WORKSPACE_WRITE = "Write(/${{ github.workspace }}/**)"
     HELPER_NETWORK = ("api.github.com", "github.com")
     POST_CLAUDE = ("Report tool-permission denials", "Package untrusted model output",
                    "Upload untrusted model output")
@@ -2137,13 +2153,25 @@ class WorkflowWiringTests(unittest.TestCase):
                 deny = settings["permissions"]["deny"]
                 for rule in self.FILE_COMMAND_DENIES:
                     self.assertIn(rule, deny)
-                self.assertFalse([r for r in deny if r.startswith("Write(") and "_runner_file_commands" in r],
-                                 deny)  # Write(path) never matches
                 names = [s.get("name") or s.get("id") for s in model["steps"]]
+                ids = [s.get("id") for s in model["steps"]]
+                self.assertIn("pin-python", ids)
+                self.assertLess(ids.index("pin-python"), ids.index("claude"))
+                pin = [s for s in model["steps"] if s.get("id") == "pin-python"][0]
+                self.assertIn("readlink -f /usr/bin/python3", pin["run"])
                 claude = names.index("claude")
                 self.assertEqual(names[claude + 1:claude + 4], list(self.POST_CLAUDE))
+                allow = action["with"]["claude_args"].split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0]
+                self.assertIn(self.WORKSPACE_EDIT, allow)
+                self.assertIn(self.WORKSPACE_WRITE, allow)
+                self.assertNotIn('"Edit,Write,', allow)
                 denials = step(model, "Report tool-permission denials")
-                self.assertIn('"${PYTHON3:-python3}" - "$EXECUTION_FILE"', denials["run"])
+                self.assertEqual(denials["env"]["PYTHON3"], "${{ steps.pin-python.outputs.python3 }}")
+                self.assertEqual(denials["env"]["PYTHONNOUSERSITE"], "1")
+                self.assertEqual(denials["env"]["PYTHONUSERBASE"], "")
+                self.assertIn('"$python3" -I - "$EXECUTION_FILE"', denials["run"])
+                self.assertIn("env -i PATH=\"/usr/bin:/bin\" PYTHONNOUSERSITE=1", denials["run"])
+                self.assertIn("PYTHON*) unset", denials["run"])
                 package = step(model, "Package untrusted model output")
                 self.assertIn('git_bin="${GIT:-git}"', package["run"])
                 self.assertIn('jq_bin="${JQ:-jq}"', package["run"])
@@ -2153,10 +2181,31 @@ class WorkflowWiringTests(unittest.TestCase):
                     for key, value in self.PINNED_ENV.items():
                         self.assertEqual(env[key], value, (step_name, key))
                     self.assertNotIn("PATH pins over GITHUB_PATH", yaml.dump(env))
+                self.assertEqual(package["env"]["PYTHON3"], "/usr/bin/python3")
         workflow = WORKFLOWS["claude.yml"].read_text(encoding="utf-8")
         self.assertGreaterEqual(
             workflow.count("# CSL-467: Edit denies for /home/runner/work/_actions and"), 2)
         self.assertNotIn("PATH pins over GITHUB_PATH prepends when step env wins.", workflow)
+        self.assertGreaterEqual(workflow.count("U-8 (deny matching) is still unverified on hosted runners."), 2)
+
+    @unittest.skipIf(os.name == "nt", "POSIX python -I")
+    def test_isolated_python_skips_user_site_usercustomize(self):
+        # CSL-467 U2: the denials reporter must not import a model-written
+        # usercustomize.py. env -i + -I is the workflow invocation.
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            site = base / "lib" / f"python{sys.version_info[0]}.{sys.version_info[1]}" / "site-packages"
+            site.mkdir(parents=True)
+            marker = base / "ran"
+            (site / "usercustomize.py").write_text(
+                f"open({str(marker)!r}, 'w').write('ran')\n", encoding="utf-8")
+            subprocess.run(
+                ["env", "-i", "PATH=/usr/bin:/bin", "PYTHONNOUSERSITE=1",
+                 "PYTHONUSERBASE=" + str(base), "PYTHONPATH=" + str(site),
+                 sys.executable, "-I", "-c", "pass"],
+                check=True,
+            )
+            self.assertFalse(marker.exists(), "python -I loaded usercustomize.py")
 
     @unittest.skipIf(os.name == "nt", "POSIX shell fixture")
     def test_helper_install_fails_closed_when_it_cannot_root_own_the_helper(self):

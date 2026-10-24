@@ -806,6 +806,9 @@ class FixerGateAndPromptTests(unittest.TestCase):
             # CSL-377 (Samir, acecb2b): the fixed helper is the only Bash rule; no gate commands.
             allow = body.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0]
             self.assertEqual(re.findall(r"Bash\([^)]*\)", allow), [self.HELPER], job)
+            self.assertIn("Edit(/${{ github.workspace }}/**)", allow, job)
+            self.assertIn("Write(/${{ github.workspace }}/**)", allow, job)
+            self.assertNotIn('"Edit,Write,', allow, job)
             self.assertNotIn("Bash(ruff", body, job)
             for removed in self.REMOVED:
                 self.assertNotIn(removed, body, job)
@@ -844,8 +847,13 @@ class FixerGateAndPromptTests(unittest.TestCase):
         for job in ("claude-mention", "devin-review-fix"):
             body = self._job(job)
             self.assertIn("id: claude", body, job)
+            self.assertIn("id: pin-python", body, job)
             self.assertIn("Report tool-permission denials", body, job)
             self.assertIn("steps.claude.outputs.execution_file", body, job)
+            self.assertIn('"$python3" -I - "$EXECUTION_FILE"', body, job)
+            self.assertIn("Write(/${{ runner.temp }}/_runner_file_commands/**)", body, job)
+            self.assertIn("Write(/${{ runner.temp }}/_runner_file_commands/set_env_*)", body, job)
+            self.assertIn("Write(/${{ runner.temp }}/_runner_file_commands/add_path_*)", body, job)
             self.assertNotIn("show_full_output", body, job)
 
     def test_mention_job_installs_gate_deps(self) -> None:
@@ -857,14 +865,15 @@ class FixerGateAndPromptTests(unittest.TestCase):
         self.assertNotIn("Bash(python -m pytest -q app/tests)", mention)
 
     def test_embedded_denials_match_source(self) -> None:
-        # Mention/fixer call python3 via "${PYTHON3:-python3}" so a poisoned
-        # PATH cannot win. Conflict-writer on main still uses bare python3
-        # until #258 merges.
+        # Mention/fixer run the trusted pin-python path with -I. Conflict-writer
+        # still uses bare python3 until a later PR.
         starts = (
             f"python3 - \"$EXECUTION_FILE\" <<'{DENIALS_HEREDOC}'\n",
             f"\"${{PYTHON3:-python3}}\" - \"$EXECUTION_FILE\" <<'{DENIALS_HEREDOC}'\n",
+            f"\"$python3\" -I - \"$EXECUTION_FILE\" <<'{DENIALS_HEREDOC}'\n",
         )
         combined = self.text + "\n" + WRITER_WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertEqual(self.text.count(starts[2]), 2)
         self.assertEqual(sum(self.text.count(s) for s in starts), 2)
         self.assertEqual(sum(combined.count(s) for s in starts), 3)
         scan = SCAN_WORKFLOW_PATH.read_text(encoding="utf-8")
