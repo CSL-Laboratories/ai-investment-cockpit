@@ -92,10 +92,51 @@ def default_halt_path() -> Path:
     return Path(base) / "ai-investment-cockpit" / "HALT"
 
 
+def _fsync_directory(directory: Path) -> None:
+    """Flush the directory entry that makes the sentinel name durable.
+
+    The file fsync is mandatory. Opening a directory can fail on Windows, so
+    that OSError is best-effort and does not undo a durable file write.
+    """
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    try:
+        fd = os.open(os.fspath(directory), flags)
+    except OSError:
+        return
+    try:
+        try:
+            os.fsync(fd)
+        except OSError:
+            return
+    finally:
+        os.close(fd)
+
+
 def set_halt(path: Path | str, reason: str = "killswitch") -> Path:
+    """Write the HALT sentinel and fsync the file and its directory.
+
+    A crash after a plain write can drop the sentinel. The file fsync and the
+    directory fsync make the name and the bytes durable. If this write fails
+    and the audit block write failed too, ``admit_integrity_failure`` does not
+    survive a restart and the sentinel is absent. A required safety session
+    cannot record a clean close while that denial is set, so the next start
+    sees an unclosed session and stays in startup hold. The process restarts
+    closed.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"{datetime.now(timezone.utc).isoformat()} {reason}\n", encoding="utf-8")
+    payload = f"{datetime.now(timezone.utc).isoformat()} {reason}\n".encode("utf-8")
+    fd = os.open(os.fspath(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    try:
+        written = os.write(fd, payload)
+        if written != len(payload):
+            raise OSError("HALT sentinel write was short")
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    _fsync_directory(path.parent)
     return path
 
 

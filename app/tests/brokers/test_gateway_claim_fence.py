@@ -2289,3 +2289,274 @@ def test_quote_that_expires_during_the_final_risk_refresh_does_not_submit(st):
     assert outcome.stage == "market_data"
     assert broker.calls == 0
     assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_signed_open_with_proposed_row_keeps_the_landed_block(st):
+    """A signed open transition clears the block only while the row is still open.
+
+    85bddd60 treats the verified transition as enough. The mutable column is
+    proposed, so the pending scan can miss the row once the marker is cleared.
+    """
+    from sqlalchemy import update
+
+    from brokers.gateway import UNRECONCILED_LANDED_EXPOSURE
+    from orchestrator.reconcile import reconcile_startup
+
+    scenario, broker = _capped_paper(st)
+    row = _reload_order(scenario.st, scenario.order.id)
+    transition(scenario.st, row, "approved", actor="operator", reason="signed open")
+    with scenario.st.session_factory() as session, session.begin():
+        session.execute(
+            update(Order).where(Order.id == scenario.order.id).values(state="proposed")
+        )
+    scenario.st.audit.append(
+        UNRECONCILED_LANDED_EXPOSURE,
+        actor="operator",
+        refs={"order_id": scenario.order.id},
+        payload={
+            "kind": "block",
+            "order_id": scenario.order.id,
+            "notional": "1500",
+        },
+    )
+    reconcile_startup(
+        scenario.st,
+        broker_history_fn=lambda oid: [{"order_id": oid, "status": "accepted"}],
+        alerter=lambda _msg: None,
+    )
+    assert _latest_landed_kind(scenario.st, scenario.order.id) == "block"
+    assert broker.calls == 0
+
+
+def test_history_reader_cancellation_still_writes_the_landed_block(st, monkeypatch):
+    """A cancelled history read must leave the block before it propagates.
+
+    85bddd60 lets CancelledError escape before the marker write. The row is
+    locally terminal, so the next $1,500 buy is sent.
+    """
+    from sqlalchemy import update
+
+    from tests.brokers.test_pending_exposure_chain import _fresh_submittable
+
+    scenario, broker = _capped_paper(st)
+    fail = _fail_writes_after_send(scenario, broker, monkeypatch)
+
+    def order_history(_order_id):
+        raise asyncio.CancelledError
+
+    broker.order_history = order_history
+    real_persist = scenario.gateway._persist_unreconciled_landed
+
+    def persist(st_arg, order, actor):
+        with scenario.st.session_factory() as session, session.begin():
+            session.execute(
+                update(Order).where(Order.id == order.id).values(state="cancelled")
+            )
+        return real_persist(st_arg, order, actor)
+
+    monkeypatch.setattr(scenario.gateway, "_persist_unreconciled_landed", persist)
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+    finally:
+        fail["v"] = False
+    # The keyless cancel has no signed terminal, so rule (5) would refuse the
+    # next buy on its own. Sign the cancel, then the missing marker is what
+    # lets the second $1,500 through.
+    with scenario.st.session_factory() as session, session.begin():
+        session.execute(
+            update(Order).where(Order.id == scenario.order.id).values(state="proposed")
+        )
+    cancelled = _reload_order(scenario.st, scenario.order.id)
+    transition(
+        scenario.st, cancelled, "cancelled", actor="operator", reason="signed cancel",
+    )
+    second, approval, risk = _fresh_submittable(
+        st, scenario, proposal="p-next", nonce="n-next",
+    )
+    nxt = scenario.gateway.submit(
+        second,
+        **scenario.submit_kwargs(
+            approval=approval, risk_decision=risk, token_nonce="n-next",
+        ),
+    )
+    assert (
+        _latest_landed_kind(scenario.st, scenario.order.id),
+        nxt.ok,
+        nxt.stage,
+        broker.calls,
+    ) == ("block", False, "pending_exposure", 1)
+
+
+def test_broker_history_timestamp_tie_keeps_the_landed_block(st, monkeypatch):
+    """The newest updated_at wins, and a tie is not terminal confirmation.
+
+    85bddd60 uses list position. A newer accepted record followed by an older
+    cancel, or two records with the same timestamp, clears the block.
+    """
+    from orchestrator.reconcile import _broker_order_is_terminal, reconcile_startup
+    from tests.brokers.test_pending_exposure_chain import _fresh_submittable
+
+    scenario, broker = _capped_paper(st)
+    fail = _fail_writes_after_send(scenario, broker, monkeypatch)
+    scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+    fail["v"] = False
+    row = _reload_order(scenario.st, scenario.order.id)
+    transition(scenario.st, row, "cancelled", actor="operator", reason="local cancel")
+    oid = scenario.order.id
+    reordered = [
+        {"order_id": oid, "status": "accepted", "updated_at": "2026-10-24T00:00:02Z"},
+        {"order_id": oid, "status": "cancelled", "updated_at": "2026-10-24T00:00:01Z"},
+    ]
+    tied = [
+        {"order_id": oid, "status": "accepted", "updated_at": "2026-10-24T00:00:02Z"},
+        {"order_id": oid, "status": "cancelled", "updated_at": "2026-10-24T00:00:02Z"},
+    ]
+    assert _broker_order_is_terminal(reordered, oid) is False
+    assert _broker_order_is_terminal(tied, oid) is False
+    reconcile_startup(
+        scenario.st,
+        broker_history_fn=lambda _oid: tied,
+        alerter=lambda _msg: None,
+    )
+    assert _latest_landed_kind(scenario.st, oid) == "block"
+    second, approval, risk = _fresh_submittable(
+        st, scenario, proposal="p-next", nonce="n-next",
+    )
+    nxt = scenario.gateway.submit(
+        second,
+        **scenario.submit_kwargs(
+            approval=approval, risk_decision=risk, token_nonce="n-next",
+        ),
+    )
+    assert nxt.ok is False
+    assert nxt.stage == "pending_exposure"
+    assert broker.calls == 1
+
+
+def test_halt_sentinel_fsyncs_file_and_directory(tmp_path, monkeypatch):
+    """The HALT sentinel fsyncs the file and its directory.
+
+    85bddd60 writes the file and returns. A crash can drop both the marker
+    and the sentinel before either reaches disk.
+    """
+    import os
+
+    synced = []
+    real_fsync = os.fsync
+
+    def fsync(fd):
+        synced.append(fd)
+        return real_fsync(fd)
+
+    monkeypatch.setattr("orchestrator.halt.os.fsync", fsync)
+    path = tmp_path / "halt-dir" / "HALT"
+    set_halt(path, reason="durability")
+    text = path.read_text(encoding="utf-8")
+    assert "durability" in text
+    assert len(synced) >= 2
+
+
+def test_two_gateways_sharing_state_send_only_once(st):
+    """One state admits one in-flight submit, even across two gateways.
+
+    85bddd60 keeps the guard on the gateway instance and the order id. A
+    second gateway with a different order waits out the first, then sends.
+    """
+    from tests.brokers.test_pending_exposure_chain import _fresh_submittable
+
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingBroker(_CountingPaper):
+        def submit_order(self, canonical):
+            started.set()
+            assert release.wait(timeout=10)
+            return super().submit_order(canonical)
+
+    broker = BlockingBroker()
+    gateway = OrderGateway(
+        broker, st=st, execution_scope="paper",
+        pending_exposure_cap=Decimal("10000"),
+    )
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    other = OrderGateway(
+        broker, st=st, execution_scope="paper",
+        pending_exposure_cap=Decimal("10000"),
+    )
+    second, approval, risk = _fresh_submittable(
+        st, scenario, proposal="p-other", nonce="n-other", symbol="NVDA",
+    )
+    other.mint_submit_token(
+        nonce="n-other",
+        proposal_id=second.proposal_id,
+        risk_decision_id=risk.id,
+        order_tuple_hash=second.order_tuple_hash,
+    )
+    both = threading.Event()
+    meta = threading.Lock()
+    contenders = {"n": 0}
+    real_lock = scenario.st.lock
+
+    class WatchingLock:
+        def acquire(self, blocking=True, timeout=-1):
+            with meta:
+                contenders["n"] += 1
+                if contenders["n"] >= 2:
+                    both.set()
+            return real_lock.acquire(blocking, timeout)
+
+        def release(self):
+            real_lock.release()
+
+        def __enter__(self):
+            self.acquire()
+            return self
+
+        def __exit__(self, *_args):
+            self.release()
+            return False
+
+    scenario.st.lock = WatchingLock()
+    results = {}
+    errors = {}
+    ready = threading.Barrier(2)
+
+    def run(name, gw, order, kwargs):
+        try:
+            ready.wait(timeout=10)
+            results[name] = gw.submit(order, **kwargs)
+        except BaseException as exc:  # noqa: BLE001 - the test thread must report it
+            errors[name] = exc
+
+    first = threading.Thread(
+        target=run,
+        args=("first", gateway, scenario.order, scenario.submit_kwargs()),
+    )
+    second_thread = threading.Thread(
+        target=run,
+        args=(
+            "second",
+            other,
+            second,
+            scenario.submit_kwargs(
+                approval=approval, risk_decision=risk, token_nonce="n-other",
+            ),
+        ),
+    )
+    first.start()
+    second_thread.start()
+    try:
+        assert started.wait(timeout=10)
+        assert both.wait(timeout=10)
+    finally:
+        release.set()
+    first.join(timeout=15)
+    second_thread.join(timeout=15)
+    assert errors == {}
+    assert not first.is_alive()
+    assert not second_thread.is_alive()
+    assert broker.calls == 1
+    outcomes = [results["first"], results["second"]]
+    assert sorted(item.stage for item in outcomes) == ["reentrant_submit", "submitted"]
+    assert sum(item.ok for item in outcomes) == 1

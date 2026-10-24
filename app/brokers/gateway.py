@@ -27,6 +27,7 @@ consuming the single-use approval and advancing the order to ``submitted`` (both
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -153,8 +154,28 @@ _MAX_FENCE_ROUNDS = 3
 # check itself. Injected lease jumps are larger than this; a local read is not.
 _BLOCKING_STEP_S = 1.0
 # Set of order ids with a submit inside this state. Shared by every gateway that
-# holds the state, so a second gateway cannot submit the same order.
+# holds the state, so a second gateway cannot submit the same order. The
+# non-reentrant lock below is the guard for a different order on the same state.
 _INFLIGHT_ATTR = "_gateway_inflight_orders"
+_STATE_SUBMIT_ATTR = "_gateway_submit_lock"
+_STATE_SUBMIT_INSTALL = threading.Lock()
+
+
+def _state_submit_lock(st):
+    """The one non-reentrant submit lock stored on ``st``.
+
+    Two threads can both observe a missing attribute. The install lock makes
+    the publish a single lock object, so both gateways share it.
+    """
+    lock = getattr(st, _STATE_SUBMIT_ATTR, None)
+    if lock is not None:
+        return lock
+    with _STATE_SUBMIT_INSTALL:
+        lock = getattr(st, _STATE_SUBMIT_ATTR, None)
+        if lock is None:
+            lock = threading.Lock()
+            setattr(st, _STATE_SUBMIT_ATTR, lock)
+        return lock
 
 # Defaults for the SEC-07 pending-exposure cap and approval time-to-live (Settings/limits
 # override via getattr; the gateway ctor overrides both for tests).
@@ -308,7 +329,8 @@ class OrderGateway:
         if claim_fence is not None and not callable(claim_fence):
             raise TypeError("claim_fence must be callable")
         self._claim_fence = claim_fence
-        # Same-thread re-entry (the state lock is an RLock). A fence must not submit again.
+        # Same-thread re-entry on this instance. The state object owns the lock
+        # that refuses a second gateway, including one submitting another order.
         self._submit_active = False
         # A paper-profile subclass supplies ``_admitted_paper_submit`` before the
         # first submit and may set ``_admitted_paper_type``. When that type is
@@ -602,12 +624,19 @@ class OrderGateway:
         counted = {"approved", "submitted", "partially_filled"}
         if state in counted:
             return
-        # A local terminal row is not broker confirmation. Write the block
-        # unless the broker history's latest status is itself terminal.
-        if state in TERMINAL_STATES and self._broker_history_confirms_terminal(order):
-            return
         amount = self._order_notional(order)
         text = str(amount) if amount.is_finite() and amount > 0 else "Infinity"
+        # A local terminal row is not broker confirmation. Write the block
+        # unless the broker history's latest status is itself terminal.
+        # CancelledError and other BaseExceptions are not "unknown history":
+        # the block is written first, then the error propagates.
+        if state in TERMINAL_STATES:
+            try:
+                if self._broker_history_confirms_terminal(order):
+                    return
+            except BaseException:
+                self._write_landed_block(st, order, actor, text)
+                raise
         self._write_landed_block(st, order, actor, text)
 
     def _broker_history_confirms_terminal(self, order) -> bool:
@@ -629,6 +658,11 @@ class OrderGateway:
 
         ``admit_integrity_failure`` is in-memory and does not survive a restart.
         The halt sentinel does, so the next process still refuses the buy.
+        If this audit write and ``set_halt`` both fail, that in-memory denial
+        is gone on restart and the sentinel is absent too. A required safety
+        session cannot record a clean close while the denial is set
+        (``close_safety_session``), so the next start sees an unclosed session
+        and stays in ``startup_hold``. The process restarts closed.
         """
         payload = {
             "kind": "block",
@@ -652,6 +686,9 @@ class OrderGateway:
         st.admit_integrity_failure(
             "unreconciled landed exposure was not persisted: " + detail
         )
+        # A raise here means both durable writes failed. The comment on this
+        # method is the restart-closed contract: the safety session stays open,
+        # and the next process holds.
         set_halt(
             default_halt_path(),
             reason=(
@@ -942,7 +979,8 @@ class OrderGateway:
         """One in-flight submit per state and order.
 
         A nested call on this gateway, or on another gateway sharing ``st``, is refused
-        before it can consume a token.
+        before it can consume a token. ``submit`` also takes the state's submit lock
+        before ``st.lock``, so a second gateway cannot send a different order either.
         """
         inflight = getattr(st, _INFLIGHT_ATTR, None)
         if inflight is None:
@@ -1681,6 +1719,22 @@ class OrderGateway:
         canonical = self._resolve_tuple(order)
         intent_box: dict = {}
         transport_entered = False
+        # The guard is the state object, not this gateway. Acquire it before
+        # ``st.lock`` so a second thread loses immediately instead of waiting
+        # out the broker call and then sending. A nested call on this thread
+        # fails the same non-reentrant lock and records the refusal under
+        # ``st.lock`` (an RLock). The early return does not hold the lock.
+        state_submit = _state_submit_lock(st)
+        if not state_submit.acquire(blocking=False):
+            with st.lock:
+                reason = "re-entrant submit refused before the capability token is consumed"
+                self._record_refusal(
+                    st, order, event=EVENT_ORDER_REFUSED,
+                    stage="reentrant_submit", reason=reason, actor=producing_runtime,
+                )
+                return GateOutcome(
+                    False, "reentrant_submit", reason, order_tuple_hash=resolved_hash
+                )
 
         try:
             with st.lock, self._single_submit(st, getattr(order, "id", None)) as submit_open:
@@ -2618,6 +2672,8 @@ class OrderGateway:
                         resolved_hash=resolved_hash,
                     )
             raise
+        finally:
+            state_submit.release()
 
     # ---- public: place = review THEN submit (review provably precedes submit) -----------
     def place_equity_order(self, order, *, approval, risk_decision, ladder, breaker_engine,

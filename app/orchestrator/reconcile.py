@@ -188,22 +188,46 @@ _BROKER_TERMINAL_STATUSES = frozenset({
 })
 
 
+def _history_stamp(record) -> str | None:
+    """The record's ``updated_at`` as text, or None when it cannot order history."""
+    stamp = record.get("updated_at")
+    if stamp is None or stamp == "":
+        return None
+    return str(stamp)
+
+
 def _broker_order_is_terminal(history, order_id) -> bool:
     """True only when the latest history record for this order id is terminal.
 
-    An earlier cancel does not confirm a later reopen. An error, an empty
-    reply, a non-dict, or a record for a different order is not confirmation.
-    The caller keeps the landed block in that case.
+    An earlier cancel does not confirm a later reopen. Records that carry
+    ``updated_at`` are ordered by that timestamp, not by list position. When
+    the newest timestamp is shared, the latest status is ambiguous and this
+    returns False so the landed block stays. When no matched record has a
+    timestamp, list order is the order and the last match is the latest. A
+    mix of timestamped and untimestamped records cannot be ordered. An error,
+    an empty reply, a non-dict, or a record for a different order is not
+    confirmation either.
     """
     if not history or isinstance(history, BaseException):
         return False
     records = history if isinstance(history, (list, tuple)) else [history]
-    latest = None
-    for rec in records:
-        if isinstance(rec, dict) and rec.get("order_id") == order_id:
-            latest = rec
-    if latest is None:
+    matched = [
+        rec for rec in records
+        if isinstance(rec, dict) and rec.get("order_id") == order_id
+    ]
+    if not matched:
         return False
+    stamps = [_history_stamp(rec) for rec in matched]
+    if any(stamp is None for stamp in stamps):
+        if any(stamp is not None for stamp in stamps):
+            return False
+        latest = matched[-1]
+    else:
+        newest = max(stamps)
+        leaders = [rec for rec, stamp in zip(matched, stamps) if stamp == newest]
+        if len(leaders) != 1:
+            return False
+        latest = leaders[0]
     status = str(latest.get("status", "")).strip().lower()
     return status in _BROKER_TERMINAL_STATUSES
 
@@ -324,9 +348,11 @@ def reconcile_startup(
 
     # A landed send whose local row never became open leaves a sticky block.
     # Clear it only when the rest of this report is clean AND either the
-    # verified chain says the order is open or the broker's latest status is
-    # terminal. The mutable state column is not enough, and a report that is
-    # already not ok does not discharge the block.
+    # verified chain says the order is open while the current row is still a
+    # counted open state, or the broker's latest status is terminal. A signed
+    # open transition whose row is now proposed does not clear: the pending
+    # scan can miss that row. The mutable state column alone is not enough,
+    # and a report that is already not ok does not discharge the block.
     from brokers.gateway import UNRECONCILED_LANDED_EXPOSURE
 
     stuck_landed = False
@@ -387,8 +413,9 @@ def reconcile_startup(
             order_row = s.get(Order, order_id)
         state = None if order_row is None else order_row.state
         confirmed = False
+        counted = {"approved", "submitted", "partially_filled"}
         if otherwise_ok:
-            if _signed_open_exposure(st, order_id):
+            if state in counted and _signed_open_exposure(st, order_id):
                 confirmed = True
             else:
                 history = None
