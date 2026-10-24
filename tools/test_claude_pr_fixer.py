@@ -632,8 +632,8 @@ class WorkflowStructureTests(unittest.TestCase):
         )
         locks: list[str] = []
         pip_line = (
-            'python -P -m pip install --require-hashes --only-binary=:all: '
-            '--no-deps -r "$lock"'
+            'python -P -m pip install --no-cache-dir --require-hashes '
+            '--only-binary=:all: --no-deps -r "$lock"'
         )
         for filename, job_name, body in jobs:
             with self.subTest(workflow=filename, job=job_name):
@@ -643,6 +643,7 @@ class WorkflowStructureTests(unittest.TestCase):
                 self.assertIn(f"cat > \"$lock\" <<'{marker}'", step)
                 self.assertIn(f"lock=\"$RUNNER_TEMP/csl471-pip.lock\"", step)
                 self.assertIn(pip_line, step)
+                self.assertIn("--no-cache-dir", step)
                 self.assertNotIn("git show", step)
                 self.assertNotIn("github.workspace", step)
                 self.assertNotIn("requirements.txt", step)
@@ -678,6 +679,39 @@ class WorkflowStructureTests(unittest.TestCase):
                 self.assertIn("pip==", lock)
                 locks.append(lock)
         self.assertEqual(len(set(locks)), 1)
+
+    def test_hashed_lock_heredocs_are_byte_identical(self) -> None:
+        # CSL-471 Observability I4: the three YAML heredoc bodies must match
+        # as source bytes, including indent and interior newlines.
+        marker = "CSL_PIP_HASH_LOCK"
+        writer = WRITER_WORKFLOW_PATH.read_text(encoding="utf-8")
+        bodies = []
+        for filename, job_name, job in (
+            ("claude.yml", "claude-mention", self._job("claude-mention")),
+            ("claude.yml", "devin-review-fix", self._job("devin-review-fix")),
+            ("claude-conflict-writer.yml", "model", self._job_text(writer, "model")),
+        ):
+            step = self._named_step(job, "Install acceptance-gate deps")
+            bodies.append((filename, job_name, self._heredoc_body(step, marker)))
+        first = bodies[0][2]
+        self.assertTrue(first.startswith(b"          "), first[:40])
+        self.assertIn(b"--hash=sha256:", first)
+        for filename, job_name, body in bodies[1:]:
+            self.assertEqual(body, first, f"{filename}:{job_name}")
+
+    @staticmethod
+    def _heredoc_body(step: str, marker: str) -> bytes:
+        start_token = f"<<'{marker}'\n"
+        start = step.find(start_token)
+        if start < 0:
+            raise AssertionError(marker)
+        after = step[start + len(start_token):]
+        closer = after.find(f"\n          {marker}\n")
+        if closer < 0:
+            closer = after.find(f"\n{marker}\n")
+        if closer < 0:
+            raise AssertionError("missing heredoc closer")
+        return after[:closer].encode("utf-8")
 
     @staticmethod
     def _job_text(text: str, name: str) -> str:

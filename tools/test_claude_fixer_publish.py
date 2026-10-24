@@ -2263,9 +2263,10 @@ class WorkflowWiringTests(unittest.TestCase):
             run = install["run"]
             with self.subTest(workflow=workflow, job=job_name):
                 self.assertEqual(install["working-directory"], "${{ runner.temp }}")
-                self.assertIn("python -P -m pip install --require-hashes", run)
+                self.assertIn("python -P -m pip install --no-cache-dir --require-hashes", run)
                 self.assertIn("--only-binary=:all:", run)
                 self.assertIn("--no-deps", run)
+                self.assertIn("--no-cache-dir", run)
                 self.assertIn("<<'CSL_PIP_HASH_LOCK'", run)
                 self.assertIn("$RUNNER_TEMP/csl471-pip.lock", run)
                 self.assertNotIn("working-directory: app", yaml.dump(install))

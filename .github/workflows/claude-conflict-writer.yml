@@ -326,7 +326,7 @@ jobs:
               --hash=sha256:c6f117789d22dce188e5754e8bc65b7e6ebf8cb73963b9fa761f672a5883769d \
               --hash=sha256:681c758b0490f9e96b78e5fa8e8dc6e648e9185bb6eaebe73183c33ea0c445f3
           CSL_PIP_HASH_LOCK
-          python -P -m pip install --require-hashes --only-binary=:all: --no-deps -r "$lock"
+          python -P -m pip install --no-cache-dir --require-hashes --only-binary=:all: --no-deps -r "$lock"
       - name: Install model API outbox helper
         id: outbox
         env:
