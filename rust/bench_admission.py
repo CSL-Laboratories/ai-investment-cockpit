@@ -4,7 +4,8 @@
 Per-call rows are what a poller runs: ``Dedup.add`` and ``TokenBucket.allow``,
 both on the Python implementation. Batch rows hand the script to the Rust
 extension in one call. ``allow_many`` is the shipped token-bucket batch. The
-process exits if that batch is slower than the Python loop.
+process exits if that batch is slower than the Python loop, measured with the
+interleaved pairs in ``bench_gate`` (CSL-404).
 
     python -m maturin build --release --manifest-path rust/cockpit-py/Cargo.toml
     python -m pip install --force-reinstall rust/target/wheels/cockpit_quant-*.whl
@@ -19,6 +20,7 @@ from pathlib import Path
 APP = Path(__file__).resolve().parents[1] / "app"
 sys.path.insert(0, str(APP))
 
+from bench_gate import BATCH_FLOOR, gate_failure, gate_line, paired_ratio  # noqa: E402
 from ingest.dedup import DEDUP_BACKEND, Dedup, dedup_replay  # noqa: E402
 from ingest.ratelimit import RATELIMIT_BACKEND, TokenBucket  # noqa: E402
 
@@ -93,8 +95,14 @@ def main() -> None:
     print(row("batched dedup", ref_dedup, batch_dedup))
     print(row("per-call token bucket", ref_bucket, hot_bucket))
     print(row("batched token bucket", ref_bucket, batch_bucket))
-    if ref_bucket / batch_bucket < 1.0:
-        sys.exit("token bucket shipped path regressed below 1x")
+
+    # Gate on interleaved pairs, not on the two block medians above (CSL-404).
+    # The batch runs several times faster, so it keeps the strict floor.
+    ratio = paired_ratio(lambda: _hot_bucket(times), lambda: _batched_bucket(times))
+    print(gate_line("batched token bucket", ratio, BATCH_FLOOR))
+    failure = gate_failure("batched token bucket", ratio, BATCH_FLOOR)
+    if failure:
+        sys.exit("token bucket shipped path: " + failure)
 
 
 if __name__ == "__main__":

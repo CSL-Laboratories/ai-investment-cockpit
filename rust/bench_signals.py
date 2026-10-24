@@ -19,6 +19,13 @@ APP = Path(__file__).resolve().parents[1] / "app"
 sys.path.insert(0, str(APP))
 
 import cockpit_quant  # noqa: E402
+from bench_gate import (  # noqa: E402
+    BATCH_FLOOR,
+    PER_CALL_FLOOR,
+    gate_failure,
+    gate_line,
+    paired_ratio,
+)
 from quant.signals import (  # noqa: E402
     SIGNALS_BACKEND,
     EwmaVolatility,
@@ -145,8 +152,22 @@ def main() -> None:
     print(row("batched OFI", py_ofi, batch_ofi))
     print(row("per-call beta", py_beta, rust_beta))
     print(row("batched beta", py_beta, batch_beta))
-    if py_ewma / shipped_ewma < 1.0 or py_ewma / batch_ewma < 1.0:
-        sys.exit("EWMA shipped path regressed below 1x")
+
+    # The table above is informational. The gate re-measures with interleaved
+    # pairs so runner noise cannot land on one side only (CSL-404). Per-call
+    # crosses the interpreter once per observation and runs near parity by
+    # design, so it gets a noise margin; batched keeps the strict floor.
+    gates = (
+        ("per-call EWMA", paired_ratio(lambda: _python_ewma(prices),
+                                       lambda: _shipped_ewma(prices)), PER_CALL_FLOOR),
+        ("batched EWMA", paired_ratio(lambda: _python_ewma(prices),
+                                      lambda: _batched_ewma(prices)), BATCH_FLOOR),
+    )
+    for name, ratio, floor in gates:
+        print(gate_line(name, ratio, floor))
+    failures = [msg for msg in (gate_failure(*g) for g in gates) if msg]
+    if failures:
+        sys.exit("EWMA shipped path: " + "; ".join(failures))
 
 
 if __name__ == "__main__":
