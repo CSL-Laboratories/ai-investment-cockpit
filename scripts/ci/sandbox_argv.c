@@ -7,6 +7,28 @@ static int starts_with(const char *s, const char *p)
     return strncmp(s, p, strlen(p)) == 0;
 }
 
+/* SDK 0.3.306 emits Ke("--flag", v) as a single "--flag=v" token for
+ * max-turns, allowedTools, disallowedTools, and setting-sources. YAML
+ * two-token form is still accepted with the same value checks. */
+static int take_eq_or_next(const char *a, const char *flag, int *i, int argc,
+                           char **argv, const char **value)
+{
+    size_t flen = strlen(flag);
+    if (strcmp(a, flag) == 0) {
+        if (*i + 1 >= argc) {
+            return -1;
+        }
+        (*i)++;
+        *value = argv[*i];
+        return 1;
+    }
+    if (starts_with(a, flag) && a[flen] == '=') {
+        *value = a + flen + 1;
+        return 1;
+    }
+    return 0;
+}
+
 static void free_tools(char **tools, int n)
 {
     while (n > 0) {
@@ -83,7 +105,7 @@ int csl_argv_allow(int argc, char **argv)
     char helper[768];
     char *tools[64];
     int ntools = 0;
-    const char *ws = "/home/runner/work/ai-investment-cockpit/ai-investment-cockpit";
+    const char *ws = CSL_WORKSPACE_DEFAULT;
     char wsbuf[512];
     size_t n = 0;
 
@@ -151,47 +173,83 @@ int csl_argv_allow(int argc, char **argv)
             saw_perm = 1;
             continue;
         }
-        if (strcmp(a, "--max-turns") == 0) {
-            if (saw_turns || i + 1 >= argc || strcmp(argv[i + 1], "30") != 0) {
+        {
+            const char *val = NULL;
+            int t = take_eq_or_next(a, "--max-turns", &i, argc, argv, &val);
+            if (t < 0) {
                 free_tools(tools, ntools);
                 return -1;
             }
-            i++;
-            saw_turns = 1;
-            continue;
+            if (t > 0) {
+                if (saw_turns || strcmp(val, "30") != 0) {
+                    free_tools(tools, ntools);
+                    return -1;
+                }
+                saw_turns = 1;
+                continue;
+            }
         }
-        if (strcmp(a, "--setting-sources") == 0) {
-            if (saw_sources || i + 1 >= argc || strcmp(argv[i + 1], "user") != 0) {
+        {
+            const char *val = NULL;
+            int t = take_eq_or_next(a, "--setting-sources", &i, argc, argv, &val);
+            if (t < 0) {
                 free_tools(tools, ntools);
                 return -1;
             }
-            i++;
-            saw_sources = 1;
-            continue;
+            if (t > 0) {
+                if (saw_sources || strcmp(val, "user") != 0) {
+                    free_tools(tools, ntools);
+                    return -1;
+                }
+                saw_sources = 1;
+                continue;
+            }
         }
-        if (strcmp(a, "--allowedTools") == 0 || strcmp(a, "--allowed-tools") == 0) {
-            int extra;
-            if (saw_allowed || i + 1 >= argc) {
+        {
+            const char *val = NULL;
+            int t = take_eq_or_next(a, "--allowedTools", &i, argc, argv, &val);
+            if (t == 0) {
+                t = take_eq_or_next(a, "--allowed-tools", &i, argc, argv, &val);
+            }
+            if (t < 0) {
                 free_tools(tools, ntools);
                 return -1;
             }
-            extra = split_tools(argv[i + 1], tools + ntools, 64 - ntools);
-            if (extra < 0) {
-                return -1;
+            if (t > 0) {
+                int extra;
+                if (saw_allowed) {
+                    free_tools(tools, ntools);
+                    return -1;
+                }
+                extra = split_tools(val, tools + ntools, 64 - ntools);
+                if (extra < 0) {
+                    free_tools(tools, ntools);
+                    return -1;
+                }
+                ntools += extra;
+                saw_allowed = 1;
+                continue;
             }
-            ntools += extra;
-            saw_allowed = 1;
-            i++;
-            continue;
         }
-        if (strcmp(a, "--disallowedTools") == 0 || strcmp(a, "--disallowed-tools") == 0) {
-            if (saw_disallowed || i + 1 >= argc) {
+        {
+            const char *val = NULL;
+            int t = take_eq_or_next(a, "--disallowedTools", &i, argc, argv, &val);
+            if (t == 0) {
+                t = take_eq_or_next(a, "--disallowed-tools", &i, argc, argv, &val);
+            }
+            if (t < 0) {
                 free_tools(tools, ntools);
                 return -1;
             }
-            i++;
-            saw_disallowed = 1;
-            continue;
+            if (t > 0) {
+                if (saw_disallowed) {
+                    free_tools(tools, ntools);
+                    return -1;
+                }
+                (void)val;
+                saw_disallowed = 1;
+                continue;
+            }
         }
         if (strcmp(a, "--append-system-prompt") == 0) {
             if (saw_append || i + 1 >= argc) {

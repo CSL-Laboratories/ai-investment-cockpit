@@ -55,3 +55,38 @@ amendment can restore bun MCP if founders want it.
 
 Hooks record `[A]` and accept both `sudo_fork` and `sudo_exec`. They do not
 pick which hosted sudo uses.
+
+## Round-3 policy (waiting for Lucas)
+
+R3 REVIEW-R3.md (sha256 3331c04a…) lists these as accepted-risk / policy
+choices, not in-design defects. This stack does not treat them as decided.
+Technical defects R3-B1, R3-M1, R3-L1–L6, and in-design partials N7, N14,
+N19, H4 are fixed in code; P1–P9 stay here.
+
+1. **P1 / N1.** Accept tracked and PR-head-controlled `.claude/settings.json`,
+   hooks, skills, `.mcp.json`, CLAUDE.md and AGENTS.md in the working
+   directory, relying on `--setting-sources user` plus `--strict-mcp-config`
+   with the empty launcher-owned config, instead of D10's `stat` refusal.
+   Needs a D10 amendment. Frozen DESIGN and addendum are not touched.
+2. **P2 / N9.** No bun on PATH; helper is the only GitHub write path. Under
+   P1 the launcher discards the action MCP config, so this is "no action MCP
+   at all".
+3. **P3 / N8.** Keep `Write(/workspace/**)`; the launcher requires that exact
+   set.
+4. **P4 / G9/F7.** Writer-held veto without a cgroup. N14 now waits the
+   process group; setsid is still the veto path.
+5. **P5.** `first_bash=missing` in every run; U-18 accepts both `sudo_fork`
+   and `sudo_exec`.
+6. **P6.** Residual inputs the flag does not control: server-managed
+   settings, and AGENTS.md through the built-in plugin.
+7. **P7.** Stay on 2.1.306 even though 2.1.309 fixes `--mcp-config` file
+   mutation. Acceptable only while `/opt/csl-claude/mcp.empty.json` stays
+   root 0444.
+8. **P8.** Merge commits in #264. Do not merge #264 to main in this form.
+   Either #262 and #256 land first, or Lucas explicitly accepts the merges.
+   This stack does not rebase.
+9. **P9.** Any live validation needs separately approved probes: setting-
+   sources behaviour on 2.1.306, the real SDK argv, and U-16/17/18.
+
+I-4 (ALLOW_PIDS unused / sweep-only-records) is informational: extra runner
+pids are Worker/Listener at runner uid; do not fail-closed them here.
