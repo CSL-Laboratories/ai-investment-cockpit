@@ -1269,8 +1269,28 @@ jobs:
           allowed_non_write_users: "-no-such-user-"
           bot_id: "209825114"
           bot_name: "claude[bot]"
+          # CSL-467: Write/Edit run as runner, outside bwrap. Permission path
+          # rules: Write(path) never matches; a single leading / is relative to
+          # ~/.claude (the action writes this JSON there). runner.temp and
+          # runner.tool_cache are absolute, so /${{ runner.temp }} is the //
+          # filesystem-root form. sandbox.allowUnsandboxedCommands defaults true
+          # and an allow rule auto-approves the unsandboxed retry. Existing
+          # Write(...) cockpit rules stay; tests pin them, and they are no-ops.
           settings: |
             {
+              "sandbox": {
+                "enabled": true,
+                "allowUnsandboxedCommands": false,
+                "failIfUnavailable": true,
+                "filesystem": {
+                  "denyWrite": [
+                    "${{ runner.temp }}/_runner_file_commands",
+                    "${{ runner.tool_cache }}",
+                    "/home/runner/work/_actions",
+                    "/home/runner/externals"
+                  ]
+                }
+              },
               "permissions": {
                 "deny": [
                   "Read(.env)",
@@ -1301,7 +1321,16 @@ jobs:
                   "Write(~/.gitconfig)",
                   "Edit(~/.config/git/**)",
                   "Write(~/.config/git/**)",
-                  "Read(~/.claude/**)"
+                  "Read(~/.claude/**)",
+                  "Bash(dangerouslyDisableSandbox:true)",
+                  "Read(/${{ runner.temp }}/_runner_file_commands/**)",
+                  "Edit(/${{ runner.temp }}/_runner_file_commands/**)",
+                  "Edit(/${{ runner.tool_cache }}/**)",
+                  "Edit(//home/runner/work/_actions/**)",
+                  "Edit(//home/runner/externals/**)",
+                  "Edit(~/.bashrc)",
+                  "Edit(~/.profile)",
+                  "Edit(~/.bash_profile)"
                 ]
               }
             }
@@ -1373,6 +1402,20 @@ jobs:
         if: always() && steps.claude.outputs.execution_file != ''
         env:
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+          # CSL-467: step env overrides GITHUB_ENV for these names. Blank
+          # loader/shell hooks the model could write via file commands.
+          # PATH pins over GITHUB_PATH prepends when step env wins.
+          BASH_ENV: ""
+          ENV: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GCONV_PATH: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          PYTHONSTARTUP: ""
+          NODE_OPTIONS: ""
+          PATH: "/usr/bin:/bin"
         run: |
           python3 - "$EXECUTION_FILE" <<'CLAUDE_DENIALS_REPORT'
           #!/usr/bin/env python3
@@ -1506,6 +1549,19 @@ jobs:
         env:
           HEAD_SHA: ${{ needs.mention-prepare.outputs.head_sha }}
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+          # CSL-467: pin env so a poisoned GITHUB_ENV/GITHUB_PATH cannot
+          # control this step. Publish still revalidates the artifact.
+          BASH_ENV: ""
+          ENV: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GCONV_PATH: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          PYTHONSTARTUP: ""
+          NODE_OPTIONS: ""
+          PATH: "/usr/bin:/bin"
         run: |
           set -uo pipefail
           # Everything packaged here is untrusted model/PR output; the publish
@@ -1554,6 +1610,20 @@ jobs:
       - name: Upload untrusted model output
         if: always()
         uses: actions/upload-artifact@v4
+        env:
+          # CSL-467: JS actions use the runner's bundled node; LD_* still
+          # applies. PATH pin is belt-and-suspenders if node is looked up.
+          BASH_ENV: ""
+          ENV: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GCONV_PATH: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          PYTHONSTARTUP: ""
+          NODE_OPTIONS: ""
+          PATH: "/usr/bin:/bin"
         with:
           name: claude-mention-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/claude-writer-out/
@@ -4390,8 +4460,28 @@ jobs:
           bot_name: "claude[bot]"
           allowed_bots: devin-ai-integration
           include_comments_by_actor: devin-ai-integration[bot]
+          # CSL-467: Write/Edit run as runner, outside bwrap. Permission path
+          # rules: Write(path) never matches; a single leading / is relative to
+          # ~/.claude (the action writes this JSON there). runner.temp and
+          # runner.tool_cache are absolute, so /${{ runner.temp }} is the //
+          # filesystem-root form. sandbox.allowUnsandboxedCommands defaults true
+          # and an allow rule auto-approves the unsandboxed retry. Existing
+          # Write(...) cockpit rules stay; tests pin them, and they are no-ops.
           settings: |
             {
+              "sandbox": {
+                "enabled": true,
+                "allowUnsandboxedCommands": false,
+                "failIfUnavailable": true,
+                "filesystem": {
+                  "denyWrite": [
+                    "${{ runner.temp }}/_runner_file_commands",
+                    "${{ runner.tool_cache }}",
+                    "/home/runner/work/_actions",
+                    "/home/runner/externals"
+                  ]
+                }
+              },
               "permissions": {
                 "deny": [
                   "Read(.env)",
@@ -4422,7 +4512,16 @@ jobs:
                   "Write(~/.gitconfig)",
                   "Edit(~/.config/git/**)",
                   "Write(~/.config/git/**)",
-                  "Read(~/.claude/**)"
+                  "Read(~/.claude/**)",
+                  "Bash(dangerouslyDisableSandbox:true)",
+                  "Read(/${{ runner.temp }}/_runner_file_commands/**)",
+                  "Edit(/${{ runner.temp }}/_runner_file_commands/**)",
+                  "Edit(/${{ runner.tool_cache }}/**)",
+                  "Edit(//home/runner/work/_actions/**)",
+                  "Edit(//home/runner/externals/**)",
+                  "Edit(~/.bashrc)",
+                  "Edit(~/.profile)",
+                  "Edit(~/.bash_profile)"
                 ]
               }
             }
@@ -4489,6 +4588,20 @@ jobs:
         if: always() && steps.claude.outputs.execution_file != ''
         env:
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+          # CSL-467: step env overrides GITHUB_ENV for these names. Blank
+          # loader/shell hooks the model could write via file commands.
+          # PATH pins over GITHUB_PATH prepends when step env wins.
+          BASH_ENV: ""
+          ENV: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GCONV_PATH: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          PYTHONSTARTUP: ""
+          NODE_OPTIONS: ""
+          PATH: "/usr/bin:/bin"
         run: |
           python3 - "$EXECUTION_FILE" <<'CLAUDE_DENIALS_REPORT'
           #!/usr/bin/env python3
@@ -4622,6 +4735,19 @@ jobs:
         env:
           HEAD_SHA: ${{ needs.fixer-prepare.outputs.head_sha }}
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+          # CSL-467: pin env so a poisoned GITHUB_ENV/GITHUB_PATH cannot
+          # control this step. Publish still revalidates the artifact.
+          BASH_ENV: ""
+          ENV: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GCONV_PATH: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          PYTHONSTARTUP: ""
+          NODE_OPTIONS: ""
+          PATH: "/usr/bin:/bin"
         run: |
           set -uo pipefail
           # Everything packaged here is untrusted model/PR output; the publish
@@ -4670,6 +4796,20 @@ jobs:
       - name: Upload untrusted model output
         if: always()
         uses: actions/upload-artifact@v4
+        env:
+          # CSL-467: JS actions use the runner's bundled node; LD_* still
+          # applies. PATH pin is belt-and-suspenders if node is looked up.
+          BASH_ENV: ""
+          ENV: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GCONV_PATH: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          PYTHONSTARTUP: ""
+          NODE_OPTIONS: ""
+          PATH: "/usr/bin:/bin"
         with:
           name: claude-fixer-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/claude-writer-out/

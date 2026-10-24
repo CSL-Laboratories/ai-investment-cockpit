@@ -2071,6 +2071,55 @@ class WorkflowWiringTests(unittest.TestCase):
                 tail = outbox["run"].split("\nCLAUDE_FIXER_OUTBOX\n", 1)[1]
                 self.assertEqual([line for line in tail.splitlines() if line and not line.startswith("#")], ROOT_OWN)
 
+    FILE_COMMAND_DENIES = (
+        "Bash(dangerouslyDisableSandbox:true)",
+        "Read(/${{ runner.temp }}/_runner_file_commands/**)",
+        "Edit(/${{ runner.temp }}/_runner_file_commands/**)",
+        "Edit(/${{ runner.tool_cache }}/**)",
+        "Edit(//home/runner/work/_actions/**)",
+        "Edit(//home/runner/externals/**)",
+        "Edit(~/.bashrc)",
+        "Edit(~/.profile)",
+        "Edit(~/.bash_profile)",
+    )
+    PINNED_ENV = {
+        "BASH_ENV": "", "ENV": "", "LD_PRELOAD": "", "LD_AUDIT": "", "LD_LIBRARY_PATH": "",
+        "GCONV_PATH": "", "PYTHONPATH": "", "PYTHONHOME": "", "PYTHONSTARTUP": "",
+        "NODE_OPTIONS": "", "PATH": "/usr/bin:/bin",
+    }
+    POST_CLAUDE = ("Report tool-permission denials", "Package untrusted model output",
+                   "Upload untrusted model output")
+
+    def test_claude_yml_model_jobs_block_file_command_poisoning(self):
+        # CSL-467: Write/Edit can reach $RUNNER_TEMP/_runner_file_commands. Mention
+        # and fixer model jobs in claude.yml close that; conflict-writer is separate.
+        for name, _prep, model, _pub, _group, ids in self.pipelines():
+            if name != "claude.yml":
+                continue
+            with self.subTest(job=ids[1]):
+                action = [s for s in model["steps"] if s.get("id") == "claude"][0]
+                settings = json.loads(action["with"]["settings"])
+                self.assertEqual(settings["sandbox"]["enabled"], True)
+                self.assertEqual(settings["sandbox"]["allowUnsandboxedCommands"], False)
+                self.assertEqual(settings["sandbox"]["failIfUnavailable"], True)
+                deny_write = settings["sandbox"]["filesystem"]["denyWrite"]
+                for path in ("${{ runner.temp }}/_runner_file_commands", "${{ runner.tool_cache }}",
+                             "/home/runner/work/_actions", "/home/runner/externals"):
+                    self.assertIn(path, deny_write)
+                    self.assertNotIn("*", path)  # Linux denyWrite skips wildcard entries
+                deny = settings["permissions"]["deny"]
+                for rule in self.FILE_COMMAND_DENIES:
+                    self.assertIn(rule, deny)
+                self.assertFalse([r for r in deny if r.startswith("Write(") and "_runner_file_commands" in r],
+                                 deny)  # Write(path) never matches
+                names = [s.get("name") or s.get("id") for s in model["steps"]]
+                claude = names.index("claude")
+                self.assertEqual(names[claude + 1:claude + 4], list(self.POST_CLAUDE))
+                for step_name in self.POST_CLAUDE:
+                    env = step(model, step_name)["env"]
+                    for key, value in self.PINNED_ENV.items():
+                        self.assertEqual(env[key], value, (step_name, key))
+
     @unittest.skipIf(os.name == "nt", "POSIX shell fixture")
     def test_helper_install_fails_closed_when_it_cannot_root_own_the_helper(self):
         for name, _prep, model, _pub, _group, ids in self.pipelines():
