@@ -45,12 +45,9 @@ class RunGatesActionTests(unittest.TestCase):
         self.action = ACTION.read_text(encoding='utf-8')
         self.requirements = REQUIREMENTS.read_text(encoding='utf-8')
 
-    def test_installs_from_pinned_requirements_and_keys_caches_on_it(self):
-        self.assertIn('cache: pip', self.action)
-        self.assertIn(
-            'cache-dependency-path: .github/actions/run-gates/requirements.txt',
-            self.action,
-        )
+    def test_installs_from_pinned_requirements_without_actions_pip_cache(self):
+        self.assertNotIn('cache: pip', self.action)
+        self.assertNotIn('cache-dependency-path:', self.action)
         self.assertNotIn('app/pyproject.toml', self.action)
         self.assertNotIn('uses: actions/cache@', self.action)
         self.assertNotIn('cache-hit', self.action)

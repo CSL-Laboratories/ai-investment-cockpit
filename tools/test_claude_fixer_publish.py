@@ -2274,6 +2274,43 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertIn("python -P -m pip install -r", run)
         self.assertNotIn("${{ github.workspace }}/app/benchmarks/requirements.txt", run)
 
+    def test_pr_and_model_jobs_do_not_enable_setup_python_pip_cache(self):
+        # CSL-471 REVIEW-D8 J3: setup-python's post-step would save a PR-poisoned
+        # ~/.cache/pip into the default-branch cache scope; later jobs restore by
+        # prefix. claude-conflict-writer.yml is owned by #258 and is not asserted.
+        pip_cache_line = re.compile(r"^[ \t]*cache:[ \t]*pip[ \t]*$", re.M)
+        names = ("claude.yml", "ci.yml", "rust.yml", "codex-gate.yml")
+        checked = 0
+        for name in names:
+            path = ROOT / ".github/workflows" / name
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(workflow=name, kind="text"):
+                self.assertIsNone(pip_cache_line.search(text), text)
+            data = yaml.load(text, Loader=yaml.BaseLoader)
+            for job_name, job in (data.get("jobs") or {}).items():
+                for index, item in enumerate(job.get("steps") or []):
+                    uses = str(item.get("uses") or "")
+                    if not uses.startswith("actions/setup-python@"):
+                        continue
+                    checked += 1
+                    with_block = item.get("with") or {}
+                    with self.subTest(workflow=name, job=job_name, step=index):
+                        self.assertNotEqual(with_block.get("cache"), "pip")
+                        self.assertNotIn("cache-dependency-path", with_block)
+        action_path = ROOT / ".github/actions/run-gates/action.yml"
+        action_text = action_path.read_text(encoding="utf-8")
+        self.assertIsNone(pip_cache_line.search(action_text), action_text)
+        action = yaml.load(action_text, Loader=yaml.BaseLoader)
+        for index, item in enumerate((action.get("runs") or {}).get("steps") or []):
+            uses = str(item.get("uses") or "")
+            if not uses.startswith("actions/setup-python@"):
+                continue
+            checked += 1
+            with_block = item.get("with") or {}
+            self.assertNotEqual(with_block.get("cache"), "pip")
+            self.assertNotIn("cache-dependency-path", with_block)
+        self.assertGreater(checked, 0)
+
 
 def _has_pip_module_install(run):
     return bool(re.search(r"-m\s+pip\b", run) or re.search(r"""['\"]-m['\"],\s*['\"]pip['\"]""", run))

@@ -9,13 +9,13 @@ inputs:
 runs:
   using: composite
   steps:
+    # CSL-471 REVIEW-D8 J3: do not enable setup-python's pip cache. The post-step
+    # would save ~/.cache/pip into the default-branch cache scope under a
+    # PR-influenced key; later jobs restore it by prefix. Fresh venv each run
+    # (environments embed absolute paths and must not be restored across runners).
     - uses: actions/setup-python@v5
       with:
         python-version: ${{ inputs.python-version }}
-        cache: pip
-        cache-dependency-path: .github/actions/run-gates/requirements.txt
-    # Cache downloads only. Environments embed absolute paths and interpreter/image
-    # details, and must never be restored across runners or Python patch upgrades.
     - name: Create fresh venv and install pinned direct dependencies
       shell: bash
       env:
