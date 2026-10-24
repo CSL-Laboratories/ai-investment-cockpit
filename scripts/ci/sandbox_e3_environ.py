@@ -339,31 +339,33 @@ def main(argv: Sequence[str]) -> int:
     cmd = argv[1] if len(argv) > 1 else ""
     state = Path("/var/lib/csl-relay")
     if cmd == "check":
-        worker = parse_environ_bytes((state / "worker.environ").read_bytes())
-        proc = parse_environ_bytes((state / "x.environ").read_bytes())
-        b_env = parse_environ_bytes((state / "b.environ").read_bytes())
+        raise SystemExit("worker.environ is not written (N9); use check-ld + C F1")
+    if cmd == "check-ld":
+        proc = {k: v for k, v in os.environ.items()}
+        reason = check_ld_library_path(proc)
+        if reason:
+            raise SystemExit(reason)
+        for name in ("SRT_DEBUG", "DEBUG_CLAUDE_AGENT_SDK", "ACTIONS_STEP_DEBUG"):
+            if name in proc:
+                raise SystemExit(name)
         bun = {}
         bun_path = state / "bun.env"
         if bun_path.is_file():
             bun = json.loads(bun_path.read_text(encoding="ascii"))
-        workspace = (state / "workspace").read_text(encoding="ascii").strip()
-        worker_path = worker.get("PATH", "")
-        verdict = check_environ(
-            proc_env=proc,
-            worker_env=worker,
-            b_env=b_env,
-            on_x=True,
-            workspace=workspace,
-            worker_path=worker_path,
-            recorded_bun=bun,
+        reason = check_bun_names(
+            {k: v for k, v in proc.items() if k.startswith("BUN_")}, bun
         )
-        if not verdict.ok:
-            raise SystemExit("environ")
+        if reason:
+            raise SystemExit(reason)
         return 0
     if cmd == "record-bun":
         recorded = {k: v for k, v in os.environ.items() if k.startswith("BUN_")}
         state.mkdir(parents=True, exist_ok=True)
         (state / "bun.env").write_text(json.dumps(recorded, sort_keys=True), encoding="ascii")
+        names = "".join(f"{k}\n" for k in sorted(recorded))
+        names_path = state / "bun.names"
+        names_path.write_text(names, encoding="ascii")
+        names_path.chmod(0o600)
         return 0
     raise SystemExit("argv")
 

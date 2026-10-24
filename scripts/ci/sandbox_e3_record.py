@@ -138,3 +138,72 @@ def compare_pinned_sdk(sha256: str) -> bool:
     if not HEX64.fullmatch(sha256):
         return False
     return sha256 == SDK_MJS_SHA256
+
+
+def _sha256_file(path: str) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        while True:
+            chunk = handle.read(1 << 16)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def write_e3_record(state_dir: str = "/var/lib/csl-relay") -> str:
+    """Build the E3-5 record from hashed binaries and pin constants (N8)."""
+    from pathlib import Path
+
+    state = Path(state_dir)
+    bun_tofu = (state / "bun.tofu").read_text(encoding="ascii").strip()[:64]
+    sdk_match = "true"
+    action_sdk = (
+        "/home/runner/work/_actions/anthropics/claude-code-action/"
+        "a5a423f75c251dcbff8a74e99f83b2cb03c72bfa/node_modules/"
+        "@anthropic-ai/claude-agent-sdk/sdk.mjs"
+    )
+    try:
+        sdk_got = _sha256_file(action_sdk)
+        sdk_match = "true" if sdk_got == SDK_MJS_SHA256 else "false"
+    except OSError:
+        sdk_match = "false"
+    claude_path = "/opt/csl-claude/2.1.306/claude"
+    claude_got = _sha256_file(claude_path)
+    match = "true" if claude_got == CLAUDE_SHA256 and sdk_match == "true" else "false"
+    fields = {
+        "claude_sha256": claude_got if HEX64.fullmatch(claude_got) else CLAUDE_SHA256,
+        "claude_realpath_class": REALPATH_CLASS,
+        "sdk_mjs_sha256": SDK_MJS_SHA256,
+        "sdk_source": SDK_SOURCE,
+        "sdk_disk_match": sdk_match,
+        "bun_tofu_sha256": bun_tofu,
+        "bwrap_sha256": _sha256_file("/usr/bin/bwrap"),
+        "socat_sha256": _sha256_file("/usr/bin/socat"),
+        "bash_sha256": _sha256_file("/bin/bash"),
+        "match": match,
+        "handoff_count": "0",
+        "handoff_conflict": "false",
+    }
+    text = reconstruct_e3_record(fields)
+    dest = Path("/var/lib/csl-relay/e3.record")
+    dest.write_text(text + "\n", encoding="ascii")
+    dest.chmod(0o600)
+    return text
+
+
+def main(argv: Optional[list] = None) -> int:
+    import sys
+
+    args = list(sys.argv if argv is None else argv)
+    cmd = args[1] if len(args) > 1 else ""
+    if cmd == "write":
+        write_e3_record()
+        return 0
+    raise SystemExit("argv")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

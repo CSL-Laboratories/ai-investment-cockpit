@@ -45,6 +45,14 @@
 #define CSL_WORKSPACE_PATH CSL_STATE_DIR "/workspace"
 #define CSL_BUN_TOFU_PATH CSL_STATE_DIR "/bun.tofu"
 #define CSL_ACTION_DIR "/home/runner/work/_actions/anthropics/claude-code-action/a5a423f75c251dcbff8a74e99f83b2cb03c72bfa"
+#ifdef CSL_PREFIX
+#define CSL_RUNNER_TEMP CSL_PREFIX "/tmp"
+#define CSL_MCP_EMPTY_PATH CSL_PREFIX "/mcp.empty.json"
+#else
+#define CSL_RUNNER_TEMP "/home/runner/work/_temp"
+#define CSL_MCP_EMPTY_PATH "/opt/csl-claude/mcp.empty.json"
+#endif
+#define CSL_MCP_EMPTY_BYTES "{\"mcpServers\":{}}\n"
 
 #define CSL_CLAUDE_SHA256 "520bc6c1f40af466bd03a278b5ae1af1a2938bc7de5b9e5cb15526da20d71cfe"
 #define CSL_CAP_BYTES (1024 * 1024)
@@ -70,10 +78,13 @@ int csl_sha256_file(const char *path, unsigned char out[32]);
 void csl_hex32(const unsigned char in[32], char out[65]);
 int csl_hex_eq(const unsigned char digest[32], const char *hex64);
 int csl_lookup_user(uid_t uid, char *name, size_t nlen, char *home, size_t hlen);
+int csl_lookup_name(const char *name, uid_t *uid);
 int csl_pidfd_open(pid_t pid, unsigned int flags);
 int csl_read_pidfd_pid(int pidfd, pid_t *out);
 int csl_proc_exe(pid_t pid, char *buf, size_t len);
+pid_t csl_proc_ppid(pid_t pid);
 int csl_proc_cmdline(pid_t pid, char *buf, size_t len, size_t *nuls);
+int csl_e3_record_ok(const char *text, size_t n);
 int csl_mkdir_p(const char *path, mode_t mode);
 int csl_write_file(const char *path, const void *data, size_t n, mode_t mode);
 int csl_read_file(const char *path, char *buf, size_t cap, size_t *n);

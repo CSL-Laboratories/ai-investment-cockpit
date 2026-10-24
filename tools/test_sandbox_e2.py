@@ -11,7 +11,10 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import os
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -188,6 +191,91 @@ class FilterAgreeTests(unittest.TestCase):
         self.assertEqual(result.status, filt.STATUS_OBSERVED)
         self.assertEqual(result.overlong, 0)
         self.assertEqual(result.reconstructed, filt.reconstruct_line(frozenset({"env"})))
+
+
+class FilterCPythonAgreementTests(unittest.TestCase):
+    """N20: C filter and Python filter agree on status for the drop/match set."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.tmp = tempfile.TemporaryDirectory()
+        harness = Path(cls.tmp.name) / "filter_harness.c"
+        harness.write_text(
+            '#include "sandbox_filter.h"\n'
+            "int main(void) {\n"
+            "  unsigned char buf[CSL_CAP_BYTES];\n"
+            "  size_t n = 0, off = 0;\n"
+            "  csl_filter_result r;\n"
+            "  char recon[256];\n"
+            "  while (off < sizeof buf) {\n"
+            "    ssize_t got = read(0, buf + off, sizeof buf - off);\n"
+            "    if (got < 0) return 2;\n"
+            "    if (got == 0) break;\n"
+            "    off += (size_t)got;\n"
+            "  }\n"
+            "  n = off;\n"
+            "  r = csl_filter_capture(buf, n);\n"
+            "  if (r.status == CSL_STATUS_OBSERVED) {\n"
+            "    csl_reconstruct(r.tokens, recon, sizeof recon);\n"
+            "    printf(\"observed\\n%s\\n\", recon);\n"
+            "    (void)r.tokens;\n"
+            "  } else if (r.status == CSL_STATUS_CONFLICT) {\n"
+            "    printf(\"conflict\\n\");\n"
+            "  } else {\n"
+            "    printf(\"not_observed\\n\");\n"
+            "  }\n"
+            "  return 0;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        cls.bin = Path(cls.tmp.name) / "filter_harness"
+        subprocess.run(
+            [
+                "gcc", "-O2", "-Wall", "-Werror",
+                f'-DCSL_PREFIX="{cls.tmp.name}"',
+                "-o", str(cls.bin),
+                str(harness),
+                str(SCRIPTS / "sandbox_filter.c"),
+                str(SCRIPTS / "sandbox_common.c"),
+                f"-I{SCRIPTS}",
+            ],
+            check=True,
+        )
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.tmp.cleanup()
+
+    def _c_status(self, data: bytes) -> str:
+        proc = subprocess.run(
+            [str(self.bin)],
+            input=data,
+            capture_output=True,
+            check=True,
+        )
+        return proc.stdout.decode("utf-8").splitlines()[0]
+
+    def test_drop_match_conflict_and_nul_pad_agree(self) -> None:
+        cases = [
+            capture(C2),
+            capture(C3, C4, C5, C6, C7),
+            capture(matching(("network", "filesystem", "env", "seccomp(unix-block)"))),
+            capture(matching(("env",))),
+            capture(matching(("env",)), matching(("network",))),
+            capture(""),
+            matching(("env",)).encode("utf-8"),  # no newline, NUL pad in both
+            capture(WORKFLOW_CMD),
+            capture(ANSI_WRAP),
+        ]
+        py_map = {
+            filt.STATUS_OBSERVED: "observed",
+            filt.STATUS_NOT_OBSERVED: "not_observed",
+            filt.STATUS_CONFLICT: "conflict",
+        }
+        for data in cases:
+            py = filt.filter_capture(data)
+            c_status = self._c_status(data)
+            self.assertEqual(c_status, py_map[py.status], data[:80])
 
 
 class FilterDoesNotWireDebugTests(unittest.TestCase):

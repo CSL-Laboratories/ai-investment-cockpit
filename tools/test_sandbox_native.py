@@ -5,7 +5,9 @@ Run: python3 -X utf8 -B tools/test_sandbox_native.py
 """
 from __future__ import annotations
 
+import hashlib
 import os
+import re
 import socket
 import stat
 import subprocess
@@ -52,6 +54,45 @@ def compile_prefix(prefix: Path) -> dict[str, Path]:
     return {"launch": launch, "capture": capture, "relay": relay}
 
 
+C_PIN_FILES = (
+    "sandbox_common.h",
+    "sandbox_common.c",
+    "sandbox_filter.h",
+    "sandbox_filter.c",
+    "sandbox_argv.h",
+    "sandbox_argv.c",
+    "sandbox_launch.c",
+    "sandbox_capture.c",
+    "sandbox_relay.c",
+)
+def _unindent_heredoc(body: str) -> str:
+    lines = body.split("\n")
+    out = []
+    for line in lines:
+        if line.startswith("          "):
+            out.append(line[10:])
+        else:
+            out.append(line)
+    text = "\n".join(out)
+    if body.endswith("\n") and not text.endswith("\n"):
+        text += "\n"
+    if not text.endswith("\n"):
+        text += "\n"
+    return text
+
+
+def extract_heredoc(yml: str, tag: str) -> str:
+    start = f"<<'{tag}'\n"
+    idx = yml.find(start)
+    if idx < 0:
+        raise AssertionError(f"missing heredoc {tag}")
+    idx += len(start)
+    match = re.search(rf"\n[ \t]*{re.escape(tag)}\n", yml[idx:])
+    if not match:
+        raise AssertionError(f"unterminated heredoc {tag}")
+    return _unindent_heredoc(yml[idx : idx + match.start()] + "\n")
+
+
 class NativeArgvTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -82,6 +123,27 @@ class NativeArgvTests(unittest.TestCase):
         env = {**os.environ, "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1", "LD_PRELOAD": "x"}
         proc = subprocess.run([str(self.bins["launch"])], env=env, capture_output=True)
         self.assertNotEqual(proc.returncode, 0)
+
+    def test_argv_requires_setting_sources_and_tools(self) -> None:
+        env = {k: v for k, v in os.environ.items() if k not in {
+            "SRT_DEBUG", "DEBUG_CLAUDE_AGENT_SDK", "ACTIONS_STEP_DEBUG", "LD_PRELOAD", "LD_AUDIT",
+        }}
+        env["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"] = "1"
+        proc = subprocess.run(
+            [str(self.bins["launch"]), "--max-turns", "30", "--allowedTools", "Read"],
+            env=env,
+            capture_output=True,
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn(b"launcher refused", proc.stderr)
+
+    def test_n1_does_not_stat_cwd_mcp_json(self) -> None:
+        src = (SRC / "sandbox_launch.c").read_text(encoding="utf-8")
+        self.assertNotIn('mcp_exists("/.mcp.json")', src)
+        self.assertNotIn('mcp_exists("/.claude/settings.json")', src)
+        self.assertIn("settings.local.json", src)
+        self.assertIn("strict-mcp-config", src)
+        self.assertIn("CSL_MCP_EMPTY_PATH", src)
 
 
 class NativeRelayOneShotTests(unittest.TestCase):
@@ -124,6 +186,9 @@ class NativeSocketTests(unittest.TestCase):
             prefix = Path(tmp)
             bins = compile_prefix(prefix)
             state = prefix / "state"
+            state.mkdir(parents=True, exist_ok=True)
+            (state / "worker.pid").write_text(f"{os.getpid()}\n", encoding="ascii")
+            (state / "worker.pid").chmod(0o600)
             daemon = subprocess.Popen(
                 [str(bins["capture"])],
                 stdout=subprocess.DEVNULL,
@@ -162,7 +227,7 @@ class NativeSocketTests(unittest.TestCase):
                     match.connect(str(state / "control.sock"))
                     match.sendall(f"WORKER_MATCH {os.getpid()}\n".encode("ascii"))
                     reply = match.recv(32)
-                    self.assertIn(reply, (b"yes\n", b"no\n"))
+                    self.assertEqual(reply, b"yes\n")
                 finally:
                     match.close()
             finally:
@@ -172,6 +237,43 @@ class NativeSocketTests(unittest.TestCase):
                 except subprocess.TimeoutExpired:
                     daemon.kill()
                     daemon.wait(timeout=2)
+
+
+class EmbedPinTests(unittest.TestCase):
+    def test_each_embedded_c_file_hashes_to_its_pin(self) -> None:
+        pin_text = (SRC / "sandbox_c.pin").read_text(encoding="utf-8")
+        want = {}
+        for line in pin_text.splitlines():
+            digest, name = line.split()
+            want[name] = digest
+        self.assertEqual(set(want), set(C_PIN_FILES))
+        for name in C_PIN_FILES:
+            data = (SRC / name).read_bytes()
+            got = hashlib.sha256(data).hexdigest()
+            self.assertEqual(got, want[name], name)
+        yml = (ROOT / ".github" / "workflows" / "claude.yml").read_text(encoding="utf-8")
+        names = {
+            "CSL_C_COMMON_H": "sandbox_common.h",
+            "CSL_C_COMMON_C": "sandbox_common.c",
+            "CSL_C_FILTER_H": "sandbox_filter.h",
+            "CSL_C_FILTER_C": "sandbox_filter.c",
+            "CSL_C_ARGV_H": "sandbox_argv.h",
+            "CSL_C_ARGV_C": "sandbox_argv.c",
+            "CSL_C_LAUNCH": "sandbox_launch.c",
+            "CSL_C_CAPTURE": "sandbox_capture.c",
+            "CSL_C_RELAY": "sandbox_relay.c",
+            "CSL_C_PIN": "sandbox_c.pin",
+        }
+        for tag, name in names.items():
+            extracted = extract_heredoc(yml, tag)
+            repo = (SRC / name).read_text(encoding="utf-8")
+            if not repo.endswith("\n"):
+                repo += "\n"
+            self.assertEqual(extracted, repo, tag)
+            digest = hashlib.sha256(extracted.encode("utf-8")).hexdigest()
+            if name in want:
+                self.assertEqual(digest, want[name], f"embed {name}")
+            self.assertGreaterEqual(yml.count(f"<<'{tag}'"), 2)
 
 
 if __name__ == "__main__":

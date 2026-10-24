@@ -242,28 +242,143 @@ int csl_lookup_user(uid_t uid, char *name, size_t nlen, char *home, size_t hlen)
         return -1;
     }
     while (fgets(line, sizeof line, f)) {
-        char *save = NULL;
-        char *user = strtok_r(line, ":\n", &save);
-        char *pw = strtok_r(NULL, ":\n", &save);
-        char *uid_s = strtok_r(NULL, ":\n", &save);
-        char *gid_s = strtok_r(NULL, ":\n", &save);
-        char *gecos = strtok_r(NULL, ":\n", &save);
-        char *dir = strtok_r(NULL, ":\n", &save);
-        (void)pw;
-        (void)gid_s;
-        (void)gecos;
-        if (!user || !uid_s || !dir) {
+        char *fields[7];
+        int n = 0;
+        char *p = line;
+        char *nl = strchr(line, '\n');
+        if (nl) {
+            *nl = 0;
+        }
+        fields[n++] = p;
+        for (; *p && n < 7; p++) {
+            if (*p == ':') {
+                *p = 0;
+                fields[n++] = p + 1;
+            }
+        }
+        if (n < 6) {
             continue;
         }
-        if ((uid_t)atoi(uid_s) == uid) {
-            snprintf(name, nlen, "%s", user);
-            snprintf(home, hlen, "%s", dir);
+        if ((uid_t)atoi(fields[2]) == uid) {
+            snprintf(name, nlen, "%s", fields[0]);
+            snprintf(home, hlen, "%s", fields[5]);
             fclose(f);
             return 0;
         }
     }
     fclose(f);
     return -1;
+}
+
+pid_t csl_proc_ppid(pid_t pid)
+{
+    char path[64], buf[4096];
+    int fd;
+    char *rparen;
+    char state = 0;
+    int pp = 0;
+    snprintf(path, sizeof path, "/proc/%d/stat", (int)pid);
+    fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        return 0;
+    }
+    if (read(fd, buf, sizeof buf - 1) <= 0) {
+        close(fd);
+        return 0;
+    }
+    close(fd);
+    rparen = strrchr(buf, ')');
+    if (!rparen || sscanf(rparen + 2, "%c %d", &state, &pp) != 2) {
+        return 0;
+    }
+    return (pid_t)pp;
+}
+
+int csl_lookup_name(const char *name, uid_t *uid)
+{
+    FILE *f;
+    char line[1024];
+    if (!name || !uid) {
+        return -1;
+    }
+    f = fopen("/etc/passwd", "r");
+    if (!f) {
+        return -1;
+    }
+    while (fgets(line, sizeof line, f)) {
+        char *fields[7];
+        int n = 0;
+        char *p = line;
+        char *nl = strchr(line, '\n');
+        if (nl) {
+            *nl = 0;
+        }
+        fields[n++] = p;
+        for (; *p && n < 7; p++) {
+            if (*p == ':') {
+                *p = 0;
+                fields[n++] = p + 1;
+            }
+        }
+        if (n < 3) {
+            continue;
+        }
+        if (strcmp(fields[0], name) == 0) {
+            *uid = (uid_t)atoi(fields[2]);
+            fclose(f);
+            return 0;
+        }
+    }
+    fclose(f);
+    return -1;
+}
+
+int csl_e3_record_ok(const char *text, size_t n)
+{
+    static const char *ok[] = {
+        "claude_sha256", "claude_realpath_class", "sdk_mjs_sha256", "sdk_source",
+        "sdk_disk_match", "bun_tofu_sha256", "bwrap_sha256", "socat_sha256",
+        "bash_sha256", "match", "handoff_count", "handoff_conflict", NULL
+    };
+    char buf[4096];
+    char *line, *save = NULL;
+    int saw = 0, need = 0, i;
+    unsigned present = 0;
+    while (ok[need]) {
+        need++;
+    }
+    if (n == 0 || n >= sizeof buf) {
+        return 0;
+    }
+    memcpy(buf, text, n);
+    buf[n] = 0;
+    for (line = strtok_r(buf, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+        char *eq = strchr(line, '=');
+        size_t klen;
+        int found = 0;
+        if (!eq || eq == line) {
+            return 0;
+        }
+        klen = (size_t)(eq - line);
+        for (i = 0; ok[i]; i++) {
+            if (strlen(ok[i]) == klen && memcmp(line, ok[i], klen) == 0) {
+                if (present & (1u << i)) {
+                    return 0;
+                }
+                present |= (1u << i);
+                found = 1;
+                break;
+            }
+        }
+        if (!found) {
+            return 0;
+        }
+        if (strchr(eq + 1, ' ') || strchr(eq + 1, '\t')) {
+            return 0;
+        }
+        saw++;
+    }
+    return saw == need;
 }
 
 int csl_pidfd_open(pid_t pid, unsigned int flags)
