@@ -2,6 +2,8 @@
 # E3-0-early 0b body (CSL-474 D10). Already root via:
 #   shell: /usr/bin/sudo -n /bin/bash --noprofile --norc -e -o pipefail {0}
 # Constants only — no CSL_* environment path overrides (L-d).
+# sudo env_reset drops the workflow step env, including $RUNNER_TEMP;
+# paths below are compiled in (same as CSL_RUNNER_TEMP).
 # E3-1 CLI pin runs here before sudoers. Capture-start is not in sudoers.
 set -euo pipefail
 
@@ -85,11 +87,29 @@ test -x /opt/csl-claude/launch
 test -x /opt/csl-relay/bin/relay
 test -s "$STATE/launch.sha256"
 
-if ! command -v bun >/dev/null 2>&1; then
-  echo "e3-0b: bun missing after setup-bun" >&2
+# Never PATH-lookup bun: sudo secure_path is /usr/sbin:/usr/bin:/sbin:/bin
+# and hides setup-bun's ~/.bun/bin. The runner-uid record step wrote the
+# setup-bun bun-path output to this compiled-in file.
+BUN_SRC="/home/runner/.bun/bin/bun"
+BUN_PATH_FILE="/home/runner/work/_temp/csl-e3-bun-path"
+if [ ! -f "$BUN_PATH_FILE" ]; then
+  echo "e3-0b: bun-path file missing" >&2
   exit 1
 fi
-BUN_SRC="$(command -v bun)"
+got="$(tr -d '\n' < "$BUN_PATH_FILE")"
+if [ "$got" != "$BUN_SRC" ]; then
+  echo "e3-0b: bun-path '$got' want $BUN_SRC" >&2
+  exit 1
+fi
+if [ ! -x "$BUN_SRC" ]; then
+  echo "e3-0b: bun missing after setup-bun at $BUN_SRC" >&2
+  exit 1
+fi
+ver="$("$BUN_SRC" --version)"
+if [ "$ver" != "1.3.14" ]; then
+  echo "e3-0b: bun version '$ver' want 1.3.14" >&2
+  exit 1
+fi
 install -D -m0755 -o root -g root "$BUN_SRC" "$BUN_DST"
 sha256sum "$BUN_DST" | awk '{print $1}' > "$STATE/bun.tofu"
 chmod 0644 "$STATE/bun.tofu"
@@ -165,6 +185,11 @@ test -f "$LIB/sandbox_e3_cli_pin.sh" || { echo "e3-0b: cli_pin missing" >&2; exi
 if [ -f "$AP/package.json" ]; then
   (cd "$AP" && "$BUN_DST" install --frozen-lockfile --production --ignore-scripts)
 fi
+# Pre-create the action's pin-bun destination before the ro remount so
+# mkdir -p "$AP/bin" is a no-op. Live proof that the action's later
+# bun install --production is a no-op on this tree is still P9.
+mkdir -p "$AP/bin"
+install -D -m0755 -o root -g root "$BUN_DST" "$AP/bin/bun"
 
 # 0b step 9: git-tree hash, extra-file check, node_modules digest, then bind.
 command -v git >/dev/null 2>&1 || { echo "e3-0b: git missing" >&2; exit 1; }

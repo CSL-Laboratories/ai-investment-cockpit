@@ -120,8 +120,9 @@ def _generated_0b_steps(env: str) -> str:
     helper = (
         "          mkdir -p /opt/csl-claude/lib /opt/csl-claude/src "
         "/opt/csl-relay/bin /opt/csl-bun /var/lib/csl-relay\n"
-        "          mkdir -p \"$RUNNER_TEMP/claude-fixer-guard\"\n"
-        "          cat > \"$RUNNER_TEMP/claude-fixer-guard/model-api\" "
+        "          # sudo env_reset drops $RUNNER_TEMP; use the compiled-in path.\n"
+        "          mkdir -p /home/runner/work/_temp/claude-fixer-guard\n"
+        "          cat > /home/runner/work/_temp/claude-fixer-guard/model-api "
         "<<'CLAUDE_FIXER_OUTBOX'\n"
         f"{indent_body(OUTBOX.read_text(encoding='utf-8'))}\n"
         "          CLAUDE_FIXER_OUTBOX\n"

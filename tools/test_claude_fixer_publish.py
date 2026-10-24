@@ -1345,7 +1345,7 @@ class OutboxHelperTests(unittest.TestCase):
                     self.GIT + ["ls-files", "-z", "--modified"],
                     self.GIT + ["ls-files", "-z", "--others", "--exclude-standard"],
                     self.GIT + ["add", "-A", "--", "."],
-                    self.GIT + ["reset", "-q", "--", ".claude-fixer-out", ".claude-fixer-replies"]
+                    self.GIT + ["reset", "-q", "--", ".claude-fixer-out", ".claude-fixer-replies", "AGENTS.md"]
                     + ([] if mode == "conflict" else list(o.ACTION_RESTORED)),
                     self.GIT + ["commit", "--no-verify", "-q", "-m", "-fix: a message\nwith a second line\n"],
                     self.GIT + ["rev-parse", "HEAD"]])
@@ -1642,20 +1642,22 @@ class OutboxHelperTests(unittest.TestCase):
         # revert the PR's versions (and the publisher refuses protected paths, dropping the whole run).
         # A dispatch run gets no restore, so its edits to those paths are real and are committed.
         self.assertEqual(o.ACTION_RESTORED, (".claude", ".mcp.json", ".claude.json", ".gitmodules", ".ripgreprc",
-                                             "CLAUDE.md", "CLAUDE.local.md", ".husky"))
+                                             "CLAUDE.md", "CLAUDE.local.md", ".husky", "AGENTS.md"))
+        self.assertIn("AGENTS.md", o.UNSTAGE)
         for mode, restored in (("mention", True), ("fixer", True), ("fixer", False)):
             with self.subTest(mode=mode, restored=restored), tempfile.TemporaryDirectory() as tmp, \
                     patch.dict(os.environ, git_env(), clear=True):
                 os.chdir(tmp)
                 o.command(["git", "init", "-q", "-b", "main"])
-                for name, text in (("a.txt", "a\n"), ("CLAUDE.md", "pr\n"), (".claude/settings.json", "{}\n"),
-                                   (".husky/pre-commit", "pr\n")):
+                for name, text in (("a.txt", "a\n"), ("CLAUDE.md", "pr\n"), ("AGENTS.md", "pr agents\n"),
+                                   (".claude/settings.json", "{}\n"), (".husky/pre-commit", "pr\n")):
                     Path(name).parent.mkdir(exist_ok=True)
                     Path(name).write_text(text)
                 o.command(["git", "add", "-A"])
                 o.command(["git", "commit", "-q", "-m", "base"])
                 # What the restore leaves behind: base-branch content, unstaged, plus base-only files.
                 Path("CLAUDE.md").write_text("main\n")
+                Path("AGENTS.md").write_text("# CSL-474 C6.2 stub\n")
                 Path(".claude/settings.json").write_text('{"main": 1}\n')
                 Path(".husky/pre-commit").unlink()
                 Path(".ripgreprc").write_text("--hidden\n")
@@ -1665,6 +1667,8 @@ class OutboxHelperTests(unittest.TestCase):
                 head = o.model_api(self.CONFIG | {"mode": mode, "restored": restored},
                                    ["commit", ".claude-fixer-replies/msg.txt"])
                 files = o.command(["git", "show", "--name-only", "--format=", head]).split()
+                # AGENTS.md is always unstaged (C6.2 stub), including dispatch.
+                self.assertNotIn("AGENTS.md", files)
                 self.assertEqual(sorted(files), ["a.txt"] if restored else
                                  [".claude/settings.json", ".husky/pre-commit", ".ripgreprc", "CLAUDE.md", "a.txt"])
                 os.chdir(self.tmp.name)
@@ -2094,7 +2098,8 @@ class WorkflowWiringTests(unittest.TestCase):
                 args = action["with"]["claude_args"]
                 self.assertIn("--setting-sources user", args)
                 self.assertIn("Bash(git diff --no-index:*)", args.split("--disallowedTools", 1)[1])
-                self.assertIn("they are not preloaded, so Read them", action["with"]["prompt"])
+                self.assertNotIn("they are not preloaded, so Read them", action["with"]["prompt"])
+                self.assertIn("must not be Read", action["with"]["prompt"])
                 allow = args.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0]
                 for gone in ("pytest", "tools/test_", "gh pr", "python -m", "python -X"):
                     self.assertNotIn(gone, allow)
@@ -2149,11 +2154,12 @@ class WorkflowWiringTests(unittest.TestCase):
         model = jobs("claude.yml")["claude-mention"]
         names = [s.get("name") or s.get("id") or s.get("uses") for s in model["steps"]]
         self.assertEqual(names[0], "E3-0-early setup-bun")
-        self.assertEqual(names[1], "E3-0-early write helper")
+        self.assertEqual(names[1], "E3-0-early record bun-path")
+        self.assertEqual(names[2], "E3-0-early write helper")
         self.assertIn("E3-0-early write python helpers", names)
         self.assertIn("E3-0-early write C sources A", names)
         self.assertIn("E3-0-early write C sources B", names)
-        self.assertEqual(names[5], "E3-0-early root bootstrap")
+        self.assertEqual(names[6], "E3-0-early root bootstrap")
         sandbox = step(model, "Install the subprocess sandbox for Claude's commands")
         self.assertEqual(names.index("claude") - 1, names.index(sandbox["name"]))
         action = [s for s in model["steps"] if s.get("id") == "claude"][0]
@@ -2173,6 +2179,14 @@ class WorkflowWiringTests(unittest.TestCase):
         )
         self.assertEqual(setup["with"]["bun-version"], "1.3.14")
         self.assertIn(str(setup["with"]["no-cache"]).lower(), {"true", "yes"})
+        self.assertEqual(setup.get("id"), "setup-bun")
+        bun_path = step(model, "E3-0-early record bun-path")
+        self.assertEqual(
+            bun_path["env"]["BUN_PATH"],
+            "${{ steps.setup-bun.outputs.bun-path }}",
+        )
+        self.assertIn("/home/runner/.bun/bin/bun", bun_path["run"])
+        self.assertIn("/home/runner/work/_temp/csl-e3-bun-path", bun_path["run"])
         bootstrap = step(model, "E3-0-early root bootstrap")
         self.assertEqual(
             bootstrap["shell"],

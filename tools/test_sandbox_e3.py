@@ -346,6 +346,11 @@ class BootstrapContractTests(unittest.TestCase):
         self.assertIn('GUARD="/home/runner/work/_temp/claude-fixer-guard"', text)
         self.assertNotIn("${RUNNER_TEMP:?}", text)
         self.assertNotIn("${GITHUB_WORKSPACE:-}", text)
+        self.assertNotIn("command -v bun", text)
+        self.assertIn('BUN_SRC="/home/runner/.bun/bin/bun"', text)
+        self.assertIn("/home/runner/work/_temp/csl-e3-bun-path", text)
+        self.assertIn('"$AP/bin/bun"', text)
+        self.assertIn("1.3.14", text)
         self.assertIn(
             "/home/runner/work/ai-investment-cockpit/ai-investment-cockpit",
             text,
@@ -354,6 +359,11 @@ class BootstrapContractTests(unittest.TestCase):
             'readlink /proc/"$WORKER_PID"/ns/mnt > "$STATE/ns.mnt"',
             text,
         )
+
+    def test_cli_pin_uses_compiled_in_runner_temp(self) -> None:
+        text = (SCRIPTS / "sandbox_e3_cli_pin.sh").read_text(encoding="utf-8")
+        self.assertIn('STAGING="/home/runner/work/_temp/csl-claude-staging"', text)
+        self.assertNotIn("${RUNNER_TEMP:?}", text)
 
 
 if __name__ == "__main__":

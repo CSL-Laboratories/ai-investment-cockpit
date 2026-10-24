@@ -24,7 +24,8 @@ for bin in "$CURL" "$GPG" "$PYTHON"; do
 done
 command -v sha256sum >/dev/null
 
-STAGING="${RUNNER_TEMP:?}/csl-claude-staging"
+# Compiled-in: 0b runs under sudo env_reset, which drops $RUNNER_TEMP.
+STAGING="/home/runner/work/_temp/csl-claude-staging"
 GNUPGHOME=""
 cleanup() {
   rm -rf "$STAGING"

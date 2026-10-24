@@ -610,6 +610,9 @@ class DispatchScopeTests(unittest.TestCase):
 # eight-commit guard, the one-attempt publish guard and the pause. Retry behaviour itself is
 # exercised by tools/test_claude_fixer_*.py and tools/test_claude_pr_fixer.py.
 WRITER_FILES = ('claude.yml', 'claude-conflict-writer.yml', 'conflict-scan.yml')
+# CSL-474 P9: dispatch-only measurement. Not a writer. Optional OAuth is an
+# explicit workflow_dispatch input defaulting off; Lucas dispatches.
+P9_PROBE_FILE = 'csl-474-p9-probes.yml'
 # Roles: prep, model, publish. No job has the credential-free 'verify' role yet; CSL-409 adds one,
 # and the 'verify' branches below are ready for it.
 WRITER_JOBS = {
@@ -712,7 +715,7 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         # A new Claude workflow must be added here (and to the contract) before it can merge.
         found = {p.name for p in WORKFLOWS.glob('*.y*ml')
                  if re.search(r'anthropics/claude-code|ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN', p.read_text())}
-        self.assertEqual(found, set(WRITER_FILES))
+        self.assertEqual(found, set(WRITER_FILES) | {P9_PROBE_FILE})
         for name, jobs in WRITER_JOBS.items():
             self.assertEqual(set(workflow(name)['jobs']), set(jobs) | NON_WRITER_JOBS[name])
         self.assertEqual(set(workflow('conflict-scan.yml')['jobs']), set(SCAN_JOBS))
@@ -910,6 +913,74 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         scan_job = workflow('conflict-scan.yml')['jobs']['conflict-scan']
         self.assertIn(pause_py, job_text(scan_job))
         self.assertIn('${{ vars.CLAUDE_FIXER_PAUSE }}', str(scan_job))
+
+
+class P9ProbeWorkflowTests(unittest.TestCase):
+    """CSL-474 P9 Probes 0/2: dispatch-only measurement, not a writer."""
+
+    def setUp(self):
+        self.path = WORKFLOWS / P9_PROBE_FILE
+        self.text = self.path.read_text(encoding='utf-8')
+        self.doc = workflow(P9_PROBE_FILE)
+
+    def test_dispatch_only_least_privilege(self):
+        header = self.text.split('\njobs:', 1)[0]
+        self.assertIn('workflow_dispatch:', header)
+        self.assertNotIn('\npull_request:', header)
+        self.assertNotIn('\npush:', header)
+        self.assertNotIn('\nschedule:', header)
+        self.assertNotIn('\nissue_comment:', header)
+        self.assertNotIn('\nrepository_dispatch:', header)
+        self.assertNotIn('\nworkflow_call:', header)
+        self.assertNotIn('\nworkflow_run:', header)
+        self.assertEqual(self.doc.get('permissions'), {'contents': 'read'})
+        self.assertEqual(set(self.doc['jobs']), {'probe-0', 'probe-2'})
+        for name, job in self.doc['jobs'].items():
+            with self.subTest(job=name):
+                self.assertEqual(job['runs-on'], 'ubuntu-24.04')
+                self.assertEqual(job.get('permissions'), {'contents': 'read'})
+                self.assertNotIn('id-token', job.get('permissions') or {})
+                self.assertFalse(PUSH.search(job_text(job)))
+                uses = [str(s.get('uses') or '') for s in job.get('steps') or []]
+                self.assertFalse(any(u.startswith('anthropics/claude-code-action') for u in uses))
+
+    def test_oauth_input_defaults_off_and_gates_the_secret(self):
+        spec = self.doc['on']['workflow_dispatch']['inputs']['enable_probe2_oauth']
+        self.assertEqual(spec['type'], 'boolean')
+        self.assertIn(spec['default'], (False, 'false'))
+        oauth_steps = [s for s in self.doc['jobs']['probe-2']['steps']
+                       if 'CLAUDE_CODE_OAUTH_TOKEN' in str(s)]
+        self.assertEqual(len(oauth_steps), 1)
+        self.assertIn('enable_probe2_oauth', str(oauth_steps[0].get('if')))
+        self.assertNotIn('CLAUDE_CODE_OAUTH_TOKEN', str(self.doc['jobs']['probe-0']))
+        self.assertNotIn('secrets: inherit', self.text)
+
+    def test_same_cli_pin_as_e3(self):
+        pin = (ROOT / 'scripts' / 'ci' / 'claude-code-2.1.306-linux-x64.pin').read_text(encoding='utf-8')
+        sha = [line.split('=', 1)[1].strip() for line in pin.splitlines() if line.startswith('sha256=')][0]
+        self.assertIn('2.1.306', self.text)
+        self.assertIn(sha, self.text)
+        self.assertIn('a5a423f75c251dcbff8a74e99f83b2cb03c72bfa', self.text)
+        self.assertIn('https://downloads.claude.ai/claude-code-releases', self.text)
+        self.assertIn('${RELEASE_BASE}/${CLAUDE_VERSION}/${PLATFORM}/claude', self.text)
+        self.assertNotIn('claude.ai/install', self.text)
+        self.assertNotIn('anthropics/claude-code', self.text)
+
+    def test_probe_bodies_record_host_and_p1_facts(self):
+        p0 = job_text(self.doc['jobs']['probe-0'])
+        self.assertIn('cgroup.controllers', p0)
+        self.assertIn('cgroup.kill', p0)
+        self.assertIn('cgroup.procs', p0)
+        self.assertIn('apparmor_restrict_unprivileged_userns', p0)
+        self.assertIn('unshare --user --pid', p0)
+        p2 = job_text(self.doc['jobs']['probe-2'])
+        self.assertIn('settings.local.json', p2)
+        self.assertIn('AGENTS.md', p2)
+        self.assertIn('instructionFiles', p2)
+        self.assertIn('CSL474_AGENTS_CANARY', p2)
+        self.assertIn('--setting-sources user', p2)
+        self.assertIn('mcp.empty', p2)
+
 
 if __name__ == '__main__':
     unittest.main()
