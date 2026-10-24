@@ -156,8 +156,9 @@ class SdkArgvTests(unittest.TestCase):
 
     parse-sdk-options converts --max-turns, --allowedTools, --disallowedTools
     and --setting-sources to SDK options, so Ke() always emits the = form.
-    extraArgs (--mcp-config, --append-system-prompt, --strict-mcp-config) stay
-    two-token because their values do not start with '-'.
+    Remaining extraArgs are mcp-config (merged inline JSON), strict-mcp-config,
+    then append-system-prompt. my() is two-token because those values do not
+    start with '-'. Format flags come first.
     """
 
     WS = "/home/runner/work/ai-investment-cockpit/ai-investment-cockpit"
@@ -167,6 +168,11 @@ class SdkArgvTests(unittest.TestCase):
         "Bash(git config:*),Bash(git difftool:*),Bash(gh api:*),Bash(curl:*),"
         "Bash(wget:*),Bash(env:*),Bash(printenv:*)"
     )
+    ACTION_MCP = (
+        '{"mcpServers":{"github_comment":{"command":"bun","args":["run",'
+        '"src/mcp/github-comment.ts"]},"github_ci":{"command":"bun","args":'
+        '["run","src/mcp/github-ci.ts"]}}}'
+    )
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -175,8 +181,14 @@ class SdkArgvTests(unittest.TestCase):
         probe_c = dest / "argv_probe.c"
         probe_c.write_text(
             '#include "sandbox_argv.h"\n'
+            "#include <stdio.h>\n"
             "int main(int argc, char **argv) {\n"
-            "    return csl_argv_allow(argc, argv) == 0 ? 0 : 1;\n"
+            "    char *out[64];\n"
+            "    int n = 0, i;\n"
+            "    if (csl_argv_allow(argc, argv) != 0) return 2;\n"
+            "    if (csl_argv_rewrite(argc, argv, out, 64, &n) != 0) return 3;\n"
+            "    for (i = 0; i < n; i++) puts(out[i]);\n"
+            "    return 0;\n"
             "}\n",
             encoding="ascii",
         )
@@ -206,48 +218,130 @@ class SdkArgvTests(unittest.TestCase):
         turns = overrides.get("turns", "30")
         sources = overrides.get("sources", "user")
         disallowed = overrides.get("disallowed", self.DISALLOWED)
+        mcp = overrides.get("mcp", self.ACTION_MCP)
         return [
             str(self.probe),
+            "--output-format", "stream-json",
+            "--verbose",
+            "--input-format", "stream-json",
             _ke("--max-turns", turns),
             _ke("--allowedTools", allowed),
             _ke("--disallowedTools", disallowed),
             _ke("--setting-sources", sources),
-            "--output-format", "stream-json",
-            "--verbose",
-            "--input-format", "stream-json",
-            "--mcp-config", "/opt/csl-claude/mcp.empty.json",
-            "--append-system-prompt", "Linear-first (CSL-88)",
+            "--mcp-config", mcp,
             "--strict-mcp-config",
+            "--append-system-prompt", "Linear-first (CSL-88)",
         ]
 
-    def test_sdk_mjs_ke_form_is_allowed(self) -> None:
-        proc = subprocess.run(self._sdk_argv(), capture_output=True)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
+    def _rewritten(self, argv: list[str]) -> tuple[int, list[str]]:
+        proc = subprocess.run(argv, capture_output=True, text=True)
+        lines = [ln for ln in proc.stdout.splitlines() if ln]
+        return proc.returncode, lines
+
+    def test_sdk_mjs_ke_form_is_allowed_and_rewritten(self) -> None:
+        rc, out = self._rewritten(self._sdk_argv())
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(out[0], str(self.probe))
+        self.assertIn("--output-format", out)
+        self.assertIn("stream-json", out)
+        self.assertIn(_ke("--max-turns", "30"), out)
+        self.assertIn(_ke("--setting-sources", "user"), out)
+        self.assertNotIn(self.ACTION_MCP, out)
+        self.assertNotIn("--dangerously-skip-permissions", out)
+        self.assertEqual(out[-3:], [
+            "--strict-mcp-config",
+            "--mcp-config",
+            "/opt/csl-claude/mcp.empty.json",
+        ])
+        self.assertEqual(out.count("--strict-mcp-config"), 1)
+        self.assertEqual(out.count("--mcp-config"), 1)
 
     def test_two_token_form_still_allowed(self) -> None:
         argv = [
             str(self.probe),
+            "--output-format", "stream-json",
+            "--verbose",
+            "--input-format", "stream-json",
             "--max-turns", "30",
             "--allowedTools", self._allowed(),
             "--disallowedTools", self.DISALLOWED,
             "--setting-sources", "user",
+            "--mcp-config", "{}",
+            "--strict-mcp-config",
+            "--append-system-prompt", "Linear-first (CSL-88)",
+        ]
+        rc, out = self._rewritten(argv)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("{}", out)
+        self.assertEqual(out[-3:], [
+            "--strict-mcp-config",
+            "--mcp-config",
+            "/opt/csl-claude/mcp.empty.json",
+        ])
+
+    def test_ke_wrong_turns_refused(self) -> None:
+        rc, _ = self._rewritten(self._sdk_argv(turns="31"))
+        self.assertEqual(rc, 2)
+
+    def test_ke_project_sources_refused(self) -> None:
+        rc, _ = self._rewritten(self._sdk_argv(sources="user,project"))
+        self.assertEqual(rc, 2)
+
+    def test_mixed_form_repeat_refused(self) -> None:
+        argv = self._sdk_argv() + ["--max-turns", "30"]
+        rc, _ = self._rewritten(argv)
+        self.assertEqual(rc, 2)
+
+    def test_empty_allowed_tools_refused(self) -> None:
+        rc, _ = self._rewritten(self._sdk_argv(allowed=""))
+        self.assertEqual(rc, 2)
+
+    def test_permission_mode_bypass_refused(self) -> None:
+        argv = self._sdk_argv() + [_ke("--permission-mode", "bypassPermissions")]
+        rc, _ = self._rewritten(argv)
+        self.assertEqual(rc, 2)
+
+    def test_dangerously_skip_permissions_eq_refused(self) -> None:
+        argv = self._sdk_argv() + [_ke("--dangerously-skip-permissions", "1")]
+        rc, _ = self._rewritten(argv)
+        self.assertEqual(rc, 2)
+
+    def test_mcp_config_eq_discarded_from_rewrite(self) -> None:
+        argv = [
+            str(self.probe),
             "--output-format", "stream-json",
             "--verbose",
             "--input-format", "stream-json",
-            "--mcp-config", "{}",
-            "--append-system-prompt", "Linear-first (CSL-88)",
+            _ke("--max-turns", "30"),
+            _ke("--allowedTools", self._allowed()),
+            _ke("--disallowedTools", self.DISALLOWED),
+            _ke("--setting-sources", "user"),
+            _ke("--mcp-config", self.ACTION_MCP),
             "--strict-mcp-config",
+            "--append-system-prompt", "Linear-first (CSL-88)",
         ]
-        proc = subprocess.run(argv, capture_output=True)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
+        rc, out = self._rewritten(argv)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn(self.ACTION_MCP, out)
+        self.assertNotIn(_ke("--mcp-config", self.ACTION_MCP), out)
+        self.assertEqual(out[-3:], [
+            "--strict-mcp-config",
+            "--mcp-config",
+            "/opt/csl-claude/mcp.empty.json",
+        ])
 
-    def test_ke_wrong_turns_refused(self) -> None:
-        proc = subprocess.run(self._sdk_argv(turns="31"), capture_output=True)
-        self.assertNotEqual(proc.returncode, 0)
-
-    def test_ke_project_sources_refused(self) -> None:
-        proc = subprocess.run(self._sdk_argv(sources="user,project"), capture_output=True)
-        self.assertNotEqual(proc.returncode, 0)
+    def test_r4_m1_dash_value_bypass_refused(self) -> None:
+        argv = [
+            str(self.probe),
+            _ke("--max-turns", "30"),
+            _ke("--setting-sources", "user"),
+            _ke("--allowedTools", self._allowed()),
+            "--append-system-prompt", "--strict-mcp-config",
+            "--disallowedTools", "--dangerously-skip-permissions",
+        ]
+        rc, out = self._rewritten(argv)
+        self.assertEqual(rc, 2)
+        self.assertEqual(out, [])
 
 
 class NativeRelayOneShotTests(unittest.TestCase):
@@ -397,10 +491,11 @@ class R3ContractTests(unittest.TestCase):
         capture = (SRC / "sandbox_capture.c").read_text(encoding="utf-8")
         self.assertIn("fifo_hup", capture)
 
-    def test_n14_waits_process_group(self) -> None:
+    def test_n14_subreaper_waits_descendants(self) -> None:
         launch = (SRC / "sandbox_launch.c").read_text(encoding="utf-8")
+        self.assertIn("PR_SET_CHILD_SUBREAPER", launch)
+        self.assertIn("waitpid(-1", launch)
         self.assertIn("setpgid(0, 0)", launch)
-        self.assertIn("waitpid(-child", launch)
 
     def test_relay_sudo_parent_is_exact(self) -> None:
         relay = (SRC / "sandbox_relay.c").read_text(encoding="utf-8")
