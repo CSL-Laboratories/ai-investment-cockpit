@@ -781,7 +781,22 @@ class WorkflowStructureTests(unittest.TestCase):
                 for line in header.splitlines()
                 if line.strip().startswith("runs-on:")
             ]
-            self.assertEqual(runners, ["runs-on: ubuntu-latest"], name)
+            self.assertEqual(runners, ["runs-on: ubuntu-24.04"], name)
+
+    def test_stack_sandbox_jobs_pin_ubuntu_24_04(self) -> None:
+        # Lucas 2026-10-24 1:36pm PT: pin ubuntu-24.04; 26.04 is a later PR.
+        for path in (
+            WORKFLOW_PATH,
+            WRITER_WORKFLOW_PATH,
+            ROOT / ".github" / "workflows" / "csl-474-p9-probes.yml",
+        ):
+            runners = [
+                line.strip()
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip().startswith("runs-on:")
+            ]
+            self.assertTrue(runners, path.name)
+            self.assertEqual(set(runners), {"runs-on: ubuntu-24.04"}, path.name)
 
     def _job(self, name: str) -> str:
         marker = f"  {name}:"
@@ -1393,7 +1408,7 @@ class ConflictJobStructureTests(unittest.TestCase):
         prepare = writer.split("\n  prepare:\n", 1)[1].split("\n  model:\n", 1)[0]
         job = writer.split("\n  model:\n", 1)[1].split("\n  publish:\n", 1)[0]
         for part in (prepare, job):
-            self.assertIn("runs-on: ubuntu-latest", part.split("steps:")[0])
+            self.assertIn("runs-on: ubuntu-24.04", part.split("steps:")[0])
             self.assertNotIn("blacksmith", part.split("steps:")[0])
             self.assertIn("group: claude-${{ inputs.pr_number }}", part)
             self.assertIn("cancel-in-progress: false", part)
@@ -2129,7 +2144,8 @@ class P9ProbeWorkflowTests(unittest.TestCase):
         self.assertIn("2.1.306", text)
         self.assertIn("520bc6c1f40af466bd03a278b5ae1af1a2938bc7de5b9e5cb15526da20d71cfe", text)
         self.assertIn("a5a423f75c251dcbff8a74e99f83b2cb03c72bfa", text)
-        self.assertIn("runs-on: ubuntu-latest", text)
+        self.assertIn("runs-on: ubuntu-24.04", text)
+        self.assertNotIn("runs-on: ubuntu-latest", text)
         self.assertNotIn("anthropics/claude-code-action", text)
         self.assertIn("if: ${{ inputs.enable_probe2_oauth }}", text)
 

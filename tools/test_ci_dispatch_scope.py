@@ -937,7 +937,7 @@ class P9ProbeWorkflowTests(unittest.TestCase):
         self.assertEqual(set(self.doc['jobs']), {'probe-0', 'probe-2'})
         for name, job in self.doc['jobs'].items():
             with self.subTest(job=name):
-                self.assertEqual(job['runs-on'], 'ubuntu-latest')
+                self.assertEqual(job['runs-on'], 'ubuntu-24.04')
                 self.assertEqual(job.get('permissions'), {'contents': 'read'})
                 self.assertNotIn('id-token', job.get('permissions') or {})
                 self.assertFalse(PUSH.search(job_text(job)))

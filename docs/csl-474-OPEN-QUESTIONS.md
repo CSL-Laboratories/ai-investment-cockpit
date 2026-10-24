@@ -173,10 +173,12 @@ still only records (I-4 / C10.1).
     - **C10.1 satisfied:** 0b sweep stays record-only.
     - **C10.2 satisfied:** 0b still runs before the `head_sha` checkout.
 
-**Open item for Lucas (not a C-id):** `ubuntu-latest` is migrating from
-24.04 to 26.04 between 19 Oct and 19 Nov 2026. Lucas approved pinning
-`runs-on: ubuntu-24.04` (2026-10-24 1:36pm PT); that pin is a separate
-commit on this stack. A 26.04 upgrade (including Probe 0 on 26.04) is a
-later separate PR.
+**Runs-on pin (resolved 2026-10-24 1:36pm PT):** Lucas approved pinning
+`runs-on: ubuntu-24.04` on every job in the workflows this stack
+touches (`claude.yml`, `claude-conflict-writer.yml`,
+`csl-474-p9-probes.yml`). `ubuntu-latest` is mid-migration to 26.04
+(19 Oct–19 Nov 2026). A 26.04 upgrade, including Probe 0 on 26.04, is
+a later separate PR. conflict-scan.yml and other repo workflows are
+unchanged here.
 
 D5 and D8 remain unapproved. E4 stays parked.

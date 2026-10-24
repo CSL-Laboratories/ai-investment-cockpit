@@ -33,7 +33,7 @@ jobs:
   probe-0:
     name: Probe 0 host facts
     if: ${{ inputs.probe == '0' || inputs.probe == 'both' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -140,7 +140,7 @@ jobs:
   probe-2:
     name: Probe 2 CLI settings.local.json and AGENTS.md
     if: ${{ inputs.probe == '2' || inputs.probe == 'both' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read

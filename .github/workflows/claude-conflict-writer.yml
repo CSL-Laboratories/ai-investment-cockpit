@@ -35,7 +35,7 @@ jobs:
       group: claude-${{ inputs.pr_number }}
       queue: max
       cancel-in-progress: false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     # Trusted and model-free: pause, staleness and Devin-race checks under the
     # PR lock, and the recorded base commit. Reads only; no checkout.
@@ -129,7 +129,7 @@ jobs:
       group: claude-${{ inputs.pr_number }}
       queue: max
       cancel-in-progress: false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     # Untrusted: the model and PR code run here with a read-only job token,
     # no id-token and no persisted checkout credential. Its only output is an
@@ -1098,7 +1098,7 @@ jobs:
       group: claude-${{ inputs.pr_number }}
       queue: max
       cancel-in-progress: false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read

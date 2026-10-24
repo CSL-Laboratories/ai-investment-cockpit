@@ -100,7 +100,7 @@ jobs:
         github.event_name == 'workflow_dispatch' &&
         github.event.inputs.job == 'devin-review-fix'
       )
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     # GITHUB_TOKEN reads collaborator permission (needs only repo metadata,
     # granted with any read scope) and the PR payload. No write scopes here.
@@ -513,7 +513,7 @@ jobs:
 
   event-paths:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -546,7 +546,7 @@ jobs:
     if: >
       github.event_name == 'workflow_dispatch' &&
       github.event.inputs.job != 'devin-review-fix'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       actions: write
@@ -575,7 +575,7 @@ jobs:
       group: claude-${{ needs.resolve-pr.outputs.pr_number }}
       queue: max
       cancel-in-progress: false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -797,7 +797,7 @@ jobs:
       group: claude-${{ needs.resolve-pr.outputs.pr_number }}
       queue: max
       cancel-in-progress: false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # CSL-467: Edit denies for /home/runner/work/_actions and
     # /home/runner/runners/*/externals are ubuntu-latest hosted-runner
     # paths. Linux sandbox denyWrite skips wildcards, so externals is
@@ -6288,7 +6288,7 @@ jobs:
       group: claude-${{ needs.resolve-pr.outputs.pr_number }}
       queue: max
       cancel-in-progress: false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -7805,7 +7805,7 @@ jobs:
       group: claude-${{ needs.resolve-pr.outputs.pr_number }}
       queue: max
       cancel-in-progress: false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Trusted and model-free (CSL-377): locked preflight, loop cap, receipt-aware
     # eligibility and the attempt reservation. Only prepare and publish write
@@ -8622,7 +8622,7 @@ jobs:
       group: claude-${{ needs.resolve-pr.outputs.pr_number }}
       queue: max
       cancel-in-progress: false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # CSL-467: Edit denies for /home/runner/work/_actions and
     # /home/runner/runners/*/externals are ubuntu-latest hosted-runner
     # paths. Linux sandbox denyWrite skips wildcards, so externals is
@@ -14116,7 +14116,7 @@ jobs:
       group: claude-${{ needs.resolve-pr.outputs.pr_number }}
       queue: max
       cancel-in-progress: false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
