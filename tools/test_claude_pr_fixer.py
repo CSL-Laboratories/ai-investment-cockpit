@@ -1925,6 +1925,64 @@ jobs:
                 self.assertEqual(result.returncode == 0, passes, result.stdout + result.stderr)
 
 
+class ConflictWriterFileCommandHardeningTests(unittest.TestCase):
+    """CSL-467 leftover: conflict-writer model job, not claude.yml (#256)."""
+
+    FILE_COMMAND_DENIES = (
+        "Bash(dangerouslyDisableSandbox:true)",
+        "Read(/${{ runner.temp }}/_runner_file_commands/**)",
+        "Edit(/${{ runner.temp }}/_runner_file_commands/**)",
+        "Edit(/${{ runner.tool_cache }}/**)",
+        "Edit(//home/runner/work/_actions/**)",
+        "Edit(//home/runner/externals/**)",
+        "Edit(~/.bashrc)",
+        "Edit(~/.profile)",
+        "Edit(~/.bash_profile)",
+    )
+    PINNED_ENV = {
+        "BASH_ENV": "", "ENV": "", "LD_PRELOAD": "", "LD_AUDIT": "", "LD_LIBRARY_PATH": "",
+        "GCONV_PATH": "", "PYTHONPATH": "", "PYTHONHOME": "", "PYTHONSTARTUP": "",
+        "NODE_OPTIONS": "", "PATH": "/usr/bin:/bin",
+    }
+    POST_CLAUDE = ("Report tool-permission denials", "Package untrusted model output",
+                   "Upload untrusted model output")
+
+    def test_conflict_writer_model_job_blocks_file_command_poisoning(self) -> None:
+        # Write/Edit can reach $RUNNER_TEMP/_runner_file_commands. #256 hardens
+        # claude.yml; this pins the same controls on claude-conflict-writer.yml.
+        import yaml
+
+        workflow = yaml.load(WRITER_WORKFLOW_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+        model = workflow["jobs"]["model"]
+        action = [s for s in model["steps"] if s.get("id") == "claude"][0]
+        settings = json.loads(action["with"]["settings"])
+        self.assertEqual(settings["sandbox"]["enabled"], True)
+        self.assertEqual(settings["sandbox"]["allowUnsandboxedCommands"], False)
+        self.assertEqual(settings["sandbox"]["failIfUnavailable"], True)
+        deny_write = settings["sandbox"]["filesystem"]["denyWrite"]
+        for path in ("${{ runner.temp }}/_runner_file_commands", "${{ runner.tool_cache }}",
+                     "/home/runner/work/_actions", "/home/runner/externals"):
+            self.assertIn(path, deny_write)
+            self.assertNotIn("*", path)  # Linux denyWrite skips wildcard entries
+        deny = settings["permissions"]["deny"]
+        for rule in self.FILE_COMMAND_DENIES:
+            self.assertIn(rule, deny)
+        self.assertFalse([r for r in deny if r.startswith("Write(") and "_runner_file_commands" in r],
+                         deny)  # Write(path) never matches
+        names = [s.get("name") or s.get("id") for s in model["steps"]]
+        claude = names.index("claude")
+        self.assertEqual(names[claude + 1:claude + 4], list(self.POST_CLAUDE))
+        for step_name in self.POST_CLAUDE:
+            env = [s for s in model["steps"] if s.get("name") == step_name][0]["env"]
+            for key, value in self.PINNED_ENV.items():
+                self.assertEqual(env[key], value, (step_name, key))
+        install = [s for s in model["steps"] if s.get("name") == "Install acceptance-gate deps"][0]
+        self.assertEqual(install["working-directory"], "${{ runner.temp }}")
+        self.assertTrue(install["run"].lstrip().startswith("python -P -m pip install"), install["run"])
+        self.assertNotEqual(install.get("working-directory"), "app")
+        self.assertNotIn("python -m pip", install["run"])
+
+
 class ClaudeActionInlineCommentTests(unittest.TestCase):
     """CSL-383: no claude-code-action step publishes the model-writable comment buffer."""
 
