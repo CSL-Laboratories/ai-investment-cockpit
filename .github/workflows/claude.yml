@@ -787,8 +787,9 @@ jobs:
       cancel-in-progress: false
     runs-on: ubuntu-latest
     # CSL-467: Edit denies for /home/runner/work/_actions and
-    # /home/runner/externals are ubuntu-latest paths. If this job
-    # changes runner image, those deny paths must be updated.
+    # /home/runner/runners/*/externals are ubuntu-latest hosted-runner
+    # paths. Linux sandbox denyWrite skips wildcards, so externals is
+    # Edit-only. If this job changes runner image, update those paths.
     timeout-minutes: 30
     # Untrusted (CSL-377): the model and PR code run here with a read-only job
     # token, no id-token and no persisted checkout credential. Its only output
@@ -1282,18 +1283,23 @@ jobs:
           bot_id: "209825114"
           bot_name: "claude[bot]"
           # CSL-467: Write/Edit run as runner, outside bwrap. Permission path
-          # rules: Write(path) never matches; a single leading / is relative to
-          # ~/.claude (the action writes this JSON there). runner.temp and
-          # runner.tool_cache are absolute, so /${{ runner.temp }} is the //
-          # filesystem-root form. sandbox.allowUnsandboxedCommands defaults true
+          # rules: Write(path) never matches (file checks use Edit/Read), so
+          # Write(...) deny rules are omitted; Edit is the binding form.
+          # A single leading / is relative to ~/.claude (the action writes
+          # this JSON there). runner.temp and runner.tool_cache are absolute,
+          # so /${{ runner.temp }} is the // filesystem-root form.
+          # sandbox.allowUnsandboxedCommands defaults true
           # and an allow rule auto-approves the unsandboxed retry.
           # autoAllowBashIfSandboxed also defaults true and would auto-approve
           # any sandboxed Bash outside the helper-only allowedTools path
           # (https://code.claude.com/docs/en/sandboxing#auto-allow-mode).
-          # Existing Write(...) cockpit rules stay; tests pin them, and they
-          # are no-ops. allowedTools scopes Edit/Write to github.workspace
-          # (D10); extra Write/Edit/Read denies cover _runner_file_commands
-          # and the GITHUB_ENV (set_env_*) / GITHUB_PATH (add_path_*) files.
+          # allowedTools still allows Write(/github.workspace/**); that is an
+          # allow, not a deny. Extra Edit/Read denies cover
+          # _runner_file_commands and the GITHUB_ENV (set_env_*) /
+          # GITHUB_PATH (add_path_*) files. Hosted-runner externals live at
+          # /home/runner/runners/<ver>/externals; Linux denyWrite skips
+          # wildcards, so that path is Edit-only. ~/.bash_login is denied
+          # with the other shell startup files (D10).
           # U-8 (deny matching) is still unverified on hosted runners.
           # network.allowedDomains is what the helper's `gh api`/`graphql`
           # calls need (api.github.com plus github.com for auth/redirects).
@@ -1313,8 +1319,7 @@ jobs:
                   "denyWrite": [
                     "${{ runner.temp }}/_runner_file_commands",
                     "${{ runner.tool_cache }}",
-                    "/home/runner/work/_actions",
-                    "/home/runner/externals"
+                    "/home/runner/work/_actions"
                   ]
                 },
                 "network": {
@@ -1330,48 +1335,33 @@ jobs:
                   "Read(.env)",
                   "Read(.env.*)",
                   "Edit(.github/workflows/**)",
-                  "Write(.github/workflows/**)",
                   "Edit(.git/hooks/**)",
-                  "Write(.git/hooks/**)",
                   "Edit(.git/config)",
-                  "Write(.git/config)",
                   "Edit(.git/config.worktree)",
-                  "Write(.git/config.worktree)",
                   "Edit(.git/info/**)",
-                  "Write(.git/info/**)",
                   "Edit(.git/commondir)",
-                  "Write(.git/commondir)",
                   "Edit(.git/modules/**)",
-                  "Write(.git/modules/**)",
                   "Edit(.git/worktrees/**)",
-                  "Write(.git/worktrees/**)",
                   "Edit(/${{ runner.temp }}/claude-fixer-guard/**)",
-                  "Write(/${{ runner.temp }}/claude-fixer-guard/**)",
                   "Edit(.claude/**)",
-                  "Write(.claude/**)",
                   "Edit(~/.claude/**)",
-                  "Write(~/.claude/**)",
                   "Edit(~/.gitconfig)",
-                  "Write(~/.gitconfig)",
                   "Edit(~/.config/git/**)",
-                  "Write(~/.config/git/**)",
                   "Read(~/.claude/**)",
                   "Bash(dangerouslyDisableSandbox:true)",
                   "Read(/${{ runner.temp }}/_runner_file_commands/**)",
                   "Edit(/${{ runner.temp }}/_runner_file_commands/**)",
-                  "Write(/${{ runner.temp }}/_runner_file_commands/**)",
                   "Read(/${{ runner.temp }}/_runner_file_commands/set_env_*)",
                   "Edit(/${{ runner.temp }}/_runner_file_commands/set_env_*)",
-                  "Write(/${{ runner.temp }}/_runner_file_commands/set_env_*)",
                   "Read(/${{ runner.temp }}/_runner_file_commands/add_path_*)",
                   "Edit(/${{ runner.temp }}/_runner_file_commands/add_path_*)",
-                  "Write(/${{ runner.temp }}/_runner_file_commands/add_path_*)",
                   "Edit(/${{ runner.tool_cache }}/**)",
                   "Edit(//home/runner/work/_actions/**)",
-                  "Edit(//home/runner/externals/**)",
+                  "Edit(//home/runner/runners/*/externals/**)",
                   "Edit(~/.bashrc)",
                   "Edit(~/.profile)",
-                  "Edit(~/.bash_profile)"
+                  "Edit(~/.bash_profile)",
+                  "Edit(~/.bash_login)"
                 ]
               }
             }
@@ -1479,8 +1469,8 @@ jobs:
               PYTHON3|PYTHONNOUSERSITE) continue ;;
               PYTHON*) unset "$name" ;;
             esac
-          done < <(env)
-          env -i PATH="/usr/bin:/bin" PYTHONNOUSERSITE=1 \
+          done < <(/usr/bin/env)
+          /usr/bin/env -i PATH="/usr/bin:/bin" PYTHONNOUSERSITE=1 \
             "$python3" -I - "$EXECUTION_FILE" <<'CLAUDE_DENIALS_REPORT'
           #!/usr/bin/env python3
           """Report Claude Code tool-permission denials from the execution file.
@@ -1616,11 +1606,11 @@ jobs:
           # CSL-467: step env overrides GITHUB_ENV for these names. Blank
           # loader/shell hooks the model could write via file commands.
           # GITHUB_PATH typically prepends over step PATH (actions/toolkit#655);
-          # whether step PATH wins is unverified. Call git/jq via GIT/JQ
-          # absolute paths so a poisoned GITHUB_PATH entry cannot win.
-          # PATH=/usr/bin:/bin is belt-and-suspenders only. Publish still
-          # revalidates the artifact. Scripts use ${GIT:-git} so local PATH
-          # shims in wiring tests still work when GIT is unset.
+          # whether step PATH wins is unverified. The run script wraps the
+          # body in /usr/bin/env -i so GITHUB_PATH and GIT_CONFIG_* / GIT_EXEC_PATH
+          # from file commands cannot retarget git. GIT/JQ still default to
+          # /usr/bin; wiring tests point GIT at a shim. Publish still
+          # revalidates the artifact.
           GIT: "/usr/bin/git"
           PYTHON3: "/usr/bin/python3"
           JQ: "/usr/bin/jq"
@@ -1636,6 +1626,22 @@ jobs:
           NODE_OPTIONS: ""
           PATH: "/usr/bin:/bin"
         run: |
+          /usr/bin/env -i \
+            PATH="/usr/bin:/bin" \
+            HOME="${HOME:-/home/runner}" \
+            GIT="${GIT:-/usr/bin/git}" \
+            JQ="${JQ:-/usr/bin/jq}" \
+            HEAD_SHA="${HEAD_SHA:-}" \
+            EXECUTION_FILE="${EXECUTION_FILE:-}" \
+            RUNNER_TEMP="${RUNNER_TEMP:-}" \
+            GITHUB_OUTPUT="${GITHUB_OUTPUT:-}" \
+            GIT_CONFIG_COUNT= \
+            GIT_CONFIG_GLOBAL= \
+            GIT_CONFIG_SYSTEM= \
+            GIT_CONFIG_NOSYSTEM= \
+            GIT_CONFIG_PARAMETERS= \
+            GIT_EXEC_PATH= \
+            /bin/bash --noprofile --norc <<'CLAUDE_PACKAGE'
           set -uo pipefail
           # Everything packaged here is untrusted model/PR output; the publish
           # job revalidates it. The model transcript itself is never uploaded.
@@ -1682,6 +1688,7 @@ jobs:
               "$EXECUTION_FILE" > "$out/result.json" || rm -f "$out/result.json"
           fi
           exit 0
+          CLAUDE_PACKAGE
       - name: Upload untrusted model output
         if: always()
         uses: actions/upload-artifact@v4
@@ -4063,8 +4070,9 @@ jobs:
       cancel-in-progress: false
     runs-on: ubuntu-latest
     # CSL-467: Edit denies for /home/runner/work/_actions and
-    # /home/runner/externals are ubuntu-latest paths. If this job
-    # changes runner image, those deny paths must be updated.
+    # /home/runner/runners/*/externals are ubuntu-latest hosted-runner
+    # paths. Linux sandbox denyWrite skips wildcards, so externals is
+    # Edit-only. If this job changes runner image, update those paths.
     timeout-minutes: 30
     # Untrusted (CSL-377): the model and PR code run here with a read-only job
     # token, no id-token and no persisted checkout credential. Its only output
@@ -4561,18 +4569,23 @@ jobs:
           allowed_bots: devin-ai-integration
           include_comments_by_actor: devin-ai-integration[bot]
           # CSL-467: Write/Edit run as runner, outside bwrap. Permission path
-          # rules: Write(path) never matches; a single leading / is relative to
-          # ~/.claude (the action writes this JSON there). runner.temp and
-          # runner.tool_cache are absolute, so /${{ runner.temp }} is the //
-          # filesystem-root form. sandbox.allowUnsandboxedCommands defaults true
+          # rules: Write(path) never matches (file checks use Edit/Read), so
+          # Write(...) deny rules are omitted; Edit is the binding form.
+          # A single leading / is relative to ~/.claude (the action writes
+          # this JSON there). runner.temp and runner.tool_cache are absolute,
+          # so /${{ runner.temp }} is the // filesystem-root form.
+          # sandbox.allowUnsandboxedCommands defaults true
           # and an allow rule auto-approves the unsandboxed retry.
           # autoAllowBashIfSandboxed also defaults true and would auto-approve
           # any sandboxed Bash outside the helper-only allowedTools path
           # (https://code.claude.com/docs/en/sandboxing#auto-allow-mode).
-          # Existing Write(...) cockpit rules stay; tests pin them, and they
-          # are no-ops. allowedTools scopes Edit/Write to github.workspace
-          # (D10); extra Write/Edit/Read denies cover _runner_file_commands
-          # and the GITHUB_ENV (set_env_*) / GITHUB_PATH (add_path_*) files.
+          # allowedTools still allows Write(/github.workspace/**); that is an
+          # allow, not a deny. Extra Edit/Read denies cover
+          # _runner_file_commands and the GITHUB_ENV (set_env_*) /
+          # GITHUB_PATH (add_path_*) files. Hosted-runner externals live at
+          # /home/runner/runners/<ver>/externals; Linux denyWrite skips
+          # wildcards, so that path is Edit-only. ~/.bash_login is denied
+          # with the other shell startup files (D10).
           # U-8 (deny matching) is still unverified on hosted runners.
           # network.allowedDomains is what the helper's `gh api`/`graphql`
           # calls need (api.github.com plus github.com for auth/redirects).
@@ -4592,8 +4605,7 @@ jobs:
                   "denyWrite": [
                     "${{ runner.temp }}/_runner_file_commands",
                     "${{ runner.tool_cache }}",
-                    "/home/runner/work/_actions",
-                    "/home/runner/externals"
+                    "/home/runner/work/_actions"
                   ]
                 },
                 "network": {
@@ -4609,48 +4621,33 @@ jobs:
                   "Read(.env)",
                   "Read(.env.*)",
                   "Edit(.github/workflows/**)",
-                  "Write(.github/workflows/**)",
                   "Edit(.git/hooks/**)",
-                  "Write(.git/hooks/**)",
                   "Edit(.git/config)",
-                  "Write(.git/config)",
                   "Edit(.git/config.worktree)",
-                  "Write(.git/config.worktree)",
                   "Edit(.git/info/**)",
-                  "Write(.git/info/**)",
                   "Edit(.git/commondir)",
-                  "Write(.git/commondir)",
                   "Edit(.git/modules/**)",
-                  "Write(.git/modules/**)",
                   "Edit(.git/worktrees/**)",
-                  "Write(.git/worktrees/**)",
                   "Edit(/${{ runner.temp }}/claude-fixer-guard/**)",
-                  "Write(/${{ runner.temp }}/claude-fixer-guard/**)",
                   "Edit(.claude/**)",
-                  "Write(.claude/**)",
                   "Edit(~/.claude/**)",
-                  "Write(~/.claude/**)",
                   "Edit(~/.gitconfig)",
-                  "Write(~/.gitconfig)",
                   "Edit(~/.config/git/**)",
-                  "Write(~/.config/git/**)",
                   "Read(~/.claude/**)",
                   "Bash(dangerouslyDisableSandbox:true)",
                   "Read(/${{ runner.temp }}/_runner_file_commands/**)",
                   "Edit(/${{ runner.temp }}/_runner_file_commands/**)",
-                  "Write(/${{ runner.temp }}/_runner_file_commands/**)",
                   "Read(/${{ runner.temp }}/_runner_file_commands/set_env_*)",
                   "Edit(/${{ runner.temp }}/_runner_file_commands/set_env_*)",
-                  "Write(/${{ runner.temp }}/_runner_file_commands/set_env_*)",
                   "Read(/${{ runner.temp }}/_runner_file_commands/add_path_*)",
                   "Edit(/${{ runner.temp }}/_runner_file_commands/add_path_*)",
-                  "Write(/${{ runner.temp }}/_runner_file_commands/add_path_*)",
                   "Edit(/${{ runner.tool_cache }}/**)",
                   "Edit(//home/runner/work/_actions/**)",
-                  "Edit(//home/runner/externals/**)",
+                  "Edit(//home/runner/runners/*/externals/**)",
                   "Edit(~/.bashrc)",
                   "Edit(~/.profile)",
-                  "Edit(~/.bash_profile)"
+                  "Edit(~/.bash_profile)",
+                  "Edit(~/.bash_login)"
                 ]
               }
             }
@@ -4753,8 +4750,8 @@ jobs:
               PYTHON3|PYTHONNOUSERSITE) continue ;;
               PYTHON*) unset "$name" ;;
             esac
-          done < <(env)
-          env -i PATH="/usr/bin:/bin" PYTHONNOUSERSITE=1 \
+          done < <(/usr/bin/env)
+          /usr/bin/env -i PATH="/usr/bin:/bin" PYTHONNOUSERSITE=1 \
             "$python3" -I - "$EXECUTION_FILE" <<'CLAUDE_DENIALS_REPORT'
           #!/usr/bin/env python3
           """Report Claude Code tool-permission denials from the execution file.
@@ -4890,11 +4887,11 @@ jobs:
           # CSL-467: step env overrides GITHUB_ENV for these names. Blank
           # loader/shell hooks the model could write via file commands.
           # GITHUB_PATH typically prepends over step PATH (actions/toolkit#655);
-          # whether step PATH wins is unverified. Call git/jq via GIT/JQ
-          # absolute paths so a poisoned GITHUB_PATH entry cannot win.
-          # PATH=/usr/bin:/bin is belt-and-suspenders only. Publish still
-          # revalidates the artifact. Scripts use ${GIT:-git} so local PATH
-          # shims in wiring tests still work when GIT is unset.
+          # whether step PATH wins is unverified. The run script wraps the
+          # body in /usr/bin/env -i so GITHUB_PATH and GIT_CONFIG_* / GIT_EXEC_PATH
+          # from file commands cannot retarget git. GIT/JQ still default to
+          # /usr/bin; wiring tests point GIT at a shim. Publish still
+          # revalidates the artifact.
           GIT: "/usr/bin/git"
           PYTHON3: "/usr/bin/python3"
           JQ: "/usr/bin/jq"
@@ -4910,6 +4907,22 @@ jobs:
           NODE_OPTIONS: ""
           PATH: "/usr/bin:/bin"
         run: |
+          /usr/bin/env -i \
+            PATH="/usr/bin:/bin" \
+            HOME="${HOME:-/home/runner}" \
+            GIT="${GIT:-/usr/bin/git}" \
+            JQ="${JQ:-/usr/bin/jq}" \
+            HEAD_SHA="${HEAD_SHA:-}" \
+            EXECUTION_FILE="${EXECUTION_FILE:-}" \
+            RUNNER_TEMP="${RUNNER_TEMP:-}" \
+            GITHUB_OUTPUT="${GITHUB_OUTPUT:-}" \
+            GIT_CONFIG_COUNT= \
+            GIT_CONFIG_GLOBAL= \
+            GIT_CONFIG_SYSTEM= \
+            GIT_CONFIG_NOSYSTEM= \
+            GIT_CONFIG_PARAMETERS= \
+            GIT_EXEC_PATH= \
+            /bin/bash --noprofile --norc <<'CLAUDE_PACKAGE'
           set -uo pipefail
           # Everything packaged here is untrusted model/PR output; the publish
           # job revalidates it. The model transcript itself is never uploaded.
@@ -4956,6 +4969,7 @@ jobs:
               "$EXECUTION_FILE" > "$out/result.json" || rm -f "$out/result.json"
           fi
           exit 0
+          CLAUDE_PACKAGE
       - name: Upload untrusted model output
         if: always()
         uses: actions/upload-artifact@v4

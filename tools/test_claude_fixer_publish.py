@@ -1968,9 +1968,16 @@ class WorkflowWiringTests(unittest.TestCase):
                 for rule in ("Bash(git push:*)", "Bash(git config:*)", "Bash(gh api:*)"):
                     self.assertIn(rule, inputs["claude_args"].split("--disallowedTools", 1)[1])
                 deny = json.loads(inputs["settings"])["permissions"]["deny"]
-                for rule in ("Edit(.git/hooks/**)", "Write(.git/config)", "Edit(/${{ runner.temp }}/claude-fixer-guard/**)",
-                             "Write(/${{ runner.temp }}/claude-fixer-guard/**)"):
+                for rule in ("Edit(.git/hooks/**)", "Edit(/${{ runner.temp }}/claude-fixer-guard/**)"):
                     self.assertIn(rule, deny)
+                write_rules = ("Write(.git/config)", "Write(/${{ runner.temp }}/claude-fixer-guard/**)")
+                if name == "claude.yml":
+                    for rule in write_rules:
+                        self.assertNotIn(rule, deny)
+                    self.assertFalse([r for r in deny if r.startswith("Write(")], deny)
+                else:
+                    for rule in write_rules:
+                        self.assertIn(rule, deny)
                 # Deny rules become sandbox denies for Bash too: git must still write .git and read its
                 # config, and the helper must still read its own files.
                 self.assertFalse([r for r in deny if r in {"Edit(.git/**)", "Write(.git/**)", "Read(.git/config)"}
@@ -2028,11 +2035,16 @@ class WorkflowWiringTests(unittest.TestCase):
                     (shim / "git").chmod(0o755)
                     output = root / "output"
                     env = dict(git_env(), PATH=f"{shim}{os.pathsep}{os.environ['PATH']}", RUNNER_TEMP=str(root),
-                               GITHUB_OUTPUT=str(output), HEAD_SHA=head, BASE_SHA=head, EXECUTION_FILE="")
+                               GITHUB_OUTPUT=str(output), HEAD_SHA=head, BASE_SHA=head, EXECUTION_FILE="",
+                               HOME=str(root))
                     # Package uses ${GIT:-git}; a host GIT= would skip the PATH shim.
+                    # claude.yml wraps Package in env -i PATH=/usr/bin:/bin, so the
+                    # shim has to be GIT=; conflict-writer still uses PATH.
                     env.pop("GIT", None)
                     env.pop("JQ", None)
                     env.pop("PYTHON3", None)
+                    if "/usr/bin/env -i" in script:
+                        env["GIT"] = str(shim / "git")
                     subprocess.run(["bash", "-c", script], cwd=work.path, env=env, check=True, capture_output=True)
                     expected = ("failed" if case in ISOLATED_CREDENTIALS else
                                 {"credential": "failed", "helper": "bundled", "big": "failed",
@@ -2088,10 +2100,17 @@ class WorkflowWiringTests(unittest.TestCase):
                 settings = json.loads(action["with"]["settings"])["permissions"]
                 self.assertEqual(set(settings), {"deny"})  # no settings-level allow rules either
                 deny = settings["deny"]
-                for rule in ("Edit(.claude/**)", "Write(.claude/**)", "Edit(~/.claude/**)", "Write(~/.claude/**)",
-                             "Read(~/.claude/**)", "Edit(~/.gitconfig)", "Write(~/.gitconfig)",
-                             "Edit(~/.config/git/**)", "Write(~/.config/git/**)"):
+                for rule in ("Edit(.claude/**)", "Edit(~/.claude/**)", "Read(~/.claude/**)",
+                             "Edit(~/.gitconfig)", "Edit(~/.config/git/**)"):
                     self.assertIn(rule, deny)
+                write_rules = ("Write(.claude/**)", "Write(~/.claude/**)", "Write(~/.gitconfig)",
+                               "Write(~/.config/git/**)")
+                if name == "claude.yml":
+                    for rule in write_rules:
+                        self.assertNotIn(rule, deny)
+                else:
+                    for rule in write_rules:
+                        self.assertIn(rule, deny)
                 outbox = [s for s in model["steps"] if s.get("id") == "outbox"][0]
                 self.assertEqual(outbox["env"]["GH_TOKEN"], "${{ github.token }}")
                 # The helper is root-owned and read-only before Claude runs; any failure fails the step.
@@ -2103,19 +2122,17 @@ class WorkflowWiringTests(unittest.TestCase):
         "Bash(dangerouslyDisableSandbox:true)",
         "Read(/${{ runner.temp }}/_runner_file_commands/**)",
         "Edit(/${{ runner.temp }}/_runner_file_commands/**)",
-        "Write(/${{ runner.temp }}/_runner_file_commands/**)",
         "Read(/${{ runner.temp }}/_runner_file_commands/set_env_*)",
         "Edit(/${{ runner.temp }}/_runner_file_commands/set_env_*)",
-        "Write(/${{ runner.temp }}/_runner_file_commands/set_env_*)",
         "Read(/${{ runner.temp }}/_runner_file_commands/add_path_*)",
         "Edit(/${{ runner.temp }}/_runner_file_commands/add_path_*)",
-        "Write(/${{ runner.temp }}/_runner_file_commands/add_path_*)",
         "Edit(/${{ runner.tool_cache }}/**)",
         "Edit(//home/runner/work/_actions/**)",
-        "Edit(//home/runner/externals/**)",
+        "Edit(//home/runner/runners/*/externals/**)",
         "Edit(~/.bashrc)",
         "Edit(~/.profile)",
         "Edit(~/.bash_profile)",
+        "Edit(~/.bash_login)",
     )
     PINNED_ENV = {
         "BASH_ENV": "", "ENV": "", "LD_PRELOAD": "", "LD_AUDIT": "", "LD_LIBRARY_PATH": "",
@@ -2144,15 +2161,18 @@ class WorkflowWiringTests(unittest.TestCase):
                 self.assertEqual(settings["sandbox"]["failIfUnavailable"], True)
                 deny_write = settings["sandbox"]["filesystem"]["denyWrite"]
                 for path in ("${{ runner.temp }}/_runner_file_commands", "${{ runner.tool_cache }}",
-                             "/home/runner/work/_actions", "/home/runner/externals"):
+                             "/home/runner/work/_actions"):
                     self.assertIn(path, deny_write)
                     self.assertNotIn("*", path)  # Linux denyWrite skips wildcard entries
+                self.assertNotIn("/home/runner/externals", deny_write)
                 network = settings["sandbox"]["network"]
                 self.assertEqual(network["allowedDomains"], list(self.HELPER_NETWORK))
                 self.assertEqual(network["strictAllowlist"], True)
                 deny = settings["permissions"]["deny"]
                 for rule in self.FILE_COMMAND_DENIES:
                     self.assertIn(rule, deny)
+                self.assertFalse([r for r in deny if r.startswith("Write(")], deny)
+                self.assertNotIn("Edit(//home/runner/externals/**)", deny)
                 names = [s.get("name") or s.get("id") for s in model["steps"]]
                 ids = [s.get("id") for s in model["steps"]]
                 self.assertIn("pin-python", ids)
@@ -2170,12 +2190,22 @@ class WorkflowWiringTests(unittest.TestCase):
                 self.assertEqual(denials["env"]["PYTHONNOUSERSITE"], "1")
                 self.assertEqual(denials["env"]["PYTHONUSERBASE"], "")
                 self.assertIn('"$python3" -I - "$EXECUTION_FILE"', denials["run"])
-                self.assertIn("env -i PATH=\"/usr/bin:/bin\" PYTHONNOUSERSITE=1", denials["run"])
+                self.assertIn("/usr/bin/env -i PATH=\"/usr/bin:/bin\" PYTHONNOUSERSITE=1", denials["run"])
+                self.assertIn("done < <(/usr/bin/env)", denials["run"])
+                self.assertNotIn("done < <(env)", denials["run"])
                 self.assertIn("PYTHON*) unset", denials["run"])
                 package = step(model, "Package untrusted model output")
+                self.assertIn("/usr/bin/env -i", package["run"])
+                self.assertIn('PATH="/usr/bin:/bin"', package["run"])
+                self.assertIn("GIT_CONFIG_COUNT=", package["run"])
+                self.assertIn("GIT_CONFIG_GLOBAL=", package["run"])
+                self.assertIn("GIT_CONFIG_SYSTEM=", package["run"])
+                self.assertIn("GIT_CONFIG_NOSYSTEM=", package["run"])
+                self.assertIn("GIT_CONFIG_PARAMETERS=", package["run"])
+                self.assertIn("GIT_EXEC_PATH=", package["run"])
+                self.assertIn('GIT="${GIT:-/usr/bin/git}"', package["run"])
                 self.assertIn('git_bin="${GIT:-git}"', package["run"])
                 self.assertIn('jq_bin="${JQ:-jq}"', package["run"])
-                self.assertNotIn("/usr/bin/git", package["run"])  # PATH shims in this file's tests
                 for step_name in self.POST_CLAUDE:
                     env = step(model, step_name)["env"]
                     for key, value in self.PINNED_ENV.items():
@@ -2185,8 +2215,44 @@ class WorkflowWiringTests(unittest.TestCase):
         workflow = WORKFLOWS["claude.yml"].read_text(encoding="utf-8")
         self.assertGreaterEqual(
             workflow.count("# CSL-467: Edit denies for /home/runner/work/_actions and"), 2)
+        self.assertGreaterEqual(workflow.count("/home/runner/runners/*/externals"), 2)
         self.assertNotIn("PATH pins over GITHUB_PATH prepends when step env wins.", workflow)
         self.assertGreaterEqual(workflow.count("U-8 (deny matching) is still unverified on hosted runners."), 2)
+
+    def test_package_env_i_blanks_git_config_and_exec_path(self):
+        # CSL-467 L2: GITHUB_ENV GIT_CONFIG_* / GIT_EXEC_PATH must not retarget
+        # Package git. env -i rebuilds a minimal env and blanks those names.
+        git_bin = shutil.which("git")
+        self.assertTrue(git_bin)
+        for name, _prep, model, _pub, _group, ids in self.pipelines():
+            if name != "claude.yml":
+                continue
+            script = [s for s in model["steps"] if s.get("name") == "Package untrusted model output"][0]["run"]
+            with self.subTest(job=ids[1]), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                work = Work(root / "repo")
+                subprocess.run(["git", "init", "-q", "-b", "main", str(work.path)], env=git_env(), check=True)
+                head = work.commit({"a.txt": "a\n"}, message="head")
+                work.git("remote", "add", "origin", "https://github.com/acme/example.git")
+                poison = root / "poison.gitconfig"
+                poison.write_text("[http]\n\textraheader = AUTHORIZATION: basic bm90YXRva2Vu\n",
+                                  encoding="utf-8")
+                evil = root / "evil-git-core"
+                evil.mkdir()
+                (evil / "git-rev-parse").write_text("#!/bin/sh\necho poisoned-rev-parse\n", encoding="utf-8")
+                (evil / "git-rev-parse").chmod(0o755)
+                output = root / "output"
+                env = dict(git_env(), PATH="/usr/bin:/bin", RUNNER_TEMP=str(root),
+                           GITHUB_OUTPUT=str(output), HEAD_SHA=head, EXECUTION_FILE="",
+                           HOME=str(root), GIT=git_bin,
+                           GIT_CONFIG_COUNT="1",
+                           GIT_CONFIG_KEY_0="include.path",
+                           GIT_CONFIG_VALUE_0=str(poison),
+                           GIT_CONFIG_PARAMETERS=f"include.path={poison}",
+                           GIT_EXEC_PATH=str(evil))
+                subprocess.run(["bash", "-c", script], cwd=work.path, env=env, check=True,
+                               capture_output=True)
+                self.assertEqual(output.read_text(), "package_status=unchanged\n")
 
     @unittest.skipIf(os.name == "nt", "POSIX python -I")
     def test_isolated_python_skips_user_site_usercustomize(self):
@@ -2200,7 +2266,7 @@ class WorkflowWiringTests(unittest.TestCase):
             (site / "usercustomize.py").write_text(
                 f"open({str(marker)!r}, 'w').write('ran')\n", encoding="utf-8")
             subprocess.run(
-                ["env", "-i", "PATH=/usr/bin:/bin", "PYTHONNOUSERSITE=1",
+                ["/usr/bin/env", "-i", "PATH=/usr/bin:/bin", "PYTHONNOUSERSITE=1",
                  "PYTHONUSERBASE=" + str(base), "PYTHONPATH=" + str(site),
                  sys.executable, "-I", "-c", "pass"],
                 check=True,

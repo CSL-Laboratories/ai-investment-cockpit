@@ -851,9 +851,15 @@ class FixerGateAndPromptTests(unittest.TestCase):
             self.assertIn("Report tool-permission denials", body, job)
             self.assertIn("steps.claude.outputs.execution_file", body, job)
             self.assertIn('"$python3" -I - "$EXECUTION_FILE"', body, job)
-            self.assertIn("Write(/${{ runner.temp }}/_runner_file_commands/**)", body, job)
-            self.assertIn("Write(/${{ runner.temp }}/_runner_file_commands/set_env_*)", body, job)
-            self.assertIn("Write(/${{ runner.temp }}/_runner_file_commands/add_path_*)", body, job)
+            self.assertIn("/usr/bin/env -i", body, job)
+            self.assertIn("done < <(/usr/bin/env)", body, job)
+            self.assertIn("Edit(/${{ runner.temp }}/_runner_file_commands/**)", body, job)
+            self.assertIn("Edit(/${{ runner.temp }}/_runner_file_commands/set_env_*)", body, job)
+            self.assertIn("Edit(/${{ runner.temp }}/_runner_file_commands/add_path_*)", body, job)
+            self.assertNotIn("Write(/${{ runner.temp }}/_runner_file_commands/**)", body, job)
+            self.assertIn("Edit(~/.bash_login)", body, job)
+            self.assertIn("Edit(//home/runner/runners/*/externals/**)", body, job)
+            self.assertNotIn("Edit(//home/runner/externals/**)", body, job)
             self.assertNotIn("show_full_output", body, job)
 
     def test_mention_job_installs_gate_deps(self) -> None:
@@ -1850,17 +1856,21 @@ class GuardTamperDenyTests(unittest.TestCase):
     # Edit/Write deny rules also become sandbox write denies for Bash (CLAUDE_CODE_SUBPROCESS_ENV_SCRUB),
     # so a blanket .git/** deny would stop the helper's git from writing its index. Deny what git can
     # be made to execute or redirect through, the same set Claude Code's scrub profile protects.
-    GUARD_DENIES = tuple(f'"{tool}(.git/{path})"' for path in ("hooks/**", "config", "config.worktree", "info/**",
-                                                                "commondir", "modules/**", "worktrees/**")
-                         for tool in ("Edit", "Write")) + (
+    GUARD_PATHS = ("hooks/**", "config", "config.worktree", "info/**",
+                   "commondir", "modules/**", "worktrees/**")
+    GUARD_EDIT = tuple(f'"Edit(.git/{path})"' for path in GUARD_PATHS) + (
         '"Edit(/${{ runner.temp }}/claude-fixer-guard/**)"',
+    )
+    GUARD_WRITE = tuple(f'"Write(.git/{path})"' for path in GUARD_PATHS) + (
         '"Write(/${{ runner.temp }}/claude-fixer-guard/**)"',
     )
+    GUARD_DENIES = GUARD_EDIT + GUARD_WRITE
 
     def test_every_guarded_writer_denies_hook_tampering(self) -> None:
         # CSL-377: the model jobs hold no push credential; the publish job is the
         # boundary. These denials still keep Edit/Write away from .git and the
         # helper context (accidental-edit control, not isolation).
+        # claude.yml omits Write(path) denies (they never match); Edit is binding.
         for path, jobs in ((WORKFLOW_PATH, ("claude-mention", "devin-review-fix")),
                            (WRITER_WORKFLOW_PATH, ("model",))):
             text = path.read_text(encoding="utf-8")
@@ -1870,8 +1880,14 @@ class GuardTamperDenyTests(unittest.TestCase):
                 with self.subTest(workflow=path.name, job=job):
                     self.assertIn("claude-fixer-guard/model-api", body)
                     deny = body.split('"deny": [', 1)[1].split("]", 1)[0]
-                    for rule in self.GUARD_DENIES:
+                    for rule in self.GUARD_EDIT:
                         self.assertIn(rule, deny)
+                    if path.name == "claude.yml":
+                        for rule in self.GUARD_WRITE:
+                            self.assertNotIn(rule, deny)
+                    else:
+                        for rule in self.GUARD_WRITE:
+                            self.assertIn(rule, deny)
                     self.assertNotIn('"Edit(.git/**)"', deny)
                     self.assertNotIn('"Write(.git/**)"', deny)
 
