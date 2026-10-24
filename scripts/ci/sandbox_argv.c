@@ -29,6 +29,22 @@ static int take_eq_or_next(const char *a, const char *flag, int *i, int argc,
     return 0;
 }
 
+/* SDK my() never emits a separate value token that starts with '-'.
+ * Empty values are also refuse (fail closed). */
+static int value_ok(const char *v)
+{
+    return v && v[0] != '\0' && v[0] != '-';
+}
+
+#define CSL_ARGV_MAX 64
+
+static void mark_drop(unsigned char *drop, int i)
+{
+    if (drop && i >= 0 && i < CSL_ARGV_MAX) {
+        drop[i] = 1;
+    }
+}
+
 static void free_tools(char **tools, int n)
 {
     while (n > 0) {
@@ -95,7 +111,7 @@ static int tools_equal(char **got, int ngot, const char **expect)
     return 1;
 }
 
-int csl_argv_allow(int argc, char **argv)
+static int classify(int argc, char **argv, unsigned char *drop)
 {
     int i;
     int saw_turns = 0, saw_sources = 0, saw_allowed = 0;
@@ -122,6 +138,9 @@ int csl_argv_allow(int argc, char **argv)
     snprintf(helper, sizeof helper,
              "Bash(python3 %s/claude-fixer-guard/model-api --:*)", CSL_RUNNER_TEMP);
 
+    if (argc < 1 || argc >= CSL_ARGV_MAX) {
+        return -1;
+    }
     for (i = 1; i < argc; i++) {
         const char *a = argv[i];
         if (strcmp(a, "--dangerously-skip-permissions") == 0) {
@@ -143,21 +162,30 @@ int csl_argv_allow(int argc, char **argv)
         }
         /* Incoming MCP is discarded; launcher injects its own empty file. */
         if (strcmp(a, "--mcp-config") == 0) {
-            if (i + 1 >= argc) {
+            if (i + 1 >= argc || !value_ok(argv[i + 1])) {
                 free_tools(tools, ntools);
                 return -1;
             }
+            mark_drop(drop, i);
+            mark_drop(drop, i + 1);
             i++;
             continue;
         }
         if (starts_with(a, "--mcp-config=")) {
+            if (!value_ok(a + 13)) {
+                free_tools(tools, ntools);
+                return -1;
+            }
+            mark_drop(drop, i);
             continue;
         }
         if (strcmp(a, "--strict-mcp-config") == 0) {
+            mark_drop(drop, i);
             continue;
         }
         if (strcmp(a, "--permission-mode") == 0) {
-            if (saw_perm || i + 1 >= argc || strcmp(argv[i + 1], "acceptEdits") != 0) {
+            if (saw_perm || i + 1 >= argc || !value_ok(argv[i + 1]) ||
+                strcmp(argv[i + 1], "acceptEdits") != 0) {
                 free_tools(tools, ntools);
                 return -1;
             }
@@ -166,7 +194,7 @@ int csl_argv_allow(int argc, char **argv)
             continue;
         }
         if (starts_with(a, "--permission-mode=")) {
-            if (saw_perm || strcmp(a + 18, "acceptEdits") != 0) {
+            if (saw_perm || !value_ok(a + 18) || strcmp(a + 18, "acceptEdits") != 0) {
                 free_tools(tools, ntools);
                 return -1;
             }
@@ -181,7 +209,7 @@ int csl_argv_allow(int argc, char **argv)
                 return -1;
             }
             if (t > 0) {
-                if (saw_turns || strcmp(val, "30") != 0) {
+                if (saw_turns || !value_ok(val) || strcmp(val, "30") != 0) {
                     free_tools(tools, ntools);
                     return -1;
                 }
@@ -197,7 +225,7 @@ int csl_argv_allow(int argc, char **argv)
                 return -1;
             }
             if (t > 0) {
-                if (saw_sources || strcmp(val, "user") != 0) {
+                if (saw_sources || !value_ok(val) || strcmp(val, "user") != 0) {
                     free_tools(tools, ntools);
                     return -1;
                 }
@@ -217,7 +245,7 @@ int csl_argv_allow(int argc, char **argv)
             }
             if (t > 0) {
                 int extra;
-                if (saw_allowed) {
+                if (saw_allowed || !value_ok(val)) {
                     free_tools(tools, ntools);
                     return -1;
                 }
@@ -242,17 +270,16 @@ int csl_argv_allow(int argc, char **argv)
                 return -1;
             }
             if (t > 0) {
-                if (saw_disallowed) {
+                if (saw_disallowed || !value_ok(val)) {
                     free_tools(tools, ntools);
                     return -1;
                 }
-                (void)val;
                 saw_disallowed = 1;
                 continue;
             }
         }
         if (strcmp(a, "--append-system-prompt") == 0) {
-            if (saw_append || i + 1 >= argc) {
+            if (saw_append || i + 1 >= argc || !value_ok(argv[i + 1])) {
                 free_tools(tools, ntools);
                 return -1;
             }
@@ -261,7 +288,8 @@ int csl_argv_allow(int argc, char **argv)
             continue;
         }
         if (strcmp(a, "--output-format") == 0) {
-            if (i + 1 >= argc || strcmp(argv[i + 1], "stream-json") != 0) {
+            if (i + 1 >= argc || !value_ok(argv[i + 1]) ||
+                strcmp(argv[i + 1], "stream-json") != 0) {
                 free_tools(tools, ntools);
                 return -1;
             }
@@ -269,7 +297,8 @@ int csl_argv_allow(int argc, char **argv)
             continue;
         }
         if (strcmp(a, "--input-format") == 0) {
-            if (i + 1 >= argc || strcmp(argv[i + 1], "stream-json") != 0) {
+            if (i + 1 >= argc || !value_ok(argv[i + 1]) ||
+                strcmp(argv[i + 1], "stream-json") != 0) {
                 free_tools(tools, ntools);
                 return -1;
             }
@@ -306,25 +335,25 @@ int csl_argv_allow(int argc, char **argv)
     return 0;
 }
 
+int csl_argv_allow(int argc, char **argv)
+{
+    return classify(argc, argv, NULL);
+}
+
 int csl_argv_rewrite(int argc, char **argv, char **out, int cap, int *outn)
 {
+    unsigned char drop[CSL_ARGV_MAX];
     int i, n = 0;
-    if (cap < 4 || !argv || !out) {
+    if (cap < 4 || !argv || !out || argc < 1 || argc >= CSL_ARGV_MAX) {
+        return -1;
+    }
+    memset(drop, 0, sizeof drop);
+    if (classify(argc, argv, drop) != 0) {
         return -1;
     }
     out[n++] = argv[0];
     for (i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--mcp-config") == 0) {
-            if (i + 1 >= argc) {
-                return -1;
-            }
-            i++;
-            continue;
-        }
-        if (starts_with(argv[i], "--mcp-config=")) {
-            continue;
-        }
-        if (strcmp(argv[i], "--strict-mcp-config") == 0) {
+        if (drop[i]) {
             continue;
         }
         if (n + 4 > cap) {

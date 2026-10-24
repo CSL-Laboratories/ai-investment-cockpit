@@ -23,9 +23,10 @@ record it; this stack does not wait for `main` to drop those files.
 ## G9 / F7 — cgroup v2 leaf
 
 D10:341: if hosted cgroup v2 is absent, do not claim `setpgid` covers `setsid`.
-This stack does not create a cgroup v2 leaf. F7 stays **partial**: worst
-outcome is the R4 `writer_held` veto, which now closes `fifo_w_held` after the
-F4c send (N5) so POLLHUP can fire. Not claimed as PASS.
+This stack does not create a cgroup v2 leaf. N14 is a subreaper wait of
+non-`setsid` descendants, not a substitute for a cgroup. F7 stays
+**partial**: worst outcome is the R4 `writer_held` veto, which now closes
+`fifo_w_held` after the F4c send (N5) so POLLHUP can fire. Not claimed as PASS.
 
 ## D10:331 N8 vs #256 workspace Write
 
@@ -56,12 +57,16 @@ amendment can restore bun MCP if founders want it.
 Hooks record `[A]` and accept both `sudo_fork` and `sudo_exec`. They do not
 pick which hosted sudo uses.
 
-## Round-3 policy (waiting for Lucas)
+## Round-3 / Round-4 policy (waiting for Lucas)
 
-R3 REVIEW-R3.md (sha256 3331c04a…) lists these as accepted-risk / policy
-choices, not in-design defects. This stack does not treat them as decided.
-Technical defects R3-B1, R3-M1, R3-L1–L6, and in-design partials N7, N14,
-N19, H4 are fixed in code; P1–P9 stay here.
+R3 REVIEW-R3.md (sha256 3331c04a…) and R4 REVIEW-R4.md list these as
+accepted-risk / policy choices, not in-design defects. This stack does
+not treat them as decided.
+
+**Code status (R4):** R3-B1, R3-M1/N7, R3-L1–L6, N19, and the H4
+namespace check are fixed. N14 is a subreaper wait of descendants that
+did not `setsid` (R4-L1); it is not a cgroup and does not cover `setsid`.
+The H4 sweep still only records (I-4). P1–P10 stay here.
 
 1. **P1 / N1.** Accept tracked and PR-head-controlled `.claude/settings.json`,
    hooks, skills, `.mcp.json`, CLAUDE.md and AGENTS.md in the working
@@ -73,8 +78,9 @@ N19, H4 are fixed in code; P1–P9 stay here.
    at all".
 3. **P3 / N8.** Keep `Write(/workspace/**)`; the launcher requires that exact
    set.
-4. **P4 / G9/F7.** Writer-held veto without a cgroup. N14 now waits the
-   process group; setsid is still the veto path.
+4. **P4 / G9/F7.** Writer-held veto without a cgroup. N14: `PR_SET_CHILD_SUBREAPER`
+   then `waitpid(-1)` so grandchildren that did not `setsid` are reaped
+   before END. `setsid` is still the veto path. Not claimed as PASS for F7.
 5. **P5.** `first_bash=missing` in every run; U-18 accepts both `sudo_fork`
    and `sudo_exec`.
 6. **P6.** Residual inputs the flag does not control: server-managed
@@ -84,9 +90,11 @@ N19, H4 are fixed in code; P1–P9 stay here.
    root 0444.
 8. **P8.** Merge commits in #264. Do not merge #264 to main in this form.
    Either #262 and #256 land first, or Lucas explicitly accepts the merges.
-   This stack does not rebase.
+   This stack does not rebase. A later linear rebase must keep the ordinary
+   E1 "wire static launcher" commit (R4-I3).
 9. **P9.** Any live validation needs separately approved probes: setting-
    sources behaviour on 2.1.306, the real SDK argv, and U-16/17/18.
-
-I-4 (ALLOW_PIDS unused / sweep-only-records) is informational: extra runner
-pids are Worker/Listener at runner uid; do not fail-closed them here.
+10. **P10 / I-4.** `ALLOW_PIDS` is unused and the 0b sweep only records.
+    Extra runner-uid pids are Worker/Listener; this stack does not
+    fail-closed them. H4 namespace compare is fixed; this sweep residual
+    is a new accepted-risk item for Lucas (R4-I2).
