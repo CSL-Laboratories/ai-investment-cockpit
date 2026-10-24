@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sidecar.merger_calibration.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "method", "frozen", "frozen_at", "training_cutoff", "dataset_hash",
+    "synthetic", "yield_claim", "n_train", "n_test", "feature_names", "coefficients",
+    "intercept", "break_loss", "metrics", "retrofit"
+  ],
+  "properties": {
+    "schema_version": {"const": "sidecar.merger_calibration.v1"},
+    "method": {"const": "irls_l2_logistic_v1"},
+    "frozen": {"const": true},
+    "frozen_at": {"type": "string"},
+    "training_cutoff": {"type": "string"},
+    "dataset_hash": {"type": "string"},
+    "synthetic": {"type": "boolean"},
+    "yield_claim": {"const": false},
+    "n_train": {"type": "integer", "minimum": 1},
+    "n_test": {"type": "integer", "minimum": 0},
+    "n_censored": {"type": "integer", "minimum": 0},
+    "train_completed": {"type": "integer"},
+    "train_broken": {"type": "integer"},
+    "l2": {"type": "string"},
+    "feature_names": {"type": "array", "items": {"type": "string"}},
+    "kept_indices": {"type": "array", "items": {"type": "integer"}},
+    "means": {"type": "array", "items": {"type": "string"}},
+    "stds": {"type": "array", "items": {"type": "string"}},
+    "intercept": {"type": "string"},
+    "coefficients": {"type": "array", "items": {"type": "string"}},
+    "break_loss": {"type": "object"},
+    "metrics": {"type": "object"},
+    "expected_return_formula": {"type": "string"},
+    "retrofit": {
+      "type": "object",
+      "required": ["compatible_without_amendment", "cockpit_pinned_method"],
+      "properties": {
+        "cockpit_module": {"type": "string"},
+        "cockpit_schema": {"type": "string"},
+        "cockpit_pinned_method": {"const": "wilson95_heldout_worst_case_prices_v2"},
+        "compatible_without_amendment": {"const": false},
+        "reason": {"type": "string"}
+      }
+    }
+  }
+}

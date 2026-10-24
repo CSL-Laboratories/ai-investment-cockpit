@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="520" viewBox="0 0 920 520">
+<rect width="100%" height="100%" fill="#fbfbfb"/>
+<text x="180" y="22" font-family="sans-serif" font-size="16">Chase sleeve mean P&amp;L by headline class</text>
+<line x1="180" y1="186.86" x2="880" y2="186.86" stroke="#999"/>
+<rect x="188.00" y="186.86" width="61.78" height="19.42" fill="#6b2d5b"/>
+<text x="188.00" y="364" font-family="sans-serif" font-size="11" transform="rotate(40 188.00,364)">earnings_beat</text>
+<rect x="265.78" y="186.86" width="61.78" height="1.00" fill="#0b6e4f"/>
+<text x="265.78" y="364" font-family="sans-serif" font-size="11" transform="rotate(40 265.78,364)">earnings_miss</text>
+<rect x="343.56" y="186.86" width="61.78" height="57.04" fill="#6b2d5b"/>
+<text x="343.56" y="364" font-family="sans-serif" font-size="11" transform="rotate(40 343.56,364)">fda_clearance</text>
+<rect x="421.33" y="186.86" width="61.78" height="1.00" fill="#0b6e4f"/>
+<text x="421.33" y="364" font-family="sans-serif" font-size="11" transform="rotate(40 421.33,364)">guidance_cut</text>
+<rect x="499.11" y="186.86" width="61.78" height="1.00" fill="#0b6e4f"/>
+<text x="499.11" y="364" font-family="sans-serif" font-size="11" transform="rotate(40 499.11,364)">hoax</text>
+<rect x="576.89" y="186.86" width="61.78" height="149.14" fill="#6b2d5b"/>
+<text x="576.89" y="364" font-family="sans-serif" font-size="11" transform="rotate(40 576.89,364)">ma_rumor_false</text>
+<rect x="654.67" y="36.00" width="61.78" height="150.86" fill="#0b6e4f"/>
+<text x="654.67" y="364" font-family="sans-serif" font-size="11" transform="rotate(40 654.67,364)">ma_rumor_true</text>
+<rect x="732.44" y="186.86" width="61.78" height="1.00" fill="#0b6e4f"/>
+<text x="732.44" y="364" font-family="sans-serif" font-size="11" transform="rotate(40 732.44,364)">macro_print</text>
+<rect x="810.22" y="186.86" width="61.78" height="3.38" fill="#6b2d5b"/>
+<text x="810.22" y="364" font-family="sans-serif" font-size="11" transform="rotate(40 810.22,364)">priced_in_beat</text>
+</svg>

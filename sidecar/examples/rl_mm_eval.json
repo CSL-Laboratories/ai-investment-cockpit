@@ -1,0 +1,225 @@
+{
+  "as_baseline": {
+    "acceptance_rate": 0.40062777351083806,
+    "adverse_selection_mean": 0.008319932859576733,
+    "evalstats": {
+      "benchmark": null,
+      "bootstrap": {
+        "block_length": 2,
+        "max_drawdown_ci95": [
+          "0.00192495413962",
+          "0.0109581092649"
+        ],
+        "mean_return_ci95": [
+          "-0.000896413129025",
+          "0.000420723468546"
+        ],
+        "method": "stationary",
+        "reps_requested": 80,
+        "reps_used": 80,
+        "seed": 1,
+        "sharpe_per_period_ci95": [
+          "-0.574354577583",
+          "0.251174292752"
+        ]
+      },
+      "drawdown": {
+        "current_drawdown": "0.00338409789684",
+        "max_drawdown": "0.00625821249074",
+        "max_drawdown_duration": 12,
+        "peak_index": 0,
+        "trough_index": 10,
+        "ulcer_index": "0.00385025343449"
+      },
+      "dsr": "0.0358877829619",
+      "kurtosis_pearson": "2.14292254602",
+      "mean_return": "-0.00028131631564",
+      "min_track_record_length": null,
+      "min_track_record_years": null,
+      "minimum_observations": 8,
+      "n_observations": 12,
+      "n_trials": 5,
+      "notes": [
+        "PSR and DSR use the per-period Sharpe. Annualized Sharpe is a display scaling.",
+        "threshold_status is not_frozen. This report is not a qualify or reject decision.",
+        "No finite minimum track record: per-period Sharpe does not exceed the benchmark."
+      ],
+      "pbo": null,
+      "periods_per_year": 252,
+      "psr": "0.271611965439",
+      "reason": null,
+      "schema_version": "sidecar.eval_report.v1",
+      "sharpe_annualized": "-2.84469096903",
+      "sharpe_per_period": "-0.179198687164",
+      "skewness": "-0.298265377297",
+      "sr_benchmark": "0",
+      "sr_deflation_threshold": "0.351530595414",
+      "status": "ok",
+      "threshold_status": "not_frozen",
+      "track_record_confidence": "0.95",
+      "volatility": "0.0015698570123"
+    },
+    "mean_pnl": -0.2813163156396617,
+    "mean_session_return": -0.00028131631563966175,
+    "n_sessions": 12
+  },
+  "beta_shape": 0.5,
+  "broker_writes": false,
+  "caveats": [
+    "Simulation only. This module never submits an order and has no broker credentials.",
+    "The expert is the Avellaneda-Stoikov formula reimplemented in sidecar.rl.as_expert, not an import from the cockpit tree.",
+    "Gamma and kappa are simulator units on a $100 mid. They are the same expression as the cockpit quoter with different numeric clamps.",
+    "Held-out sessions use seeds 10000 and up. Training seeds are the hyperparameter seeds only.",
+    "Each observation in evalstats is one simulated session, not one market day. Annualized Sharpe is the sqrt(252) display scaling of that per-session Sharpe.",
+    "PBO, when present, ranks hyperparameter seeds and learning rates on those sessions. It is not a purged CPCV and it is not a qualify gate.",
+    "historical_daily_replay_not_l1 replays SPY daily simple returns as the mid path. The repository has no L1 tape. A daily move is the wrong horizon for a market-making quote.",
+    "Quote acceptance is filled sides over posted sides. Adverse selection is the mean of sign(side) * (next_mid - fill_price); negative means the mid moved against the fill.",
+    "Figgie win rates from the CS224R report are not reused here.",
+    "A short CPU run can leave two hyperparameter rows with the same held-out session returns. The table is what was measured.",
+    "threshold_status stays not_frozen."
+  ],
+  "comparison": {
+    "learner_minus_as_acceptance_rate": 0.0031329873964392463,
+    "learner_minus_as_mean_session_return": -0.00036658817351052067
+  },
+  "discount": 0.99,
+  "generated_at": "2026-10-18T20:00:24.905814+00:00",
+  "historical_replay": {
+    "as_baseline": {
+      "acceptance_rate": 0.40625,
+      "adverse_selection_mean": -0.18567035982288657,
+      "mean_pnl": -2.4007235716481574,
+      "mean_session_return": -0.002400723571648157,
+      "n_sessions": 8
+    },
+    "bars": "fixtures/etf_daily.csv",
+    "label": "historical_daily_replay_not_l1",
+    "learner": {
+      "acceptance_rate": 0.4114583333333333,
+      "adverse_selection_mean": -0.17300006854996552,
+      "mean_pnl": -3.138345336965614,
+      "mean_session_return": -0.0031383453369656137,
+      "n_sessions": 8
+    }
+  },
+  "hyperparameters": [
+    {
+      "config_hash": "ef10ba67a7bf175ef91461999f611014f43534012b43d94e9b81cc5722cc8e80",
+      "learning_rate": 0.01,
+      "mean_session_return": -0.0006479044891501824,
+      "seed": 0
+    },
+    {
+      "config_hash": "dfe8f8614a7c38ca9044b9b95493d062e45b99d2f2007d33815cc8201bd44a5e",
+      "learning_rate": 0.003,
+      "mean_session_return": -0.0006745711558168387,
+      "seed": 0
+    },
+    {
+      "config_hash": "067a84fd1d263516ca5f225b28b868d904b9cea986913a0b4b9ed7908fea2fae",
+      "learning_rate": 0.01,
+      "mean_session_return": -0.0008004148891554173,
+      "seed": 1
+    },
+    {
+      "config_hash": "d8c8ea85d548659587d877d091a078f24d851d2977880f4ecc021ea2d69b537d",
+      "learning_rate": 0.003,
+      "mean_session_return": -0.0008004148891554173,
+      "seed": 1
+    }
+  ],
+  "learner": {
+    "acceptance_rate": 0.4037607609072773,
+    "adverse_selection_mean": 0.002677305484321503,
+    "bc_loss_first": 2.148449016515442,
+    "bc_loss_last": 1.256130490059318,
+    "config_hash": "ef10ba67a7bf175ef91461999f611014f43534012b43d94e9b81cc5722cc8e80",
+    "evalstats": {
+      "benchmark": {
+        "beta": "1.12412184005",
+        "down_market_beta": null,
+        "excess_sharpe_annualized": "-12.7828904757",
+        "excess_sharpe_per_period": "-0.805246410364",
+        "n_down": 5
+      },
+      "bootstrap": {
+        "block_length": 2,
+        "max_drawdown_ci95": [
+          "0.00318438573477",
+          "0.0182203187712"
+        ],
+        "mean_return_ci95": [
+          "-0.00149674803895",
+          "-5.17193953049e-05"
+        ],
+        "method": "stationary",
+        "reps_requested": 80,
+        "reps_used": 80,
+        "seed": 0,
+        "sharpe_per_period_ci95": [
+          "-0.807896527968",
+          "-0.0316150287256"
+        ]
+      },
+      "drawdown": {
+        "current_drawdown": "0.00776515502801",
+        "max_drawdown": "0.0101739970986",
+        "max_drawdown_duration": 12,
+        "peak_index": 0,
+        "trough_index": 10,
+        "ulcer_index": "0.00666010515582"
+      },
+      "dsr": "0.00795028414945",
+      "kurtosis_pearson": "1.76834462484",
+      "mean_return": "-0.00064790448915",
+      "min_track_record_length": null,
+      "min_track_record_years": null,
+      "minimum_observations": 8,
+      "n_observations": 12,
+      "n_trials": 5,
+      "notes": [
+        "PSR and DSR use the per-period Sharpe. Annualized Sharpe is a display scaling.",
+        "threshold_status is not_frozen. This report is not a qualify or reject decision.",
+        "PBO is the fraction of CSCV splits where the in-sample winner's out-of-sample Sharpe is at or below the median. Splits are not purged.",
+        "No finite minimum track record: per-period Sharpe does not exceed the benchmark."
+      ],
+      "pbo": {
+        "mean_oos_sharpe_of_selected": "-0.459288474876",
+        "median_logit": "-0.405465108108",
+        "n_slices": 4,
+        "n_splits": 3,
+        "n_strategies": 4,
+        "observations_dropped_prefix": 0,
+        "observations_used": 12,
+        "pbo": "0.666666666667",
+        "status": "ok"
+      },
+      "periods_per_year": 252,
+      "psr": "0.111498808829",
+      "reason": null,
+      "schema_version": "sidecar.eval_report.v1",
+      "sharpe_annualized": "-5.67601535935",
+      "sharpe_per_period": "-0.357555359015",
+      "skewness": "-0.216849938518",
+      "sr_benchmark": "0",
+      "sr_deflation_threshold": "0.349925998406",
+      "status": "ok",
+      "threshold_status": "not_frozen",
+      "track_record_confidence": "0.95",
+      "volatility": "0.00181203965432"
+    },
+    "mean_pnl": -0.6479044891501822,
+    "mean_session_return": -0.0006479044891501824,
+    "n_sessions": 12
+  },
+  "live_trading": false,
+  "orders_submitted": 0,
+  "profile": "report",
+  "schema_version": "sidecar.rl_mm_eval.v1",
+  "trial_ledger": {
+    "distinct_configs": 5,
+    "entries": 5,
+    "head_hash": "fc6164c7cc593de06c48470c0368918ad50e880bcccdabcbaf5527a9af2ddf17",
+    "path": "examples/rl_mm_eval.ledger.jsonl"
+  }
+}

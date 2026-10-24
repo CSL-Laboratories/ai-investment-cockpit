@@ -1,0 +1,23 @@
+{
+  "source": "Yahoo Finance chart API v8, interval=1d, range=5y",
+  "url_pattern": "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=5y",
+  "symbols": [
+    "SPY",
+    "QQQ",
+    "IWM"
+  ],
+  "downloaded_at": "2026-10-18",
+  "session_timezone": "America/New_York",
+  "first_date": "2021-10-18",
+  "last_date": "2026-10-16",
+  "rows_per_symbol": {
+    "SPY": 1255,
+    "QQQ": 1255,
+    "IWM": 1255
+  },
+  "rows_dropped_nonpositive": 0,
+  "sha256": "c0cf2c0daf6256e5afabada832fe77878a8480e7f81e632a63bbdb6078187f32",
+  "adjustment": "adj_close is Yahoo's backward-adjusted close as of the download. The backtest scales each day's OHLC by adj_close/close.",
+  "not_a_point_in_time_tape": true,
+  "universe_note": "Three ETFs that existed for the whole window. Not a survivorship-free stock universe."
+}

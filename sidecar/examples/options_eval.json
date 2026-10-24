@@ -1,0 +1,194 @@
+{
+  "bars_path": "/workspace/sidecar/fixtures/etf_daily.csv",
+  "bars_sha256": "c0cf2c0daf6256e5afabada832fe77878a8480e7f81e632a63bbdb6078187f32",
+  "beats_cash": false,
+  "caveats": [
+    "No historical OPRA chain is in this tree. Premiums are Black-Scholes with zero rates and zero dividends.",
+    "The volatility input is the trailing 60-session close-to-close realized vol. It is not an implied vol, and the IV-RV spread is 60-day realized minus 10-day realized.",
+    "IV rank is the percentile of that proxy against the prior 252 sessions of the same proxy.",
+    "Fills sell the bid and buy the ask. The full spread on each leg is max($0.05, 8% of the model mid), then rounded to the penny.",
+    "The signal uses that session's close. The spread is filled at the next session's close. Strikes are chosen on the signal day.",
+    "Take-profit and stop are judged on the model mid after the entry session. The close itself still pays the bid-ask.",
+    "Underlying closes are adjusted daily bars, not a point-in-time options tape.",
+    "The primary config was fixed before this run. Other rows are trials. A better trial does not replace the primary.",
+    "beats_cash compares ending equity with the starting cash. It is not a qualify decision. threshold_status is not_frozen.",
+    "orders_submitted is 0. This file does not place an order."
+  ],
+  "closes": {
+    "dte": 1,
+    "final": 0,
+    "stop": 12,
+    "take_profit": 69
+  },
+  "ending_equity": "99039.00",
+  "evalstats": {
+    "benchmark": {
+      "beta": "0.0122371530295",
+      "down_market_beta": "0.0156840545622",
+      "excess_sharpe_annualized": "-1.36841550532",
+      "excess_sharpe_per_period": "-0.0862020742208",
+      "n_down": 415
+    },
+    "bootstrap": {
+      "block_length": 10,
+      "max_drawdown_ci95": [
+        "0.00485126908781",
+        "0.0379901509257"
+      ],
+      "mean_return_ci95": [
+        "-3.77697213632e-05",
+        "9.09316090442e-06"
+      ],
+      "method": "stationary",
+      "reps_requested": 400,
+      "reps_used": 400,
+      "seed": 0,
+      "sharpe_per_period_ci95": [
+        "-0.0844744170792",
+        "0.0324476499074"
+      ]
+    },
+    "drawdown": {
+      "current_drawdown": "0.0120206695663",
+      "max_drawdown": "0.0140357527633",
+      "max_drawdown_duration": 533,
+      "peak_index": 410,
+      "trough_index": 903,
+      "ulcer_index": "0.00496449662581"
+    },
+    "dsr": "0.0221962979604",
+    "kurtosis_pearson": "79.6576492559",
+    "mean_return": "-1.01773291136e-05",
+    "min_track_record_length": null,
+    "min_track_record_years": null,
+    "minimum_observations": 8,
+    "n_observations": 943,
+    "n_trials": 4,
+    "notes": [
+      "PSR and DSR use the per-period Sharpe. Annualized Sharpe is a display scaling.",
+      "threshold_status is not_frozen. This report is not a qualify or reject decision.",
+      "PBO is the fraction of CSCV splits where the in-sample winner's out-of-sample Sharpe is at or below the median. Splits are not purged.",
+      "No finite minimum track record: per-period Sharpe does not exceed the benchmark."
+    ],
+    "pbo": {
+      "mean_oos_sharpe_of_selected": "-0.0302199877696",
+      "median_logit": "-0.405465108108",
+      "n_slices": 16,
+      "n_splits": 6435,
+      "n_strategies": 4,
+      "observations_dropped_prefix": 15,
+      "observations_used": 928,
+      "pbo": "0.584770784771",
+      "status": "ok"
+    },
+    "periods_per_year": 252,
+    "psr": "0.168970384225",
+    "reason": null,
+    "schema_version": "sidecar.eval_report.v1",
+    "sharpe_annualized": "-0.456013471371",
+    "sharpe_per_period": "-0.0287261485653",
+    "skewness": "-5.90652023336",
+    "sr_benchmark": "0",
+    "sr_deflation_threshold": "0.0315405066235",
+    "status": "ok",
+    "threshold_status": "not_frozen",
+    "track_record_confidence": "0.95",
+    "volatility": "0.000354287978788"
+  },
+  "historical_options_tape": false,
+  "ledger_distinct_configs": 4,
+  "ledger_head_hash": "54a28af134504c5150f53fcaf3f5c7692b770b77a612b08038b8ae7d8691c4b5",
+  "live_trading": false,
+  "n_opens": 82,
+  "n_signals": 82,
+  "orders_submitted": 0,
+  "pricing": "black_scholes_r0_iv_equals_trailing_60d_realized",
+  "primary_config_hash": "6f3519afee25087e24bf81b72e79adb96c7d77a0349d5b492b740d85b55debb6",
+  "primary_name": "put_credit_d20_ivr60",
+  "schema_version": "sidecar.options_eval.v1",
+  "starting_equity": "100000",
+  "tca": {
+    "fills_with_execution_dispersion": 328,
+    "mean_implementation_shortfall_bps": "502.0144135083238239900633058",
+    "mean_realized_minus_predicted_bps": null,
+    "median_implementation_shortfall_bps": "402.0100502512562814070351759",
+    "median_realized_minus_predicted_bps": null,
+    "n_fills": 328,
+    "n_with_prediction": 0,
+    "p95_abs_implementation_shortfall_bps": "927.5568181818181818181818182",
+    "schema_version": "sidecar.tca_summary.v1",
+    "status": "ok",
+    "venue_label": "synthetic_black_scholes"
+  },
+  "threshold_status": "not_frozen",
+  "trials": [
+    {
+      "closes": {
+        "dte": 1,
+        "final": 0,
+        "stop": 12,
+        "take_profit": 69
+      },
+      "config_hash": "6f3519afee25087e24bf81b72e79adb96c7d77a0349d5b492b740d85b55debb6",
+      "ending_equity": "99039.00",
+      "kind": "put_credit",
+      "n_fills": 328,
+      "n_opens": 82,
+      "n_return_days": 943,
+      "n_signals": 82,
+      "name": "put_credit_d20_ivr60",
+      "primary": true
+    },
+    {
+      "closes": {
+        "dte": 0,
+        "final": 0,
+        "stop": 12,
+        "take_profit": 73
+      },
+      "config_hash": "ea3666454863c97638ad661dc927060703768dab6c429d57dedd176fc223f0e3",
+      "ending_equity": "99483.00",
+      "kind": "put_credit",
+      "n_fills": 340,
+      "n_opens": 85,
+      "n_return_days": 943,
+      "n_signals": 85,
+      "name": "put_credit_d15",
+      "primary": false
+    },
+    {
+      "closes": {
+        "dte": 1,
+        "final": 1,
+        "stop": 15,
+        "take_profit": 89
+      },
+      "config_hash": "3008b5130042d5040122ea89efec28da6bad8d7c0c17c94bae9ffcdd83ea1002",
+      "ending_equity": "98934.00",
+      "kind": "put_credit",
+      "n_fills": 424,
+      "n_opens": 106,
+      "n_return_days": 943,
+      "n_signals": 106,
+      "name": "put_credit_ivr40",
+      "primary": false
+    },
+    {
+      "closes": {
+        "dte": 10,
+        "final": 0,
+        "stop": 4,
+        "take_profit": 36
+      },
+      "config_hash": "409e589bba5360f4cc05708a3d8a0b387d8b5d05368495de053cef2a3c3d015e",
+      "ending_equity": "99235.00",
+      "kind": "iron_condor",
+      "n_fills": 400,
+      "n_opens": 50,
+      "n_return_days": 943,
+      "n_signals": 50,
+      "name": "iron_condor_d20",
+      "primary": false
+    }
+  ]
+}
