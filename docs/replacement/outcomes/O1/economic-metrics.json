@@ -1,0 +1,97 @@
+{
+  "api_version": "o1.product.v0",
+  "outcome": "O1",
+  "maturity": "researched",
+  "qualification_claimed": false,
+  "promises_alpha": false,
+  "empty_negative_rejected_inconclusive_remain_visible": true,
+  "primary": {
+    "id": "net_yield_vs_matched_cash_per_capital_day",
+    "decision_id": "D1",
+    "status": "human_decided",
+    "statement": "Net yield versus a matched-cash baseline after transaction, latency, data, and model costs, reported per capital-day.",
+    "costs_retained": ["transaction", "latency", "data", "model"],
+    "risk_retained": true,
+    "uncertainty_retained": true,
+    "capital_use_retained": true,
+    "threshold": "owner_unset",
+    "source_comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237"
+  },
+  "secondary": {
+    "id": "cost_coverage_ratio",
+    "decision_id": "D1",
+    "role": "secondary",
+    "source_issue": "CSL-96",
+    "threshold": "owner_unset",
+    "statement": "Samir named the CSL-96 cost-coverage ratio as a secondary report. This packet sets no multiple and does not make the ratio primary."
+  },
+  "rejected_primary_metrics": [
+    {
+      "id": "gross_pnl_or_win_rate",
+      "why": "Breaks the yield-without-costs falsifier."
+    },
+    {
+      "id": "cost_coverage_as_primary",
+      "why": "Rewards cutting spend over finding edge."
+    }
+  ],
+  "benchmarks": {
+    "decision_id": "D2",
+    "status": "human_decided",
+    "stock_leg": ["matched_cash", "passive_equity_index_total_return"],
+    "event_leg": ["matched_cash"],
+    "index_identity": {
+      "decision_id": "D2-index",
+      "status": "open",
+      "selected": null
+    },
+    "per_strategy_benchmarks": "rejected_scorecards_on_hold"
+  },
+  "horizon": {
+    "decision_id": "D3",
+    "status": "human_decided",
+    "shape": "hybrid_short_and_long_buckets",
+    "each_bucket_has_own_population_split_and_embargo": true,
+    "frozen_before_results": true
+  },
+  "capital_base": {
+    "decision_id": "D4",
+    "status": "open",
+    "owner": "Lucas",
+    "tier": 1,
+    "selected": null,
+    "value": "owner_unset",
+    "candidate_action_not_selected": "A declared notional parameter whose value stays owner_unset."
+  },
+  "loss_drawdown": {
+    "decision_id": "D5",
+    "status": "human_decided",
+    "definition": "fraction_of_declared_notional",
+    "value": "owner_unset",
+    "promotion_blocked_while_unset": true,
+    "numeric_risk_limit_selected": false
+  },
+  "statistical_bars": {
+    "decision_id": "D6",
+    "status": "human_decided",
+    "deflated_sharpe": "owner_unset",
+    "probability_of_backtest_overfitting": "owner_unset",
+    "uncertainty_estimator": "owner_unset",
+    "embargo_length": "owner_unset",
+    "literature_conventions": "candidate_list_only",
+    "selected_numeric_bar": null,
+    "frozen_before_results": true
+  },
+  "taxes": {
+    "decision_id": "D7",
+    "status": "human_decided",
+    "primary": "pretax_net_yield",
+    "tax_impact": "unknown"
+  },
+  "promotion_of_measured_yield_blocked_while": [
+    "D4 capital base is open",
+    "D5 loss fraction is owner_unset",
+    "D6 statistical bars are owner_unset",
+    "D2-index is open for any stock-leg index comparison"
+  ]
+}
