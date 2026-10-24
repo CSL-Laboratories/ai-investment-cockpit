@@ -658,14 +658,11 @@ class WorkflowStructureTests(unittest.TestCase):
         )
         self.assertNotIn("uses: actions/checkout@v4", mention)
         self.assertIn("path_to_bun_executable: /opt/csl-bun/bun", mention)
-        self.assertIn(
-            "path_to_claude_code_executable: /opt/csl-claude/2.1.306/claude",
-            mention,
-        )
+        self.assertIn("path_to_claude_code_executable: /opt/csl-claude/launch", mention)
         self.assertIn("sandbox_e3_cli_pin.sh", mention)
         self.assertNotIn("SRT_DEBUG:", mention)
         self.assertNotIn("show_full_output", mention)
-        self.assertIn("/opt/csl-relay/bin/relay", mention)
+        self.assertIn("shell: /usr/bin/sudo -n /opt/csl-relay/bin/relay {0}", mention)
         self.assertIn("/opt/csl-relay/bin/capture-start", mention)
         self.assertIn("/opt/csl-claude/launch", mention)
         self.assertNotIn("background: true", mention)
@@ -681,6 +678,8 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("E3-0-early record bun-path", fixer)
         self.assertIn("C6.2 stub", fixer)
         self.assertIn("path_to_bun_executable", fixer)
+        self.assertIn("path_to_claude_code_executable: /opt/csl-claude/launch", fixer)
+        self.assertIn("shell: /usr/bin/sudo -n /opt/csl-relay/bin/relay {0}", fixer)
         self.assertIn("sandbox_e3_cli_pin.sh", fixer)
 
     def test_embedded_e3_helpers_match_source_files(self) -> None:
@@ -694,8 +693,11 @@ class WorkflowStructureTests(unittest.TestCase):
             "CSL_C_LAUNCH": ROOT / "scripts" / "ci" / "sandbox_launch.c",
             "CSL_C_CAPTURE": ROOT / "scripts" / "ci" / "sandbox_capture.c",
             "CSL_C_RELAY": ROOT / "scripts" / "ci" / "sandbox_relay.c",
+            "CSL_C_ARGV_H": ROOT / "scripts" / "ci" / "sandbox_argv.h",
             "CSL_C_ARGV_C": ROOT / "scripts" / "ci" / "sandbox_argv.c",
+            "CSL_C_FILTER_H": ROOT / "scripts" / "ci" / "sandbox_filter.h",
             "CSL_C_FILTER_C": ROOT / "scripts" / "ci" / "sandbox_filter.c",
+            "CSL_C_COMMON_H": ROOT / "scripts" / "ci" / "sandbox_common.h",
             "CSL_C_COMMON_C": ROOT / "scripts" / "ci" / "sandbox_common.c",
             "CSL_C_PIN": ROOT / "scripts" / "ci" / "sandbox_c.pin",
         }
@@ -2124,7 +2126,11 @@ class ClaudeCodeInstallerPinTests(unittest.TestCase):
         self.assertGreaterEqual(len(steps), 3)
         for index, (name, inputs) in enumerate(steps):
             with self.subTest(workflow=name, step=index):
-                self.assertIn("\n          path_to_claude_code_executable: /opt/csl-claude/2.1.306/claude\n", inputs)
+                if name == "claude.yml":
+                    want = "\n          path_to_claude_code_executable: /opt/csl-claude/launch\n"
+                else:
+                    want = "\n          path_to_claude_code_executable: /opt/csl-claude/2.1.306/claude\n"
+                self.assertIn(want, inputs)
                 self.assertIn("DISABLE_UPDATES", inputs)
 
 

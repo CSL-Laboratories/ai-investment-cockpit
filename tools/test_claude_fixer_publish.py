@@ -2086,8 +2086,8 @@ class WorkflowWiringTests(unittest.TestCase):
                 action = [s for s in model["steps"] if s.get("id") == "claude"][0]
                 self.assertEqual(action["env"], {"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1",
                                                  "DISABLE_UPDATES": "1"})
-                self.assertEqual(action["with"]["path_to_claude_code_executable"],
-                                 "/opt/csl-claude/2.1.306/claude")
+                want_bin = "/opt/csl-claude/launch" if name == "claude.yml" else "/opt/csl-claude/2.1.306/claude"
+                self.assertEqual(action["with"]["path_to_claude_code_executable"], want_bin)
                 # Chaandan's review at 95de346: any value keeps the job token out of the origin URL
                 # in .git/config; one no GitHub login can match keeps every actor's write check.
                 self.assertEqual(action["with"]["github_token"], "${{ github.token }}")
@@ -2165,11 +2165,13 @@ class WorkflowWiringTests(unittest.TestCase):
         action = [s for s in model["steps"] if s.get("id") == "claude"][0]
         self.assertEqual(action["env"].get("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"), "1")
         self.assertEqual(action["with"]["path_to_bun_executable"], "/opt/csl-bun/bun")
-        self.assertEqual(
-            action["with"]["path_to_claude_code_executable"],
-            "/opt/csl-claude/2.1.306/claude",
-        )
+        self.assertEqual(action["with"]["path_to_claude_code_executable"], "/opt/csl-claude/launch")
         self.assertNotIn("SRT_DEBUG", action.get("env", {}))
+        self.assertEqual(action["env"].get("DISABLE_UPDATES"), "1")
+        self.assertEqual(names[names.index("claude") + 1], "Relay sandbox fd-2 (E1)")
+        relay = step(model, "Relay sandbox fd-2 (E1)")
+        self.assertEqual(relay["if"], "always()")
+        self.assertEqual(relay["shell"], "/usr/bin/sudo -n /opt/csl-relay/bin/relay {0}")
         setup = step(model, "E3-0-early setup-bun")
         self.assertEqual(
             setup["uses"],
@@ -2221,8 +2223,8 @@ class WorkflowWiringTests(unittest.TestCase):
     WORKSPACE_EDIT = "Edit(/${{ github.workspace }}/**)"
     WORKSPACE_WRITE = "Write(/${{ github.workspace }}/**)"
     HELPER_NETWORK = ("api.github.com", "github.com")
-    POST_CLAUDE = ("Report tool-permission denials", "Package untrusted model output",
-                   "Upload untrusted model output")
+    POST_CLAUDE = ("Relay sandbox fd-2 (E1)", "Report tool-permission denials",
+                   "Package untrusted model output", "Upload untrusted model output")
 
     def test_claude_yml_model_jobs_block_file_command_poisoning(self):
         # CSL-467: Write/Edit can reach $RUNNER_TEMP/_runner_file_commands. Mention
@@ -2258,7 +2260,7 @@ class WorkflowWiringTests(unittest.TestCase):
                 pin = [s for s in model["steps"] if s.get("id") == "pin-python"][0]
                 self.assertIn("readlink -f /usr/bin/python3", pin["run"])
                 claude = names.index("claude")
-                self.assertEqual(names[claude + 1:claude + 4], list(self.POST_CLAUDE))
+                self.assertEqual(names[claude + 1:claude + 5], list(self.POST_CLAUDE))
                 allow = action["with"]["claude_args"].split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0]
                 self.assertIn(self.WORKSPACE_EDIT, allow)
                 self.assertIn(self.WORKSPACE_WRITE, allow)
@@ -2703,7 +2705,8 @@ class ClaudeCodeInstallerPinTests(unittest.TestCase):
                     self.assertIn(committed_fingerprint(), install["run"])
                     self.assertIn('DEST_DIR="/opt/csl-claude/${CLAUDE_VERSION}"', install["run"])
                     self.assertIn(f'CLAUDE_VERSION="{pin["version"]}"', install["run"])
-                self.assertEqual(action["with"]["path_to_claude_code_executable"], CLAUDE_BIN)
+                want_bin = "/opt/csl-claude/launch" if name == "claude.yml" else CLAUDE_BIN
+                self.assertEqual(action["with"]["path_to_claude_code_executable"], want_bin)
                 self.assertEqual(action["env"].get("DISABLE_UPDATES"), "1")
                 self.assertTrue(str(action.get("uses", "")).endswith(
                     "a5a423f75c251dcbff8a74e99f83b2cb03c72bfa"))
