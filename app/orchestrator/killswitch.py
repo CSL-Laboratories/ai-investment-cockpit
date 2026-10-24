@@ -1,13 +1,16 @@
 """WP5 — the global kill switch (sec-arch §4 L7; SEC-04; Inv 1).
 
-``killswitch`` performs instant containment in a fixed, fail-closed order, HELD UNDER the
-shared state lock so a concurrent ``arm_auto_mode`` cannot interleave between the HALT flag
-and the mode drop (SEC-04 race fix):
+``killswitch`` performs instant containment in a fixed, fail-closed order. The HALT
+sentinel is written FIRST, before ``st.lock``, so a holder of that lock (a hung fence or
+broker I/O) cannot delay the flag. Cancel, disconnect, disarm and the EVENT_KILLSWITCH
+audit stay under the lock, so a concurrent ``arm_auto_mode`` cannot commit an auto mode
+between the mode drop and this audit (SEC-04):
   1. **set the filesystem HALT sentinel** (SEC-04) — a durable flag at a CONFIGURABLE path
      (``default_halt_path`` / injectable) that the future WP7 ``OrderGateway`` checks
      SYNCHRONOUSLY immediately before every broker submit, AND that ``arm_auto_mode``
-     refuses to arm while set. Setting it first means even a wedged event loop cannot slip an
-     order out after the switch is pulled.
+     refuses to arm while set. It is written before ``st.lock``. If ``set_halt`` raises
+     ``OSError`` or ``asyncio.CancelledError``, cancel, disconnect, disarm and the
+     killswitch audit still run under the lock, and that error is re-raised afterwards.
   2. **cancel unapproved / in-flight proposals** (via an injected cancel hook — the order
      store lands in WP7; the mechanism + audit are real now). A cancel hook that RAISES is
      caught — including a ``BaseException`` (``asyncio.CancelledError`` / ``KeyboardInterrupt`` /
@@ -31,6 +34,7 @@ this module and ``mode_ladder`` can share them without a circular import.
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -60,9 +64,14 @@ def killswitch(st: OrchestratorState, *, actor: str, reason: str = "manual kills
                clock=None, halt_path: Path | str | None = None,
                cancel_hook: Callable[[], int] | None = None,
                disconnect_hook: Callable[[], None] | None = None) -> KillResult:
-    """Instant containment. Ordering is load-bearing: set-flag -> cancel-in-flight ->
-    MCP-disconnect -> disarm (SEC-04). The whole sequence runs under ``st.lock`` so an
-    in-flight arm cannot land an auto mode at a higher audit seq than this drop.
+    """Instant containment. Ordering is load-bearing: set-flag, then under ``st.lock``
+    cancel-in-flight -> MCP-disconnect -> disarm (SEC-04).
+
+    The HALT sentinel is written before ``st.lock`` so a holder of that lock cannot delay
+    the flag. Cancel, disconnect, disarm and the killswitch audit remain under the lock.
+    If ``set_halt`` raises ``OSError`` or ``asyncio.CancelledError``, containment still
+    completes under the lock (audit records ``halt_failed`` and the error text) and the
+    error is re-raised afterwards.
 
     ``disconnect_hook`` (W12 SEAM 4) is the INJECTED MCP/broker disconnect — called AFTER
     cancel and BEFORE disarm. It is optional (``None`` -> no live connection to drop, e.g. the
@@ -74,10 +83,18 @@ def killswitch(st: OrchestratorState, *, actor: str, reason: str = "manual kills
     now = clock.now()
     path = Path(halt_path) if halt_path is not None else default_halt_path()
 
-    with st.lock:
-        # 1. durable HALT flag FIRST — the gateway refuses to submit + arm refuses to arm
-        #    once it is set.
+    # 1. durable HALT flag BEFORE st.lock. A hung fence or stalled broker I/O holding the
+    #    lock must not delay the sentinel the gateway and arm path read. An OSError
+    #    (write or fsync) or CancelledError here must NOT abort the kill: record it,
+    #    still cancel / disconnect / disarm / audit (fail closed), then re-raise after
+    #    containment completes.
+    halt_error: OSError | asyncio.CancelledError | None = None
+    try:
         set_halt(path, reason=reason)
+    except (OSError, asyncio.CancelledError) as exc:
+        halt_error = exc
+
+    with st.lock:
         # 2. cancel unapproved / in-flight proposals (WP7 supplies the real hook). A raise here
         #    (the WP7 order-store DB hook is the likeliest to throw mid-crisis) must NOT abort the
         #    kill: catch, record cancelled=-1 + cancel_failed=True, and STILL disconnect, disarm and
@@ -117,9 +134,14 @@ def killswitch(st: OrchestratorState, *, actor: str, reason: str = "manual kills
             EVENT_KILLSWITCH, actor=actor,
             payload={"reason": reason, "halt_path": str(path), "cancelled": cancelled,
                      "cancel_failed": cancel_failed,
+                     "halt_durable": halt_error is None,
+                     "halt_failed": halt_error is not None,
+                     "halt_error": None if halt_error is None else str(halt_error),
                      "mcp_disconnected": mcp_disconnected, "mode_after": mode_after.value},
         )
 
+    if halt_error is not None:
+        raise halt_error
     event = SystemEvent("#system", "killswitch", None, reason, mode_after.value, now)
     return KillResult(halt_path=path, cancelled_count=cancelled, mode_after=mode_after,
                       event=event, mcp_disconnected=mcp_disconnected)
