@@ -850,13 +850,23 @@ class FixerGateAndPromptTests(unittest.TestCase):
         self.assertNotIn("Bash(python -m pytest -q app/tests)", mention)
 
     def test_embedded_denials_match_source(self) -> None:
-        start = f"python3 - \"$EXECUTION_FILE\" <<'{DENIALS_HEREDOC}'\n"
+        # #256/#258 call python3 via "${PYTHON3:-python3}" so a poisoned PATH
+        # cannot win. Main still uses bare python3 until those PRs merge.
+        starts = (
+            f"python3 - \"$EXECUTION_FILE\" <<'{DENIALS_HEREDOC}'\n",
+            f"\"${{PYTHON3:-python3}}\" - \"$EXECUTION_FILE\" <<'{DENIALS_HEREDOC}'\n",
+        )
         combined = self.text + "\n" + WRITER_WORKFLOW_PATH.read_text(encoding="utf-8")
-        self.assertEqual(self.text.count(start), 2)
-        self.assertEqual(combined.count(start), 3)
-        self.assertNotIn(start, SCAN_WORKFLOW_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(sum(self.text.count(s) for s in starts), 2)
+        self.assertEqual(sum(combined.count(s) for s in starts), 3)
+        scan = SCAN_WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertTrue(all(s not in scan for s in starts))
         source = DENIALS_PATH.read_text(encoding="utf-8").rstrip("\n")
-        for chunk in combined.split(start)[1:]:
+        chunks: list[str] = []
+        for start in starts:
+            chunks.extend(combined.split(start)[1:])
+        self.assertEqual(len(chunks), 3)
+        for chunk in chunks:
             embedded = textwrap.dedent(chunk[: chunk.find(DENIALS_HEREDOC)]).rstrip("\n")
             self.assertEqual(embedded, source)
 
@@ -1943,7 +1953,9 @@ class ConflictWriterFileCommandHardeningTests(unittest.TestCase):
         "BASH_ENV": "", "ENV": "", "LD_PRELOAD": "", "LD_AUDIT": "", "LD_LIBRARY_PATH": "",
         "GCONV_PATH": "", "PYTHONPATH": "", "PYTHONHOME": "", "PYTHONSTARTUP": "",
         "NODE_OPTIONS": "", "PATH": "/usr/bin:/bin",
+        "GIT": "/usr/bin/git", "PYTHON3": "/usr/bin/python3", "JQ": "/usr/bin/jq",
     }
+    HELPER_NETWORK = ("api.github.com", "github.com")
     POST_CLAUDE = ("Report tool-permission denials", "Package untrusted model output",
                    "Upload untrusted model output")
 
@@ -1964,6 +1976,9 @@ class ConflictWriterFileCommandHardeningTests(unittest.TestCase):
                      "/home/runner/work/_actions", "/home/runner/externals"):
             self.assertIn(path, deny_write)
             self.assertNotIn("*", path)  # Linux denyWrite skips wildcard entries
+        network = settings["sandbox"]["network"]
+        self.assertEqual(network["allowedDomains"], list(self.HELPER_NETWORK))
+        self.assertEqual(network["strictAllowlist"], True)
         deny = settings["permissions"]["deny"]
         for rule in self.FILE_COMMAND_DENIES:
             self.assertIn(rule, deny)
@@ -1972,10 +1987,20 @@ class ConflictWriterFileCommandHardeningTests(unittest.TestCase):
         names = [s.get("name") or s.get("id") for s in model["steps"]]
         claude = names.index("claude")
         self.assertEqual(names[claude + 1:claude + 4], list(self.POST_CLAUDE))
+        denials = [s for s in model["steps"] if s.get("name") == "Report tool-permission denials"][0]
+        self.assertIn('"${PYTHON3:-python3}" - "$EXECUTION_FILE"', denials["run"])
+        package = [s for s in model["steps"] if s.get("name") == "Package untrusted model output"][0]
+        self.assertIn('git_bin="${GIT:-git}"', package["run"])
+        self.assertIn('jq_bin="${JQ:-jq}"', package["run"])
+        self.assertNotIn("/usr/bin/git", package["run"])  # PATH shims in publish wiring tests
         for step_name in self.POST_CLAUDE:
             env = [s for s in model["steps"] if s.get("name") == step_name][0]["env"]
             for key, value in self.PINNED_ENV.items():
                 self.assertEqual(env[key], value, (step_name, key))
+            self.assertNotIn("PATH pins over GITHUB_PATH", yaml.dump(env))
+        workflow_text = WRITER_WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertIn("# CSL-467: Edit denies for /home/runner/work/_actions and", workflow_text)
+        self.assertNotIn("PATH pins over GITHUB_PATH prepends when step env wins.", workflow_text)
         install = [s for s in model["steps"] if s.get("name") == "Install acceptance-gate deps"][0]
         self.assertEqual(install["working-directory"], "${{ runner.temp }}")
         self.assertTrue(install["run"].lstrip().startswith("python -P -m pip install"), install["run"])
