@@ -850,8 +850,12 @@ class FixerGateAndPromptTests(unittest.TestCase):
             self.assertIn("id: pin-python", body, job)
             self.assertIn("Report tool-permission denials", body, job)
             self.assertIn("steps.claude.outputs.execution_file", body, job)
-            self.assertIn('"$python3" -I - "$EXECUTION_FILE"', body, job)
+            self.assertIn('interpreter="${PYTHON3:?}"', body, job)
+            self.assertNotIn('python3="$PYTHON3"', body, job)
+            self.assertIn('"$interpreter" -I - "$EXECUTION_FILE"', body, job)
             self.assertIn("/usr/bin/env -i", body, job)
+            self.assertIn('GITHUB_STEP_SUMMARY="${GITHUB_STEP_SUMMARY:-}"', body, job)
+            self.assertIn('GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-}"', body, job)
             self.assertIn("done < <(/usr/bin/env)", body, job)
             self.assertIn("Edit(/${{ runner.temp }}/_runner_file_commands/**)", body, job)
             self.assertIn("Edit(/${{ runner.temp }}/_runner_file_commands/set_env_*)", body, job)
@@ -876,7 +880,7 @@ class FixerGateAndPromptTests(unittest.TestCase):
         starts = (
             f"python3 - \"$EXECUTION_FILE\" <<'{DENIALS_HEREDOC}'\n",
             f"\"${{PYTHON3:-python3}}\" - \"$EXECUTION_FILE\" <<'{DENIALS_HEREDOC}'\n",
-            f"\"$python3\" -I - \"$EXECUTION_FILE\" <<'{DENIALS_HEREDOC}'\n",
+            f"\"$interpreter\" -I - \"$EXECUTION_FILE\" <<'{DENIALS_HEREDOC}'\n",
         )
         combined = self.text + "\n" + WRITER_WORKFLOW_PATH.read_text(encoding="utf-8")
         self.assertEqual(self.text.count(starts[2]), 2)

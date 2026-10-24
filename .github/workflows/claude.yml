@@ -1459,8 +1459,8 @@ jobs:
           PATH: "/usr/bin:/bin"
         run: |
           set -euo pipefail
-          python3="$PYTHON3"
-          case "$python3" in
+          interpreter="${PYTHON3:?}"
+          case "$interpreter" in
             /usr/bin/python3|/usr/bin/python3.*) ;;
             *) echo "::error::refusing non-system python3" >&2; exit 1 ;;
           esac
@@ -1471,7 +1471,9 @@ jobs:
             esac
           done < <(/usr/bin/env)
           /usr/bin/env -i PATH="/usr/bin:/bin" PYTHONNOUSERSITE=1 \
-            "$python3" -I - "$EXECUTION_FILE" <<'CLAUDE_DENIALS_REPORT'
+            GITHUB_STEP_SUMMARY="${GITHUB_STEP_SUMMARY:-}" \
+            GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-}" \
+            "$interpreter" -I - "$EXECUTION_FILE" <<'CLAUDE_DENIALS_REPORT'
           #!/usr/bin/env python3
           """Report Claude Code tool-permission denials from the execution file.
 
@@ -4740,8 +4742,8 @@ jobs:
           PATH: "/usr/bin:/bin"
         run: |
           set -euo pipefail
-          python3="$PYTHON3"
-          case "$python3" in
+          interpreter="${PYTHON3:?}"
+          case "$interpreter" in
             /usr/bin/python3|/usr/bin/python3.*) ;;
             *) echo "::error::refusing non-system python3" >&2; exit 1 ;;
           esac
@@ -4752,7 +4754,9 @@ jobs:
             esac
           done < <(/usr/bin/env)
           /usr/bin/env -i PATH="/usr/bin:/bin" PYTHONNOUSERSITE=1 \
-            "$python3" -I - "$EXECUTION_FILE" <<'CLAUDE_DENIALS_REPORT'
+            GITHUB_STEP_SUMMARY="${GITHUB_STEP_SUMMARY:-}" \
+            GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-}" \
+            "$interpreter" -I - "$EXECUTION_FILE" <<'CLAUDE_DENIALS_REPORT'
           #!/usr/bin/env python3
           """Report Claude Code tool-permission denials from the execution file.
 

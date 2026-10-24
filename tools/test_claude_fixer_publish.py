@@ -2189,8 +2189,17 @@ class WorkflowWiringTests(unittest.TestCase):
                 self.assertEqual(denials["env"]["PYTHON3"], "${{ steps.pin-python.outputs.python3 }}")
                 self.assertEqual(denials["env"]["PYTHONNOUSERSITE"], "1")
                 self.assertEqual(denials["env"]["PYTHONUSERBASE"], "")
-                self.assertIn('"$python3" -I - "$EXECUTION_FILE"', denials["run"])
+                self.assertIn('interpreter="${PYTHON3:?}"', denials["run"])
+                self.assertNotIn('python3="$PYTHON3"', denials["run"])
+                self.assertIn('"$interpreter" -I - "$EXECUTION_FILE"', denials["run"])
                 self.assertIn("/usr/bin/env -i PATH=\"/usr/bin:/bin\" PYTHONNOUSERSITE=1", denials["run"])
+                self.assertIn('GITHUB_STEP_SUMMARY="${GITHUB_STEP_SUMMARY:-}"', denials["run"])
+                self.assertIn('GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-}"', denials["run"])
+                isolated = denials["run"].split("/usr/bin/env -i", 1)[1].split("<<", 1)[0]
+                for leaked in ("PYTHONPATH=", "PYTHONHOME=", "PYTHONSTARTUP=",
+                               "PYTHONUSERBASE=", "PYTHON3="):
+                    self.assertNotIn(leaked, isolated)
+                self.assertIn("PYTHONNOUSERSITE=1", isolated)
                 self.assertIn("done < <(/usr/bin/env)", denials["run"])
                 self.assertNotIn("done < <(env)", denials["run"])
                 self.assertIn("PYTHON*) unset", denials["run"])
