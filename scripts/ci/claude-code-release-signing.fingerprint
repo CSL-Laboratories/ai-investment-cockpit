@@ -1,0 +1,4 @@
+# Anthropic Claude Code Release Signing <security@anthropic.com>
+# Official docs: https://code.claude.com/docs/en/setup
+# gpg --fingerprint form: 31DD DE24 DDFA B679 F42D  7BD2 BAA9 29FF 1A7E CACE
+31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE
