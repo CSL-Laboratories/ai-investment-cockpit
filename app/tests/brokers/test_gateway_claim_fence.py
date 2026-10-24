@@ -2435,26 +2435,52 @@ def test_broker_history_timestamp_tie_keeps_the_landed_block(st, monkeypatch):
 
 
 def test_halt_sentinel_fsyncs_file_and_directory(tmp_path, monkeypatch):
-    """The HALT sentinel fsyncs the file and its directory.
+    """The file fsync is required. The directory fsync follows the platform.
 
-    85bddd60 writes the file and returns. A crash can drop both the marker
-    and the sentinel before either reaches disk.
+    e5eb1af7 counted fsync calls and required two. Windows fsyncs the file
+    and cannot open the directory, so that assertion was ``1 >= 2``.
     """
     import os
 
-    synced = []
-    real_fsync = os.fsync
+    from orchestrator.halt import _directory_open_flags
 
-    def fsync(fd):
-        synced.append(fd)
+    synced = []
+    real_open = os.open
+    real_fsync = os.fsync
+    fd_path: dict[int, str] = {}
+
+    def tracked_open(file, flags, mode=0o777, *, dir_fd=None):
+        if dir_fd is None:
+            fd = real_open(file, flags, mode)
+        else:
+            fd = real_open(file, flags, mode, dir_fd=dir_fd)
+        fd_path[fd] = os.fspath(file)
+        return fd
+
+    def tracked_fsync(fd):
+        synced.append(fd_path.get(fd))
         return real_fsync(fd)
 
-    monkeypatch.setattr("orchestrator.halt.os.fsync", fsync)
+    monkeypatch.setattr("orchestrator.halt.os.open", tracked_open)
+    monkeypatch.setattr("orchestrator.halt.os.fsync", tracked_fsync)
     path = tmp_path / "halt-dir" / "HALT"
     set_halt(path, reason="durability")
     text = path.read_text(encoding="utf-8")
     assert "durability" in text
-    assert len(synced) >= 2
+    file_key = os.fspath(path)
+    dir_key = os.fspath(path.parent)
+    assert synced.count(file_key) >= 1
+    try:
+        probe = real_open(dir_key, _directory_open_flags())
+    except OSError:
+        directory_open = False
+    else:
+        os.close(probe)
+        directory_open = True
+    if directory_open:
+        assert synced.count(dir_key) >= 1
+    else:
+        assert dir_key not in synced
 
 
 def test_two_gateways_sharing_state_send_only_once(st):
@@ -2560,3 +2586,169 @@ def test_two_gateways_sharing_state_send_only_once(st):
     outcomes = [results["first"], results["second"]]
     assert sorted(item.stage for item in outcomes) == ["reentrant_submit", "submitted"]
     assert sum(item.ok for item in outcomes) == 1
+
+
+def _cancel_landed_order(st, monkeypatch):
+    """Land a buy whose local writes fail, then sign a local cancel.
+
+    Reconcile then reads broker history while the block is still in place.
+    """
+    scenario, broker = _capped_paper(st)
+    fail = _fail_writes_after_send(scenario, broker, monkeypatch)
+    scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+    fail["v"] = False
+    row = _reload_order(scenario.st, scenario.order.id)
+    transition(scenario.st, row, "cancelled", actor="operator", reason="local cancel")
+    return scenario, broker
+
+
+def _history_keeps_block(scenario, broker, history):
+    """Reconcile against ``history`` and try the next $1,500 buy."""
+    from orchestrator.reconcile import _broker_order_is_terminal, reconcile_startup
+    from tests.brokers.test_pending_exposure_chain import _fresh_submittable
+
+    oid = scenario.order.id
+    terminal = _broker_order_is_terminal(history, oid)
+    reconcile_startup(
+        scenario.st,
+        broker_history_fn=lambda _oid: history,
+        alerter=lambda _msg: None,
+    )
+    second, approval, risk = _fresh_submittable(
+        scenario.st, scenario, proposal="p-next", nonce="n-next",
+    )
+    nxt = scenario.gateway.submit(
+        second,
+        **scenario.submit_kwargs(
+            approval=approval, risk_decision=risk, token_nonce="n-next",
+        ),
+    )
+    return terminal, _latest_landed_kind(scenario.st, oid), nxt, broker.calls
+
+
+def test_mixed_precision_history_timestamps_keep_the_landed_block(st, monkeypatch):
+    """A later fractional timestamp must beat an earlier whole-second cancel.
+
+    e5eb1af7 orders the raw strings. ``...00:00:02Z`` sorts after
+    ``...00:00:02.900Z``, so the older cancel clears the block and the next
+    buy is sent.
+    """
+    scenario, broker = _cancel_landed_order(st, monkeypatch)
+    oid = scenario.order.id
+    history = [
+        {
+            "order_id": oid,
+            "status": "accepted",
+            "updated_at": "2026-10-23T00:00:02.900Z",
+        },
+        {
+            "order_id": oid,
+            "status": "cancelled",
+            "updated_at": "2026-10-23T00:00:02Z",
+        },
+    ]
+    terminal, kind, nxt, calls = _history_keeps_block(scenario, broker, history)
+    assert (terminal, kind, nxt.ok, nxt.stage, calls) == (
+        False, "block", False, "pending_exposure", 1,
+    )
+
+
+def test_equivalent_offset_history_timestamps_keep_the_landed_block(st, monkeypatch):
+    """``Z`` and ``+00:00`` for the same instant are a tie, so the block stays.
+
+    e5eb1af7 compares the strings. ``Z`` sorts after ``+00:00``, the cancel
+    wins, and the next buy is admitted.
+    """
+    scenario, broker = _cancel_landed_order(st, monkeypatch)
+    oid = scenario.order.id
+    history = [
+        {
+            "order_id": oid,
+            "status": "accepted",
+            "updated_at": "2026-10-24T00:00:02+00:00",
+        },
+        {
+            "order_id": oid,
+            "status": "cancelled",
+            "updated_at": "2026-10-24T00:00:02Z",
+        },
+    ]
+    terminal, kind, nxt, calls = _history_keeps_block(scenario, broker, history)
+    assert (terminal, kind, nxt.ok, nxt.stage, calls) == (
+        False, "block", False, "pending_exposure", 1,
+    )
+
+
+def test_unparseable_history_timestamp_keeps_the_landed_block(st, monkeypatch):
+    """A timestamp that cannot be parsed is not terminal confirmation.
+
+    e5eb1af7 takes the string maximum. ``not-a-timestamp`` sorts after the
+    real instant, so the cancel clears the block and the next buy is sent.
+    """
+    scenario, broker = _cancel_landed_order(st, monkeypatch)
+    oid = scenario.order.id
+    history = [
+        {
+            "order_id": oid,
+            "status": "accepted",
+            "updated_at": "2026-10-24T00:00:02Z",
+        },
+        {
+            "order_id": oid,
+            "status": "cancelled",
+            "updated_at": "not-a-timestamp",
+        },
+    ]
+    terminal, kind, nxt, calls = _history_keeps_block(scenario, broker, history)
+    assert (terminal, kind, nxt.ok, nxt.stage, calls) == (
+        False, "block", False, "pending_exposure", 1,
+    )
+
+
+def test_history_cancellation_is_not_replaced_when_the_block_write_fails(
+    st, monkeypatch,
+):
+    """The history CancelledError survives a failed block write.
+
+    e5eb1af7 lets the HALT sentinel's OSError replace CancelledError when
+    both the marker append and the sentinel write fail.
+    """
+    from sqlalchemy import update
+
+    scenario, broker = _capped_paper(st)
+    fail = _fail_writes_after_send(scenario, broker, monkeypatch)
+
+    def order_history(_order_id):
+        raise asyncio.CancelledError
+
+    broker.order_history = order_history
+    real_persist = scenario.gateway._persist_unreconciled_landed
+
+    def persist(st_arg, order, actor):
+        with scenario.st.session_factory() as session, session.begin():
+            session.execute(
+                update(Order).where(Order.id == order.id).values(state="cancelled")
+            )
+        return real_persist(st_arg, order, actor)
+
+    monkeypatch.setattr(scenario.gateway, "_persist_unreconciled_landed", persist)
+    real_append = scenario.st.audit.append
+
+    def append(event_type, *args, **kwargs):
+        if event_type == "unreconciled_landed_exposure":
+            raise OSError("marker write failed")
+        return real_append(event_type, *args, **kwargs)
+
+    monkeypatch.setattr(scenario.st.audit, "append", append)
+
+    def halt_fails(*_args, **_kwargs):
+        raise OSError("halt sentinel failed")
+
+    monkeypatch.setattr("brokers.gateway.set_halt", halt_fails)
+    try:
+        with pytest.raises(asyncio.CancelledError) as caught:
+            scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+    finally:
+        fail["v"] = False
+    assert isinstance(caught.value.__cause__, OSError)
+    assert broker.calls == 1

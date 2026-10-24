@@ -632,11 +632,18 @@ class OrderGateway:
         # the block is written first, then the error propagates.
         if state in TERMINAL_STATES:
             try:
-                if self._broker_history_confirms_terminal(order):
-                    return
-            except BaseException:
-                self._write_landed_block(st, order, actor, text)
+                confirmed = self._broker_history_confirms_terminal(order)
+            except BaseException as history_exc:
+                # The block write can raise OSError when both the audit append
+                # and the HALT sentinel fail. That write error must not replace
+                # CancelledError (or any other history BaseException).
+                try:
+                    self._write_landed_block(st, order, actor, text)
+                except BaseException as write_exc:
+                    raise history_exc from write_exc
                 raise
+            if confirmed:
+                return
         self._write_landed_block(st, order, actor, text)
 
     def _broker_history_confirms_terminal(self, order) -> bool:

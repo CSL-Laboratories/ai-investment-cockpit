@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Callable
 
 from schemas.models.agent_job import AgentJob
@@ -188,25 +189,39 @@ _BROKER_TERMINAL_STATUSES = frozenset({
 })
 
 
-def _history_stamp(record) -> str | None:
-    """The record's ``updated_at`` as text, or None when it cannot order history."""
-    stamp = record.get("updated_at")
-    if stamp is None or stamp == "":
+def _parsed_history_time(value) -> datetime | None:
+    """An aware UTC instant, or None when ``value`` is not a usable timestamp.
+
+    ``Z`` and ``+00:00`` are the same instant. Fractional seconds are kept.
+    A naive value, or text ``datetime.fromisoformat`` cannot parse, is not
+    usable: the caller keeps the landed block.
+    """
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text = str(value).strip()
+        if text.endswith(("Z", "z")):
+            text = text[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+    if parsed.tzinfo is None or parsed.tzinfo.utcoffset(parsed) is None:
         return None
-    return str(stamp)
+    return parsed.astimezone(timezone.utc)
 
 
 def _broker_order_is_terminal(history, order_id) -> bool:
     """True only when the latest history record for this order id is terminal.
 
     An earlier cancel does not confirm a later reopen. Records that carry
-    ``updated_at`` are ordered by that timestamp, not by list position. When
-    the newest timestamp is shared, the latest status is ambiguous and this
-    returns False so the landed block stays. When no matched record has a
-    timestamp, list order is the order and the last match is the latest. A
-    mix of timestamped and untimestamped records cannot be ordered. An error,
-    an empty reply, a non-dict, or a record for a different order is not
-    confirmation either.
+    ``updated_at`` are ordered by the parsed instant, not by the raw string
+    or by list position. A parse failure, a mix of timestamped and
+    untimestamped records, or a tie for the newest instant is not
+    confirmation, so the landed block stays. When no matched record has a
+    timestamp, list order is the order and the last match is the latest.
+    An error, an empty reply, a non-dict, or a record for a different order
+    is not confirmation either.
     """
     if not history or isinstance(history, BaseException):
         return False
@@ -217,14 +232,27 @@ def _broker_order_is_terminal(history, order_id) -> bool:
     ]
     if not matched:
         return False
-    stamps = [_history_stamp(rec) for rec in matched]
-    if any(stamp is None for stamp in stamps):
-        if any(stamp is not None for stamp in stamps):
+    instants: list[datetime | None] = []
+    saw_timestamp = False
+    for rec in matched:
+        raw = rec.get("updated_at")
+        if raw is None or raw == "":
+            instants.append(None)
+            continue
+        saw_timestamp = True
+        instant = _parsed_history_time(raw)
+        if instant is None:
             return False
+        instants.append(instant)
+    if not saw_timestamp:
         latest = matched[-1]
     else:
-        newest = max(stamps)
-        leaders = [rec for rec, stamp in zip(matched, stamps) if stamp == newest]
+        if any(instant is None for instant in instants):
+            return False
+        newest = max(instant for instant in instants if instant is not None)
+        leaders = [
+            rec for rec, instant in zip(matched, instants) if instant == newest
+        ]
         if len(leaders) != 1:
             return False
         latest = leaders[0]
