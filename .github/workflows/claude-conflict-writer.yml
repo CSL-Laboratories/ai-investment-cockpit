@@ -632,7 +632,8 @@ jobs:
           trap cleanup EXIT
           
           rm -rf "$STAGING"
-          mkdir -m 0700 -p "$STAGING"
+          mkdir -p "$STAGING"
+          chmod 0700 "$STAGING"
           
           curl -fsSL --retry 3 --retry-delay 2 -o "$STAGING/claude" \
             "${RELEASE_BASE}/${CLAUDE_VERSION}/${PLATFORM}/claude"
