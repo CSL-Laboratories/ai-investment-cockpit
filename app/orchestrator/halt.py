@@ -92,10 +92,54 @@ def default_halt_path() -> Path:
     return Path(base) / "ai-investment-cockpit" / "HALT"
 
 
+def _directory_open_flags() -> int:
+    """Flags for a read-only directory handle. ``O_DIRECTORY`` when the OS has it."""
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    return flags
+
+
+def _fsync_directory(directory: Path) -> None:
+    """Flush the directory entry that names the sentinel.
+
+    Opening the directory is best-effort: an ``OSError`` on open returns without
+    failing ``set_halt`` (Windows often cannot open a directory). Once the directory
+    is open, an ``os.fsync`` ``OSError`` propagates so the caller does not treat the
+    sentinel as durable when that directory entry did not commit (POSIX).
+    """
+    try:
+        fd = os.open(os.fspath(directory), _directory_open_flags())
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def set_halt(path: Path | str, reason: str = "killswitch") -> Path:
+    """Write the HALT sentinel and fsync the file before returning.
+
+    The file fsync is always required. A short write or a file-fsync ``OSError``
+    propagates, and the sentinel is not claimed durable. Directory fsync fails the
+    call only when the directory was opened (POSIX): an ``os.fsync`` ``OSError`` on
+    that fd propagates. If the directory cannot be opened, that ``OSError`` stays
+    platform best-effort (Windows) and this function returns after the successful
+    file fsync.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"{datetime.now(timezone.utc).isoformat()} {reason}\n", encoding="utf-8")
+    payload = f"{datetime.now(timezone.utc).isoformat()} {reason}\n".encode("utf-8")
+    fd = os.open(os.fspath(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    try:
+        written = os.write(fd, payload)
+        if written != len(payload):
+            raise OSError("HALT sentinel write was short")
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    _fsync_directory(path.parent)
     return path
 
 
