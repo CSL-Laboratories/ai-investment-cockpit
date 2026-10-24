@@ -1,0 +1,37 @@
+{
+  "commit": "ebbaa34489f171e079834d02098135711e1d4755",
+  "workload_id": "ingest_to_raw_store",
+  "fixture_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "units": {
+    "latency": "ms",
+    "throughput": "workload_completions_per_second",
+    "rss_bytes": "bytes",
+    "cpu": "cpu_seconds",
+    "io": "bytes",
+    "tokens": "tokens",
+    "cost": "USD"
+  },
+  "observation": {
+    "p50": 10.0,
+    "p95": 20.0,
+    "p99": 30.0,
+    "throughput": 1000.0,
+    "rss_bytes": 123456,
+    "cpu": 0.5,
+    "io": 2.0,
+    "tokens": null,
+    "cost": null,
+    "correctness": "synthetic control only; not measured evidence",
+    "failure": "synthetic control",
+    "recovery": "synthetic control",
+    "growth": "synthetic control",
+    "status": "measured"
+  },
+  "host": {
+    "runner": "blacksmith-4vcpu-ubuntu-2204",
+    "python": "3.12.3"
+  },
+  "configuration": {
+    "batch_size": 1
+  }
+}
