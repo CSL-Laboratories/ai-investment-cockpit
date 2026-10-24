@@ -147,8 +147,8 @@ def test_killswitch_writes_halt_while_st_lock_is_held(st, tmp_path):
     assert st.audit.verify_chain().ok
 
 
-def test_set_halt_error_does_not_acquire_st_lock(st, monkeypatch):
-    """A ``set_halt`` failure propagates and does not disarm under ``st.lock``."""
+def test_set_halt_error_still_completes_containment_then_raises(st, monkeypatch):
+    """A ``set_halt`` failure still cancels, disarms and audits, then propagates."""
     ladder = _arm_auto_veto(st)
     probe = _LockProbe(st.lock)
     st.lock = probe
@@ -164,19 +164,10 @@ def test_set_halt_error_does_not_acquire_st_lock(st, monkeypatch):
             cancel_hook=lambda: cancelled.append(1) or 1,
         )
 
-    assert probe.entered == 0
-    assert cancelled == []
-    assert ladder.current() is Mode.auto_veto
-    assert _killswitch_audit_missing(st)
-
-
-def _killswitch_audit_missing(st) -> bool:
-    with st.session_factory() as session:
-        entry = session.execute(
-            select(AuditEntry).where(AuditEntry.event_type == EVENT_KILLSWITCH)
-            .limit(1)
-        ).scalar_one_or_none()
-    return entry is None
+    assert probe.entered == 1
+    assert cancelled == [1]
+    assert ladder.current() is Mode.review_live
+    assert _killswitch_audit(st)["halt_durable"] is False
 
 
 def _directory_openable(directory) -> bool:

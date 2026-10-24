@@ -67,7 +67,8 @@ def killswitch(st: OrchestratorState, *, actor: str, reason: str = "manual kills
 
     The HALT sentinel is written before ``st.lock`` so a holder of that lock cannot delay
     the flag. Cancel, disconnect, disarm and the killswitch audit remain under the lock.
-    If ``set_halt`` raises, the lock is not acquired and the mode is left unchanged.
+    If ``set_halt`` raises ``OSError``, containment still completes under the lock
+    (audit records ``halt_durable=False``) and the error is re-raised afterwards.
 
     ``disconnect_hook`` (W12 SEAM 4) is the INJECTED MCP/broker disconnect — called AFTER
     cancel and BEFORE disarm. It is optional (``None`` -> no live connection to drop, e.g. the
@@ -80,10 +81,14 @@ def killswitch(st: OrchestratorState, *, actor: str, reason: str = "manual kills
     path = Path(halt_path) if halt_path is not None else default_halt_path()
 
     # 1. durable HALT flag BEFORE st.lock. A hung fence or stalled broker I/O holding the
-    #    lock must not delay the sentinel the gateway and arm path read. A raise here
-    #    propagates: the lock is not taken, and cancel / disconnect / disarm / audit do
-    #    not run.
-    set_halt(path, reason=reason)
+    #    lock must not delay the sentinel the gateway and arm path read. An OSError here
+    #    (write or fsync) must NOT abort the kill: record it, still cancel / disconnect /
+    #    disarm / audit (fail closed), then re-raise after containment completes.
+    halt_error: OSError | None = None
+    try:
+        set_halt(path, reason=reason)
+    except OSError as exc:
+        halt_error = exc
 
     with st.lock:
         # 2. cancel unapproved / in-flight proposals (WP7 supplies the real hook). A raise here
@@ -125,9 +130,12 @@ def killswitch(st: OrchestratorState, *, actor: str, reason: str = "manual kills
             EVENT_KILLSWITCH, actor=actor,
             payload={"reason": reason, "halt_path": str(path), "cancelled": cancelled,
                      "cancel_failed": cancel_failed,
+                     "halt_durable": halt_error is None,
                      "mcp_disconnected": mcp_disconnected, "mode_after": mode_after.value},
         )
 
+    if halt_error is not None:
+        raise halt_error
     event = SystemEvent("#system", "killswitch", None, reason, mode_after.value, now)
     return KillResult(halt_path=path, cancelled_count=cancelled, mode_after=mode_after,
                       event=event, mcp_disconnected=mcp_disconnected)
