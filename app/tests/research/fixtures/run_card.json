@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-06-30T00:00:00Z",
+  "run_dir": "/runs/idea-1",
+  "backtest": {
+    "start_date": "2026-01-01",
+    "end_date": "2026-06-30",
+    "source": "yfinance",
+    "engine": "GlobalEquity"
+  },
+  "reproducibility": {
+    "config_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "metrics": {"sharpe": 1.2, "annual_return": 0.08, "max_drawdown": -0.11},
+  "artifacts": [
+    {
+      "path": "artifacts/metrics.csv",
+      "size_bytes": 64,
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "tool_traces": [
+    {
+      "tool": "backtest",
+      "status": "ok",
+      "started_at": "2026-01-01T00:00:00Z",
+      "ended_at": "2026-06-30T00:00:00Z",
+      "args_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "result_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+  ],
+  "admits_order": true,
+  "side": "buy"
+}

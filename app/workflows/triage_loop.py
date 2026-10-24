@@ -234,6 +234,9 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
     verify_event_type = make_event_type_verifier(state)
     survivors: list[MarketEvent] = []
     for ev in events:
+        if ev.event_type == "signal:envelope":
+            dispositions[ev.id] = "prefiltered_ignore"
+            continue
         keep = ev.symbol in holdings_symbols or ev.symbol in watchlist \
             or ev.event_type in _HARD_EVENT_TYPES
         if not keep:

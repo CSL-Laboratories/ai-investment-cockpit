@@ -90,6 +90,25 @@ def _stub_outcome(status="drafted", embed=None):
                            risk_decision=None, order=None, embed=embed, reasons=())
 
 
+def test_source_envelopes_are_prefiltered_before_the_model(st, clock, tmp_path):
+    rows = _persist(st, clock, tmp_path, [
+        _mk("env-1", "AAPL", "research_source sha256=abc", event_type="signal:envelope"),
+        _mk("t-a", "AAPL", "AAPL earnings surprise"),
+    ])
+    by_type = {row.event_type: row for row in rows}
+    transport = FakeTransport([envelope(_triage_body([
+        _scored(by_type["news"].raw_ref, "AAPL", "material", 50),
+    ]))])
+    result = triage_loop(st, clock, transport=transport, parquet_root=tmp_path / "raw",
+                         holdings_symbols=HOLDINGS, watchlist=WATCHLIST)
+    assert result["status"] == "ok"
+    assert len(transport.calls) == 1
+    assert "research_source" not in transport.calls[0]["input"]
+    assert "AAPL earnings" in transport.calls[0]["input"]
+    batch = _payloads(st, EVENT_TRIAGE_BATCH)[-1]
+    assert batch["dispositions"][by_type["signal:envelope"].id] == "prefiltered_ignore"
+
+
 def test_prefilter_drops_noise_before_any_model_call(st, clock, tmp_path):
     rows = _persist(st, clock, tmp_path, [
         _mk("t-a", "AAPL", "AAPL earnings surprise"),

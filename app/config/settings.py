@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import date
 from decimal import Decimal
 from enum import Enum
 
@@ -86,6 +87,8 @@ _SECRETISH_ALLOWED = frozenset({
     "COCKPIT_CONTEXT_TOKEN_CAP",
     "COCKPIT_JEV_STATE_TOKEN_CAP",
     "COCKPIT_JEV_REQUEST_TOKEN_CAP",
+    # How many estimated tokens of sidecar research may enter a decision packet.
+    "COCKPIT_VIBE_TRADING_TOKEN_BUDGET",
 })
 
 # Static operator-configured paper universe.  This is intentionally conservative: a bounded
@@ -123,6 +126,23 @@ def normalize_watchlist(raw: str | None) -> str:
     if invalid:
         raise ValueError(f"invalid watchlist symbol(s): {', '.join(invalid)}")
     return ",".join(ordered)
+
+
+_EVENT_QUERY = re.compile(r"[A-Za-z0-9 .,'?/:%-]{1,80}")
+
+
+def _normalize_event_queries(raw: str | None) -> str:
+    """Up to four short event-contract queries. '|' separates them so a query may contain a comma."""
+    if raw is None or not str(raw).strip():
+        return ""
+    parts = [part.strip() for part in str(raw).split("|")]
+    parts = [part for part in parts if part]
+    if len(parts) > 4:
+        raise ValueError("at most 4 event-contract queries")
+    bad = [part for part in parts if _EVENT_QUERY.fullmatch(part) is None]
+    if bad:
+        raise ValueError("event-contract queries must be short plain text")
+    return "|".join(dict.fromkeys(parts))
 
 
 def normalize_operator_ids(raw: str | None) -> str:
@@ -413,6 +433,91 @@ class Settings(BaseSettings):
             allowed = ", ".join(sorted(JEV_MODEL_PINS))
             raise ValueError(f"jev_model must be one of: {allowed}")
         return key
+
+    # ---- CSL-192 optional Vibe-Trading research sidecar -----------------------------
+    # Off unless the operator turns it on. The binary is a separate install; a missing
+    # sidecar emits no research features and does not change mode, risk, or orders.
+    # Env: COCKPIT_VIBE_TRADING_ENABLED.
+    vibe_trading_enabled: bool = False
+    # Basename only. The client resolves it on PATH and never runs a shell.
+    # Env: COCKPIT_VIBE_TRADING_COMMAND.
+    vibe_trading_command: str = "vibe-trading-mcp"
+    vibe_trading_timeout_seconds: float = Field(default=60, ge=1, le=600)
+    # Named bench universe the sidecar actually scores (sp500, csi300, btc-usdt, ...).
+    # Symbol-scoped reads are still clipped to the operator watchlist.
+    # Env: COCKPIT_VIBE_TRADING_BENCH_UNIVERSE / _ZOO / _PERIOD / _TOP.
+    vibe_trading_bench_universe: str = "sp500"
+    vibe_trading_bench_zoo: str = "alpha101"
+    vibe_trading_bench_period: str = "2018-2025"
+    vibe_trading_bench_top: int = Field(default=8, ge=1, le=40)
+    # Research text is trimmed to this many estimated tokens, and never above the
+    # decision context cap. Env: COCKPIT_VIBE_TRADING_TOKEN_BUDGET.
+    vibe_trading_token_budget: int = Field(
+        default=4000, ge=1, le=HAIKU_55_LONG_CONTEXT_TOKENS - 1,
+    )
+    # How many watchlist names get a 13F diff read on one pass. Env: COCKPIT_VIBE_TRADING_MAX_SYMBOLS.
+    vibe_trading_max_symbols: int = Field(default=8, ge=0, le=32)
+    # Operator-named ETFs for constituent look-through. Same ticker grammar as the watchlist.
+    # Env: COCKPIT_VIBE_TRADING_ETFS.
+    vibe_trading_etfs: str = ""
+    # Up to four event-contract queries, separated by '|'. Env: COCKPIT_VIBE_TRADING_EVENT_QUERIES.
+    vibe_trading_event_queries: str = ""
+
+    @field_validator("vibe_trading_command")
+    @classmethod
+    def _validate_vibe_command(cls, value):
+        if re.fullmatch(r"[A-Za-z0-9._-]{1,64}", str(value)) is None:
+            raise ValueError("vibe_trading_command must be a single executable name")
+        return str(value)
+
+    @field_validator("vibe_trading_bench_universe", "vibe_trading_bench_zoo")
+    @classmethod
+    def _validate_vibe_bench_token(cls, value):
+        if re.fullmatch(r"[A-Za-z0-9_-]{1,32}", str(value)) is None:
+            raise ValueError("bench universe and zoo must be short tokens")
+        return str(value)
+
+    @field_validator("vibe_trading_bench_period")
+    @classmethod
+    def _validate_vibe_period(cls, value):
+        text = str(value)
+        year = re.fullmatch(r"(\d{4})-(\d{4})", text)
+        dates = re.fullmatch(r"(\d{4}-\d{2}-\d{2})/(\d{4}-\d{2}-\d{2})", text)
+        if year is None and dates is None:
+            raise ValueError("bench period must be YYYY-YYYY or YYYY-MM-DD/YYYY-MM-DD")
+        if year is not None and int(year.group(1)) > int(year.group(2)):
+            raise ValueError("bench period years are reversed")
+        if dates is not None:
+            try:
+                start = date.fromisoformat(dates.group(1))
+                end = date.fromisoformat(dates.group(2))
+            except ValueError as exc:
+                raise ValueError("bench period dates must be real calendar dates") from exc
+            if start > end:
+                raise ValueError("bench period dates are reversed")
+        return text
+
+    @field_validator("vibe_trading_etfs", mode="before")
+    @classmethod
+    def _validate_vibe_etfs(cls, value):
+        return normalize_watchlist(value)
+
+    @field_validator("vibe_trading_event_queries", mode="before")
+    @classmethod
+    def _validate_vibe_event_queries(cls, value):
+        return _normalize_event_queries(value)
+
+    @property
+    def vibe_trading_etf_symbols(self) -> tuple[str, ...]:
+        if not self.vibe_trading_etfs:
+            return ()
+        return tuple(self.vibe_trading_etfs.split(","))
+
+    @property
+    def vibe_trading_event_query_list(self) -> tuple[str, ...]:
+        if not self.vibe_trading_event_queries:
+            return ()
+        return tuple(self.vibe_trading_event_queries.split("|"))
 
     # The separate LOW-PRIVILEGE Windows account decision-stage subprocesses run under. When set,
     # main.compose() FAILS CLOSED unless that account provably cannot read the bearer stores

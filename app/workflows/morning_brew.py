@@ -84,10 +84,11 @@ def partition_by_relevance(events, holdings_symbols: frozenset[str],
     not yet hold. A brief filtered to your existing positions can only ever tell you what you
     already own.
 
-    So the brew filters exactly one thing — BULK CALENDAR ROWS for symbols the operator
-    neither holds nor watches. An earnings date for a company you have no relationship with is
-    reference data; it is not something a human needs read to them at 08:30. News, filings and
-    halts all stay eligible regardless of symbol.
+    So the brew filters two things. BULK CALENDAR ROWS for symbols the operator neither holds
+    nor watches: an earnings date for a company you have no relationship with is reference
+    data, not something a human needs read to them at 08:30. And ``signal:envelope`` rows,
+    which are the sidecar's raw archive. They stay in the window for replay and are not
+    decision evidence. News, filings and halts all stay eligible regardless of symbol.
 
     Ignored events are recorded as ``prefiltered_ignore``, the disposition ``triage_loop``
     already uses for "deliberately not analyzed" — distinct from ``deferred``, which promises
@@ -99,7 +100,8 @@ def partition_by_relevance(events, holdings_symbols: frozenset[str],
     eligible, ignored = [], []
     for ev in events:
         bulk = (ev.event_type or "").startswith(_BULK_CALENDAR_PREFIX)
-        (ignored if bulk and ev.symbol not in relevant_symbols else eligible).append(ev)
+        archive = ev.event_type == "signal:envelope"
+        (ignored if archive or (bulk and ev.symbol not in relevant_symbols) else eligible).append(ev)
     return eligible, ignored
 
 
