@@ -2401,6 +2401,10 @@ class ClaudeCodeInstallerPinTests(unittest.TestCase):
         self.assertIn("python3 -I -c", script)
         self.assertNotIn("python3 -c '", script)
         self.assertIn("reference copy", script)
+        self.assertIn("scripts/ci/install_pinned_claude_code.sh is the", script)
+        self.assertIn("Do not execute that", script)
+        self.assertIn("copy from GITHUB_WORKSPACE", script)
+        self.assertNotIn("Do not execute the copy from GITHUB_WORKSPACE", script)
         self.assertNotIn("install.sh", script)
         self.assertNotIn("| bash", script)
 
@@ -2430,6 +2434,26 @@ class ClaudeCodeInstallerPinTests(unittest.TestCase):
                 self.assertNotIn("bootstrap.sh", text)
                 self.assertNotRegex(text, r"install\.sh\s*\|\s*bash")
                 self.assertNotIn("mkdir -m 0700 -p", text)
+
+    def test_inlined_installer_yaml_has_no_trailing_whitespace(self):
+        """Blank lines in the inlined installer must not be indent-only (git diff --check)."""
+        marker = "      - name: Install hash-pinned Claude Code CLI"
+        for name in ("claude.yml", "claude-conflict-writer.yml"):
+            path = ROOT / ".github/workflows" / name
+            text = path.read_text(encoding="utf-8")
+            lines = text.splitlines(keepends=True)
+            starts = [i for i, line in enumerate(lines) if line.startswith(marker)]
+            self.assertTrue(starts, msg=f"{name} missing installer step")
+            for start in starts:
+                for i in range(start, len(lines)):
+                    line = lines[i]
+                    if i > start and line.startswith("      - "):
+                        break
+                    body = line[:-1] if line.endswith("\n") else line
+                    self.assertEqual(
+                        body, body.rstrip(" \t"),
+                        msg=f"{name}:{i + 1} installer trailing whitespace",
+                    )
 
 
 if __name__ == "__main__":
