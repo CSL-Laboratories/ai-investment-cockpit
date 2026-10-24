@@ -1273,8 +1273,12 @@ jobs:
           # ~/.claude (the action writes this JSON there). runner.temp and
           # runner.tool_cache are absolute, so /${{ runner.temp }} is the //
           # filesystem-root form. sandbox.allowUnsandboxedCommands defaults true
-          # and an allow rule auto-approves the unsandboxed retry. Existing
-          # Write(...) cockpit rules stay; tests pin them, and they are no-ops.
+          # and an allow rule auto-approves the unsandboxed retry.
+          # autoAllowBashIfSandboxed also defaults true and would auto-approve
+          # any sandboxed Bash outside the helper-only allowedTools path
+          # (https://code.claude.com/docs/en/sandboxing#auto-allow-mode).
+          # Existing Write(...) cockpit rules stay; tests pin them, and they
+          # are no-ops.
           # network.allowedDomains is what the helper's `gh api`/`graphql`
           # calls need (api.github.com plus github.com for auth/redirects).
           # WebFetch is disallowed, so nothing else feeds the list.
@@ -1287,6 +1291,7 @@ jobs:
               "sandbox": {
                 "enabled": true,
                 "allowUnsandboxedCommands": false,
+                "autoAllowBashIfSandboxed": false,
                 "failIfUnavailable": true,
                 "filesystem": {
                   "denyWrite": [
@@ -4508,8 +4513,12 @@ jobs:
           # ~/.claude (the action writes this JSON there). runner.temp and
           # runner.tool_cache are absolute, so /${{ runner.temp }} is the //
           # filesystem-root form. sandbox.allowUnsandboxedCommands defaults true
-          # and an allow rule auto-approves the unsandboxed retry. Existing
-          # Write(...) cockpit rules stay; tests pin them, and they are no-ops.
+          # and an allow rule auto-approves the unsandboxed retry.
+          # autoAllowBashIfSandboxed also defaults true and would auto-approve
+          # any sandboxed Bash outside the helper-only allowedTools path
+          # (https://code.claude.com/docs/en/sandboxing#auto-allow-mode).
+          # Existing Write(...) cockpit rules stay; tests pin them, and they
+          # are no-ops.
           # network.allowedDomains is what the helper's `gh api`/`graphql`
           # calls need (api.github.com plus github.com for auth/redirects).
           # WebFetch is disallowed, so nothing else feeds the list.
@@ -4522,6 +4531,7 @@ jobs:
               "sandbox": {
                 "enabled": true,
                 "allowUnsandboxedCommands": false,
+                "autoAllowBashIfSandboxed": false,
                 "failIfUnavailable": true,
                 "filesystem": {
                   "denyWrite": [

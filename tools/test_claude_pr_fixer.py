@@ -857,13 +857,24 @@ class FixerGateAndPromptTests(unittest.TestCase):
         self.assertNotIn("Bash(python -m pytest -q app/tests)", mention)
 
     def test_embedded_denials_match_source(self) -> None:
-        start = f"python3 - \"$EXECUTION_FILE\" <<'{DENIALS_HEREDOC}'\n"
+        # Mention/fixer call python3 via "${PYTHON3:-python3}" so a poisoned
+        # PATH cannot win. Conflict-writer on main still uses bare python3
+        # until #258 merges.
+        starts = (
+            f"python3 - \"$EXECUTION_FILE\" <<'{DENIALS_HEREDOC}'\n",
+            f"\"${{PYTHON3:-python3}}\" - \"$EXECUTION_FILE\" <<'{DENIALS_HEREDOC}'\n",
+        )
         combined = self.text + "\n" + WRITER_WORKFLOW_PATH.read_text(encoding="utf-8")
-        self.assertEqual(self.text.count(start), 2)
-        self.assertEqual(combined.count(start), 3)
-        self.assertNotIn(start, SCAN_WORKFLOW_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(sum(self.text.count(s) for s in starts), 2)
+        self.assertEqual(sum(combined.count(s) for s in starts), 3)
+        scan = SCAN_WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertTrue(all(s not in scan for s in starts))
         source = DENIALS_PATH.read_text(encoding="utf-8").rstrip("\n")
-        for chunk in combined.split(start)[1:]:
+        chunks: list[str] = []
+        for start in starts:
+            chunks.extend(combined.split(start)[1:])
+        self.assertEqual(len(chunks), 3)
+        for chunk in chunks:
             embedded = textwrap.dedent(chunk[: chunk.find(DENIALS_HEREDOC)]).rstrip("\n")
             self.assertEqual(embedded, source)
 

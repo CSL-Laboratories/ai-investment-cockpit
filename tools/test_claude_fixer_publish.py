@@ -2124,6 +2124,7 @@ class WorkflowWiringTests(unittest.TestCase):
                 settings = json.loads(action["with"]["settings"])
                 self.assertEqual(settings["sandbox"]["enabled"], True)
                 self.assertEqual(settings["sandbox"]["allowUnsandboxedCommands"], False)
+                self.assertEqual(settings["sandbox"]["autoAllowBashIfSandboxed"], False)
                 self.assertEqual(settings["sandbox"]["failIfUnavailable"], True)
                 deny_write = settings["sandbox"]["filesystem"]["denyWrite"]
                 for path in ("${{ runner.temp }}/_runner_file_commands", "${{ runner.tool_cache }}",
