@@ -113,6 +113,20 @@ def _normalize_order_body(body: Any) -> dict:
     }
 
 
+# One owned send is capped at this wall-clock budget. Each httpx phase is not
+# its own copy of the budget: a trickle must not keep the dispatch lock.
+PAPER_HTTP_TIMEOUT_S = 10.0
+# The profile store waits longer than that whole send. A stop blocked on the
+# dispatch write lock then commits when the send returns, instead of being
+# refused because the database was still locked.
+PAPER_STORE_BUSY_TIMEOUT_S = 30.0
+
+
+def paper_dispatch_budget_s() -> float:
+    """Seconds one owned paper send may hold the dispatch lock."""
+    return float(PAPER_HTTP_TIMEOUT_S)
+
+
 class AlpacaPaperHTTPClient:
     """Minimal synchronous client for Alpaca's fixed PAPER trading endpoint.
 
@@ -123,7 +137,7 @@ class AlpacaPaperHTTPClient:
     """
 
     def __init__(self, key_id: str, secret_key: str, *, http_client=None,
-                 timeout_seconds: float = 10.0, clock=None) -> None:
+                 timeout_seconds: float = PAPER_HTTP_TIMEOUT_S, clock=None) -> None:
         if not str(key_id).strip() or not str(secret_key).strip():
             raise AlpacaPaperError("both Alpaca paper credentials are required")
         self._headers = {

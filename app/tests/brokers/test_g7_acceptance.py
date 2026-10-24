@@ -10,8 +10,9 @@ Criteria covered (one test each):
   * EVERY order-state transition writes a hash-chained AuditEntry BEFORE returning success (Inv 6);
   * ``review_equity_order`` PROVABLY precedes ``place_equity_order``;
   * INVARIANT 1 CALL-SITE: the ONLY code reaching a broker submit passes risk -> mode -> approval,
-    proven statically (AST scan: the sole ``.submit_order(`` call outside an adapter's own
-    injected-transport delegation is inside ``OrderGateway.submit``, after the gates) AND at
+    proven statically (AST scan: the ``.submit_order(`` calls outside an adapter's own
+    injected-transport delegation are ``OrderGateway.submit``, after the gates, and
+    ``PaperOrderGateway``'s class pin, which that submit enters) AND at
     runtime (a stack-capturing broker + ``sys.settrace`` tracer that catches getattr / partial /
     string-shim dispatch and shows the gates ran before the broker call) — SEC-03;
   * TOCTOU: a risk verdict that deteriorates after approval VOIDS the submit (SEC-20 bypass logged);
@@ -236,13 +237,19 @@ def _submit_order_call_sites():
 def test_g7_invariant1_only_gated_callsite_reaches_broker_ast():
     sites = _submit_order_call_sites()
     modfuncs = sorted({(m, f) for m, f, _ in sites})
-    # EXACTLY two ``.submit_order(`` calls exist in the whole brokers package:
-    #   * ("gateway", "submit")          — the single GATED reach to the broker;
-    #   * ("alpaca_paper", "submit_order") — the adapter delegating to its OWN injected
-    #     transport (``self._client``), i.e. the broker calling itself, not reaching out.
-    # Anything else (a job/bridge/module-level call bypassing the gate) fails Invariant 1.
-    assert modfuncs == [("alpaca_paper", "submit_order"), ("gateway", "submit")], modfuncs
-    assert len([s for s in sites if s[0] == "gateway"]) == 1  # the gateway reaches the broker ONCE
+    # Three ``.submit_order(`` calls exist in the whole brokers package:
+    #   * ("gateway", "submit") — the single gated reach. It calls the broker object.
+    #   * ("paper_gateway", "submit_order") — the class pin that object runs, immediately
+    #     after the profile fence. It is not a second entry; gateway.submit calls it.
+    #   * ("alpaca_paper", "submit_order") — the adapter delegating to its own client.
+    # Anything else (a job, bridge, or module-level call) fails Invariant 1.
+    assert modfuncs == [
+        ("alpaca_paper", "submit_order"),
+        ("gateway", "submit"),
+        ("paper_gateway", "submit_order"),
+    ], modfuncs
+    assert len([s for s in sites if s[0] == "gateway"]) == 1
+    assert len([s for s in sites if s[0] == "paper_gateway"]) == 1
 
 
 def test_g7_invariant1_gates_precede_broker_call_ast():
