@@ -2100,9 +2100,14 @@ class WorkflowWiringTests(unittest.TestCase):
         action = [s for s in model["steps"] if s.get("id") == "claude"][0]
         self.assertEqual(action["env"], {"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1"})
         self.assertEqual(action["with"]["path_to_bun_executable"], "/opt/csl-bun/bun")
-        self.assertNotIn("path_to_claude_code_executable", action["with"])
+        self.assertEqual(action["with"]["path_to_claude_code_executable"], "/opt/csl-claude/launch")
         self.assertNotIn("SRT_DEBUG", action.get("env", {}))
         self.assertNotIn("DISABLE_UPDATES", action.get("env", {}))
+        self.assertEqual(names[names.index("claude") + 1], "Relay sandbox fd-2 (E1)")
+        relay = step(model, "Relay sandbox fd-2 (E1)")
+        self.assertEqual(relay["if"], "always()")
+        self.assertEqual(relay["shell"], "/usr/bin/sudo -n /opt/csl-relay/bin/relay {0}")
+        self.assertEqual(names[2], "E1 install relay and launcher")
         setup = step(model, "E3-0-early setup-bun")
         self.assertEqual(
             setup["uses"],

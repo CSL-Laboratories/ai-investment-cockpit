@@ -643,11 +643,11 @@ class WorkflowStructureTests(unittest.TestCase):
         )
         self.assertNotIn("uses: actions/checkout@v4", mention)
         self.assertIn("path_to_bun_executable: /opt/csl-bun/bun", mention)
-        self.assertNotIn("path_to_claude_code_executable", mention)
+        self.assertIn("path_to_claude_code_executable: /opt/csl-claude/launch", mention)
         self.assertNotIn("install_pinned_claude_code.sh", mention)
         self.assertNotIn("SRT_DEBUG:", mention)
         self.assertNotIn("show_full_output", mention)
-        self.assertNotIn("/opt/csl-relay/bin/relay", mention)
+        self.assertIn("shell: /usr/bin/sudo -n /opt/csl-relay/bin/relay {0}", mention)
         self.assertNotIn("background: true", mention)
         self.assertNotIn("isBackground", mention)
         bootstrap = mention.split("E3-0-early root bootstrap", 1)[1].split(
