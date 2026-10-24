@@ -641,7 +641,13 @@ class WorkflowStructureTests(unittest.TestCase):
         )
         self.assertIn("bun-version: \"1.3.14\"", mention)
         self.assertIn("no-cache: true", mention)
+        self.assertIn("id: setup-bun", mention)
+        self.assertIn("E3-0-early record bun-path", mention)
+        self.assertIn("steps.setup-bun.outputs.bun-path", mention)
+        self.assertIn("/home/runner/work/_temp/csl-e3-bun-path", mention)
         self.assertIn("E3-0-early root bootstrap", mention)
+        self.assertIn("C6.2 stub", mention)
+        self.assertIn("printf '%s\\n' .claude-fixer-out/ .claude-fixer-replies/", mention)
         self.assertIn(
             "shell: /usr/bin/sudo -n /bin/bash --noprofile --norc -e -o pipefail {0}",
             mention,
@@ -672,6 +678,8 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertNotIn("%sudo   ALL=(ALL:ALL) NOPASSWD:ALL", bootstrap)
         self.assertIn('"$GCC" -static', bootstrap)
         self.assertIn("E3-0-early setup-bun", fixer)
+        self.assertIn("E3-0-early record bun-path", fixer)
+        self.assertIn("C6.2 stub", fixer)
         self.assertIn("path_to_bun_executable", fixer)
         self.assertIn("sandbox_e3_cli_pin.sh", fixer)
 
@@ -926,6 +934,10 @@ class FixerGateAndPromptTests(unittest.TestCase):
             self.assertNotIn("the gate result", body, job)
             self.assertIn("that linux-gates checks the pushed commit", body, job)
             self.assertIn("If you cannot complete the fix, or a command you need is denied", body, job)
+            self.assertNotIn("Read them when you need them", body, job)
+            self.assertIn("must not be Read", body, job)
+            self.assertIn('"agents-md@builtin"', body, job)
+            self.assertIn('"instructionFiles": "claude-md"', body, job)
 
     def test_denials_are_reported_after_each_fixer(self) -> None:
         for job in ("claude-mention", "devin-review-fix"):
@@ -1390,6 +1402,10 @@ class ConflictJobStructureTests(unittest.TestCase):
         self.assertIn("merge --no-ff --no-commit", job)
         self.assertNotIn("--no-edit", job)
         self.assertIn('git config user.name "claude[bot]"', job)
+        self.assertIn("C6.2 stub", job)
+        self.assertIn('"agents-md@builtin"', job)
+        self.assertIn('"instructionFiles": "claude-md"', job)
+        self.assertIn("must not be Read", job)
         self.assertIn("needs.prepare.outputs.skip == 'false'", job.split("steps:")[0])
         self.assertIn('"open $HEAD_SHA dirty $REPO"', prepare)
         self.assertIn(".head.repo.full_name", prepare)

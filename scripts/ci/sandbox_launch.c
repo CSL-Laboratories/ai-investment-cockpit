@@ -261,7 +261,8 @@ static int kill_remaining_children(void)
     DIR *d;
     struct dirent *e;
     pid_t self = getpid();
-    int killed = 0;
+    int work = 0;
+    int st = 0;
     d = opendir("/proc");
     if (!d) {
         return 0;
@@ -270,6 +271,7 @@ static int kill_remaining_children(void)
         char *end = NULL;
         pid_t pid;
         pid_t ppid;
+        pid_t wr;
         if (e->d_name[0] < '1' || e->d_name[0] > '9') {
             continue;
         }
@@ -280,19 +282,27 @@ static int kill_remaining_children(void)
         if (parse_ppid(pid, &ppid) != 0 || ppid != self) {
             continue;
         }
+        /* kill() on a zombie returns 0, so reap first and do not count a
+         * kill. Reaping is still work: the caller sleeps and rescans for
+         * children adopted after the zombie parent is gone (PPid == self). */
+        wr = waitpid(pid, &st, WNOHANG);
+        if (wr == pid) {
+            work++;
+            continue;
+        }
         if (kill(pid, SIGKILL) == 0) {
-            killed++;
+            work++;
         }
     }
     closedir(d);
-    return killed;
+    return work;
 }
 
 static void reap_wnohang_until(long deadline_ms, int cap)
 {
     int left = cap;
     int st = 0;
-    while (left-- > 0) {
+    while (left > 0) {
         pid_t r = waitpid(-1, &st, WNOHANG);
         if (r < 0) {
             break;
@@ -305,7 +315,30 @@ static void reap_wnohang_until(long deadline_ms, int cap)
             sleep_ms(10);
             continue;
         }
+        left--;
     }
+}
+
+void csl_reap_leftover_descendants(pid_t child)
+{
+    long start = monotonic_ms();
+    long deadline = (start < 0) ? 0 : start + 3000;
+    int round;
+    int st = 0;
+    reap_wnohang_until(deadline, 256);
+    (void)kill(-child, SIGKILL);
+    for (round = 0; round < 32; round++) {
+        int n = kill_remaining_children();
+        while (waitpid(-1, &st, WNOHANG) > 0) {
+        }
+        if (n == 0) {
+            break;
+        }
+        sleep_ms(10);
+    }
+    start = monotonic_ms();
+    deadline = (start < 0) ? 0 : start + 200;
+    reap_wnohang_until(deadline, 256);
 }
 
 static void close_cmsg_fds(struct msghdr *msg, int keep)
@@ -325,6 +358,7 @@ static void close_cmsg_fds(struct msghdr *msg, int keep)
     }
 }
 
+#ifndef CSL_N14_TEST
 int main(int argc, char **argv)
 {
     char home[256], user[64];
@@ -500,26 +534,12 @@ int main(int argc, char **argv)
     if (waitpid(child, &status, 0) < 0) {
         status = 1;
     }
-    /* N14 / R5-L1: subreaper reaps orphaned descendants (including
+    /* N14 / R5-L1 / C4.1: subreaper reaps orphaned descendants (including
      * setsid) outside a nested pid namespace. WNOHANG until a few
      * seconds, then SIGKILL the process group and remaining children,
      * then a final bounded WNOHANG reap. Never block forever. Writer
      * veto covers fd 2 leftovers after that; not a cgroup. */
-    {
-        long start = monotonic_ms();
-        long deadline = (start < 0) ? 0 : start + 3000;
-        int round;
-        reap_wnohang_until(deadline, 256);
-        (void)kill(-child, SIGKILL);
-        for (round = 0; round < 32; round++) {
-            if (kill_remaining_children() == 0) {
-                break;
-            }
-        }
-        start = monotonic_ms();
-        deadline = (start < 0) ? 0 : start + 200;
-        reap_wnohang_until(deadline, 256);
-    }
+    csl_reap_leftover_descendants(child);
     if (WIFEXITED(status)) {
         dummy = 'E';
         (void)csl_write_all(pair[0], "END\n", 4);
@@ -530,3 +550,4 @@ int main(int argc, char **argv)
     }
     return 1;
 }
+#endif
