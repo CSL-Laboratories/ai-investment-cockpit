@@ -2113,5 +2113,26 @@ class ClaudeCodeInstallerPinTests(unittest.TestCase):
                 self.assertIn("DISABLE_UPDATES", inputs)
 
 
+class P9ProbeWorkflowTests(unittest.TestCase):
+    """CSL-474 P9 workflow_dispatch probes live next to the sandbox writers."""
+
+    def test_p9_probe_workflow_is_dispatch_only_and_pinned(self) -> None:
+        path = ROOT / ".github" / "workflows" / "csl-474-p9-probes.yml"
+        text = path.read_text(encoding="utf-8")
+        header = text.split("\njobs:", 1)[0]
+        self.assertIn("workflow_dispatch:", header)
+        self.assertNotIn("\npull_request:", header)
+        self.assertNotIn("\npush:", header)
+        self.assertIn("contents: read", header)
+        self.assertIn("enable_probe2_oauth:", header)
+        self.assertIn("default: false", header)
+        self.assertIn("2.1.306", text)
+        self.assertIn("520bc6c1f40af466bd03a278b5ae1af1a2938bc7de5b9e5cb15526da20d71cfe", text)
+        self.assertIn("a5a423f75c251dcbff8a74e99f83b2cb03c72bfa", text)
+        self.assertIn("runs-on: ubuntu-latest", text)
+        self.assertNotIn("anthropics/claude-code-action", text)
+        self.assertIn("if: ${{ inputs.enable_probe2_oauth }}", text)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

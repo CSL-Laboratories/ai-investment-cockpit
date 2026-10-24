@@ -155,23 +155,28 @@ still only records (I-4 / C10.1).
    - **C8.4 satisfied:** no rebase or force-push in place. This stack still
      uses normal merge commits down E3 → E2 → E1.
 
-9. **P9 — accepted, reduced scope. Probes 0/2 still owed.**
-   - **Probe 0 owed:** host facts (cgroup v2, `cgroup.kill`, runner writing
-     `cgroup.procs`, userns, sudo, `ps`) on **both** `ubuntu-24.04` and
-     `ubuntu-26.04`. New `workflow_dispatch` workflow; Lucas approves adding
-     and dispatching it.
+9. **P9 — accepted, reduced scope. Probe workflow added; dispatch still owed.**
+   - **Probe 0 added:** `.github/workflows/csl-474-p9-probes.yml`
+     (`workflow_dispatch` only, `contents: read`). Host facts (cgroup v2,
+     `cgroup.kill`, runner writing `cgroup.procs`, userns, sudo, `ps`).
+     Lucas approved adding the file (2026-10-24 1:35pm PT). **Awaiting
+     Lucas's dispatch go.** This PR does not dispatch it.
    - **Probe 1 satisfied:** C4.2 native test, ordinary CI.
-   - **Probe 2 owed:** 2.1.306 CLI: empty MCP file stays immutable, and
-     `--setting-sources user` loads no cwd hooks. Same dispatch workflow;
-     second explicit yes if OAuth is required. No write GITHUB_TOKEN. Do
-     not use a live `@claude` on #265.
+   - **Probe 2 added:** same workflow. 2.1.306 CLI pin
+     `520bc6c1…` / action pin `a5a423f7…`; empty MCP immutability;
+     `--setting-sources user` plus planted `settings.local.json` / AGENTS.md
+     canaries. OAuth invoke is `enable_probe2_oauth` (default false).
+     **Awaiting Lucas's dispatch go.** No secrets/vars added. Do not use a
+     live `@claude` on #265.
 
 10. **P10 / I-4 — accepted.**
     - **C10.1 satisfied:** 0b sweep stays record-only.
     - **C10.2 satisfied:** 0b still runs before the `head_sha` checkout.
 
 **Open item for Lucas (not a C-id):** `ubuntu-latest` is migrating from
-24.04 to 26.04 between 19 Oct and 19 Nov 2026. Either pin `runs-on`, or
-accept 26.04 and run Probes 0/2 on both images.
+24.04 to 26.04 between 19 Oct and 19 Nov 2026. Lucas approved pinning
+`runs-on: ubuntu-24.04` (2026-10-24 1:36pm PT); that pin is a separate
+commit on this stack. A 26.04 upgrade (including Probe 0 on 26.04) is a
+later separate PR.
 
 D5 and D8 remain unapproved. E4 stays parked.
