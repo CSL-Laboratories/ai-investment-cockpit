@@ -3085,8 +3085,9 @@ jobs:
           /* F3a argv allowlist. Returns 0 if ok, -1 on reject (reason code only). */
           int csl_argv_allow(int argc, char **argv);
 
-          /* Drop incoming --mcp-config / --strict-mcp-config and append the
-           * launcher-owned empty MCP pair. out[cap] is the array bound including NULL. */
+          /* Same parser as allow. Drops exactly the tokens allow classified as
+           * incoming MCP (flag and its value slot), then appends the launcher-owned
+           * empty MCP pair. out[cap] is the array bound including NULL. */
           int csl_argv_rewrite(int argc, char **argv, char **out, int cap, int *outn);
 
           #endif
@@ -3121,6 +3122,22 @@ jobs:
                   return 1;
               }
               return 0;
+          }
+
+          /* SDK my() never emits a separate value token that starts with '-'.
+           * Empty values are also refuse (fail closed). */
+          static int value_ok(const char *v)
+          {
+              return v && v[0] != '\0' && v[0] != '-';
+          }
+
+          #define CSL_ARGV_MAX 64
+
+          static void mark_drop(unsigned char *drop, int i)
+          {
+              if (drop && i >= 0 && i < CSL_ARGV_MAX) {
+                  drop[i] = 1;
+              }
           }
 
           static void free_tools(char **tools, int n)
@@ -3189,7 +3206,7 @@ jobs:
               return 1;
           }
 
-          int csl_argv_allow(int argc, char **argv)
+          static int classify(int argc, char **argv, unsigned char *drop)
           {
               int i;
               int saw_turns = 0, saw_sources = 0, saw_allowed = 0;
@@ -3216,6 +3233,9 @@ jobs:
               snprintf(helper, sizeof helper,
                        "Bash(python3 %s/claude-fixer-guard/model-api --:*)", CSL_RUNNER_TEMP);
 
+              if (argc < 1 || argc >= CSL_ARGV_MAX) {
+                  return -1;
+              }
               for (i = 1; i < argc; i++) {
                   const char *a = argv[i];
                   if (strcmp(a, "--dangerously-skip-permissions") == 0) {
@@ -3237,21 +3257,30 @@ jobs:
                   }
                   /* Incoming MCP is discarded; launcher injects its own empty file. */
                   if (strcmp(a, "--mcp-config") == 0) {
-                      if (i + 1 >= argc) {
+                      if (i + 1 >= argc || !value_ok(argv[i + 1])) {
                           free_tools(tools, ntools);
                           return -1;
                       }
+                      mark_drop(drop, i);
+                      mark_drop(drop, i + 1);
                       i++;
                       continue;
                   }
                   if (starts_with(a, "--mcp-config=")) {
+                      if (!value_ok(a + 13)) {
+                          free_tools(tools, ntools);
+                          return -1;
+                      }
+                      mark_drop(drop, i);
                       continue;
                   }
                   if (strcmp(a, "--strict-mcp-config") == 0) {
+                      mark_drop(drop, i);
                       continue;
                   }
                   if (strcmp(a, "--permission-mode") == 0) {
-                      if (saw_perm || i + 1 >= argc || strcmp(argv[i + 1], "acceptEdits") != 0) {
+                      if (saw_perm || i + 1 >= argc || !value_ok(argv[i + 1]) ||
+                          strcmp(argv[i + 1], "acceptEdits") != 0) {
                           free_tools(tools, ntools);
                           return -1;
                       }
@@ -3260,7 +3289,7 @@ jobs:
                       continue;
                   }
                   if (starts_with(a, "--permission-mode=")) {
-                      if (saw_perm || strcmp(a + 18, "acceptEdits") != 0) {
+                      if (saw_perm || !value_ok(a + 18) || strcmp(a + 18, "acceptEdits") != 0) {
                           free_tools(tools, ntools);
                           return -1;
                       }
@@ -3275,7 +3304,7 @@ jobs:
                           return -1;
                       }
                       if (t > 0) {
-                          if (saw_turns || strcmp(val, "30") != 0) {
+                          if (saw_turns || !value_ok(val) || strcmp(val, "30") != 0) {
                               free_tools(tools, ntools);
                               return -1;
                           }
@@ -3291,7 +3320,7 @@ jobs:
                           return -1;
                       }
                       if (t > 0) {
-                          if (saw_sources || strcmp(val, "user") != 0) {
+                          if (saw_sources || !value_ok(val) || strcmp(val, "user") != 0) {
                               free_tools(tools, ntools);
                               return -1;
                           }
@@ -3311,7 +3340,7 @@ jobs:
                       }
                       if (t > 0) {
                           int extra;
-                          if (saw_allowed) {
+                          if (saw_allowed || !value_ok(val)) {
                               free_tools(tools, ntools);
                               return -1;
                           }
@@ -3336,17 +3365,16 @@ jobs:
                           return -1;
                       }
                       if (t > 0) {
-                          if (saw_disallowed) {
+                          if (saw_disallowed || !value_ok(val)) {
                               free_tools(tools, ntools);
                               return -1;
                           }
-                          (void)val;
                           saw_disallowed = 1;
                           continue;
                       }
                   }
                   if (strcmp(a, "--append-system-prompt") == 0) {
-                      if (saw_append || i + 1 >= argc) {
+                      if (saw_append || i + 1 >= argc || !value_ok(argv[i + 1])) {
                           free_tools(tools, ntools);
                           return -1;
                       }
@@ -3355,7 +3383,8 @@ jobs:
                       continue;
                   }
                   if (strcmp(a, "--output-format") == 0) {
-                      if (i + 1 >= argc || strcmp(argv[i + 1], "stream-json") != 0) {
+                      if (i + 1 >= argc || !value_ok(argv[i + 1]) ||
+                          strcmp(argv[i + 1], "stream-json") != 0) {
                           free_tools(tools, ntools);
                           return -1;
                       }
@@ -3363,7 +3392,8 @@ jobs:
                       continue;
                   }
                   if (strcmp(a, "--input-format") == 0) {
-                      if (i + 1 >= argc || strcmp(argv[i + 1], "stream-json") != 0) {
+                      if (i + 1 >= argc || !value_ok(argv[i + 1]) ||
+                          strcmp(argv[i + 1], "stream-json") != 0) {
                           free_tools(tools, ntools);
                           return -1;
                       }
@@ -3400,25 +3430,25 @@ jobs:
               return 0;
           }
 
+          int csl_argv_allow(int argc, char **argv)
+          {
+              return classify(argc, argv, NULL);
+          }
+
           int csl_argv_rewrite(int argc, char **argv, char **out, int cap, int *outn)
           {
+              unsigned char drop[CSL_ARGV_MAX];
               int i, n = 0;
-              if (cap < 4 || !argv || !out) {
+              if (cap < 4 || !argv || !out || argc < 1 || argc >= CSL_ARGV_MAX) {
+                  return -1;
+              }
+              memset(drop, 0, sizeof drop);
+              if (classify(argc, argv, drop) != 0) {
                   return -1;
               }
               out[n++] = argv[0];
               for (i = 1; i < argc; i++) {
-                  if (strcmp(argv[i], "--mcp-config") == 0) {
-                      if (i + 1 >= argc) {
-                          return -1;
-                      }
-                      i++;
-                      continue;
-                  }
-                  if (starts_with(argv[i], "--mcp-config=")) {
-                      continue;
-                  }
-                  if (strcmp(argv[i], "--strict-mcp-config") == 0) {
+                  if (drop[i]) {
                       continue;
                   }
                   if (n + 4 > cap) {
@@ -3806,6 +3836,13 @@ jobs:
                   refuse("claude_hash");
               }
 
+          #ifndef PR_SET_CHILD_SUBREAPER
+          #define PR_SET_CHILD_SUBREAPER 36
+          #endif
+              if (prctl(PR_SET_CHILD_SUBREAPER, 1L) < 0) {
+                  refuse("subreaper");
+              }
+
               child = fork();
               if (child < 0) {
                   refuse("fork");
@@ -3840,10 +3877,17 @@ jobs:
               if (waitpid(child, &status, 0) < 0) {
                   status = 1;
               }
-              /* N14: wait remaining process-group members (grandchildren that did
-               * not setsid). Writer veto covers setsid. END only if the direct
-               * child exited (not killed). */
-              while (waitpid(-child, NULL, 0) > 0) {
+              /* N14: as subreaper, reap grandchildren (waitpid children only)
+               * before END. Bound so a fork bomb cannot hang forever. Writer
+               * veto covers setsid processes that keep fd 2. */
+              {
+                  int left = 256;
+                  int st = 0;
+                  while (left-- > 0) {
+                      if (waitpid(-1, &st, 0) <= 0) {
+                          break;
+                      }
+                  }
               }
               if (WIFEXITED(status)) {
                   dummy = 'E';
@@ -5072,9 +5116,9 @@ jobs:
           ed36a4ceaf1602cf7f9d8d93d6988e3365dca0c57cd8df41c85858827a99570d  sandbox_common.c
           098eb6177463294e2585fca35a21a93575ae9b162185d5646bd156d0f9b04996  sandbox_filter.h
           c7d218317d057037e4c3712af5e79ea38b5763f67a6bfe1e6bcb55d31f29eb45  sandbox_filter.c
-          24fafd315646846decbea02390ebef80b45c767aabee2c4733dcce04c122e41a  sandbox_argv.h
-          20b71024ba6695073e939c0a6776500c3415b16d0d6ff9324db7cf8fb2f2d4e1  sandbox_argv.c
-          0b14afb7eb4546d01273ce13e18b7fa259b4c3ccc4963f9b19ce0e5a0fe324df  sandbox_launch.c
+          ce7d40fb65fb34f5adb4e6089d7f26423ffc299f52b77acf32d446f6d09753fe  sandbox_argv.h
+          53d9e830a9a3e54da837bda920af5d8ca392faf46600cfcc47ffb2d6fcf0da7f  sandbox_argv.c
+          aa2b6e45c5c69a2da7baaf05c76e75240a9c9b40ae5aa9edd7b98eb91eabe252  sandbox_launch.c
           314468cf71d54907394e0040f37c02362809e408c5729072ccd8e7009980a23c  sandbox_capture.c
           5497efe24944dc3a792a9b1b96679af39bf4c89b8251119f8f79f30be1a137b0  sandbox_relay.c
           CSL_C_PIN
@@ -10677,8 +10721,9 @@ jobs:
           /* F3a argv allowlist. Returns 0 if ok, -1 on reject (reason code only). */
           int csl_argv_allow(int argc, char **argv);
 
-          /* Drop incoming --mcp-config / --strict-mcp-config and append the
-           * launcher-owned empty MCP pair. out[cap] is the array bound including NULL. */
+          /* Same parser as allow. Drops exactly the tokens allow classified as
+           * incoming MCP (flag and its value slot), then appends the launcher-owned
+           * empty MCP pair. out[cap] is the array bound including NULL. */
           int csl_argv_rewrite(int argc, char **argv, char **out, int cap, int *outn);
 
           #endif
@@ -10713,6 +10758,22 @@ jobs:
                   return 1;
               }
               return 0;
+          }
+
+          /* SDK my() never emits a separate value token that starts with '-'.
+           * Empty values are also refuse (fail closed). */
+          static int value_ok(const char *v)
+          {
+              return v && v[0] != '\0' && v[0] != '-';
+          }
+
+          #define CSL_ARGV_MAX 64
+
+          static void mark_drop(unsigned char *drop, int i)
+          {
+              if (drop && i >= 0 && i < CSL_ARGV_MAX) {
+                  drop[i] = 1;
+              }
           }
 
           static void free_tools(char **tools, int n)
@@ -10781,7 +10842,7 @@ jobs:
               return 1;
           }
 
-          int csl_argv_allow(int argc, char **argv)
+          static int classify(int argc, char **argv, unsigned char *drop)
           {
               int i;
               int saw_turns = 0, saw_sources = 0, saw_allowed = 0;
@@ -10808,6 +10869,9 @@ jobs:
               snprintf(helper, sizeof helper,
                        "Bash(python3 %s/claude-fixer-guard/model-api --:*)", CSL_RUNNER_TEMP);
 
+              if (argc < 1 || argc >= CSL_ARGV_MAX) {
+                  return -1;
+              }
               for (i = 1; i < argc; i++) {
                   const char *a = argv[i];
                   if (strcmp(a, "--dangerously-skip-permissions") == 0) {
@@ -10829,21 +10893,30 @@ jobs:
                   }
                   /* Incoming MCP is discarded; launcher injects its own empty file. */
                   if (strcmp(a, "--mcp-config") == 0) {
-                      if (i + 1 >= argc) {
+                      if (i + 1 >= argc || !value_ok(argv[i + 1])) {
                           free_tools(tools, ntools);
                           return -1;
                       }
+                      mark_drop(drop, i);
+                      mark_drop(drop, i + 1);
                       i++;
                       continue;
                   }
                   if (starts_with(a, "--mcp-config=")) {
+                      if (!value_ok(a + 13)) {
+                          free_tools(tools, ntools);
+                          return -1;
+                      }
+                      mark_drop(drop, i);
                       continue;
                   }
                   if (strcmp(a, "--strict-mcp-config") == 0) {
+                      mark_drop(drop, i);
                       continue;
                   }
                   if (strcmp(a, "--permission-mode") == 0) {
-                      if (saw_perm || i + 1 >= argc || strcmp(argv[i + 1], "acceptEdits") != 0) {
+                      if (saw_perm || i + 1 >= argc || !value_ok(argv[i + 1]) ||
+                          strcmp(argv[i + 1], "acceptEdits") != 0) {
                           free_tools(tools, ntools);
                           return -1;
                       }
@@ -10852,7 +10925,7 @@ jobs:
                       continue;
                   }
                   if (starts_with(a, "--permission-mode=")) {
-                      if (saw_perm || strcmp(a + 18, "acceptEdits") != 0) {
+                      if (saw_perm || !value_ok(a + 18) || strcmp(a + 18, "acceptEdits") != 0) {
                           free_tools(tools, ntools);
                           return -1;
                       }
@@ -10867,7 +10940,7 @@ jobs:
                           return -1;
                       }
                       if (t > 0) {
-                          if (saw_turns || strcmp(val, "30") != 0) {
+                          if (saw_turns || !value_ok(val) || strcmp(val, "30") != 0) {
                               free_tools(tools, ntools);
                               return -1;
                           }
@@ -10883,7 +10956,7 @@ jobs:
                           return -1;
                       }
                       if (t > 0) {
-                          if (saw_sources || strcmp(val, "user") != 0) {
+                          if (saw_sources || !value_ok(val) || strcmp(val, "user") != 0) {
                               free_tools(tools, ntools);
                               return -1;
                           }
@@ -10903,7 +10976,7 @@ jobs:
                       }
                       if (t > 0) {
                           int extra;
-                          if (saw_allowed) {
+                          if (saw_allowed || !value_ok(val)) {
                               free_tools(tools, ntools);
                               return -1;
                           }
@@ -10928,17 +11001,16 @@ jobs:
                           return -1;
                       }
                       if (t > 0) {
-                          if (saw_disallowed) {
+                          if (saw_disallowed || !value_ok(val)) {
                               free_tools(tools, ntools);
                               return -1;
                           }
-                          (void)val;
                           saw_disallowed = 1;
                           continue;
                       }
                   }
                   if (strcmp(a, "--append-system-prompt") == 0) {
-                      if (saw_append || i + 1 >= argc) {
+                      if (saw_append || i + 1 >= argc || !value_ok(argv[i + 1])) {
                           free_tools(tools, ntools);
                           return -1;
                       }
@@ -10947,7 +11019,8 @@ jobs:
                       continue;
                   }
                   if (strcmp(a, "--output-format") == 0) {
-                      if (i + 1 >= argc || strcmp(argv[i + 1], "stream-json") != 0) {
+                      if (i + 1 >= argc || !value_ok(argv[i + 1]) ||
+                          strcmp(argv[i + 1], "stream-json") != 0) {
                           free_tools(tools, ntools);
                           return -1;
                       }
@@ -10955,7 +11028,8 @@ jobs:
                       continue;
                   }
                   if (strcmp(a, "--input-format") == 0) {
-                      if (i + 1 >= argc || strcmp(argv[i + 1], "stream-json") != 0) {
+                      if (i + 1 >= argc || !value_ok(argv[i + 1]) ||
+                          strcmp(argv[i + 1], "stream-json") != 0) {
                           free_tools(tools, ntools);
                           return -1;
                       }
@@ -10992,25 +11066,25 @@ jobs:
               return 0;
           }
 
+          int csl_argv_allow(int argc, char **argv)
+          {
+              return classify(argc, argv, NULL);
+          }
+
           int csl_argv_rewrite(int argc, char **argv, char **out, int cap, int *outn)
           {
+              unsigned char drop[CSL_ARGV_MAX];
               int i, n = 0;
-              if (cap < 4 || !argv || !out) {
+              if (cap < 4 || !argv || !out || argc < 1 || argc >= CSL_ARGV_MAX) {
+                  return -1;
+              }
+              memset(drop, 0, sizeof drop);
+              if (classify(argc, argv, drop) != 0) {
                   return -1;
               }
               out[n++] = argv[0];
               for (i = 1; i < argc; i++) {
-                  if (strcmp(argv[i], "--mcp-config") == 0) {
-                      if (i + 1 >= argc) {
-                          return -1;
-                      }
-                      i++;
-                      continue;
-                  }
-                  if (starts_with(argv[i], "--mcp-config=")) {
-                      continue;
-                  }
-                  if (strcmp(argv[i], "--strict-mcp-config") == 0) {
+                  if (drop[i]) {
                       continue;
                   }
                   if (n + 4 > cap) {
@@ -11399,6 +11473,13 @@ jobs:
                   refuse("claude_hash");
               }
 
+          #ifndef PR_SET_CHILD_SUBREAPER
+          #define PR_SET_CHILD_SUBREAPER 36
+          #endif
+              if (prctl(PR_SET_CHILD_SUBREAPER, 1L) < 0) {
+                  refuse("subreaper");
+              }
+
               child = fork();
               if (child < 0) {
                   refuse("fork");
@@ -11433,10 +11514,17 @@ jobs:
               if (waitpid(child, &status, 0) < 0) {
                   status = 1;
               }
-              /* N14: wait remaining process-group members (grandchildren that did
-               * not setsid). Writer veto covers setsid. END only if the direct
-               * child exited (not killed). */
-              while (waitpid(-child, NULL, 0) > 0) {
+              /* N14: as subreaper, reap grandchildren (waitpid children only)
+               * before END. Bound so a fork bomb cannot hang forever. Writer
+               * veto covers setsid processes that keep fd 2. */
+              {
+                  int left = 256;
+                  int st = 0;
+                  while (left-- > 0) {
+                      if (waitpid(-1, &st, 0) <= 0) {
+                          break;
+                      }
+                  }
               }
               if (WIFEXITED(status)) {
                   dummy = 'E';
@@ -12665,9 +12753,9 @@ jobs:
           ed36a4ceaf1602cf7f9d8d93d6988e3365dca0c57cd8df41c85858827a99570d  sandbox_common.c
           098eb6177463294e2585fca35a21a93575ae9b162185d5646bd156d0f9b04996  sandbox_filter.h
           c7d218317d057037e4c3712af5e79ea38b5763f67a6bfe1e6bcb55d31f29eb45  sandbox_filter.c
-          24fafd315646846decbea02390ebef80b45c767aabee2c4733dcce04c122e41a  sandbox_argv.h
-          20b71024ba6695073e939c0a6776500c3415b16d0d6ff9324db7cf8fb2f2d4e1  sandbox_argv.c
-          0b14afb7eb4546d01273ce13e18b7fa259b4c3ccc4963f9b19ce0e5a0fe324df  sandbox_launch.c
+          ce7d40fb65fb34f5adb4e6089d7f26423ffc299f52b77acf32d446f6d09753fe  sandbox_argv.h
+          53d9e830a9a3e54da837bda920af5d8ca392faf46600cfcc47ffb2d6fcf0da7f  sandbox_argv.c
+          aa2b6e45c5c69a2da7baaf05c76e75240a9c9b40ae5aa9edd7b98eb91eabe252  sandbox_launch.c
           314468cf71d54907394e0040f37c02362809e408c5729072ccd8e7009980a23c  sandbox_capture.c
           5497efe24944dc3a792a9b1b96679af39bf4c89b8251119f8f79f30be1a137b0  sandbox_relay.c
           CSL_C_PIN

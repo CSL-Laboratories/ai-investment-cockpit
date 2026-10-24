@@ -347,6 +347,13 @@ int main(int argc, char **argv)
         refuse("claude_hash");
     }
 
+#ifndef PR_SET_CHILD_SUBREAPER
+#define PR_SET_CHILD_SUBREAPER 36
+#endif
+    if (prctl(PR_SET_CHILD_SUBREAPER, 1L) < 0) {
+        refuse("subreaper");
+    }
+
     child = fork();
     if (child < 0) {
         refuse("fork");
@@ -381,10 +388,17 @@ int main(int argc, char **argv)
     if (waitpid(child, &status, 0) < 0) {
         status = 1;
     }
-    /* N14: wait remaining process-group members (grandchildren that did
-     * not setsid). Writer veto covers setsid. END only if the direct
-     * child exited (not killed). */
-    while (waitpid(-child, NULL, 0) > 0) {
+    /* N14: as subreaper, reap grandchildren (waitpid children only)
+     * before END. Bound so a fork bomb cannot hang forever. Writer
+     * veto covers setsid processes that keep fd 2. */
+    {
+        int left = 256;
+        int st = 0;
+        while (left-- > 0) {
+            if (waitpid(-1, &st, 0) <= 0) {
+                break;
+            }
+        }
     }
     if (WIFEXITED(status)) {
         dummy = 'E';
