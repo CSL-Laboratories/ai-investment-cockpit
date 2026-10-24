@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "o2.identity.schema",
+  "title": "O2 candidate identities",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "maturity", "contract_frozen", "synthetic", "identities"],
+  "properties": {
+    "schema_version": {"type": "string", "const": "o2.candidate.v1"},
+    "maturity": {"type": "string", "const": "researched"},
+    "contract_frozen": {"type": "boolean", "const": false},
+    "synthetic": {"type": "boolean", "const": true},
+    "identities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/identity"}
+    }
+  },
+  "$defs": {
+    "identity": {
+      "oneOf": [
+        {"$ref": "#/$defs/equity"},
+        {"$ref": "#/$defs/event"}
+      ]
+    },
+    "equity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identity_id",
+        "market_family",
+        "identity_version",
+        "venue",
+        "currency",
+        "prior_identity_id",
+        "equity"
+      ],
+      "properties": {
+        "identity_id": {"type": "string", "pattern": "^idn-[a-z0-9-]{1,64}$"},
+        "market_family": {"const": "equity"},
+        "identity_version": {"type": "integer", "minimum": 1},
+        "venue": {"const": "us_equity"},
+        "currency": {"const": "USD"},
+        "prior_identity_id": {"type": ["string", "null"]},
+        "equity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["issuer_cik", "listing_key", "ticker", "share_class"],
+          "properties": {
+            "issuer_cik": {"type": "string", "pattern": "^[0-9]{10}$"},
+            "listing_key": {"type": "string", "pattern": "^us-equity:cik:[0-9]{10}:class:[a-z0-9-]+$"},
+            "ticker": {"type": "string", "pattern": "^[A-Z][A-Z0-9.]{0,11}$"},
+            "share_class": {"type": "string", "pattern": "^[a-z0-9-]{1,32}$"}
+          }
+        },
+        "event": false
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identity_id",
+        "market_family",
+        "identity_version",
+        "venue",
+        "currency",
+        "prior_identity_id",
+        "event"
+      ],
+      "properties": {
+        "identity_id": {"type": "string", "pattern": "^idn-[a-z0-9-]{1,64}$"},
+        "market_family": {"const": "event"},
+        "identity_version": {"type": "integer", "minimum": 1},
+        "venue": {"const": "kalshi_demo"},
+        "currency": {"const": "USD"},
+        "prior_identity_id": {"type": ["string", "null"]},
+        "event": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "environment",
+            "api_path_observed_not_selected",
+            "series_ticker",
+            "event_ticker",
+            "market_ticker",
+            "contract_family",
+            "collateral_return_type",
+            "settlement_sources"
+          ],
+          "properties": {
+            "environment": {"const": "demo"},
+            "api_path_observed_not_selected": {"const": "trade-api/v2"},
+            "series_ticker": {"type": "string", "pattern": "^[A-Z0-9][A-Z0-9-]{0,63}$"},
+            "event_ticker": {"type": "string", "pattern": "^[A-Z0-9][A-Z0-9-]{0,63}$"},
+            "market_ticker": {"type": "string", "pattern": "^[A-Z0-9][A-Z0-9-]{0,63}$"},
+            "contract_family": {"enum": ["binary", "scalar"]},
+            "collateral_return_type": {"enum": ["", "MECNET", "DIRECNET"]},
+            "settlement_sources": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "url"],
+                "properties": {
+                  "name": {"type": "string", "minLength": 1},
+                  "url": {"type": "string", "minLength": 1}
+                }
+              }
+            }
+          }
+        },
+        "equity": false
+      }
+    }
+  }
+}

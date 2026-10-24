@@ -1,0 +1,27 @@
+{
+  "schema_version": "o2.candidate.v1",
+  "maturity": "researched",
+  "contract_frozen": false,
+  "synthetic": true,
+  "files": {
+    "CONTRACT.md": "15f3f4ed30b41c54bd27600636bd96735761c4e4a5b5ab9d69e8465c685ec741",
+    "validate_o2.py": "a109d770d1925892d92f8d30fef57608c01b8ba4c0b9eed55487fc476aeb2d63",
+    "fixtures/identities.json": "a7fc283a14744417a509be3d35634aec6a4be1c3f18c33aa032e70e29796d9ab",
+    "fixtures/raw_records.json": "04354f947f3ef32f50d9ddc92a8cd98a04604225704a8efd9ae7a801bda9fdb4",
+    "fixtures/observations.json": "3773b09dd3d1ad9f9358dc887860bc22bff2a77fca6bc7ef903c4501e3c93dd2",
+    "fixtures/lineage.json": "5639bfe5a2a6a4e62831d5102391c0f0772e226a3d0db42ef91518a999e07278",
+    "fixtures/replay_checks.json": "849c0a0f7178c8d10d362fc388d4491bb5554dff349abb91e30b8e7fa26185e6",
+    "fixtures/coverage.json": "b618b930e95f5c9b4dee9e0ef5ae74e768ad6b62a5a1de34170e8827e2ab83f6",
+    "fixtures/qualification_matrix.json": "8ace962049aa57e68921b4f23a739f570d6b8ee809077cbf40d29cc41d511ea6",
+    "fixtures/negative_controls.json": "35cfaf12b7e11de1a5d2f1ec934956ae643de8551b42880f8e52a0df33a4a2fc",
+    "schemas/identity.schema.json": "69b02870f8dedf8d9cc1da76d6268f2912f282e75141c5d37f3d84b7f7819be2",
+    "schemas/raw_record.schema.json": "e6f8aa8ff1e989b72cd2be0efdee8621430e9da65004fcb62b3122d22c5289e5",
+    "schemas/observation.schema.json": "8b4875b2101644cc06b317f573bb44d7d4bb3a8d987f060c8bdd58a1284b9102",
+    "schemas/lineage.schema.json": "37fd07f7b72da3487ee3a2a9ed0f2cdba6c29cde9586bf297050918689331de0",
+    "schemas/replay_manifest.schema.json": "53e56da8beca1fdad80d414a40a232b91e7fcba91170e9eb8deca103efca256d",
+    "schemas/coverage.schema.json": "4c04da61adab500b642155d2e4cc07c14984e05c327c4e7a44ba8393866a9db4",
+    "schemas/qualification_matrix.schema.json": "1f58f78e0a7765a0ecb5b1d0c08774938f50c19d0ced8b08d088dd437ae046a7",
+    "schemas/negative_control.schema.json": "e62fde7170fd951433aeea6ebfb664624984c2342721b77c3ecafad4b9b0f997",
+    "schemas/manifest.schema.json": "69671129f05292babf473264523db7e9d1e880ccb4f297eef1b2ca3e386f41b8"
+  }
+}

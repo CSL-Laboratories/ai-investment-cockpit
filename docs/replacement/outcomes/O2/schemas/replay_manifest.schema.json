@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "o2.replay_manifest.schema",
+  "title": "O2 candidate replay checks",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "maturity",
+    "contract_frozen",
+    "synthetic",
+    "ordering",
+    "visibility_rule",
+    "checks"
+  ],
+  "properties": {
+    "schema_version": {"const": "o2.candidate.v1"},
+    "maturity": {"const": "researched"},
+    "contract_frozen": {"const": false},
+    "synthetic": {"const": true},
+    "ordering": {"const": "accepted_at_then_raw_record_id"},
+    "visibility_rule": {"const": "accepted_at_lte_decision_time_excluding_duplicates"},
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "check_id",
+          "decision_time",
+          "natural_key",
+          "visible_raw_record_ids",
+          "hidden_raw_record_ids",
+          "effective_raw_record_id"
+        ],
+        "properties": {
+          "check_id": {"type": "string", "minLength": 1},
+          "decision_time": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+          },
+          "natural_key": {"type": "string", "minLength": 1},
+          "visible_raw_record_ids": {"type": "array", "items": {"type": "string"}},
+          "hidden_raw_record_ids": {"type": "array", "items": {"type": "string"}},
+          "effective_raw_record_id": {"type": ["string", "null"]},
+          "expected_close_time": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+          }
+        }
+      }
+    }
+  }
+}

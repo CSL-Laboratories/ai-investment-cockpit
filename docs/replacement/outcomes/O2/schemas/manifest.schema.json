@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "o2.fixture_manifest.schema",
+  "title": "O2 frozen fixture manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "maturity", "contract_frozen", "synthetic", "files"],
+  "properties": {
+    "schema_version": {"const": "o2.candidate.v1"},
+    "maturity": {"const": "researched"},
+    "contract_frozen": {"const": false},
+    "synthetic": {"const": true},
+    "files": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "CONTRACT.md",
+        "validate_o2.py",
+        "fixtures/identities.json",
+        "fixtures/raw_records.json",
+        "fixtures/observations.json",
+        "fixtures/lineage.json",
+        "fixtures/replay_checks.json",
+        "fixtures/coverage.json",
+        "fixtures/qualification_matrix.json",
+        "fixtures/negative_controls.json",
+        "schemas/identity.schema.json",
+        "schemas/raw_record.schema.json",
+        "schemas/observation.schema.json",
+        "schemas/lineage.schema.json",
+        "schemas/replay_manifest.schema.json",
+        "schemas/coverage.schema.json",
+        "schemas/qualification_matrix.schema.json",
+        "schemas/negative_control.schema.json",
+        "schemas/manifest.schema.json"
+      ],
+      "properties": {
+        "CONTRACT.md": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "validate_o2.py": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "fixtures/identities.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "fixtures/raw_records.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "fixtures/observations.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "fixtures/lineage.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "fixtures/replay_checks.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "fixtures/coverage.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "fixtures/qualification_matrix.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "fixtures/negative_controls.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "schemas/identity.schema.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "schemas/raw_record.schema.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "schemas/observation.schema.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "schemas/lineage.schema.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "schemas/replay_manifest.schema.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "schemas/coverage.schema.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "schemas/qualification_matrix.schema.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "schemas/negative_control.schema.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "schemas/manifest.schema.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

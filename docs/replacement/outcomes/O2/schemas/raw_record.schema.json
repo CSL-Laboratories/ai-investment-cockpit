@@ -1,0 +1,216 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "o2.raw_record.schema",
+  "title": "O2 candidate immutable raw records",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "maturity", "contract_frozen", "synthetic", "records"],
+  "properties": {
+    "schema_version": {"const": "o2.candidate.v1"},
+    "maturity": {"const": "researched"},
+    "contract_frozen": {"const": false},
+    "synthetic": {"const": true},
+    "records": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/record"}
+    }
+  },
+  "$defs": {
+    "instant": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "id": {"type": "string", "pattern": "^raw-[a-z0-9-]{1,64}$"},
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "raw_record_id",
+        "market_family",
+        "identity_id",
+        "source",
+        "source_record_key",
+        "natural_key",
+        "event_time",
+        "accepted_at",
+        "duplicate_of",
+        "supersedes",
+        "raw_sha256",
+        "acquisition_route",
+        "calendar",
+        "payload"
+      ],
+      "properties": {
+        "raw_record_id": {"$ref": "#/$defs/id"},
+        "market_family": {"enum": ["equity", "event"]},
+        "identity_id": {"type": "string", "pattern": "^idn-[a-z0-9-]{1,64}$"},
+        "source": {
+          "enum": [
+            "synthetic_sec_submission",
+            "synthetic_corporate_action",
+            "synthetic_equity_quote",
+            "synthetic_kalshi_demo_lifecycle"
+          ]
+        },
+        "source_record_key": {"type": "string", "minLength": 1, "maxLength": 128},
+        "natural_key": {"type": "string", "pattern": "^[a-z0-9:._-]{1,128}$"},
+        "event_time": {"$ref": "#/$defs/instant"},
+        "accepted_at": {"$ref": "#/$defs/instant"},
+        "duplicate_of": {"type": ["string", "null"]},
+        "supersedes": {"type": ["string", "null"]},
+        "raw_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "acquisition_route": {"const": "synthetic_fixture"},
+        "calendar": {"$ref": "#/$defs/calendar"},
+        "payload": {"$ref": "#/$defs/payload"}
+      }
+    },
+    "calendar": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["calendar_id", "session_date"],
+          "properties": {
+            "calendar_id": {"const": "XNYS"},
+            "session_date": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["calendar_id", "session_date"],
+          "properties": {
+            "calendar_id": {"const": "kalshi_demo_exchange"},
+            "session_date": {"const": null}
+          }
+        }
+      ]
+    },
+    "payload": {
+      "oneOf": [
+        {"$ref": "#/$defs/filing"},
+        {"$ref": "#/$defs/amendment"},
+        {"$ref": "#/$defs/corporate_action"},
+        {"$ref": "#/$defs/quote"},
+        {"$ref": "#/$defs/lifecycle"}
+      ]
+    },
+    "filing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "form", "accession", "concept", "value", "unit"],
+      "properties": {
+        "kind": {"const": "filing"},
+        "form": {"enum": ["10-K", "8-K"]},
+        "accession": {"type": "string", "pattern": "^[0-9]{10}-[0-9]{2}-[0-9]{6}$"},
+        "issuer_cik": {"type": "string", "pattern": "^[0-9]{10}$"},
+        "concept": {"type": "string", "minLength": 1},
+        "value": {"type": "string", "minLength": 1},
+        "unit": {"enum": ["USD", "text"]}
+      }
+    },
+    "amendment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "form", "accession", "amends_accession", "concept", "value", "unit"],
+      "properties": {
+        "kind": {"const": "filing_amendment"},
+        "form": {"enum": ["10-K/A", "8-K/A"]},
+        "accession": {"type": "string", "pattern": "^[0-9]{10}-[0-9]{2}-[0-9]{6}$"},
+        "amends_accession": {"type": "string", "pattern": "^[0-9]{10}-[0-9]{2}-[0-9]{6}$"},
+        "issuer_cik": {"type": "string", "pattern": "^[0-9]{10}$"},
+        "concept": {"type": "string", "minLength": 1},
+        "value": {"type": "string", "minLength": 1},
+        "unit": {"enum": ["USD", "text"]}
+      }
+    },
+    "corporate_action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "action_type",
+        "ratio_numerator",
+        "ratio_denominator",
+        "ex_date",
+        "listing_identity_before",
+        "listing_identity_after"
+      ],
+      "properties": {
+        "kind": {"const": "corporate_action"},
+        "action_type": {"const": "split"},
+        "ratio_numerator": {"type": "integer", "minimum": 1},
+        "ratio_denominator": {"type": "integer", "minimum": 1},
+        "ex_date": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+        "listing_identity_before": {"type": "string"},
+        "listing_identity_after": {"type": "string"}
+      }
+    },
+    "quote": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "value", "unit", "adjustment"],
+      "properties": {
+        "kind": {"const": "quote"},
+        "value": {"type": "string", "minLength": 1},
+        "unit": {"const": "USD"},
+        "adjustment": {"const": "unadjusted"}
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "channel",
+        "event_type",
+        "resolution",
+        "status_rest",
+        "result",
+        "official_lifecycle_status_observed",
+        "close_time"
+      ],
+      "properties": {
+        "kind": {"const": "lifecycle"},
+        "channel": {"enum": ["market_lifecycle_v2", "rest_get_markets"]},
+        "event_type": {
+          "enum": [
+            "created",
+            "close_date_updated",
+            "determined",
+            "settled",
+            "status_observed"
+          ]
+        },
+        "resolution": {"enum": ["yes", "no", "scalar", "voided", null]},
+        "status_rest": {
+          "enum": [
+            "initialized",
+            "active",
+            "inactive",
+            "closed",
+            "determined",
+            "disputed",
+            "amended",
+            "finalized",
+            "voided"
+          ]
+        },
+        "result": {"enum": ["yes", "no", "scalar", null]},
+        "official_lifecycle_status_observed": {"type": "boolean"},
+        "close_time": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+        },
+        "determination_ts": {"type": ["integer", "null"], "minimum": 0},
+        "settled_ts": {"type": ["integer", "null"], "minimum": 0},
+        "settlement_value": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9]+\\.[0-9]{4}$"
+        },
+        "settlement_ts": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,295 @@
+{
+  "schema_version": "o2.candidate.v1",
+  "maturity": "researched",
+  "contract_frozen": false,
+  "synthetic": true,
+  "observation_ids": [
+    "obs-revenue-apr",
+    "obs-revenue-jul",
+    "obs-ooo-may",
+    "obs-revenue-aug",
+    "obs-quote-aug",
+    "obs-split-aug",
+    "obs-split-corr",
+    "obs-splits-sep",
+    "obs-ev-aug21",
+    "obs-ev-sep",
+    "obs-ev-void",
+    "obs-ev-d1-dispute",
+    "obs-ev-d1-final"
+  ],
+  "checks": [
+    {
+      "check_id": "late_correction_before_amendment",
+      "natural_key": "sec:fact:0000000001:revenue:fy2023",
+      "decision_time": "2024-04-01T00:00:00Z",
+      "outcome": {
+        "visible_raw_record_ids": [
+          "raw-eq-10k"
+        ],
+        "hidden_raw_record_ids": [
+          "raw-eq-10k-dup",
+          "raw-eq-10ka"
+        ],
+        "effective_raw_record_id": "raw-eq-10k"
+      }
+    },
+    {
+      "check_id": "duplicate_does_not_supersede",
+      "natural_key": "sec:fact:0000000001:revenue:fy2023",
+      "decision_time": "2024-03-02T00:00:00Z",
+      "outcome": {
+        "visible_raw_record_ids": [
+          "raw-eq-10k"
+        ],
+        "hidden_raw_record_ids": [
+          "raw-eq-10k-dup",
+          "raw-eq-10ka"
+        ],
+        "effective_raw_record_id": "raw-eq-10k"
+      }
+    },
+    {
+      "check_id": "late_correction_after_amendment",
+      "natural_key": "sec:fact:0000000001:revenue:fy2023",
+      "decision_time": "2024-07-01T00:00:00Z",
+      "outcome": {
+        "visible_raw_record_ids": [
+          "raw-eq-10k",
+          "raw-eq-10ka"
+        ],
+        "hidden_raw_record_ids": [
+          "raw-eq-10k-dup"
+        ],
+        "effective_raw_record_id": "raw-eq-10ka"
+      }
+    },
+    {
+      "check_id": "out_of_order_acceptance_hidden",
+      "natural_key": "sec:accession:0000000001-24-000050",
+      "decision_time": "2024-04-01T00:00:00Z",
+      "outcome": {
+        "visible_raw_record_ids": [],
+        "hidden_raw_record_ids": [
+          "raw-eq-ooo"
+        ],
+        "effective_raw_record_id": null
+      }
+    },
+    {
+      "check_id": "out_of_order_acceptance_visible_after_accept",
+      "natural_key": "sec:accession:0000000001-24-000050",
+      "decision_time": "2024-05-02T00:00:00Z",
+      "outcome": {
+        "visible_raw_record_ids": [
+          "raw-eq-ooo"
+        ],
+        "hidden_raw_record_ids": [],
+        "effective_raw_record_id": "raw-eq-ooo"
+      }
+    },
+    {
+      "check_id": "corporate_action_retained",
+      "natural_key": "us-equity:listing:0000000001:common:corporate_action",
+      "decision_time": "2024-08-02T00:00:00Z",
+      "outcome": {
+        "visible_raw_record_ids": [
+          "raw-eq-split"
+        ],
+        "hidden_raw_record_ids": [
+          "raw-eq-split-corr"
+        ],
+        "effective_raw_record_id": "raw-eq-split"
+      }
+    },
+    {
+      "check_id": "corporate_action_correction_is_effective",
+      "natural_key": "us-equity:listing:0000000001:common:corporate_action",
+      "decision_time": "2024-08-11T00:00:00Z",
+      "outcome": {
+        "visible_raw_record_ids": [
+          "raw-eq-split",
+          "raw-eq-split-corr"
+        ],
+        "hidden_raw_record_ids": [],
+        "effective_raw_record_id": "raw-eq-split-corr"
+      }
+    },
+    {
+      "check_id": "independent_corporate_action_hidden",
+      "natural_key": "us-equity:listing:0000000001:common:corporate_action:ex-2024-10-01",
+      "decision_time": "2024-09-02T00:00:00Z",
+      "outcome": {
+        "visible_raw_record_ids": [],
+        "hidden_raw_record_ids": [
+          "raw-eq-split-oct"
+        ],
+        "effective_raw_record_id": null
+      }
+    },
+    {
+      "check_id": "independent_corporate_action_retained",
+      "natural_key": "us-equity:listing:0000000001:common:corporate_action:ex-2024-10-01",
+      "decision_time": "2024-09-17T00:00:00Z",
+      "outcome": {
+        "visible_raw_record_ids": [
+          "raw-eq-split-oct"
+        ],
+        "hidden_raw_record_ids": [],
+        "effective_raw_record_id": "raw-eq-split-oct"
+      }
+    },
+    {
+      "check_id": "independent_action_does_not_replace_correction",
+      "natural_key": "us-equity:listing:0000000001:common:corporate_action",
+      "decision_time": "2024-09-17T00:00:00Z",
+      "outcome": {
+        "visible_raw_record_ids": [
+          "raw-eq-split",
+          "raw-eq-split-corr"
+        ],
+        "hidden_raw_record_ids": [],
+        "effective_raw_record_id": "raw-eq-split-corr"
+      }
+    },
+    {
+      "check_id": "unadjusted_quote_not_rewritten",
+      "natural_key": "us-equity:listing:0000000001:common:quote",
+      "decision_time": "2024-08-02T00:00:00Z",
+      "outcome": {
+        "visible_raw_record_ids": [
+          "raw-eq-quote"
+        ],
+        "hidden_raw_record_ids": [],
+        "effective_raw_record_id": "raw-eq-quote"
+      }
+    },
+    {
+      "check_id": "event_resolution_before_late_message",
+      "natural_key": "kalshi_demo:market:kxsynth-26jan01-b1:resolution",
+      "decision_time": "2024-08-21T00:00:00Z",
+      "outcome": {
+        "visible_raw_record_ids": [
+          "raw-ev-determined"
+        ],
+        "hidden_raw_record_ids": [
+          "raw-ev-settled"
+        ],
+        "effective_raw_record_id": "raw-ev-determined"
+      }
+    },
+    {
+      "check_id": "event_close_out_of_order_hidden",
+      "natural_key": "kalshi_demo:market:kxsynth-26jan01-b1:close_date",
+      "decision_time": "2024-08-21T00:00:00Z",
+      "outcome": {
+        "visible_raw_record_ids": [],
+        "hidden_raw_record_ids": [
+          "raw-ev-close-ooo"
+        ],
+        "effective_raw_record_id": null
+      }
+    },
+    {
+      "check_id": "event_close_visible_only_after_accept",
+      "natural_key": "kalshi_demo:market:kxsynth-26jan01-b1:close_date",
+      "decision_time": "2024-08-26T00:00:00Z",
+      "outcome": {
+        "visible_raw_record_ids": [
+          "raw-ev-close-ooo"
+        ],
+        "hidden_raw_record_ids": [],
+        "effective_raw_record_id": "raw-ev-close-ooo",
+        "expected_close_time": "2024-09-05T20:00:00Z"
+      }
+    },
+    {
+      "check_id": "event_settled_keeps_determination_raw",
+      "natural_key": "kalshi_demo:market:kxsynth-26jan01-b1:resolution",
+      "decision_time": "2024-09-02T00:00:00Z",
+      "outcome": {
+        "visible_raw_record_ids": [
+          "raw-ev-determined",
+          "raw-ev-settled"
+        ],
+        "hidden_raw_record_ids": [],
+        "effective_raw_record_id": "raw-ev-settled"
+      }
+    },
+    {
+      "check_id": "voided_event_stays_distinct",
+      "natural_key": "kalshi_demo:market:kxsynth-26jan01-void:resolution",
+      "decision_time": "2024-09-02T00:00:00Z",
+      "outcome": {
+        "visible_raw_record_ids": [
+          "raw-ev-void"
+        ],
+        "hidden_raw_record_ids": [],
+        "effective_raw_record_id": "raw-ev-void"
+      }
+    },
+    {
+      "check_id": "event_dispute_chain_determined_only",
+      "natural_key": "kalshi_demo:market:kxsynth-26jan01-d1:resolution",
+      "decision_time": "2024-09-11T00:00:00Z",
+      "outcome": {
+        "visible_raw_record_ids": [
+          "raw-ev-d1-determined"
+        ],
+        "hidden_raw_record_ids": [
+          "raw-ev-d1-disputed",
+          "raw-ev-d1-amended",
+          "raw-ev-d1-finalized"
+        ],
+        "effective_raw_record_id": "raw-ev-d1-determined"
+      }
+    },
+    {
+      "check_id": "event_dispute_correction_is_effective",
+      "natural_key": "kalshi_demo:market:kxsynth-26jan01-d1:resolution",
+      "decision_time": "2024-09-13T00:00:00Z",
+      "outcome": {
+        "visible_raw_record_ids": [
+          "raw-ev-d1-determined",
+          "raw-ev-d1-disputed"
+        ],
+        "hidden_raw_record_ids": [
+          "raw-ev-d1-amended",
+          "raw-ev-d1-finalized"
+        ],
+        "effective_raw_record_id": "raw-ev-d1-disputed"
+      }
+    },
+    {
+      "check_id": "event_amendment_supersedes_dispute",
+      "natural_key": "kalshi_demo:market:kxsynth-26jan01-d1:resolution",
+      "decision_time": "2024-09-16T00:00:00Z",
+      "outcome": {
+        "visible_raw_record_ids": [
+          "raw-ev-d1-determined",
+          "raw-ev-d1-disputed",
+          "raw-ev-d1-amended"
+        ],
+        "hidden_raw_record_ids": [
+          "raw-ev-d1-finalized"
+        ],
+        "effective_raw_record_id": "raw-ev-d1-amended"
+      }
+    },
+    {
+      "check_id": "event_finalized_keeps_dispute_chain",
+      "natural_key": "kalshi_demo:market:kxsynth-26jan01-d1:resolution",
+      "decision_time": "2024-09-17T00:00:00Z",
+      "outcome": {
+        "visible_raw_record_ids": [
+          "raw-ev-d1-determined",
+          "raw-ev-d1-disputed",
+          "raw-ev-d1-amended",
+          "raw-ev-d1-finalized"
+        ],
+        "hidden_raw_record_ids": [],
+        "effective_raw_record_id": "raw-ev-d1-finalized"
+      }
+    }
+  ]
+}
