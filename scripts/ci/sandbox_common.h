@@ -43,7 +43,9 @@
 #define CSL_PAIR_PATH CSL_STATE_DIR "/pair.closed"
 #define CSL_WORKER_PID_PATH CSL_STATE_DIR "/worker.pid"
 #define CSL_WORKSPACE_PATH CSL_STATE_DIR "/workspace"
+#define CSL_LAUNCH_SHA_PATH CSL_STATE_DIR "/launch.sha256"
 #define CSL_BUN_TOFU_PATH CSL_STATE_DIR "/bun.tofu"
+#define CSL_WORKSPACE_DEFAULT "/home/runner/work/ai-investment-cockpit/ai-investment-cockpit"
 #define CSL_ACTION_DIR "/home/runner/work/_actions/anthropics/claude-code-action/a5a423f75c251dcbff8a74e99f83b2cb03c72bfa"
 #ifdef CSL_PREFIX
 #define CSL_RUNNER_TEMP CSL_PREFIX "/tmp"

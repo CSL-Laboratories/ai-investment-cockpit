@@ -341,6 +341,19 @@ class BootstrapContractTests(unittest.TestCase):
         self.assertIn("hash-node-modules", text)
         self.assertIn("hash-setup-bun", text)
         self.assertIn("sandbox_e3_cli_pin.sh", text)
+        self.assertIn('readlink /proc/self/ns/mnt', text)
+        self.assertIn('"$STATE/launch.sha256"', text)
+        self.assertIn('GUARD="/home/runner/work/_temp/claude-fixer-guard"', text)
+        self.assertNotIn("${RUNNER_TEMP:?}", text)
+        self.assertNotIn("${GITHUB_WORKSPACE:-}", text)
+        self.assertIn(
+            "/home/runner/work/ai-investment-cockpit/ai-investment-cockpit",
+            text,
+        )
+        self.assertNotIn(
+            'readlink /proc/"$WORKER_PID"/ns/mnt > "$STATE/ns.mnt"',
+            text,
+        )
 
 
 if __name__ == "__main__":

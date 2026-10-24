@@ -17,6 +17,7 @@ static volatile sig_atomic_t stop;
 static int fifo_r = -1, fifo_w_held = -1, listen_fd = -1, control_fd = -1;
 static int cap_fd = -1, pair_fd = -1, worker_pidfd = -1;
 static int f1_armed;
+static int fifo_hup;
 static unsigned char capture_buf[CSL_CAP_BYTES];
 static size_t captured;
 static unsigned extra_handoffs;
@@ -332,6 +333,9 @@ static void try_arm_f1(void)
     while (cn && (cwdwant[cn - 1] == '\n' || cwdwant[cn - 1] == ' ')) {
         cwdwant[--cn] = 0;
     }
+    if (cn == 0) {
+        return;
+    }
     d = opendir("/proc");
     if (!d) {
         return;
@@ -366,7 +370,7 @@ static void try_arm_f1(void)
             }
             cwd[n] = 0;
         }
-        if (cn && strcmp(cwd, cwdwant) != 0) {
+        if (strcmp(cwd, cwdwant) != 0) {
             continue;
         }
         b = proc_ppid(x);
@@ -568,7 +572,9 @@ static void accept_handoff(void)
         int peerpidfd = -1;
         socklen_t sl = sizeof peerpidfd;
         char exe[PATH_MAX];
-        unsigned char dig[32], want[32];
+        unsigned char dig[32];
+        char pinhex[80];
+        size_t pn = 0;
         pid_t pfd_pid = 0;
         if (getsockopt(cfd, SOL_SOCKET, SO_PEERPIDFD, &peerpidfd, &sl) < 0) {
             close(cfd);
@@ -594,8 +600,18 @@ static void accept_handoff(void)
             return;
         }
         if (csl_sha256_file(exe, dig) != 0 ||
-            csl_sha256_file(CSL_LAUNCH_PATH, want) != 0 ||
-            memcmp(dig, want, 32) != 0) {
+            csl_read_file(CSL_LAUNCH_SHA_PATH, pinhex, sizeof pinhex, &pn) != 0 ||
+            pn == 0) {
+            close(peerpidfd);
+            close(cfd);
+            close(got_pair);
+            return;
+        }
+        while (pn && (pinhex[pn - 1] == '\n' || pinhex[pn - 1] == '\r' ||
+                      pinhex[pn - 1] == ' ')) {
+            pinhex[--pn] = 0;
+        }
+        if (!csl_hex_eq(dig, pinhex)) {
             close(peerpidfd);
             close(cfd);
             close(got_pair);
@@ -813,19 +829,26 @@ int main(int argc, char **argv)
 
     for (;;) {
         int nfd = 0;
+        int fifo_idx = -1, listen_idx, control_idx, pair_idx = -1;
         if (stop) {
             break;
         }
-        pfds[nfd].fd = fifo_r;
-        pfds[nfd].events = POLLIN | POLLHUP;
-        nfd++;
+        if (!fifo_hup) {
+            fifo_idx = nfd;
+            pfds[nfd].fd = fifo_r;
+            pfds[nfd].events = POLLIN | POLLHUP;
+            nfd++;
+        }
+        listen_idx = nfd;
         pfds[nfd].fd = listen_fd;
         pfds[nfd].events = POLLIN;
         nfd++;
+        control_idx = nfd;
         pfds[nfd].fd = control_fd;
         pfds[nfd].events = POLLIN;
         nfd++;
         if (pair_fd >= 0) {
+            pair_idx = nfd;
             pfds[nfd].fd = pair_fd;
             pfds[nfd].events = POLLIN | POLLHUP;
             nfd++;
@@ -839,16 +862,20 @@ int main(int argc, char **argv)
             }
             break;
         }
-        if (pfds[0].revents & (POLLIN | POLLHUP)) {
+        if (fifo_idx >= 0 && (pfds[fifo_idx].revents & (POLLIN | POLLHUP))) {
             drain_fifo(got_end || captured >= CSL_CAP_BYTES);
+            if (pfds[fifo_idx].revents & POLLHUP) {
+                drain_fifo(got_end || captured >= CSL_CAP_BYTES);
+                fifo_hup = 1;
+            }
         }
-        if (pfds[1].revents & POLLIN) {
+        if (pfds[listen_idx].revents & POLLIN) {
             accept_handoff();
         }
-        if (pfds[2].revents & POLLIN) {
+        if (pfds[control_idx].revents & POLLIN) {
             handle_control();
         }
-        if (nfd > 3 && (pfds[3].revents & (POLLIN | POLLHUP))) {
+        if (pair_idx >= 0 && (pfds[pair_idx].revents & (POLLIN | POLLHUP))) {
             read_pair();
         }
     }
