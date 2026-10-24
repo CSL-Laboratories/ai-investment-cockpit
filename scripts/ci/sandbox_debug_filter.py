@@ -81,13 +81,19 @@ def capture_buffer(data: bytes, cap: int = CAP_BYTES) -> bytes:
 
 
 def split_lines(buf: bytes) -> List[bytes]:
-    """Split on ``\\n`` only. A trailing fragment without newline is still a line."""
+    """Split on ``\\n`` only. Trailing NULs are padding, not last-line content (L-c)."""
+    if not buf:
+        return []
+    end = len(buf)
+    while end and buf[end - 1] == 0:
+        end -= 1
+    buf = buf[:end]
     if not buf:
         return []
     parts = buf.split(b"\n")
     if parts and parts[-1] == b"":
         parts.pop()
-    return parts
+    return [p.split(b"\0", 1)[0] for p in parts]
 
 
 def decode_line(raw: bytes) -> Tuple[Optional[str], str]:
