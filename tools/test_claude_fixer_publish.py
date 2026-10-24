@@ -2029,6 +2029,10 @@ class WorkflowWiringTests(unittest.TestCase):
                     output = root / "output"
                     env = dict(git_env(), PATH=f"{shim}{os.pathsep}{os.environ['PATH']}", RUNNER_TEMP=str(root),
                                GITHUB_OUTPUT=str(output), HEAD_SHA=head, BASE_SHA=head, EXECUTION_FILE="")
+                    # Package uses ${GIT:-git}; a host GIT= would skip the PATH shim.
+                    env.pop("GIT", None)
+                    env.pop("JQ", None)
+                    env.pop("PYTHON3", None)
                     subprocess.run(["bash", "-c", script], cwd=work.path, env=env, check=True, capture_output=True)
                     expected = ("failed" if case in ISOLATED_CREDENTIALS else
                                 {"credential": "failed", "helper": "bundled", "big": "failed",
