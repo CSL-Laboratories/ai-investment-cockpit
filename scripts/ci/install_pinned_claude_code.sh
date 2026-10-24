@@ -88,7 +88,7 @@ for bad in EXPKEYSIG REVKEYSIG EXPSIG KEYEXPIRED KEYREVOKED BADSIG ERRSIG; do
 done
 
 export CLAUDE_VERSION EXPECTED_SHA256 EXPECTED_BYTES
-STAGING="$STAGING" python3 -c '
+STAGING="$STAGING" python3 -I -c '
 import json, os, sys
 manifest = json.load(open(os.environ["STAGING"] + "/manifest.json", encoding="utf-8"))
 plat = manifest["platforms"]["linux-x64"]
