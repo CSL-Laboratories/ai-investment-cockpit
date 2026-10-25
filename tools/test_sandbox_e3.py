@@ -356,6 +356,8 @@ class BootstrapContractTests(unittest.TestCase):
         self.assertIn('readlink /proc/self/ns/mnt', text)
         self.assertIn('"$STATE/launch.sha256"', text)
         self.assertIn('GUARD="/home/runner/work/_temp/claude-fixer-guard"', text)
+        self.assertNotIn('"$PYTHON" -I "$GUARD/model-api" install', text)
+        self.assertIn('test -f "$GUARD/context.json"', text)
         self.assertNotIn("${RUNNER_TEMP:?}", text)
         self.assertNotIn("${GITHUB_WORKSPACE:-}", text)
         self.assertNotIn("command -v bun", text)
@@ -440,6 +442,11 @@ class BootstrapContractTests(unittest.TestCase):
         self.assertGreater(hash_at, 0)
         self.assertGreater(bun_at, hash_at)
         self.assertGreater(remount_at, bun_at)
+        self.assertNotIn("still P9", text)
+        touch_at = text.find('touch "$AP/csl-e3-ro-probe"')
+        mkdir_at = text.find('mkdir "$AP/csl-e3-ro-dir"')
+        self.assertGreater(touch_at, remount_at)
+        self.assertGreater(mkdir_at, remount_at)
 
 
 if __name__ == "__main__":

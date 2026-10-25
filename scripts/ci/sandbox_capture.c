@@ -8,6 +8,7 @@
 #include <signal.h>
 #include <sys/prctl.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/un.h>
 #include <sys/wait.h>
 
@@ -506,7 +507,7 @@ static int peer_uid_ok(uid_t uid)
 
 static void accept_handoff(void)
 {
-    int cfd = accept4(listen_fd, NULL, NULL, SOCK_CLOEXEC | SOCK_NONBLOCK);
+    int cfd = accept4(listen_fd, NULL, NULL, SOCK_CLOEXEC);
     struct msghdr msg;
     struct iovec iov;
     char cmsgbuf[CMSG_SPACE(sizeof(int)) * 4];
@@ -517,11 +518,17 @@ static void accept_handoff(void)
     struct ucred peer;
     socklen_t plen = sizeof peer;
     int pass = 1;
+    struct timeval rcv = {.tv_sec = 2, .tv_usec = 0};
 
     if (cfd < 0) {
         return;
     }
     extra_handoffs++;
+    /* Blocking accept + SO_RCVTIMEO: connect-before-sendmsg must not EAGAIN. */
+    if (setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &rcv, sizeof rcv) < 0) {
+        close(cfd);
+        return;
+    }
     /* N11: do not unlink until the peer is verified. */
     if (setsockopt(cfd, SOL_SOCKET, SO_PASSCRED, &pass, sizeof pass) < 0) {
         close(cfd);

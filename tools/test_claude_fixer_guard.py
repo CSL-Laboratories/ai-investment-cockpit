@@ -126,6 +126,16 @@ class GuardTests(unittest.TestCase):
         run.assert_not_called()
         self.assertEqual(self.queued(), [{"op": "label", "label": "needs-decision"}])
 
+    def test_install_fails_closed_without_repo_env(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "model-api"
+            script.write_text("fixture")
+            with patch.object(ob, "__file__", str(script)), patch.object(sys, "argv", ["model-api", "install"]), \
+                    patch.dict(os.environ, {}, clear=True):
+                with self.assertRaises(KeyError):
+                    ob.main()
+                self.assertFalse((Path(tmp) / "context.json").exists())
+
     def test_install_accepts_only_known_modes_and_fixer_receipt_context(self):
         env = {"REPO": CONFIG["repo"], "PR_NUMBER": "7", "HEAD_SHA": A, "HEAD_REF": "fix"}
         context = json.dumps([{"root": 11, "fingerprint": "f" * 64, "base": A}])
@@ -419,8 +429,8 @@ class TerminalReceiptIntegrationTests(unittest.TestCase):
         self.assertIn('cat > "$RUNNER_TEMP/claude-fixer-publish/receipts.py"', text)
         # The model helper (allowed roots) and the publisher (receipt fields) both bind prepare's context.
         # E3 copies the fixer 0b env into each prefix step, then the outbox verify
-        # step and the publisher: 5 0b + outbox + publish.
-        self.assertEqual(text.count("RECEIPT_CONTEXT: ${{ needs.fixer-prepare.outputs.receipt_context }}"), 7)
+        # step and the publisher: 6 0b (incl. runner-uid helper context) + outbox + publish.
+        self.assertEqual(text.count("RECEIPT_CONTEXT: ${{ needs.fixer-prepare.outputs.receipt_context }}"), 8)
         env = {"REPO": CONFIG["repo"], "PR_NUMBER": "7", "HEAD_SHA": A, "HEAD_REF": "fix", "WRITER_MODE": "fixer",
                "RECEIPT_CONTEXT": json.dumps([self.item])}
         self.assertEqual(m.load_config(env)["receipts"], [self.item])
