@@ -1648,7 +1648,7 @@ class WorkflowStructureTests(unittest.TestCase):
             if line.strip().startswith("runs-on:")
         ]
         self.assertTrue(claude_runners)
-        self.assertTrue(all(r == "runs-on: ubuntu-latest" for r in claude_runners))
+        self.assertTrue(all(r == "runs-on: ubuntu-24.04" for r in claude_runners))
         scan = (ROOT / ".github" / "workflows" / "conflict-scan.yml").read_text(encoding="utf-8")
         scan_runners = [
             line.strip()
