@@ -381,6 +381,56 @@ int csl_e3_record_ok(const char *text, size_t n)
     return saw == need;
 }
 
+int csl_e3_set_handoff(char *text, size_t cap, size_t *n, unsigned count, int conflict)
+{
+    char src[4096], out[4096];
+    char *line, *save = NULL;
+    size_t used = 0;
+    int saw_count = 0, saw_conflict = 0;
+
+    if (!text || !n || *n == 0 || *n >= sizeof src || cap < 2) {
+        return -1;
+    }
+    memcpy(src, text, *n);
+    src[*n] = 0;
+    for (line = strtok_r(src, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+        char *eq = strchr(line, '=');
+        const char *val;
+        char tmp[32];
+        int wrote;
+
+        if (!eq || eq == line) {
+            return -1;
+        }
+        *eq = 0;
+        if (strcmp(line, "handoff_count") == 0) {
+            snprintf(tmp, sizeof tmp, "%u", count);
+            val = tmp;
+            saw_count = 1;
+        } else if (strcmp(line, "handoff_conflict") == 0) {
+            val = conflict ? "true" : "false";
+            saw_conflict = 1;
+        } else {
+            val = eq + 1;
+        }
+        wrote = snprintf(out + used, sizeof out - used, "%s=%s\n", line, val);
+        if (wrote < 0 || (size_t)wrote >= sizeof out - used) {
+            return -1;
+        }
+        used += (size_t)wrote;
+    }
+    if (!saw_count || !saw_conflict || used == 0 || used >= cap) {
+        return -1;
+    }
+    memcpy(text, out, used);
+    text[used] = 0;
+    *n = used;
+    if (!csl_e3_record_ok(text, *n)) {
+        return -1;
+    }
+    return 0;
+}
+
 int csl_pidfd_open(pid_t pid, unsigned int flags)
 {
     return (int)syscall(__NR_pidfd_open, pid, flags);

@@ -418,6 +418,21 @@ class NativeRelayOneShotTests(unittest.TestCase):
             (state / "end").write_text("ok\n", encoding="ascii")
             (state / "pair.closed").write_text("1\n", encoding="ascii")
             (state / "capture").write_bytes(WRAP)
+            (state / "e3.record").write_text(
+                "claude_sha256=" + "a" * 64 + "\n"
+                "claude_realpath_class=pinned\n"
+                "sdk_mjs_sha256=" + "b" * 64 + "\n"
+                "sdk_source=downloaded-action-dir-frozen-lockfile-ignore-scripts\n"
+                "sdk_disk_match=true\n"
+                "bun_tofu_sha256=" + "c" * 64 + "\n"
+                "bwrap_sha256=" + "d" * 64 + "\n"
+                "socat_sha256=" + "e" * 64 + "\n"
+                "bash_sha256=" + "f" * 64 + "\n"
+                "match=true\n"
+                "handoff_count=0\n"
+                "handoff_conflict=false\n",
+                encoding="ascii",
+            )
             second = subprocess.run([str(relay)], capture_output=True, text=True)
             self.assertEqual(second.returncode, 0)
             self.assertNotIn("NOT RELAYED", second.stdout)
@@ -425,6 +440,9 @@ class NativeRelayOneShotTests(unittest.TestCase):
             self.assertIn("[Sandbox Linux] Wrapped command with bwrap (", second.stdout)
             self.assertIn("channel=S", second.stdout)
             self.assertIn("origin=unattributed", second.stdout)
+            self.assertIn("handoff_count=1", second.stdout)
+            self.assertIn("handoff_conflict=false", second.stdout)
+            self.assertNotIn("handoff_count=0\n", second.stdout)
             self.assertTrue((state / "already_ran").is_file())
             self.assertFalse((state / "capture").exists())
             third = subprocess.run([str(relay)], capture_output=True, text=True)
@@ -760,6 +778,24 @@ class R3ContractTests(unittest.TestCase):
         relay = (SRC / "sandbox_relay.c").read_text(encoding="utf-8")
         self.assertNotIn('strstr(exe, "/sudo")', relay)
         self.assertIn('strcmp(exe, "/usr/bin/sudo")', relay)
+
+    def test_f4a_parent_nuls_at_readlink_length(self) -> None:
+        relay = (SRC / "sandbox_relay.c").read_text(encoding="utf-8")
+        self.assertIn("csl_proc_exe(getpid(), self, sizeof self)", relay)
+        self.assertNotIn('readlink("/proc/self/exe"', relay)
+        self.assertNotIn("csl_proc_exe(0, self", relay)
+
+    def test_relay_overwrites_bootstrap_handoff_fields(self) -> None:
+        relay = (SRC / "sandbox_relay.c").read_text(encoding="utf-8")
+        common = (SRC / "sandbox_common.c").read_text(encoding="utf-8")
+        header = (SRC / "sandbox_common.h").read_text(encoding="utf-8")
+        record = (SRC / "sandbox_e3_record.py").read_text(encoding="utf-8")
+        self.assertIn("csl_e3_set_handoff", relay)
+        self.assertIn("extra=%u", relay)
+        self.assertIn("csl_e3_set_handoff", common)
+        self.assertIn("csl_e3_set_handoff", header)
+        self.assertIn("apply_observed_handoff", record)
+        self.assertIn("Placeholders only", record)
 
 
 if __name__ == "__main__":

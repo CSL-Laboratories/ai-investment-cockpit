@@ -59,6 +59,22 @@ static void not_relayed(const char *reason)
     wrap_print(buf);
 }
 
+static int parse_status(const char *status, int *end, int *pair, int *writers,
+                        int *already, unsigned *extra)
+{
+    int worker = 0;
+    unsigned ex = 0;
+    int n = sscanf(status, "end=%d pair=%d writers=%d already=%d worker=%d extra=%u",
+                   end, pair, writers, already, &worker, &ex);
+    if (n < 4) {
+        return -1;
+    }
+    if (extra) {
+        *extra = (n >= 6) ? ex : 0u;
+    }
+    return 0;
+}
+
 static int control_query(const char *req, char *resp, size_t cap)
 {
     int fd;
@@ -107,13 +123,12 @@ static const char *f4a_parent(void)
     if (uid != 0 || euid != 0) {
         return "bad_parent";
     }
-    if (csl_proc_exe(0, self, sizeof self) < 0) {
-        /* pid 0 means self via /proc/self/exe */
-    }
-    if (readlink("/proc/self/exe", self, sizeof self - 1) < 0) {
+    /* csl_proc_exe NUL-terminates at the readlink length. Do not call
+     * readlink on /proc/self/exe here: it does not append NUL, and
+     * pid 0 is /proc/0/exe, not self. */
+    if (csl_proc_exe(getpid(), self, sizeof self) < 0) {
         return "bad_parent";
     }
-    self[sizeof self - 1] = 0;
     if (csl_proc_exe(ppid, exe, sizeof exe) < 0) {
         exe[0] = 0;
     }
@@ -184,6 +199,7 @@ int main(int argc, char **argv)
     size_t e3n = 0;
     int already = 0, end = 0, pair = 0, writers = 1;
     int waited = 0;
+    unsigned extra = 0;
 
     (void)argc;
     (void)argv; /* ignore argv: do not open, stat, map, or exec {0} */
@@ -203,12 +219,14 @@ int main(int argc, char **argv)
     }
 
     if (control_query("STATUS\n", status, sizeof status) == 0) {
-        sscanf(status, "end=%d pair=%d writers=%d already=%d", &end, &pair, &writers,
-               &already);
+        if (parse_status(status, &end, &pair, &writers, &already, &extra) < 0) {
+            writers = 1;
+        }
     } else {
         end = access(CSL_END_PATH, F_OK) == 0;
         pair = access(CSL_PAIR_PATH, F_OK) == 0;
         already = access(CSL_ALREADY_PATH, F_OK) == 0;
+        extra = 0;
 #ifdef CSL_PREFIX
         writers = 0; /* file-based unit tests have no daemon */
 #else
@@ -228,8 +246,9 @@ int main(int argc, char **argv)
         nanosleep(&sl, NULL);
         waited += 50;
         if (control_query("STATUS\n", status, sizeof status) == 0) {
-            sscanf(status, "end=%d pair=%d writers=%d already=%d", &end, &pair, &writers,
-                   &already);
+            if (parse_status(status, &end, &pair, &writers, &already, &extra) < 0) {
+                writers = 1;
+            }
         } else {
             pair = access(CSL_PAIR_PATH, F_OK) == 0;
 #ifdef CSL_PREFIX
@@ -249,8 +268,9 @@ int main(int argc, char **argv)
         nanosleep(&sl, NULL);
         waited += 50;
         if (control_query("STATUS\n", status, sizeof status) == 0) {
-            sscanf(status, "end=%d pair=%d writers=%d already=%d", &end, &pair, &writers,
-                   &already);
+            if (parse_status(status, &end, &pair, &writers, &already, &extra) < 0) {
+                writers = 1;
+            }
         } else {
 #ifdef CSL_PREFIX
             writers = 0;
@@ -288,9 +308,15 @@ int main(int argc, char **argv)
     }
     if (csl_read_file(CSL_E3_RECORD_PATH, e3, sizeof e3, &e3n) == 0 && e3n &&
         csl_e3_record_ok(e3, e3n)) {
-        strncat(body, e3, sizeof body - strlen(body) - 1);
-        if (body[strlen(body) - 1] != '\n') {
-            strncat(body, "\n", sizeof body - strlen(body) - 1);
+        unsigned handoffs = extra + (pair ? 1u : 0u);
+        /* Bootstrap wrote handoff_count=0 / handoff_conflict=false before
+         * the model ran. Overwrite from the daemon's final STATUS extra=
+         * (and pair_closed) before emit. */
+        if (csl_e3_set_handoff(e3, sizeof e3, &e3n, handoffs, extra > 0) == 0) {
+            strncat(body, e3, sizeof body - strlen(body) - 1);
+            if (body[strlen(body) - 1] != '\n') {
+                strncat(body, "\n", sizeof body - strlen(body) - 1);
+            }
         }
     }
     strncat(body, "channel=S\nfirst_bash=missing\norigin=unattributed\n",

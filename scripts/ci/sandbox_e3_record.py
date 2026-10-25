@@ -109,6 +109,16 @@ def reconstruct_e3_record(fields: Mapping[str, str]) -> str:
     return "\n".join(f"{name}={parsed[name]}" for name in FIELD_ORDER)
 
 
+def apply_observed_handoff(text: str, count: int, conflict: bool) -> str:
+    """Replace bootstrap placeholders with daemon-observed handoff evidence."""
+    if count < 0:
+        raise E3RecordError("handoff_count")
+    fields = parse_e3_text(text)
+    fields["handoff_count"] = str(int(count))
+    fields["handoff_conflict"] = "true" if conflict else "false"
+    return reconstruct_e3_record(fields)
+
+
 def parse_e3_text(text: str) -> Dict[str, str]:
     """Parse a daemon-written E3 record. No capture bytes; ``k=v`` lines only."""
     if not text or text.endswith("\n\n"):
@@ -184,6 +194,8 @@ def write_e3_record(state_dir: str = "/var/lib/csl-relay") -> str:
         "socat_sha256": _sha256_file("/usr/bin/socat"),
         "bash_sha256": _sha256_file("/bin/bash"),
         "match": match,
+        # Placeholders only. The relay overwrites these from daemon STATUS
+        # extra= / pair_closed before it emits (Codex P2; Samir #264 APPROVE).
         "handoff_count": "0",
         "handoff_conflict": "false",
     }
