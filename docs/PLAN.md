@@ -250,6 +250,9 @@ the real intent vetoes corruption already committed before that snapshot. This p
 not claim atomicity against an unrestricted concurrent SQL writer committing afterward.
 Crash, legacy, integrity, or unproven shutdown startup holds have no automatic release in
 this package; clean genesis and provably closed-session restarts remain required controls.
+A provisional hosted Blacksmith four-cell stand-in on merged main `94862b6` is recorded in
+[[evidence/csl62-dec09-hosted-2026-10-17]]; whether hosted cells satisfy DEC-09 is an
+unresolved decision owned by Lucas.
 
 ### RW-24 reliability follow-up — merged 2026-09-08
 
@@ -263,6 +266,9 @@ completed matrix are repaired and independently reviewed. All four DEC-09 cells 
 against `fa3cc1c`: Windows 3.11/3.12 each 3,107 passed / 4 skipped; Ubuntu WSL2
 3.11/3.12 each 3,105 passed / 6 skipped. Every cell passes all 233 required cases.
 Final validation: [[evidence/rw23-rw24-local-matrix-2026-09-08/README]].
+A provisional hosted Blacksmith four-cell stand-in on merged main `94862b6` is recorded in
+[[evidence/csl62-dec09-hosted-2026-10-17]]; whether hosted cells satisfy DEC-09 is an
+unresolved decision owned by Lucas.
 
 ### RW-23 audit repair delivery — merged 2026-09-08
 

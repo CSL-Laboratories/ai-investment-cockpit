@@ -15,10 +15,17 @@ WORKFLOWS = {'.github/workflows/ci.yml': 'ci.yml',
              '.github/workflows/rust.yml': 'rust.yml'}
 ACTIVE = {'queued', 'pending', 'requested', 'waiting', 'in_progress'}
 SHA = re.compile(r'[0-9a-f]{40}')
+TERMINAL = {'action_required', 'cancelled', 'failure', 'neutral', 'skipped', 'stale',
+            'startup_failure', 'success', 'timed_out'}
+STATUS_LINE = re.compile(r'HTTP/[0-9](?:\.[0-9])? ([1-5][0-9]{2})(?: [^\r\n]*)?')
 
 
 class Refused(RuntimeError):
     """Insufficient evidence; do not broaden cancellation."""
+
+
+class SnapshotChanged(Refused):
+    """Well-formed reads disagree; discard this snapshot before retrying."""
 
 
 class GitHub:
@@ -27,21 +34,72 @@ class GitHub:
         self.deadline = clock() + 120
         self.calls = 0
 
-    def request(self, method, path):
+    def budget(self):
         remaining = self.deadline - self.clock()
         self.calls += 1
         if remaining <= 0 or self.calls > 160:
             raise Refused('Controller read/write budget exceeded')
+        return min(10, remaining)
+
+    def request(self, method, path):
+        timeout = self.budget()
         result = subprocess.run(['gh', 'api', '--method', method, path], check=True,
-                                capture_output=True, text=True, timeout=min(10, remaining))
+                                capture_output=True, text=True, timeout=timeout)
         return json.loads(result.stdout) if result.stdout.strip() else None
 
     def read(self, path):
         return self.request('GET', path)
 
     def cancel(self, path):
-        # No retry on an uncertain write, and no force-cancel endpoint.
-        self.request('POST', path)
+        # One POST only: no retry on an uncertain write, and no force-cancel endpoint.
+        # --include only adds the status line and headers; neither is ever printed.
+        timeout = self.budget()
+        try:
+            result = subprocess.run(['gh', 'api', '--include', '--method', 'POST', path],
+                                    check=False, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise CancelRefused('timeout') from None
+        except (OSError, UnicodeError):
+            raise CancelRefused('transport') from None
+        code = result.returncode if type(result.returncode) is int else None
+        status, body = http_response(result.stdout)
+        if status is None:
+            raise CancelRefused('unparsed-status', None, code)
+        if status == 409:
+            raise CancelRefused('conflict', 409, code)
+        if code != 0 or not 200 <= status < 300:
+            raise CancelRefused('http', status, code)
+        if body.strip():
+            try:
+                json.loads(body)
+            except ValueError:
+                raise CancelRefused('malformed-success', status, code) from None
+
+
+class CancelRefused(Refused):
+    """Unconfirmed cancellation; carries only sanitized write diagnostics."""
+
+    def __init__(self, category, status=None, exit_code=None):
+        self.category, self.status, self.exit_code = category, status, exit_code
+        super().__init__(f'Cancellation not confirmed: method=POST category={category} '
+                         f'status={status} exit={exit_code}')
+
+
+def text(value):
+    if isinstance(value, bytes):
+        return value.decode('utf-8', 'replace')
+    return value if isinstance(value, str) else ''
+
+
+def http_response(output):
+    """Split one --include response; reject missing or ambiguous status lines."""
+    head, separator, body = text(output).replace('\r\n', '\n').partition('\n\n')
+    lines = head.split('\n')
+    match = STATUS_LINE.fullmatch(lines[0])
+    if (not separator or match is None
+            or any(line.startswith('HTTP/') for line in lines[1:] + body.split('\n'))):
+        return None, body
+    return int(match.group(1)), body
 
 
 def positive(value):
@@ -99,21 +157,47 @@ def run_identity(run, repo, repo_id, workflows):
 
 
 def live_pr(api, repo, repo_id, number):
+    """Strict open-PR read; used for every pre-cancellation reread."""
+    live, _ = pr_state(api, repo, repo_id, number)
+    return live
+
+
+def closed_lifecycle(pr):
+    """Return 'merged'/'closed' only for coherent closed evidence, else None."""
+    merged = pr.get('merged')
+    if pr.get('state') != 'closed' or type(merged) is not bool:
+        return None
+    if 'merged_at' in pr:
+        merged_at = pr['merged_at']
+        if merged and not (isinstance(merged_at, str) and merged_at):
+            return None
+        if not merged and merged_at is not None:
+            return None
+    return 'merged' if merged else 'closed'
+
+
+def pr_state(api, repo, repo_id, number, allow_closed=False, allow_draft=False):
+    """Return (identity, lifecycle); lifecycle is None unless closure or draft is explicitly allowed."""
     pr = api.read(f'repos/{repo}/pulls/{number}')
     if not isinstance(pr, dict):
         raise Refused('Malformed live PR')
     head, base = pr.get('head'), pr.get('base')
     if not isinstance(head, dict) or not isinstance(base, dict):
         raise Refused('Malformed live PR head/base')
+    lifecycle = closed_lifecycle(pr) if allow_closed else None
+    # Only an open PR with a literal boolean draft flag; closed drafts stay refused.
+    if allow_draft and pr.get('state') == 'open' and pr.get('draft') is True:
+        lifecycle = 'draft'
     if (pr.get('number') != number or not positive(pr.get('id'))
-            or pr.get('state') != 'open' or pr.get('draft') is not False
+            or (pr.get('state') != 'open' and lifecycle is None)
+            or (pr.get('draft') is not False and lifecycle != 'draft')
             or not same_repo(head.get('repo'), repo, repo_id)
             or not same_repo(base.get('repo'), repo, repo_id)
             or not SHA.fullmatch(str(head.get('sha', '')))):
         raise Refused('PR is not an open, non-draft, same-repository target')
     if any(not isinstance(side.get('ref'), str) or not side['ref'] for side in (head, base)):
         raise Refused('Missing live branch identity')
-    return (pr['number'], pr['id'], head['ref'], base['ref'], head['sha'])
+    return (pr['number'], pr['id'], head['ref'], base['ref'], head['sha']), lifecycle
 
 
 def belongs(identity, live):
@@ -131,23 +215,48 @@ def stable(data):
 
 
 def run_snapshot(api, repo, workflow_id, branch):
+    """Try at most three complete snapshots within the shared API budget."""
+    for attempt in range(3):
+        try:
+            return _run_snapshot(api, repo, workflow_id, branch)
+        except SnapshotChanged:
+            if attempt == 2:
+                raise
+    raise AssertionError('Unreachable snapshot attempt')
+
+
+def run_page(api, path):
+    data = api.read(path)
+    if not isinstance(data, dict):
+        raise Refused('Malformed run page')
+    batch, count = data.get('workflow_runs'), data.get('total_count')
+    if not isinstance(batch, list) or type(count) is not int or not 0 <= count < 1000:
+        raise Refused('Missing or capped run pagination')
+    seen = set()
+    for run in batch:
+        identifier = run.get('id') if isinstance(run, dict) else None
+        if not positive(identifier) or identifier in seen:
+            raise Refused('Invalid or duplicate run ID in pagination')
+        seen.add(identifier)
+    if len(batch) < 100 and len(batch) != count and path.endswith('&page=1'):
+        raise Refused('Incomplete run pagination')
+    return data
+
+
+def _run_snapshot(api, repo, workflow_id, branch):
     """Read all matching runs before any mutation; reject capped/changing pages."""
     query = urlencode({'event': 'pull_request', 'branch': branch, 'per_page': 100})
     path = f'repos/{repo}/actions/workflows/{workflow_id}/runs?{query}'
     rows, seen, total = [], set(), None
     first = None
     for page in range(1, 11):
-        data = api.read(f'{path}&page={page}')
-        if not isinstance(data, dict):
-            raise Refused('Malformed run page')
+        data = run_page(api, f'{path}&page={page}')
         batch, count = data.get('workflow_runs'), data.get('total_count')
-        if not isinstance(batch, list) or type(count) is not int or not 0 <= count < 1000:
-            raise Refused('Missing or capped run pagination')
         if total is None:
             total = count
             first = data
         if count != total:
-            raise Refused('Run pagination changed')
+            raise SnapshotChanged('Run pagination changed')
         for run in batch:
             identifier = run.get('id') if isinstance(run, dict) else None
             if not positive(identifier) or identifier in seen:
@@ -159,8 +268,8 @@ def run_snapshot(api, repo, workflow_id, branch):
                 raise Refused('Incomplete run pagination')
             # Listing must remain stable through discovery. Per-run revalidation
             # below catches later status/attempt changes without trusting order.
-            if stable(api.read(f'{path}&page=1')) != stable(first):
-                raise Refused('Run snapshot changed during pagination')
+            if stable(run_page(api, f'{path}&page=1')) != stable(first):
+                raise SnapshotChanged('Run snapshot changed during pagination')
             return rows
     raise Refused('Run pagination bound exceeded')
 
@@ -200,6 +309,21 @@ def current_witness(identified, live, workflow_id):
     return identity if successor(witness) else None
 
 
+def conflict_settled(api, repo, repo_id, workflows, identity):
+    """One reread after HTTP 409: settled only if this exact attempt is now terminal.
+
+    This never proves the run was terminal when the POST was made.
+    """
+    try:
+        target = api.read(f'repos/{repo}/actions/runs/{identity[0]}')
+    except (Refused, OSError, subprocess.SubprocessError, ValueError):
+        return False
+    return (run_identity(target, repo, repo_id, workflows) == identity
+            and target.get('status') == 'completed'
+            and isinstance(target.get('conclusion'), str)
+            and target['conclusion'] in TERMINAL)
+
+
 def reconcile(api, repo, event_name, event):
     if not isinstance(event, dict):
         raise Refused('Malformed triggering event')
@@ -230,9 +354,14 @@ def reconcile(api, repo, event_name, event):
     source = api.read(f'repos/{repo}/actions/runs/{triggered[0]}')
     if run_identity(source, repo, repo_id, workflows) != triggered:
         raise Refused('Triggering run identity changed')
-    live = live_pr(api, repo, repo_id, triggered[6])
+    # Closure and draft are accepted only here, after all identity checks; final
+    # rereads stay strict, so a draft transition mid-plan still refuses.
+    live, lifecycle = pr_state(api, repo, repo_id, triggered[6], allow_closed=True, allow_draft=True)
     if not belongs(triggered, live):
         raise Refused('Triggering PR/branch identity changed')
+    if lifecycle is not None:
+        print(f'::notice::PR #{live[0]} is {lifecycle}; no cancellation needed', flush=True)
+        return []
     plans = []
     # Complete both workflow snapshots and ancestry reads before any cancellation.
     for workflow_id in workflows.values():
@@ -276,7 +405,16 @@ def reconcile(api, repo, event_name, event):
             raise Refused('Current-head successor changed before cancellation')
         if live_pr(api, repo, repo_id, live[0]) != live:
             raise Refused('Live head or PR state changed before cancellation')
-        api.cancel(f'repos/{repo}/actions/runs/{identity[0]}/cancel')
+        try:
+            api.cancel(f'repos/{repo}/actions/runs/{identity[0]}/cancel')
+        except CancelRefused as error:
+            if error.status != 409:
+                raise
+            if not conflict_settled(api, repo, repo_id, workflows, identity):
+                raise CancelRefused('conflict-unverified', 409, error.exit_code) from None
+            print(f'Run {identity[0]} attempt {identity[1]} returned HTTP 409 and a reread shows '
+                  'that attempt completed; no cancellation requested', flush=True)
+            continue
         requested.append(identity[0])
         print(f'Requested cancellation of verified ancestor run {identity[0]}', flush=True)
     return requested

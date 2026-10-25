@@ -20,6 +20,16 @@ empirical and release gates remain pending. Acceptance does not change current r
 invariants, credentials, order routing, or live-trading controls. A PR, merge, test
 or contract decision is not empirical acceptance.
 
+For shared research, use the [CSL research index](https://github.com/CSL-Laboratories/csl-research/blob/main/INDEX.md),
+[Cockpit context](https://github.com/CSL-Laboratories/csl-research/blob/main/knowledge/cockpit/README.md)
+and [research-to-delivery guide](https://github.com/CSL-Laboratories/csl-research/blob/main/README.md#connecting-research-and-delivery).
+These views are dated explanatory navigation; linked submissions are candidate
+evidence. They do not imply that all research has migrated. Check cited revisions
+and current product instructions before dependent work. Linear remains the live
+source for ownership, status and admission. Product contracts and authenticated
+human decisions retain their authority; user-facing and revision-dependent
+operational docs and contracts stay in this repository.
+
 Reconciled 2026-10-15 against `origin/main` `4a4308d`, using the same commit and
 UTC merge-date rule as the REGISTER and PLAN status pass (CSL-61,
 [PR #121](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/121),

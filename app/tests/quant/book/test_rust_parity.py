@@ -355,3 +355,119 @@ def test_rust_qty_domain_is_signed_64_bit():
     rust.add(order_id="hi", side=Side.SELL, price_ticks=102, qty=2**62)
     with pytest.raises(ValueError, match="signed 64-bit"):
         rust.total_qty(Side.SELL)
+
+
+def test_rust_fit_i64_extraction_bounds_and_types():
+    """FitI64 keeps its contract on the migrated PyO3 extractor."""
+    import cockpit_quant
+
+    rust = LimitOrderBook("EXT")
+    rust.add(order_id="max", side=Side.BUY, price_ticks=2**63 - 1, qty=1)
+    assert rust.get("max").price_ticks == 2**63 - 1
+    with pytest.raises(ValueError, match="signed 64-bit"):
+        rust.add(order_id="low", side=Side.BUY, price_ticks=-(2**63) - 1, qty=1)
+    rust.check_integrity()
+
+    # LimitOrderBook.add coerces with int(), so a str qty never reaches FitI64.
+    core = cockpit_quant.BookCore("EXT")
+    with pytest.raises(TypeError):
+        core.add("str", "buy", 100, "1", 0, 0, None)
+
+
+def test_rust_module_keeps_the_gil_contract_on_free_threaded_builds():
+    """``gil_used = true`` must survive the PyO3 0.28 default flip."""
+    import sys
+
+    import cockpit_quant  # noqa: F401
+
+    is_gil_enabled = getattr(sys, "_is_gil_enabled", None)
+    if is_gil_enabled is not None:
+        assert is_gil_enabled()
+
+
+def test_resting_at_matches_the_python_index_order():
+    python = PythonLimitOrderBook("S")
+    rust = LimitOrderBook("S")
+    rng = random.Random(4)
+    for i in range(30):
+        side = Side.BUY if rng.random() < 0.5 else Side.SELL
+        price = 100 + rng.randrange(-3, 4)
+        if side is Side.BUY:
+            price = min(price, 99)
+        else:
+            price = max(price, 101)
+        order_id = f"o{i}"
+        qty = 100 * rng.randint(1, 4)
+        python.add(order_id=order_id, side=side, price_ticks=price, qty=qty, seq=i, ts=i)
+        rust.add(order_id=order_id, side=side, price_ticks=price, qty=qty, seq=i, ts=i)
+        if i % 4 == 3:
+            victim = f"o{rng.randrange(i + 1)}"
+            if victim in python:
+                python.cancel(victim)
+                rust.cancel(victim)
+    python_ids = list(python._index)
+    assert [rust.resting_at(i).order_id for i in range(len(rust))] == python_ids
+    for i, order_id in enumerate(python_ids):
+        left = python.resting_at(i)
+        right = rust.resting_at(i)
+        assert right.order_id == left.order_id == order_id
+        assert right.side is left.side
+        assert right.price_ticks == left.price_ticks
+        assert right.qty == left.qty
+    for bad in (len(rust), -1, True, 2**63, 2**64):
+        with pytest.raises(IndexError):
+            rust.resting_at(bad)
+        with pytest.raises(IndexError):
+            python.resting_at(bad)
+
+
+def _resting_ids(book) -> list[str]:
+    return [book.resting_at(i).order_id for i in range(len(book))]
+
+
+def test_resting_at_keeps_insertion_order_through_reduce_and_replace():
+    """A partial reduce stays in its slot. A full reduce drops it.
+
+    ``replace`` cancels and re-adds, so the id moves to the end of the index
+    on both books. That is the order ``resting_at`` must keep.
+    """
+    python = PythonLimitOrderBook("S")
+    rust = LimitOrderBook("S")
+
+    def add(order_id: str, side: Side, price: int, qty: int, seq: int) -> None:
+        python.add(
+            order_id=order_id, side=side, price_ticks=price, qty=qty, seq=seq, ts=seq,
+        )
+        rust.add(
+            order_id=order_id, side=side, price_ticks=price, qty=qty, seq=seq, ts=seq,
+        )
+
+    def same(expected: list[str]) -> None:
+        assert _resting_ids(python) == expected
+        assert _resting_ids(rust) == expected
+
+    add("a", Side.BUY, 100, 10, 1)
+    add("b", Side.BUY, 100, 20, 2)
+    add("c", Side.SELL, 101, 30, 3)
+    same(["a", "b", "c"])
+
+    python.reduce("b", 5)
+    rust.reduce("b", 5)
+    assert python.resting_at(1).qty == rust.resting_at(1).qty == 15
+    same(["a", "b", "c"])
+
+    python.reduce("a", 10)
+    rust.reduce("a", 10)
+    same(["b", "c"])
+
+    python.replace("b", new_qty=12, seq=4, ts=4)
+    rust.replace("b", new_qty=12, seq=4, ts=4)
+    same(["c", "b"])
+    assert python.resting_at(1).qty == rust.resting_at(1).qty == 12
+    assert python.resting_at(1).price_ticks == rust.resting_at(1).price_ticks == 100
+
+    python.replace("c", new_price_ticks=102, new_qty=8, seq=5, ts=5)
+    rust.replace("c", new_price_ticks=102, new_qty=8, seq=5, ts=5)
+    same(["b", "c"])
+    assert python.resting_at(1).price_ticks == rust.resting_at(1).price_ticks == 102
+    assert python.resting_at(1).qty == rust.resting_at(1).qty == 8
