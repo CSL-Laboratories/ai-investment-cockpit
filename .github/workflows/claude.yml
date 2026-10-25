@@ -2698,6 +2698,20 @@ jobs:
               return -1;
           }
 
+          static int e3_token_ok(const char *s)
+          {
+              const unsigned char *p;
+              if (!s) {
+                  return 0;
+              }
+              for (p = (const unsigned char *)s; *p; p++) {
+                  if (*p < 0x20 || *p == 0x7f || *p == ' ' || *p == '\t') {
+                      return 0;
+                  }
+              }
+              return 1;
+          }
+
           int csl_e3_record_ok(const char *text, size_t n)
           {
               static const char *ok[] = {
@@ -2715,6 +2729,9 @@ jobs:
               if (n == 0 || n >= sizeof buf) {
                   return 0;
               }
+              if (memchr(text, 0, n)) {
+                  return 0;
+              }
               memcpy(buf, text, n);
               buf[n] = 0;
               for (line = strtok_r(buf, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
@@ -2724,7 +2741,11 @@ jobs:
                   if (!eq || eq == line) {
                       return 0;
                   }
-                  klen = (size_t)(eq - line);
+                  *eq = 0;
+                  if (!e3_token_ok(line) || !e3_token_ok(eq + 1)) {
+                      return 0;
+                  }
+                  klen = strlen(line);
                   for (i = 0; ok[i]; i++) {
                       if (strlen(ok[i]) == klen && memcmp(line, ok[i], klen) == 0) {
                           if (present & (1u << i)) {
@@ -2736,9 +2757,6 @@ jobs:
                       }
                   }
                   if (!found) {
-                      return 0;
-                  }
-                  if (strchr(eq + 1, ' ') || strchr(eq + 1, '\t')) {
                       return 0;
                   }
                   saw++;
@@ -2754,6 +2772,9 @@ jobs:
               int saw_count = 0, saw_conflict = 0;
 
               if (!text || !n || *n == 0 || *n >= sizeof src || cap < 2) {
+                  return -1;
+              }
+              if (!csl_e3_record_ok(text, *n)) {
                   return -1;
               }
               memcpy(src, text, *n);
@@ -5448,7 +5469,7 @@ jobs:
           CSL_C_RELAY
           cat > /opt/csl-claude/lib/sandbox_c.pin <<'CSL_C_PIN'
           0fc497c9177ffae698248db495779b2047acc5dcc89dc6c41d2b4475e3522d3b  sandbox_common.h
-          bbdc5f24da040edaf1121c3e16cf7bda2bf9735b63449b46abcf601df5ff1745  sandbox_common.c
+          a6ea6b389f74e61169ede3c4c102bed0182added62f6fd2784a5da6f088a6bd6  sandbox_common.c
           098eb6177463294e2585fca35a21a93575ae9b162185d5646bd156d0f9b04996  sandbox_filter.h
           c7d218317d057037e4c3712af5e79ea38b5763f67a6bfe1e6bcb55d31f29eb45  sandbox_filter.c
           ce7d40fb65fb34f5adb4e6089d7f26423ffc299f52b77acf32d446f6d09753fe  sandbox_argv.h
@@ -10777,6 +10798,20 @@ jobs:
               return -1;
           }
 
+          static int e3_token_ok(const char *s)
+          {
+              const unsigned char *p;
+              if (!s) {
+                  return 0;
+              }
+              for (p = (const unsigned char *)s; *p; p++) {
+                  if (*p < 0x20 || *p == 0x7f || *p == ' ' || *p == '\t') {
+                      return 0;
+                  }
+              }
+              return 1;
+          }
+
           int csl_e3_record_ok(const char *text, size_t n)
           {
               static const char *ok[] = {
@@ -10794,6 +10829,9 @@ jobs:
               if (n == 0 || n >= sizeof buf) {
                   return 0;
               }
+              if (memchr(text, 0, n)) {
+                  return 0;
+              }
               memcpy(buf, text, n);
               buf[n] = 0;
               for (line = strtok_r(buf, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
@@ -10803,7 +10841,11 @@ jobs:
                   if (!eq || eq == line) {
                       return 0;
                   }
-                  klen = (size_t)(eq - line);
+                  *eq = 0;
+                  if (!e3_token_ok(line) || !e3_token_ok(eq + 1)) {
+                      return 0;
+                  }
+                  klen = strlen(line);
                   for (i = 0; ok[i]; i++) {
                       if (strlen(ok[i]) == klen && memcmp(line, ok[i], klen) == 0) {
                           if (present & (1u << i)) {
@@ -10815,9 +10857,6 @@ jobs:
                       }
                   }
                   if (!found) {
-                      return 0;
-                  }
-                  if (strchr(eq + 1, ' ') || strchr(eq + 1, '\t')) {
                       return 0;
                   }
                   saw++;
@@ -10833,6 +10872,9 @@ jobs:
               int saw_count = 0, saw_conflict = 0;
 
               if (!text || !n || *n == 0 || *n >= sizeof src || cap < 2) {
+                  return -1;
+              }
+              if (!csl_e3_record_ok(text, *n)) {
                   return -1;
               }
               memcpy(src, text, *n);
@@ -13528,7 +13570,7 @@ jobs:
           CSL_C_RELAY
           cat > /opt/csl-claude/lib/sandbox_c.pin <<'CSL_C_PIN'
           0fc497c9177ffae698248db495779b2047acc5dcc89dc6c41d2b4475e3522d3b  sandbox_common.h
-          bbdc5f24da040edaf1121c3e16cf7bda2bf9735b63449b46abcf601df5ff1745  sandbox_common.c
+          a6ea6b389f74e61169ede3c4c102bed0182added62f6fd2784a5da6f088a6bd6  sandbox_common.c
           098eb6177463294e2585fca35a21a93575ae9b162185d5646bd156d0f9b04996  sandbox_filter.h
           c7d218317d057037e4c3712af5e79ea38b5763f67a6bfe1e6bcb55d31f29eb45  sandbox_filter.c
           ce7d40fb65fb34f5adb4e6089d7f26423ffc299f52b77acf32d446f6d09753fe  sandbox_argv.h

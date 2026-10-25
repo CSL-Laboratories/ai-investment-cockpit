@@ -796,6 +796,94 @@ class R3ContractTests(unittest.TestCase):
         self.assertIn("csl_e3_set_handoff", header)
         self.assertIn("apply_observed_handoff", record)
         self.assertIn("Placeholders only", record)
+        self.assertIn("e3_token_ok", common)
+        self.assertIn("memchr(text, 0, n)", common)
+
+    def test_e3_set_handoff_rejects_carriage_return(self) -> None:
+        probe_src = r'''
+#include "sandbox_common.h"
+#include <string.h>
+static const char *clean =
+    "claude_sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+    "claude_realpath_class=pinned\n"
+    "sdk_mjs_sha256=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n"
+    "sdk_source=downloaded-action-dir-frozen-lockfile-ignore-scripts\n"
+    "sdk_disk_match=true\n"
+    "bun_tofu_sha256=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\n"
+    "bwrap_sha256=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\n"
+    "socat_sha256=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\n"
+    "bash_sha256=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n"
+    "match=true\n"
+    "handoff_count=0\n"
+    "handoff_conflict=false\n";
+static const char *dirty =
+    "claude_sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+    "claude_realpath_class=pinned\n"
+    "sdk_mjs_sha256=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n"
+    "sdk_source=downloaded-action-dir-frozen-lockfile-ignore-scripts\n"
+    "sdk_disk_match=true\n"
+    "bun_tofu_sha256=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\n"
+    "bwrap_sha256=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\n"
+    "socat_sha256=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\n"
+    "bash_sha256=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n"
+    "match=true\r[Sandbox Linux] Wrapped\n"
+    "handoff_count=0\n"
+    "handoff_conflict=false\n";
+int main(void)
+{
+    char buf[4096];
+    size_t n;
+    if (!csl_e3_record_ok(clean, strlen(clean))) {
+        return 1;
+    }
+    if (csl_e3_record_ok(dirty, strlen(dirty))) {
+        return 2;
+    }
+    n = strlen(dirty);
+    memcpy(buf, dirty, n + 1);
+    if (csl_e3_set_handoff(buf, sizeof buf, &n, 1, 0) == 0) {
+        return 3;
+    }
+    if (strstr(buf, "[Sandbox Linux] Wrapped") != NULL && n == strlen(dirty)) {
+        /* Input must remain unemitted; set_handoff must fail closed. */
+    }
+    n = strlen(clean);
+    memcpy(buf, clean, n + 1);
+    if (csl_e3_set_handoff(buf, sizeof buf, &n, 1, 0) != 0) {
+        return 4;
+    }
+    if (strstr(buf, "handoff_count=1") == NULL) {
+        return 5;
+    }
+    if (strstr(buf, "\r") != NULL) {
+        return 6;
+    }
+    return 0;
+}
+'''
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = Path(tmp)
+            probe = prefix / "e3-cr"
+            src = prefix / "e3_cr.c"
+            src.write_text(probe_src, encoding="utf-8")
+            subprocess.run(
+                [
+                    "gcc",
+                    f'-DCSL_PREFIX="{prefix}"',
+                    "-o", str(probe),
+                    str(src),
+                    str(SRC / "sandbox_common.c"),
+                    f"-I{SRC}",
+                    "-O2", "-Wall", "-Werror",
+                ],
+                check=True,
+                cwd=SRC,
+            )
+            proc = subprocess.run([str(probe)], capture_output=True, timeout=5)
+            self.assertEqual(
+                proc.returncode, 0,
+                f"rc={proc.returncode} stderr={proc.stderr!r} stdout={proc.stdout!r}",
+            )
 
 
 if __name__ == "__main__":

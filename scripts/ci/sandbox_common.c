@@ -333,6 +333,20 @@ int csl_lookup_name(const char *name, uid_t *uid)
     return -1;
 }
 
+static int e3_token_ok(const char *s)
+{
+    const unsigned char *p;
+    if (!s) {
+        return 0;
+    }
+    for (p = (const unsigned char *)s; *p; p++) {
+        if (*p < 0x20 || *p == 0x7f || *p == ' ' || *p == '\t') {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 int csl_e3_record_ok(const char *text, size_t n)
 {
     static const char *ok[] = {
@@ -350,6 +364,9 @@ int csl_e3_record_ok(const char *text, size_t n)
     if (n == 0 || n >= sizeof buf) {
         return 0;
     }
+    if (memchr(text, 0, n)) {
+        return 0;
+    }
     memcpy(buf, text, n);
     buf[n] = 0;
     for (line = strtok_r(buf, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
@@ -359,7 +376,11 @@ int csl_e3_record_ok(const char *text, size_t n)
         if (!eq || eq == line) {
             return 0;
         }
-        klen = (size_t)(eq - line);
+        *eq = 0;
+        if (!e3_token_ok(line) || !e3_token_ok(eq + 1)) {
+            return 0;
+        }
+        klen = strlen(line);
         for (i = 0; ok[i]; i++) {
             if (strlen(ok[i]) == klen && memcmp(line, ok[i], klen) == 0) {
                 if (present & (1u << i)) {
@@ -371,9 +392,6 @@ int csl_e3_record_ok(const char *text, size_t n)
             }
         }
         if (!found) {
-            return 0;
-        }
-        if (strchr(eq + 1, ' ') || strchr(eq + 1, '\t')) {
             return 0;
         }
         saw++;
@@ -389,6 +407,9 @@ int csl_e3_set_handoff(char *text, size_t cap, size_t *n, unsigned count, int co
     int saw_count = 0, saw_conflict = 0;
 
     if (!text || !n || *n == 0 || *n >= sizeof src || cap < 2) {
+        return -1;
+    }
+    if (!csl_e3_record_ok(text, *n)) {
         return -1;
     }
     memcpy(src, text, *n);
