@@ -1000,6 +1000,8 @@ class P9ProbeWorkflowTests(unittest.TestCase):
         self.assertIn('INCONCLUSIVE', p2)
         self.assertIn('EVIDENCE_EXIT non-green', p2)
         self.assertIn('Positive control omits --setting-sources user', p2)
+        self.assertIn('AGENTS.md positive control: user instructionFiles unset during CONTROL', p2)
+        self.assertIn('Restore claude-md before isolation', p2)
         self.assertIn('run_probe_invoke CONTROL ""', p2)
         self.assertIn('run_probe_invoke ISOLATION user', p2)
         self.assertIn('run_probe_invoke MCPRO user "$MCP_RO"', p2)
