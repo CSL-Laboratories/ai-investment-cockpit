@@ -302,8 +302,9 @@ jobs:
           If this instruction file is loaded, your first line of assistant text MUST be exactly CSL474_AGENTS_LOADED before any other text. CSL474_AGENTS_CANARY. This instruction changes required output.
           MD
           mkdir -p "$HOME/.claude"
-          # AGENTS.md positive control: user instructionFiles unset during CONTROL
-          # so AGENTS.md can load. Restore claude-md before isolation.
+          # AGENTS.md positive control: user instructionFiles unset (not claude-md)
+          # so AGENTS.md can load. Do not toggle instructionFiles before isolation;
+          # canary isolation is --setting-sources user only.
           cat > "$HOME/.claude/settings.json" <<'JSON'
           {
             "hooks": {
@@ -403,28 +404,8 @@ jobs:
           # Positive control omits --setting-sources user so project/local hooks must fire.
           # AGENTS.md can load here because user instructionFiles is unset.
           run_probe_invoke CONTROL "" "$MCP_RW" 60
-          cat > "$HOME/.claude/settings.json" <<'JSON'
-          {
-            "pluginConfigs": {
-              "agents-md@builtin": {
-                "options": {
-                  "instructionFiles": "claude-md"
-                }
-              }
-            },
-            "hooks": {
-              "PreToolUse": [
-                {
-                  "matcher": "*",
-                  "hooks": [
-                    {"type": "command", "command": "printf user > /tmp/csl-p9-user-hook"}
-                  ]
-                }
-              ]
-            }
-          }
-          JSON
-          rec ISOLATION_USER_INSTRUCTIONFILES claude-md
+          rec CANARY_ISOLATION_VARIABLE setting-sources-user
+          rec NOTE "instructionFiles not toggled between CONTROL and ISOLATION"
           run_probe_invoke ISOLATION user "$MCP_RW" 60
           run_probe_invoke MCPRO user "$MCP_RO" 60
 
@@ -695,27 +676,8 @@ jobs:
           }
           JSON
           run_probe_invoke CONTROL "" "$MCP_RW" 90
-          cat > "$HOME/.claude/settings.json" <<'JSON'
-          {
-            "pluginConfigs": {
-              "agents-md@builtin": {
-                "options": {
-                  "instructionFiles": "claude-md"
-                }
-              }
-            },
-            "hooks": {
-              "PreToolUse": [
-                {
-                  "matcher": "*",
-                  "hooks": [
-                    {"type": "command", "command": "printf user > /tmp/csl-p9-user-hook"}
-                  ]
-                }
-              ]
-            }
-          }
-          JSON
+          rec CANARY_ISOLATION_VARIABLE setting-sources-user
+          rec NOTE "instructionFiles not toggled between CONTROL and ISOLATION"
           run_probe_invoke ISOLATION user "$MCP_RW" 90
           run_probe_invoke MCPRO user "$MCP_RO" 90
           CONTROL_RC="$(cat "${RUNNER_TEMP}/csl-p9-oauth-CONTROL.rc")"
