@@ -60,6 +60,10 @@ adds `ci:full` / `enhancement` (AGENTS.md:143-144, 155-159). Escalate on the Lin
    identity still creates those runs. That includes `forward-conflict-scan` dispatching
    `conflict-scan.yml`. Any other event a `GITHUB_TOKEN` triggers, such as a label or
    `ready_for_review`, creates no run at all, so recovery is a human action or an App or PAT identity.
+   Model jobs may receive only the job-scoped read-only `github.token`
+   (`github_token: ${{ github.token }}`), and only when every permission on that job is `read`.
+   `secrets.GITHUB_TOKEN`, a PAT, or the same mapping on a write permission fails the
+   CrossLaneAdmissionTests (CSL-428).
 3. A run is queued for minutes: check the org runner capacity (Team plan: 60 concurrent jobs, 5
    macOS, shared with recursion and every bot workflow; GitHub docs, Actions limits). macOS
    saturates first.

@@ -727,13 +727,21 @@ class _ModelSecrets:
 
 
 MODEL_SECRETS = _ModelSecrets()
+# Named allow-list: the Claude action may receive the job-scoped token, and
+# only that mapping, when every permission on the model job is `read`.
+MODEL_GITHUB_TOKEN_EXCEPTION = re.compile(
+    r'''['"]?github_token['"]?\s*:\s*['"]?\$\{\{\s*github\.token\s*\}\}['"]?'''
+)
+_SECRET_GITHUB_TOKEN = re.compile(
+    r'''['"]?github_token['"]?\s*:\s*['"]?\$\{\{\s*secrets\.'''
+)
 EXPECTED_LOCK = {
     'claude.yml': 'claude-${{ needs.resolve-pr.outputs.pr_number }}',
     'claude-conflict-writer.yml': 'claude-${{ inputs.pr_number }}',
 }
 ROLE_USES = {
     'prep': (),
-    'model': ('actions/checkout@', 'actions/setup-python@',
+    'model': ('actions/checkout@', 'actions/setup-python@', 'oven-sh/setup-bun@',
               'anthropics/claude-code-action@', 'actions/upload-artifact@'),
     'publish': ('actions/download-artifact@',),
     'verify': (),
@@ -771,6 +779,15 @@ def job_uses(job):
 def uses_allowed(job, role):
     allowed = ROLE_USES[role]
     return all(any(uses.startswith(prefix) for prefix in allowed) for uses in job_uses(job))
+
+
+def model_github_token_ok(job):
+    """Allow only `github_token: ${{ github.token }}` when every permission is read."""
+    perms = job.get('permissions') or {}
+    if not perms or any(value != 'read' for value in perms.values()):
+        return False
+    text = str(job)
+    return bool(MODEL_GITHUB_TOKEN_EXCEPTION.search(text)) and not _SECRET_GITHUB_TOKEN.search(text)
 
 
 def writer_callers(directory):
@@ -1047,10 +1064,7 @@ class CrossLaneAdmissionTests(unittest.TestCase):
                         # Values, not only scope names: the model token stays read-only.
                         self.assertEqual(perms, MODEL_PERMS)
                         self.assertIsNone(MODEL_SECRETS.search(str(job)))
-                        # Read-only job token is an explicit allow-listed mapping (Samir on
-                        # cockpit#271; Grok Bot Liaison recorded Lucas's same direction on CSL-428).
-                        self.assertIn('${{ github.token }}', str(job))
-                        self.assertIsNone(re.search(r'github_token:\s*\$\{\{\s*secrets\.', str(job)))
+                        self.assertTrue(model_github_token_ok(job))
                     self.assertTrue(uses_allowed(job, role), job_uses(job))
                     uses_model = any(str(s.get('uses', '')).startswith('anthropics/claude-code-action') for s in job['steps'])
                     self.assertEqual(uses_model, role == 'model')
@@ -1175,6 +1189,26 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         gh_secret['steps'][0]['env'] = {**(gh_secret['steps'][0].get('env') or {}),
                                         'GH_TOKEN': '${{ secrets.GITHUB_TOKEN }}'}
         self.assertIsNotNone(MODEL_SECRETS.search(str(gh_secret)))
+        self.assertTrue(model_github_token_ok(live))
+        self.assertFalse(model_github_token_ok(job))
+        pat_input = copy.deepcopy(live)
+        for step in pat_input['steps']:
+            with_block = step.get('with') or {}
+            if 'github_token' in with_block:
+                with_block['github_token'] = '${{ secrets.MY_PAT }}'
+                step['with'] = with_block
+                break
+        self.assertIsNotNone(_SECRET_GITHUB_TOKEN.search(str(pat_input)))
+        self.assertFalse(model_github_token_ok(pat_input))
+        gh_token_input = copy.deepcopy(live)
+        for step in gh_token_input['steps']:
+            with_block = step.get('with') or {}
+            if 'github_token' in with_block:
+                with_block['github_token'] = '${{ secrets.GITHUB_TOKEN }}'
+                step['with'] = with_block
+                break
+        self.assertIsNotNone(_SECRET_GITHUB_TOKEN.search(str(gh_token_input)))
+        self.assertFalse(model_github_token_ok(gh_token_input))
 
     def test_quoted_job_key_mutation_is_inventoried(self):
         text = (WORKFLOWS / 'claude.yml').read_text()
@@ -1207,7 +1241,9 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         model = copy.deepcopy(workflow('claude.yml')['jobs']['claude-mention'])
         model['steps'].append({'uses': './.github/actions/publish/action.yml'})
         self.assertFalse(uses_allowed(model, 'model'))
-        self.assertTrue(uses_allowed(workflow('claude.yml')['jobs']['claude-mention'], 'model'))
+        live = workflow('claude.yml')['jobs']['claude-mention']
+        self.assertTrue(any(u.startswith('oven-sh/setup-bun@') for u in job_uses(live)))
+        self.assertTrue(uses_allowed(live, 'model'))
 
     def test_runbook_names_the_github_token_dispatch_exception(self):
         runbook = next(path for path in (ROOT / 'docs').iterdir() if path.name == 'ci-runbook.md')
@@ -1215,6 +1251,8 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         self.assertIn('workflow_dispatch', section)
         self.assertIn('repository_dispatch', section)
         self.assertIn('forward-conflict-scan', section)
+        self.assertIn('github_token: ${{ github.token }}', section)
+        self.assertIn('CSL-428', section)
 
 
 class P9ProbeWorkflowTests(unittest.TestCase):
