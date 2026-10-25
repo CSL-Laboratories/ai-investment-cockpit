@@ -3,8 +3,9 @@
 **Owner direction:** recorded in CSL-212. This 2026-10-24 proposal is filed
 under [CSL-511](https://linear.app/csl-laboratories/issue/CSL-511); umbrella
 [CSL-493](https://linear.app/csl-laboratories/issue/CSL-493).
-**Status:** proposed amendment (2026-10-24); acceptance is a human decision by Lucas.
-Exact-digest acceptance remains a separate human decision.
+**Status:** proposed amendment (2026-10-24); this amendment is Lucas-authored,
+so Lucas's exact-digest receipt accepts it. Exact-digest acceptance remains a
+separate human decision.
 
 This file is a **proposed amendment**. It does not replace the last accepted
 bytes, which remain `docs/replacement/SUCCESSOR-PRODUCT.md`
@@ -48,9 +49,12 @@ research is synthesized. A spec change they author is accepted when a founder
 other than the author (Lucas, Samir `samir-shah-ahmed`, or Dan/Chaandan
 `CDanTheMan`) approves that versioned amendment PR; that approval counts as
 acceptance. (Relayed by Grok Bot Liaison from Lucas's 2026-10-24 chat
-answers, 11:58 PM PT.) A reviewed promotion then moves the pins. This
-proposed path is not yet wired into `program.json`,
-`tools/check_replacement_program.py`, or `AGENTS.md`.
+answers, 11:58 PM PT.) That other-founder-approval path is only proposed; it
+applies only to future Samir/Dan-authored amendments, and it takes effect
+only once it is wired into `program.json`,
+`tools/check_replacement_program.py`, and `AGENTS.md`. This Lucas-authored
+amendment is accepted only by Lucas's exact-digest receipt. A reviewed
+promotion then moves the pins.
 
 ## Product outcome
 
@@ -270,7 +274,11 @@ implementation, provider or venue qualification, profitable operation, safety,
 compliance, release readiness, or permission to trade live.
 
 This file is **not accepted** until Lucas posts an exact-digest human receipt
-over it. `program.json` and the replacement-program digest gate must keep
+over it. This amendment is Lucas-authored, so that receipt is the acceptance
+path. The other-founder-approval path is only proposed; it applies only to
+future Samir/Dan-authored amendments, and it takes effect only once it is
+wired into `program.json`, `tools/check_replacement_program.py`, and
+`AGENTS.md`. `program.json` and the replacement-program digest gate must keep
 pointing at the 2026-10-16 accepted bytes of
 `docs/replacement/SUCCESSOR-PRODUCT.md` until that
 receipt exists and a reviewed promotion updates the pins. Updating those pins
