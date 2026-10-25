@@ -440,26 +440,37 @@ static void drain_fifo(int discard)
 {
     unsigned char buf[8192];
     ssize_t r;
-    r = read(fifo_r, buf, sizeof buf);
-    if (r <= 0) {
-        return;
-    }
-    if (discard || captured >= CSL_CAP_BYTES) {
-        return;
-    }
-    if (captured + (size_t)r > CSL_CAP_BYTES) {
-        size_t keep = CSL_CAP_BYTES - captured;
-        memcpy(capture_buf + captured, buf, keep);
-        captured = CSL_CAP_BYTES;
-        if (cap_fd >= 0) {
-            (void)csl_write_all(cap_fd, buf, keep);
+    /* Loop until the FIFO is empty (EAGAIN) or EOF. A single 8 KiB read
+     * drops queued stderr when END/POLLHUP arrives with more than one
+     * chunk still buffered. */
+    for (;;) {
+        r = read(fifo_r, buf, sizeof buf);
+        if (r < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return;
         }
-        return;
-    }
-    memcpy(capture_buf + captured, buf, (size_t)r);
-    captured += (size_t)r;
-    if (cap_fd >= 0) {
-        (void)csl_write_all(cap_fd, buf, (size_t)r);
+        if (r == 0) {
+            return;
+        }
+        if (discard || captured >= CSL_CAP_BYTES) {
+            continue;
+        }
+        if (captured + (size_t)r > CSL_CAP_BYTES) {
+            size_t keep = CSL_CAP_BYTES - captured;
+            memcpy(capture_buf + captured, buf, keep);
+            captured = CSL_CAP_BYTES;
+            if (cap_fd >= 0) {
+                (void)csl_write_all(cap_fd, buf, keep);
+            }
+            continue;
+        }
+        memcpy(capture_buf + captured, buf, (size_t)r);
+        captured += (size_t)r;
+        if (cap_fd >= 0) {
+            (void)csl_write_all(cap_fd, buf, (size_t)r);
+        }
     }
 }
 
@@ -756,6 +767,7 @@ static pid_t load_worker(void)
 #endif
 }
 
+#ifndef CSL_FIFO_DRAIN_TEST
 int main(int argc, char **argv)
 {
     struct pollfd pfds[4];
@@ -863,9 +875,12 @@ int main(int argc, char **argv)
             break;
         }
         if (fifo_idx >= 0 && (pfds[fifo_idx].revents & (POLLIN | POLLHUP))) {
-            drain_fifo(got_end || captured >= CSL_CAP_BYTES);
+            /* Drain queued FIFO bytes before treating END/POLLHUP as final.
+             * got_end must not discard pre-exit stderr still sitting in the
+             * pipe; only the capture cap discards. */
+            drain_fifo(captured >= CSL_CAP_BYTES);
             if (pfds[fifo_idx].revents & POLLHUP) {
-                drain_fifo(got_end || captured >= CSL_CAP_BYTES);
+                drain_fifo(captured >= CSL_CAP_BYTES);
                 fifo_hup = 1;
             }
         }
@@ -881,3 +896,46 @@ int main(int argc, char **argv)
     }
     return 0;
 }
+#endif
+
+#ifdef CSL_FIFO_DRAIN_TEST
+int main(void)
+{
+    int pfd[2];
+    unsigned char payload[32768];
+    size_t i;
+    ssize_t w;
+    int flags;
+
+    for (i = 0; i < sizeof payload; i++) {
+        payload[i] = (unsigned char)(i & 0xff);
+    }
+    if (pipe(pfd) < 0) {
+        return 1;
+    }
+    flags = fcntl(pfd[0], F_GETFL, 0);
+    if (flags < 0 || fcntl(pfd[0], F_SETFL, flags | O_NONBLOCK) < 0) {
+        return 2;
+    }
+    fifo_r = pfd[0];
+    cap_fd = -1;
+    captured = 0;
+    (void)fifo_hup;
+    w = write(pfd[1], payload, sizeof payload);
+    if (w != (ssize_t)sizeof payload) {
+        return 3;
+    }
+    close(pfd[1]);
+    /* END arrives before the FIFO is drained; queued bytes must still land. */
+    got_end = 1;
+    drain_fifo(captured >= CSL_CAP_BYTES);
+    if (captured != sizeof payload) {
+        return 4;
+    }
+    if (memcmp(capture_buf, payload, sizeof payload) != 0) {
+        return 5;
+    }
+    close(pfd[0]);
+    return 0;
+}
+#endif

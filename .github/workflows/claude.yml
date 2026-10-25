@@ -4499,26 +4499,37 @@ jobs:
           {
               unsigned char buf[8192];
               ssize_t r;
-              r = read(fifo_r, buf, sizeof buf);
-              if (r <= 0) {
-                  return;
-              }
-              if (discard || captured >= CSL_CAP_BYTES) {
-                  return;
-              }
-              if (captured + (size_t)r > CSL_CAP_BYTES) {
-                  size_t keep = CSL_CAP_BYTES - captured;
-                  memcpy(capture_buf + captured, buf, keep);
-                  captured = CSL_CAP_BYTES;
-                  if (cap_fd >= 0) {
-                      (void)csl_write_all(cap_fd, buf, keep);
+              /* Loop until the FIFO is empty (EAGAIN) or EOF. A single 8 KiB read
+               * drops queued stderr when END/POLLHUP arrives with more than one
+               * chunk still buffered. */
+              for (;;) {
+                  r = read(fifo_r, buf, sizeof buf);
+                  if (r < 0) {
+                      if (errno == EINTR) {
+                          continue;
+                      }
+                      return;
                   }
-                  return;
-              }
-              memcpy(capture_buf + captured, buf, (size_t)r);
-              captured += (size_t)r;
-              if (cap_fd >= 0) {
-                  (void)csl_write_all(cap_fd, buf, (size_t)r);
+                  if (r == 0) {
+                      return;
+                  }
+                  if (discard || captured >= CSL_CAP_BYTES) {
+                      continue;
+                  }
+                  if (captured + (size_t)r > CSL_CAP_BYTES) {
+                      size_t keep = CSL_CAP_BYTES - captured;
+                      memcpy(capture_buf + captured, buf, keep);
+                      captured = CSL_CAP_BYTES;
+                      if (cap_fd >= 0) {
+                          (void)csl_write_all(cap_fd, buf, keep);
+                      }
+                      continue;
+                  }
+                  memcpy(capture_buf + captured, buf, (size_t)r);
+                  captured += (size_t)r;
+                  if (cap_fd >= 0) {
+                      (void)csl_write_all(cap_fd, buf, (size_t)r);
+                  }
               }
           }
 
@@ -4815,6 +4826,7 @@ jobs:
           #endif
           }
 
+          #ifndef CSL_FIFO_DRAIN_TEST
           int main(int argc, char **argv)
           {
               struct pollfd pfds[4];
@@ -4922,9 +4934,12 @@ jobs:
                       break;
                   }
                   if (fifo_idx >= 0 && (pfds[fifo_idx].revents & (POLLIN | POLLHUP))) {
-                      drain_fifo(got_end || captured >= CSL_CAP_BYTES);
+                      /* Drain queued FIFO bytes before treating END/POLLHUP as final.
+                       * got_end must not discard pre-exit stderr still sitting in the
+                       * pipe; only the capture cap discards. */
+                      drain_fifo(captured >= CSL_CAP_BYTES);
                       if (pfds[fifo_idx].revents & POLLHUP) {
-                          drain_fifo(got_end || captured >= CSL_CAP_BYTES);
+                          drain_fifo(captured >= CSL_CAP_BYTES);
                           fifo_hup = 1;
                       }
                   }
@@ -4940,6 +4955,49 @@ jobs:
               }
               return 0;
           }
+          #endif
+
+          #ifdef CSL_FIFO_DRAIN_TEST
+          int main(void)
+          {
+              int pfd[2];
+              unsigned char payload[32768];
+              size_t i;
+              ssize_t w;
+              int flags;
+
+              for (i = 0; i < sizeof payload; i++) {
+                  payload[i] = (unsigned char)(i & 0xff);
+              }
+              if (pipe(pfd) < 0) {
+                  return 1;
+              }
+              flags = fcntl(pfd[0], F_GETFL, 0);
+              if (flags < 0 || fcntl(pfd[0], F_SETFL, flags | O_NONBLOCK) < 0) {
+                  return 2;
+              }
+              fifo_r = pfd[0];
+              cap_fd = -1;
+              captured = 0;
+              (void)fifo_hup;
+              w = write(pfd[1], payload, sizeof payload);
+              if (w != (ssize_t)sizeof payload) {
+                  return 3;
+              }
+              close(pfd[1]);
+              /* END arrives before the FIFO is drained; queued bytes must still land. */
+              got_end = 1;
+              drain_fifo(captured >= CSL_CAP_BYTES);
+              if (captured != sizeof payload) {
+                  return 4;
+              }
+              if (memcmp(capture_buf, payload, sizeof payload) != 0) {
+                  return 5;
+              }
+              close(pfd[0]);
+              return 0;
+          }
+          #endif
           CSL_C_CAPTURE
           cat > /opt/csl-claude/src/sandbox_relay.c <<'CSL_C_RELAY'
           /* D10 §3.8 static relay. Ignore argv. One-shot gated. Only sudoers command. */
@@ -5275,7 +5333,7 @@ jobs:
           ce7d40fb65fb34f5adb4e6089d7f26423ffc299f52b77acf32d446f6d09753fe  sandbox_argv.h
           53d9e830a9a3e54da837bda920af5d8ca392faf46600cfcc47ffb2d6fcf0da7f  sandbox_argv.c
           e5aa27f1b63924ee9b1aa653a65674ea35aebe0279bd7e1bce0239e15c514217  sandbox_launch.c
-          314468cf71d54907394e0040f37c02362809e408c5729072ccd8e7009980a23c  sandbox_capture.c
+          38affc484ad7f1260e76141c28e86637431ad373db0edc8343691dfae4bc7e1a  sandbox_capture.c
           5497efe24944dc3a792a9b1b96679af39bf4c89b8251119f8f79f30be1a137b0  sandbox_relay.c
           CSL_C_PIN
           cat > /opt/csl-claude/lib/sandbox_e3_cli_pin.sh <<'CSL_E3_CLI_PIN'
@@ -5402,7 +5460,9 @@ jobs:
           install -o root -g root -m 0755 "$STAGING/claude" "$DEST"
           test "$(stat -c %U:%G:%a "$DEST")" = "root:root:755"
           test -x "$DEST"
-          if [ -w "$DEST" ] || [ -w "$DEST_DIR" ]; then
+          # 0b is already root, so `[ -w "$DEST" ]` is always true for a root-owned
+          # 0755 file. Check as the runner uid instead.
+          if runuser -u runner -- test -w "$DEST" || runuser -u runner -- test -w "$DEST_DIR"; then
             echo "install path is writable by the runner" >&2
             exit 1
           fi
@@ -5621,13 +5681,10 @@ jobs:
           if [ -f "$AP/package.json" ]; then
             (cd "$AP" && "$BUN_DST" install --frozen-lockfile --production --ignore-scripts)
           fi
-          # Pre-create the action's pin-bun destination before the ro remount so
-          # mkdir -p "$AP/bin" is a no-op. Live proof that the action's later
-          # bun install --production is a no-op on this tree is still P9.
-          mkdir -p "$AP/bin"
-          install -D -m0755 -o root -g root "$BUN_DST" "$AP/bin/bun"
 
           # 0b step 9: git-tree hash, extra-file check, node_modules digest, then bind.
+          # hash-git-tree before $AP/bin/bun: check_git_tree does not exclude bin/, so
+          # pre-seeding bun first would fail the extra-file check or punch a hole in it.
           command -v git >/dev/null 2>&1 || { echo "e3-0b: git missing" >&2; exit 1; }
           REF="$STATE/cca.git"
           git init --bare "$REF"
@@ -5642,6 +5699,11 @@ jobs:
           git -C "$BUNREF" ls-tree -r FETCH_HEAD > "$STATE/setup-bun.ls-tree"
           "$PYTHON" -I "$LIB/sandbox_e3_bind.py" verify-pins
           "$PYTHON" -I "$LIB/sandbox_e3_bind.py" hash-node-modules
+          # Pre-create the action's pin-bun destination after the extra-file check and
+          # before the ro remount so mkdir -p "$AP/bin" is a no-op. Live proof that the
+          # action's later bun install --production is a no-op on this tree is still P9.
+          mkdir -p "$AP/bin"
+          install -D -m0755 -o root -g root "$BUN_DST" "$AP/bin/bun"
           chown -R root:root "$AP"
           chmod -R go-w "$AP"
 
@@ -5671,8 +5733,11 @@ jobs:
           fi
 
           # 0b step 11: exact sudoers, rename-atomic, visudo -cf (F10). No NOPASSWD:ALL.
-          printf '%s' "$SUDOERS_TEXT" > /etc/sudoers.new
-          install -m0440 -o root -g root /etc/sudoers.new /etc/sudoers.new
+          # GNU install exits 1 when src and dst are the same file; stage via mktemp.
+          SUDOERS_SRC="$(mktemp)"
+          printf '%s' "$SUDOERS_TEXT" > "$SUDOERS_SRC"
+          install -m0440 -o root -g root "$SUDOERS_SRC" /etc/sudoers.new
+          rm -f "$SUDOERS_SRC"
           visudo -cf /etc/sudoers.new
           # fsync via python (already root).
           "$PYTHON" -I -c 'import os; fd=os.open("/etc/sudoers.new", os.O_RDONLY); os.fsync(fd); os.close(fd)'
@@ -12348,26 +12413,37 @@ jobs:
           {
               unsigned char buf[8192];
               ssize_t r;
-              r = read(fifo_r, buf, sizeof buf);
-              if (r <= 0) {
-                  return;
-              }
-              if (discard || captured >= CSL_CAP_BYTES) {
-                  return;
-              }
-              if (captured + (size_t)r > CSL_CAP_BYTES) {
-                  size_t keep = CSL_CAP_BYTES - captured;
-                  memcpy(capture_buf + captured, buf, keep);
-                  captured = CSL_CAP_BYTES;
-                  if (cap_fd >= 0) {
-                      (void)csl_write_all(cap_fd, buf, keep);
+              /* Loop until the FIFO is empty (EAGAIN) or EOF. A single 8 KiB read
+               * drops queued stderr when END/POLLHUP arrives with more than one
+               * chunk still buffered. */
+              for (;;) {
+                  r = read(fifo_r, buf, sizeof buf);
+                  if (r < 0) {
+                      if (errno == EINTR) {
+                          continue;
+                      }
+                      return;
                   }
-                  return;
-              }
-              memcpy(capture_buf + captured, buf, (size_t)r);
-              captured += (size_t)r;
-              if (cap_fd >= 0) {
-                  (void)csl_write_all(cap_fd, buf, (size_t)r);
+                  if (r == 0) {
+                      return;
+                  }
+                  if (discard || captured >= CSL_CAP_BYTES) {
+                      continue;
+                  }
+                  if (captured + (size_t)r > CSL_CAP_BYTES) {
+                      size_t keep = CSL_CAP_BYTES - captured;
+                      memcpy(capture_buf + captured, buf, keep);
+                      captured = CSL_CAP_BYTES;
+                      if (cap_fd >= 0) {
+                          (void)csl_write_all(cap_fd, buf, keep);
+                      }
+                      continue;
+                  }
+                  memcpy(capture_buf + captured, buf, (size_t)r);
+                  captured += (size_t)r;
+                  if (cap_fd >= 0) {
+                      (void)csl_write_all(cap_fd, buf, (size_t)r);
+                  }
               }
           }
 
@@ -12664,6 +12740,7 @@ jobs:
           #endif
           }
 
+          #ifndef CSL_FIFO_DRAIN_TEST
           int main(int argc, char **argv)
           {
               struct pollfd pfds[4];
@@ -12771,9 +12848,12 @@ jobs:
                       break;
                   }
                   if (fifo_idx >= 0 && (pfds[fifo_idx].revents & (POLLIN | POLLHUP))) {
-                      drain_fifo(got_end || captured >= CSL_CAP_BYTES);
+                      /* Drain queued FIFO bytes before treating END/POLLHUP as final.
+                       * got_end must not discard pre-exit stderr still sitting in the
+                       * pipe; only the capture cap discards. */
+                      drain_fifo(captured >= CSL_CAP_BYTES);
                       if (pfds[fifo_idx].revents & POLLHUP) {
-                          drain_fifo(got_end || captured >= CSL_CAP_BYTES);
+                          drain_fifo(captured >= CSL_CAP_BYTES);
                           fifo_hup = 1;
                       }
                   }
@@ -12789,6 +12869,49 @@ jobs:
               }
               return 0;
           }
+          #endif
+
+          #ifdef CSL_FIFO_DRAIN_TEST
+          int main(void)
+          {
+              int pfd[2];
+              unsigned char payload[32768];
+              size_t i;
+              ssize_t w;
+              int flags;
+
+              for (i = 0; i < sizeof payload; i++) {
+                  payload[i] = (unsigned char)(i & 0xff);
+              }
+              if (pipe(pfd) < 0) {
+                  return 1;
+              }
+              flags = fcntl(pfd[0], F_GETFL, 0);
+              if (flags < 0 || fcntl(pfd[0], F_SETFL, flags | O_NONBLOCK) < 0) {
+                  return 2;
+              }
+              fifo_r = pfd[0];
+              cap_fd = -1;
+              captured = 0;
+              (void)fifo_hup;
+              w = write(pfd[1], payload, sizeof payload);
+              if (w != (ssize_t)sizeof payload) {
+                  return 3;
+              }
+              close(pfd[1]);
+              /* END arrives before the FIFO is drained; queued bytes must still land. */
+              got_end = 1;
+              drain_fifo(captured >= CSL_CAP_BYTES);
+              if (captured != sizeof payload) {
+                  return 4;
+              }
+              if (memcmp(capture_buf, payload, sizeof payload) != 0) {
+                  return 5;
+              }
+              close(pfd[0]);
+              return 0;
+          }
+          #endif
           CSL_C_CAPTURE
           cat > /opt/csl-claude/src/sandbox_relay.c <<'CSL_C_RELAY'
           /* D10 §3.8 static relay. Ignore argv. One-shot gated. Only sudoers command. */
@@ -13124,7 +13247,7 @@ jobs:
           ce7d40fb65fb34f5adb4e6089d7f26423ffc299f52b77acf32d446f6d09753fe  sandbox_argv.h
           53d9e830a9a3e54da837bda920af5d8ca392faf46600cfcc47ffb2d6fcf0da7f  sandbox_argv.c
           e5aa27f1b63924ee9b1aa653a65674ea35aebe0279bd7e1bce0239e15c514217  sandbox_launch.c
-          314468cf71d54907394e0040f37c02362809e408c5729072ccd8e7009980a23c  sandbox_capture.c
+          38affc484ad7f1260e76141c28e86637431ad373db0edc8343691dfae4bc7e1a  sandbox_capture.c
           5497efe24944dc3a792a9b1b96679af39bf4c89b8251119f8f79f30be1a137b0  sandbox_relay.c
           CSL_C_PIN
           cat > /opt/csl-claude/lib/sandbox_e3_cli_pin.sh <<'CSL_E3_CLI_PIN'
@@ -13251,7 +13374,9 @@ jobs:
           install -o root -g root -m 0755 "$STAGING/claude" "$DEST"
           test "$(stat -c %U:%G:%a "$DEST")" = "root:root:755"
           test -x "$DEST"
-          if [ -w "$DEST" ] || [ -w "$DEST_DIR" ]; then
+          # 0b is already root, so `[ -w "$DEST" ]` is always true for a root-owned
+          # 0755 file. Check as the runner uid instead.
+          if runuser -u runner -- test -w "$DEST" || runuser -u runner -- test -w "$DEST_DIR"; then
             echo "install path is writable by the runner" >&2
             exit 1
           fi
@@ -13471,13 +13596,10 @@ jobs:
           if [ -f "$AP/package.json" ]; then
             (cd "$AP" && "$BUN_DST" install --frozen-lockfile --production --ignore-scripts)
           fi
-          # Pre-create the action's pin-bun destination before the ro remount so
-          # mkdir -p "$AP/bin" is a no-op. Live proof that the action's later
-          # bun install --production is a no-op on this tree is still P9.
-          mkdir -p "$AP/bin"
-          install -D -m0755 -o root -g root "$BUN_DST" "$AP/bin/bun"
 
           # 0b step 9: git-tree hash, extra-file check, node_modules digest, then bind.
+          # hash-git-tree before $AP/bin/bun: check_git_tree does not exclude bin/, so
+          # pre-seeding bun first would fail the extra-file check or punch a hole in it.
           command -v git >/dev/null 2>&1 || { echo "e3-0b: git missing" >&2; exit 1; }
           REF="$STATE/cca.git"
           git init --bare "$REF"
@@ -13492,6 +13614,11 @@ jobs:
           git -C "$BUNREF" ls-tree -r FETCH_HEAD > "$STATE/setup-bun.ls-tree"
           "$PYTHON" -I "$LIB/sandbox_e3_bind.py" verify-pins
           "$PYTHON" -I "$LIB/sandbox_e3_bind.py" hash-node-modules
+          # Pre-create the action's pin-bun destination after the extra-file check and
+          # before the ro remount so mkdir -p "$AP/bin" is a no-op. Live proof that the
+          # action's later bun install --production is a no-op on this tree is still P9.
+          mkdir -p "$AP/bin"
+          install -D -m0755 -o root -g root "$BUN_DST" "$AP/bin/bun"
           chown -R root:root "$AP"
           chmod -R go-w "$AP"
 
@@ -13521,8 +13648,11 @@ jobs:
           fi
 
           # 0b step 11: exact sudoers, rename-atomic, visudo -cf (F10). No NOPASSWD:ALL.
-          printf '%s' "$SUDOERS_TEXT" > /etc/sudoers.new
-          install -m0440 -o root -g root /etc/sudoers.new /etc/sudoers.new
+          # GNU install exits 1 when src and dst are the same file; stage via mktemp.
+          SUDOERS_SRC="$(mktemp)"
+          printf '%s' "$SUDOERS_TEXT" > "$SUDOERS_SRC"
+          install -m0440 -o root -g root "$SUDOERS_SRC" /etc/sudoers.new
+          rm -f "$SUDOERS_SRC"
           visudo -cf /etc/sudoers.new
           # fsync via python (already root).
           "$PYTHON" -I -c 'import os; fd=os.open("/etc/sudoers.new", os.O_RDONLY); os.fsync(fd); os.close(fd)'
