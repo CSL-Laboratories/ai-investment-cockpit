@@ -56,6 +56,7 @@ EXPECTED_AUTHORITY_KEYS = {
     "superseded_acceptance_receipt",
 }
 # Exact GitHub logins. Membership is not "any non-author approver".
+# Matching is exact-case: "samir-shah-ahmed" matches; "Samir-Shah-Ahmed" does not.
 FOUNDER_GITHUB_ALLOWLIST = (
     "CDanTheMan",
     "NotSkittlz",
@@ -64,6 +65,10 @@ FOUNDER_GITHUB_ALLOWLIST = (
 RECEIPT_KIND_LINEAR_DIGEST = "linear_digest"
 RECEIPT_KIND_GITHUB_FOUNDER_PR_APPROVAL = "github_founder_pr_approval"
 GITHUB_REPOSITORY = "CSL-Laboratories/ai-investment-cockpit"
+# Empty until a founder GitHub approval is recorded AND this pin table is
+# amended in the same reviewed checker change. Editing program.json alone
+# cannot mint an approval.
+EXPECTED_GITHUB_ACCEPTED_RECEIPTS: tuple[dict[str, Any], ...] = ()
 EXPECTED_ACCEPTED_RECEIPT_KEYS = {
     "kind",
     "linear_issue",
@@ -115,12 +120,15 @@ REQUIRED_NOT_GRANTED = {
     "capital_movement",
     "merge_permission",
 }
+# Linear-path pin only. A checker-pinned GitHub receipt may move any of the
+# four governing files; that path uses the receipt digest map, not this table.
 EXPECTED_ACCEPTED_CONTRACTS = {
     "docs/replacement/SUCCESSOR-PRODUCT.md": "6e5f0d0cad102077fd058aac4970ac0eb31fd6f6e952f948c43edaa9fe0c919e",
     "docs/replacement/ISSUE-CONTRACT.md": "f1fb50dab4b166ca476698fc3974d6a1c2003b16df1d89ff8930060ad04b5094",
     "docs/replacement/MONTH-PROGRAM.md": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
     "docs/replacement/SCOPE-AUDIT.md": "d23dcc769e743d199ae4142f0e20ad5feebfe310c71d9f57fdd9d647c230db8c",
 }
+# Historical Linear receipt. GitHub path does not rewrite this pin.
 EXPECTED_SUPERSEDED_CONTRACTS = {
     "docs/replacement/SUCCESSOR-PRODUCT.md": "23a608d292665281d7ac19686d8b9fc962d2abce642994b41511d4aba145c487",
     "docs/replacement/ISSUE-CONTRACT.md": "f1fb50dab4b166ca476698fc3974d6a1c2003b16df1d89ff8930060ad04b5094",
@@ -242,22 +250,46 @@ def _digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _git_head(root: Path) -> str:
+def _git_run(root: Path, args: tuple[str, ...], *, message: str) -> subprocess.CompletedProcess[bytes]:
     try:
         completed = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            ["git", "-C", str(root), *args],
             check=False,
             capture_output=True,
-            text=True,
         )
     except OSError as exc:
-        raise ContractError(f"github receipt head unavailable: {exc}") from exc
-    sha = completed.stdout.strip().lower()
+        raise ContractError(f"{message}: {exc}") from exc
+    return completed
+
+
+def _git_head(root: Path) -> str:
+    completed = _git_run(root, ("rev-parse", "HEAD"), message="github receipt head unavailable")
+    sha = completed.stdout.decode("ascii", "replace").strip().lower()
     _require(
         completed.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", sha) is not None,
         "github receipt head unavailable",
     )
     return sha
+
+
+def _git_show_digest(root: Path, sha: str, rel: str) -> str:
+    completed = _git_run(
+        root,
+        ("show", f"{sha}:{rel}"),
+        message=f"github receipt bytes unavailable: {rel}",
+    )
+    _require(completed.returncode == 0, f"github receipt bytes unavailable: {rel}")
+    return hashlib.sha256(completed.stdout).hexdigest()
+
+
+def _require_no_governed_diff(root: Path, approved: str, head: str) -> None:
+    completed = _git_run(
+        root,
+        ("diff", "--quiet", approved, head, "--", *sorted(EXPECTED_CONTRACTS)),
+        message="github receipt governed diff unavailable",
+    )
+    _require(completed.returncode != 1, "github receipt governed bytes changed after approval")
+    _require(completed.returncode == 0, "github receipt governed diff unavailable")
 
 
 def _require_digest_map(value: Any, message: str) -> dict[str, str]:
@@ -312,12 +344,7 @@ def _validate_linear_digest_receipt(receipt: dict[str, Any]) -> None:
     _require_not_granted(receipt.get("not_granted"), "accepted receipt exclusions changed")
 
 
-def _validate_github_founder_pr_approval(
-    receipt: dict[str, Any],
-    *,
-    current_head_sha: str | None,
-    root: Path,
-) -> None:
+def _validate_github_founder_pr_approval(receipt: dict[str, Any], *, root: Path) -> None:
     _require(
         isinstance(receipt, dict) and set(receipt) == EXPECTED_GITHUB_RECEIPT_KEYS,
         "accepted github receipt fields changed",
@@ -346,29 +373,24 @@ def _validate_github_founder_pr_approval(
         _nonempty(approved) and re.fullmatch(r"[0-9a-f]{40}", approved) is not None,
         "approved head sha invalid",
     )
-    head = current_head_sha
-    if not _nonempty(head):
-        head = _git_head(root)
-    if head.lower() != approved:
-        # The receipt is committed after approval, so HEAD legitimately moves past
-        # the approved revision; the digest map pins the governed bytes themselves.
-        try:
-            ancestry = subprocess.run(
-                ["git", "-C", str(root), "merge-base", "--is-ancestor", approved, head],
-                check=False,
-                capture_output=True,
-            )
-        except OSError as exc:
-            raise ContractError(f"github receipt ancestry unavailable: {exc}") from exc
-        _require(ancestry.returncode == 0, "stale github approval head")
     _require(_nonempty(receipt.get("accepted_at")), "github receipt timestamp missing")
-    _require_digest_map(receipt.get("accepted_contracts"), "github receipt digest map invalid")
+    contracts = _require_digest_map(
+        receipt.get("accepted_contracts"), "github receipt digest map invalid"
+    )
     _require(
         _nonempty(receipt.get("authority_research_sha256"))
         and re.fullmatch(r"[0-9a-f]{64}", receipt["authority_research_sha256"]) is not None,
         "github receipt research digest invalid",
     )
     _require_not_granted(receipt.get("not_granted"), "accepted receipt exclusions changed")
+    _require(
+        any(receipt == pinned for pinned in EXPECTED_GITHUB_ACCEPTED_RECEIPTS),
+        "github receipt is not checker-pinned",
+    )
+    head = _git_head(root)
+    shown = {rel: _git_show_digest(root, approved, rel) for rel in sorted(EXPECTED_CONTRACTS)}
+    _require(shown == contracts, "github receipt digest does not match approved head")
+    _require_no_governed_diff(root, approved, head)
 
 
 def _has_exact_outcome_heading(document: str, key: str) -> bool:
@@ -417,11 +439,7 @@ def _month_projection(document: str) -> dict[str, tuple[str, list[str]]]:
     return projection
 
 
-def validate(
-    program: dict[str, Any],
-    root: Path = ROOT,
-    current_head_sha: str | None = None,
-) -> None:
+def validate(program: dict[str, Any], root: Path = ROOT) -> None:
     _require(
         isinstance(program, dict) and set(program) == EXPECTED_PROGRAM_KEYS,
         "program fields changed",
@@ -458,11 +476,7 @@ def validate(
         )
         _validate_linear_digest_receipt(accepted_receipt)
     elif kind == RECEIPT_KIND_GITHUB_FOUNDER_PR_APPROVAL:
-        _validate_github_founder_pr_approval(
-            accepted_receipt,
-            current_head_sha=current_head_sha,
-            root=root,
-        )
+        _validate_github_founder_pr_approval(accepted_receipt, root=root)
     else:
         raise ContractError("unsupported receipt kind")
 
@@ -568,6 +582,7 @@ def validate(
     seen: set[str] = set()
     month_program = (root / "docs" / "replacement" / "MONTH-PROGRAM.md").read_text(encoding="utf-8")
     projection = _month_projection(month_program)
+    month_digest = accepted_receipt["accepted_contracts"]["docs/replacement/MONTH-PROGRAM.md"]
     for item in outcomes:
         key = item["key"]
         _require(set(item) == REQUIRED_OUTCOME_FIELDS, f"{key} outcome fields changed")
@@ -610,8 +625,7 @@ def validate(
             _require(ref.get("fragment") == f"docs/replacement/MONTH-PROGRAM.md#{ref['outcome'].lower()}", f"{key} invalid dependency fragment")
             _require(
                 ref.get("status") == "accepted_human_digest_receipt"
-                and ref.get("accepted_digest")
-                == EXPECTED_ACCEPTED_CONTRACTS["docs/replacement/MONTH-PROGRAM.md"],
+                and ref.get("accepted_digest") == month_digest,
                 f"{key} dependency contract receipt changed",
             )
         seen.add(key)

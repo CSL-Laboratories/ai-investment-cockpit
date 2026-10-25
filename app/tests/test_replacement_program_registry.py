@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import shutil
 import subprocess
 import sys
 import json
@@ -12,29 +11,6 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-
-
-@pytest.fixture
-def accepted_root(tmp_path: Path) -> Path:
-    root = tmp_path / "accepted-root"
-    shutil.copytree(ROOT / "docs" / "replacement", root / "docs" / "replacement")
-    program = json.loads((root / "docs/replacement/program.json").read_text(encoding="utf-8"))
-    pins = program["authority"]["acceptance_receipt"]["accepted_contracts"]
-    for rel, expected in pins.items():
-        path = root / rel
-        if hashlib.sha256(path.read_bytes()).hexdigest() == expected:
-            continue
-        shown = subprocess.run(
-            ["git", "-C", str(ROOT), "show", f"origin/main:{rel}"],
-            capture_output=True,
-        )
-        if shown.returncode != 0:
-            pytest.skip(f"origin/main unavailable to restore accepted {rel}")
-        original = shown.stdout
-        if hashlib.sha256(original).hexdigest() != expected:
-            raise AssertionError(f"origin/main {rel} does not match pin {expected}")
-        path.write_bytes(original)
-    return root
 
 
 def _run_checker(*extra: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -63,23 +39,17 @@ def test_live_tree_issue_contract_digest_gate() -> None:
         "docs/replacement/ISSUE-CONTRACT.md"
     ]
     result = _run_checker()
-    if actual == pinned:
-        assert result.returncode == 0
-        assert "replacement-program: PASS" in result.stdout
-        return
-    assert result.returncode == 1
-    assert "contract digest mismatch: docs/replacement/ISSUE-CONTRACT.md" in result.stderr
-    assert "replacement-program: PASS" not in result.stdout
+    assert actual == pinned
+    assert result.returncode == 0
+    assert "replacement-program: PASS" in result.stdout
 
 
-def test_registry_cli_rejects_changed_outcome_with_unchanged_receipt(
-    tmp_path: Path, accepted_root: Path
-) -> None:
+def test_registry_cli_rejects_changed_outcome_with_unchanged_receipt(tmp_path: Path) -> None:
     program = json.loads((ROOT / "docs/replacement/program.json").read_text(encoding="utf-8"))
     program["outcomes"][0]["intended_outcome"] = "Approve live execution immediately."
     candidate = tmp_path / "program.json"
     candidate.write_text(json.dumps(program), encoding="utf-8")
-    result = _run_checker("--program", str(candidate), "--root", str(accepted_root))
+    result = _run_checker("--program", str(candidate))
     assert result.returncode == 1
     assert "outcome integrity baseline changed" in result.stderr
 
@@ -157,7 +127,7 @@ def test_registry_cli_rejects_malformed_authority_objects(tmp_path: Path, field:
 ])
 @pytest.mark.parametrize("value", [None, True, 1.0, "bad", [], {}, [{}]])
 def test_registry_cli_normalizes_malformed_boundaries(
-    tmp_path: Path, accepted_root: Path, path: tuple, value: object
+    tmp_path: Path, path: tuple, value: object
 ) -> None:
     program = json.loads((ROOT / "docs/replacement/program.json").read_text(encoding="utf-8"))
     target = program
@@ -166,7 +136,7 @@ def test_registry_cli_normalizes_malformed_boundaries(
     target[path[-1]] = value
     candidate = tmp_path / "program.json"
     candidate.write_text(json.dumps(program), encoding="utf-8")
-    result = _run_checker("--program", str(candidate), "--root", str(accepted_root))
+    result = _run_checker("--program", str(candidate))
     assert result.returncode == 1
     assert "replacement-program: FAIL:" in result.stderr
     assert "Traceback" not in result.stderr

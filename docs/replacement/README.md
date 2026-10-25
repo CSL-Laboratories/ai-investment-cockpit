@@ -35,13 +35,23 @@ Acceptance receipts are dual-path and fail closed. The live CSL-212 record is a
 Lucas Linear digest receipt (`kind: linear_digest`). Spec changes may also be
 accepted by a founder GitHub PR approval recorded in `program.json`
 (`kind: github_founder_pr_approval`): allowlisted founder login (`CDanTheMan`,
-`NotSkittlz`, `samir-shah-ahmed`), approver other than the PR author, approved
-head SHA, and the exact file digest map. The offline checker does not call
-GitHub; the recorded fields are the receipt. Founder identity is that allowlist,
-not any non-author approver. Merge, labels, status, generic PR approval, and
-agent comments are not receipts. Changing `ISSUE-CONTRACT.md` or other governing
-bytes still requires the receipt digest map to match those bytes; the accepted
-pins in `program.json` do not move until that receipt exists.
+`NotSkittlz`, `samir-shah-ahmed`; exact-case match), approver other than the PR
+author, approved head SHA, and the exact file digest map. The checker pins
+accepted GitHub receipts the same way it pins Linear comment IDs: editing
+`program.json` alone cannot mint an approval. Receipt digests are bound to
+`approved_head_sha` (`git show <sha>:<path>` and no governed diff from that SHA
+to HEAD); git failure is fail-closed. A GitHub receipt may move any of the four
+governing files. Outcome `dependency_contracts.accepted_digest` follows that
+receipt's MONTH-PROGRAM digest, so a MONTH-PROGRAM move also requires an
+`OUTCOME_BASELINE_DIGESTS` checker amendment. The superseded Linear receipt
+stays pinned. The offline checker does not call GitHub. Founder identity is
+that allowlist, not any non-author approver. Merge, labels, status, generic PR
+approval, and agent comments are not receipts.
+
+Proposed ISSUE-CONTRACT dual-path wording lives in
+[amendments/ISSUE-CONTRACT-2026-10-25.md](amendments/ISSUE-CONTRACT-2026-10-25.md).
+It is not governing. `ISSUE-CONTRACT.md` remains the CSL-212 bytes until an
+accepted amendment is promoted.
 
 The current rules in `AGENTS.md`, `CLAUDE.md`, the nine implementation
 invariants, the order path, and all pre-live controls remain authoritative until

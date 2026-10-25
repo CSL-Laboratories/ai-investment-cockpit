@@ -41,8 +41,9 @@ Accepted contracts require their own versioned amendment, exact acceptance and r
 promotion. Exact acceptance is either the recorded Lucas Linear digest receipt or a
 founder GitHub PR approval recorded in `docs/replacement/program.json` (approving
 founder login on the checker allowlist `CDanTheMan` / `NotSkittlz` /
-`samir-shah-ahmed`, approver other than the PR author, approved head SHA, exact
-file digest map). Merge and non-founder review are not acceptance.
+`samir-shah-ahmed`, exact-case match, approver other than the PR author, approved
+head SHA, exact file digest map, checker-pinned receipt identity). Merge and
+non-founder review are not acceptance.
 No person-level decision unlocks live capital or bypasses the nine invariants,
 paper-only boundary or pre-live gates. Existing account, credential and runtime restrictions
 remain in force; this wording does not activate R2a or grant a live run.

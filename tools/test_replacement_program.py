@@ -1,6 +1,7 @@
 """Negative controls for the replacement-program contract."""
 from __future__ import annotations
 
+import contextlib
 import copy
 import hashlib
 import importlib.util
@@ -17,29 +18,60 @@ CHECKER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CHECKER)
 
 MALFORMED_VALUES = (None, True, False, 0, 1, 1.0, 1.5, "", "bad", [], {}, [None], [[]], [{}], {"x": []})
-APPROVED_HEAD = "0123456789abcdef0123456789abcdef01234567"
-STALE_HEAD = "fedcba9876543210fedcba9876543210fedcba98"
+MONTH_PROGRAM = "docs/replacement/MONTH-PROGRAM.md"
+ISSUE_CONTRACT = "docs/replacement/ISSUE-CONTRACT.md"
 
 
-def accepted_replacement_root(tmp) -> Path:
-    """Copy governing files and restore accepted product-byte pins if the tree drifted."""
+def replacement_root(tmp) -> Path:
+    """Copy the tree under review. Do not restore from origin/main or skip."""
     root = Path(tmp) / "repo"
     shutil.copytree(ROOT / "docs" / "replacement", root / "docs" / "replacement")
-    for rel, expected in CHECKER.EXPECTED_ACCEPTED_CONTRACTS.items():
-        path = root / rel
-        if hashlib.sha256(path.read_bytes()).hexdigest() == expected:
-            continue
-        shown = subprocess.run(
-            ["git", "-C", str(ROOT), "show", f"origin/main:{rel}"],
-            capture_output=True,
-        )
-        if shown.returncode != 0:
-            raise unittest.SkipTest(f"origin/main unavailable to restore accepted {rel}")
-        original = shown.stdout
-        if hashlib.sha256(original).hexdigest() != expected:
-            raise AssertionError(f"origin/main {rel} does not match pin {expected}")
-        path.write_bytes(original)
     return root
+
+
+def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(root), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def governed_git_repo(tmp, *, extra_commit=None) -> tuple[Path, str]:
+    root = replacement_root(tmp)
+    _git(root, "init")
+    _git(root, "config", "user.name", "replacement-tests")
+    _git(root, "config", "user.email", "replacement-tests@example.com")
+    _git(root, "add", "docs/replacement")
+    _git(root, "commit", "-m", "approved governed bytes")
+    approved = _git(root, "rev-parse", "HEAD").stdout.strip()
+    if extra_commit is not None:
+        extra_commit(root)
+        _git(root, "add", "-A")
+        _git(root, "commit", "-m", "descendant")
+    return root, approved
+
+
+@contextlib.contextmanager
+def pinned_github_receipt(program):
+    receipt = program["authority"]["acceptance_receipt"]
+    previous = CHECKER.EXPECTED_GITHUB_ACCEPTED_RECEIPTS
+    CHECKER.EXPECTED_GITHUB_ACCEPTED_RECEIPTS = (copy.deepcopy(receipt),)
+    try:
+        yield
+    finally:
+        CHECKER.EXPECTED_GITHUB_ACCEPTED_RECEIPTS = previous
+
+
+def retarget_month_digest(program, digest: str) -> None:
+    for contract in program["contracts"]:
+        if contract["path"] == MONTH_PROGRAM:
+            contract["sha256"] = digest
+    program["authority"]["acceptance_receipt"]["accepted_contracts"][MONTH_PROGRAM] = digest
+    for outcome in program["outcomes"]:
+        for ref in outcome["dependency_contracts"]:
+            ref["accepted_digest"] = digest
 
 
 def github_acceptance_program(program, **overrides):
@@ -52,7 +84,7 @@ def github_acceptance_program(program, **overrides):
         "github_repository": CHECKER.GITHUB_REPOSITORY,
         "pr_author_login": "CDanTheMan",
         "approving_founder_login": "samir-shah-ahmed",
-        "approved_head_sha": APPROVED_HEAD,
+        "approved_head_sha": "0123456789abcdef0123456789abcdef01234567",
         "accepted_at": "2026-10-25T07:00:00.000Z",
         "accepted_contracts": dict(CHECKER.EXPECTED_ACCEPTED_CONTRACTS),
         "authority_research_sha256": linear["authority_research_sha256"],
@@ -85,38 +117,11 @@ def replace_node(program, path, value):
 
 
 class ReplacementProgramTests(unittest.TestCase):
-    accepted_root: Path
-    _accepted_tmp: tempfile.TemporaryDirectory | None = None
-
-    @classmethod
-    def setUpClass(cls) -> None:
-        cls._accepted_tmp = tempfile.TemporaryDirectory()
-        cls.accepted_root = accepted_replacement_root(cls._accepted_tmp.name)
-
-    @classmethod
-    def tearDownClass(cls) -> None:
-        if cls._accepted_tmp is not None:
-            cls._accepted_tmp.cleanup()
-
     def setUp(self) -> None:
         self.program = CHECKER.load(ROOT / "docs" / "replacement" / "program.json")
-        self._orig_validate = CHECKER.validate
-        accepted = self.accepted_root
-        orig = self._orig_validate
-
-        def _validate(program, root=ROOT, current_head_sha=None):
-            if root == ROOT:
-                root = accepted
-            return orig(program, root, current_head_sha=current_head_sha)
-
-        CHECKER.validate = _validate  # type: ignore[method-assign]
-
-    def tearDown(self) -> None:
-        CHECKER.validate = self._orig_validate  # type: ignore[method-assign]
 
     def test_checked_in_registry_passes(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            CHECKER.validate(self.program, accepted_replacement_root(tmp))
+        CHECKER.validate(self.program)
 
     def test_registry_type_mutation_sweep_rejects_cleanly(self) -> None:
         for path, original in registry_nodes(self.program):
@@ -374,8 +379,7 @@ class ReplacementProgramTests(unittest.TestCase):
     def test_integrity_baseline_ignores_json_object_order(self) -> None:
         candidate = copy.deepcopy(self.program)
         candidate["outcomes"] = [dict(reversed(list(item.items()))) for item in candidate["outcomes"]]
-        with tempfile.TemporaryDirectory() as tmp:
-            CHECKER.validate(candidate, accepted_replacement_root(tmp))
+        CHECKER.validate(candidate)
 
     def test_month_projection_preserves_ranges_and_all_prior_outcomes(self) -> None:
         month = (ROOT / "docs" / "replacement" / "MONTH-PROGRAM.md").read_text(encoding="utf-8")
@@ -392,7 +396,7 @@ class ReplacementProgramTests(unittest.TestCase):
 
     def test_contract_file_and_registry_hash_cannot_bypass_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = accepted_replacement_root(tmp)
+            root = replacement_root(tmp)
             program = CHECKER.load(root / "docs" / "replacement" / "program.json")
             contract = root / "docs" / "replacement" / "SUCCESSOR-PRODUCT.md"
             contract.write_text(
@@ -406,7 +410,7 @@ class ReplacementProgramTests(unittest.TestCase):
 
     def test_research_file_and_registry_hash_cannot_bypass_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = accepted_replacement_root(tmp)
+            root = replacement_root(tmp)
             program = CHECKER.load(root / "docs" / "replacement" / "program.json")
             research = root / "docs" / "replacement" / "AUTHORITY-COMPLIANCE-RESEARCH.md"
             research.write_text(
@@ -476,8 +480,7 @@ class FounderPrApprovalReceiptTests(unittest.TestCase):
         self.program = CHECKER.load(ROOT / "docs" / "replacement" / "program.json")
 
     def test_lucas_linear_receipt_still_valid_on_accepted_bytes(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            CHECKER.validate(self.program, accepted_replacement_root(tmp))
+        CHECKER.validate(self.program)
         receipt = self.program["authority"]["acceptance_receipt"]
         self.assertEqual(receipt["kind"], CHECKER.RECEIPT_KIND_LINEAR_DIGEST)
         self.assertEqual(receipt["accepted_by_linear_user_id"], "8709c8bb-e7d2-429e-89f9-89a48b7187fa")
@@ -486,15 +489,21 @@ class FounderPrApprovalReceiptTests(unittest.TestCase):
             self.program["authority"]["founder_github_allowlist"],
             list(CHECKER.FOUNDER_GITHUB_ALLOWLIST),
         )
+        self.assertEqual(CHECKER.EXPECTED_GITHUB_ACCEPTED_RECEIPTS, ())
+
+    def test_program_json_alone_cannot_mint_github_approval(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root, sha = governed_git_repo(tmp)
+            candidate = github_acceptance_program(self.program, approved_head_sha=sha)
+            with self.assertRaisesRegex(CHECKER.ContractError, "github receipt is not checker-pinned"):
+                CHECKER.validate(candidate, root)
 
     def test_founder_pr_approval_accepts_allowlisted_non_author(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = accepted_replacement_root(tmp)
-            CHECKER.validate(
-                github_acceptance_program(self.program),
-                root,
-                current_head_sha=APPROVED_HEAD,
-            )
+            root, sha = governed_git_repo(tmp)
+            candidate = github_acceptance_program(self.program, approved_head_sha=sha)
+            with pinned_github_receipt(candidate):
+                CHECKER.validate(candidate, root)
 
     def test_author_self_approval_rejected(self) -> None:
         candidate = github_acceptance_program(
@@ -502,14 +511,8 @@ class FounderPrApprovalReceiptTests(unittest.TestCase):
             pr_author_login="samir-shah-ahmed",
             approving_founder_login="samir-shah-ahmed",
         )
-        with tempfile.TemporaryDirectory() as tmp, self.assertRaisesRegex(
-            CHECKER.ContractError, "author self-approval rejected"
-        ):
-            CHECKER.validate(
-                candidate,
-                accepted_replacement_root(tmp),
-                current_head_sha=APPROVED_HEAD,
-            )
+        with self.assertRaisesRegex(CHECKER.ContractError, "author self-approval rejected"):
+            CHECKER.validate(candidate)
 
     def test_author_self_approval_rejected_casefold(self) -> None:
         candidate = github_acceptance_program(
@@ -517,14 +520,17 @@ class FounderPrApprovalReceiptTests(unittest.TestCase):
             pr_author_login="cdantheman",
             approving_founder_login="CDanTheMan",
         )
-        with tempfile.TemporaryDirectory() as tmp, self.assertRaisesRegex(
-            CHECKER.ContractError, "author self-approval rejected"
-        ):
-            CHECKER.validate(
-                candidate,
-                accepted_replacement_root(tmp),
-                current_head_sha=APPROVED_HEAD,
-            )
+        with self.assertRaisesRegex(CHECKER.ContractError, "author self-approval rejected"):
+            CHECKER.validate(candidate)
+
+    def test_allowlist_matching_is_exact_case(self) -> None:
+        candidate = github_acceptance_program(
+            self.program,
+            pr_author_login="CDanTheMan",
+            approving_founder_login="Samir-Shah-Ahmed",
+        )
+        with self.assertRaisesRegex(CHECKER.ContractError, "approving founder not on allowlist"):
+            CHECKER.validate(candidate)
 
     def test_non_founder_approval_rejected(self) -> None:
         candidate = github_acceptance_program(
@@ -532,14 +538,8 @@ class FounderPrApprovalReceiptTests(unittest.TestCase):
             pr_author_login="CDanTheMan",
             approving_founder_login="octocat",
         )
-        with tempfile.TemporaryDirectory() as tmp, self.assertRaisesRegex(
-            CHECKER.ContractError, "approving founder not on allowlist"
-        ):
-            CHECKER.validate(
-                candidate,
-                accepted_replacement_root(tmp),
-                current_head_sha=APPROVED_HEAD,
-            )
+        with self.assertRaisesRegex(CHECKER.ContractError, "approving founder not on allowlist"):
+            CHECKER.validate(candidate)
 
     def test_any_non_author_approver_is_not_enough(self) -> None:
         candidate = github_acceptance_program(
@@ -547,38 +547,117 @@ class FounderPrApprovalReceiptTests(unittest.TestCase):
             pr_author_login="CDanTheMan",
             approving_founder_login="dependabot[bot]",
         )
-        with tempfile.TemporaryDirectory() as tmp, self.assertRaisesRegex(
-            CHECKER.ContractError, "approving founder not on allowlist"
-        ):
-            CHECKER.validate(
-                candidate,
-                accepted_replacement_root(tmp),
-                current_head_sha=APPROVED_HEAD,
-            )
+        with self.assertRaisesRegex(CHECKER.ContractError, "approving founder not on allowlist"):
+            CHECKER.validate(candidate)
 
-    def test_digest_mismatch_rejected(self) -> None:
-        contracts = dict(CHECKER.EXPECTED_ACCEPTED_CONTRACTS)
-        contracts["docs/replacement/SUCCESSOR-PRODUCT.md"] = "f" * 64
-        candidate = github_acceptance_program(self.program, accepted_contracts=contracts)
-        with tempfile.TemporaryDirectory() as tmp, self.assertRaisesRegex(
-            CHECKER.ContractError, "governing files differ from accepted receipt"
-        ):
-            CHECKER.validate(
-                candidate,
-                accepted_replacement_root(tmp),
-                current_head_sha=APPROVED_HEAD,
+    def test_digest_mismatch_against_approved_head_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root, sha = governed_git_repo(tmp)
+            contracts = dict(CHECKER.EXPECTED_ACCEPTED_CONTRACTS)
+            contracts["docs/replacement/SUCCESSOR-PRODUCT.md"] = "f" * 64
+            candidate = github_acceptance_program(
+                self.program, approved_head_sha=sha, accepted_contracts=contracts
             )
+            with pinned_github_receipt(candidate), self.assertRaisesRegex(
+                CHECKER.ContractError, "github receipt digest does not match approved head"
+            ):
+                CHECKER.validate(candidate, root)
 
-    def test_stale_head_approval_rejected(self) -> None:
-        candidate = github_acceptance_program(self.program)
-        with tempfile.TemporaryDirectory() as tmp, self.assertRaisesRegex(
-            CHECKER.ContractError, "stale github approval head"
-        ):
-            CHECKER.validate(
-                candidate,
-                accepted_replacement_root(tmp),
-                current_head_sha=STALE_HEAD,
+    def test_descendant_commit_changing_governed_bytes_rejected(self) -> None:
+        def mutate(root: Path) -> None:
+            path = root / ISSUE_CONTRACT
+            path.write_text(path.read_text(encoding="utf-8") + "\nchanged after approval\n")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root, sha = governed_git_repo(tmp, extra_commit=mutate)
+            candidate = github_acceptance_program(self.program, approved_head_sha=sha)
+            with pinned_github_receipt(candidate), self.assertRaisesRegex(
+                CHECKER.ContractError, "github receipt governed bytes changed after approval"
+            ):
+                CHECKER.validate(candidate, root)
+
+    def test_descendant_commit_without_governed_diff_accepted(self) -> None:
+        def mutate(root: Path) -> None:
+            readme = root / "docs" / "replacement" / "README.md"
+            readme.write_text(readme.read_text(encoding="utf-8") + "\n# non-governing\n")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root, sha = governed_git_repo(tmp, extra_commit=mutate)
+            candidate = github_acceptance_program(self.program, approved_head_sha=sha)
+            with pinned_github_receipt(candidate):
+                CHECKER.validate(candidate, root)
+
+    def test_github_receipt_fails_closed_when_git_cannot_answer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = replacement_root(tmp)
+            candidate = github_acceptance_program(self.program)
+            with pinned_github_receipt(candidate), self.assertRaisesRegex(
+                CHECKER.ContractError, "github receipt head unavailable"
+            ):
+                CHECKER.validate(candidate, root)
+
+    def test_github_receipt_may_move_issue_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = replacement_root(tmp)
+            path = root / ISSUE_CONTRACT
+            path.write_text(path.read_text(encoding="utf-8") + "\n<!-- github-receipt issue move -->\n")
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            _git(root, "init")
+            _git(root, "config", "user.name", "replacement-tests")
+            _git(root, "config", "user.email", "replacement-tests@example.com")
+            _git(root, "add", "docs/replacement")
+            _git(root, "commit", "-m", "approved issue-contract move")
+            sha = _git(root, "rev-parse", "HEAD").stdout.strip()
+            candidate = github_acceptance_program(self.program, approved_head_sha=sha)
+            candidate["authority"]["acceptance_receipt"]["accepted_contracts"][ISSUE_CONTRACT] = digest
+            for contract in candidate["contracts"]:
+                if contract["path"] == ISSUE_CONTRACT:
+                    contract["sha256"] = digest
+            with pinned_github_receipt(candidate):
+                CHECKER.validate(candidate, root)
+
+    def test_github_month_program_move_requires_outcome_baseline_amendment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = replacement_root(tmp)
+            path = root / MONTH_PROGRAM
+            path.write_text(
+                path.read_text(encoding="utf-8") + "\n<!-- github-receipt month move -->\n"
             )
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            _git(root, "init")
+            _git(root, "config", "user.name", "replacement-tests")
+            _git(root, "config", "user.email", "replacement-tests@example.com")
+            _git(root, "add", "docs/replacement")
+            _git(root, "commit", "-m", "approved month-program move")
+            sha = _git(root, "rev-parse", "HEAD").stdout.strip()
+            candidate = github_acceptance_program(self.program, approved_head_sha=sha)
+            retarget_month_digest(candidate, digest)
+            with pinned_github_receipt(candidate):
+                with self.assertRaisesRegex(
+                    CHECKER.ContractError, "outcome integrity baseline changed"
+                ):
+                    CHECKER.validate(candidate, root)
+                previous = CHECKER.OUTCOME_BASELINE_DIGESTS
+                CHECKER.OUTCOME_BASELINE_DIGESTS = {
+                    item["key"]: CHECKER._outcome_digest(item) for item in candidate["outcomes"]
+                }
+                try:
+                    CHECKER.validate(candidate, root)
+                finally:
+                    CHECKER.OUTCOME_BASELINE_DIGESTS = previous
+
+    def test_github_path_keeps_superseded_linear_pin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root, sha = governed_git_repo(tmp)
+            candidate = github_acceptance_program(self.program, approved_head_sha=sha)
+            candidate["authority"]["superseded_acceptance_receipt"]["accepted_contracts"] = {
+                **candidate["authority"]["superseded_acceptance_receipt"]["accepted_contracts"],
+                MONTH_PROGRAM: "f" * 64,
+            }
+            with pinned_github_receipt(candidate), self.assertRaisesRegex(
+                CHECKER.ContractError, "superseded contract digests changed"
+            ):
+                CHECKER.validate(candidate, root)
 
     def test_allowlist_cannot_be_widened_in_program_json(self) -> None:
         candidate = copy.deepcopy(self.program)
@@ -586,31 +665,26 @@ class FounderPrApprovalReceiptTests(unittest.TestCase):
             *CHECKER.FOUNDER_GITHUB_ALLOWLIST,
             "octocat",
         ]
-        with tempfile.TemporaryDirectory() as tmp, self.assertRaisesRegex(
-            CHECKER.ContractError, "founder GitHub allowlist changed"
-        ):
-            CHECKER.validate(candidate, accepted_replacement_root(tmp))
+        with self.assertRaisesRegex(CHECKER.ContractError, "founder GitHub allowlist changed"):
+            CHECKER.validate(candidate)
 
     def test_unknown_receipt_kind_rejected(self) -> None:
         candidate = copy.deepcopy(self.program)
         candidate["authority"]["acceptance_receipt"]["kind"] = "merge"
-        with tempfile.TemporaryDirectory() as tmp, self.assertRaisesRegex(
-            CHECKER.ContractError, "unsupported receipt kind"
-        ):
-            CHECKER.validate(candidate, accepted_replacement_root(tmp))
+        with self.assertRaisesRegex(CHECKER.ContractError, "unsupported receipt kind"):
+            CHECKER.validate(candidate)
 
     def test_lucas_github_path_requires_another_founder(self) -> None:
-        candidate = github_acceptance_program(
-            self.program,
-            pr_author_login="NotSkittlz",
-            approving_founder_login="CDanTheMan",
-        )
         with tempfile.TemporaryDirectory() as tmp:
-            CHECKER.validate(
-                candidate,
-                accepted_replacement_root(tmp),
-                current_head_sha=APPROVED_HEAD,
+            root, sha = governed_git_repo(tmp)
+            candidate = github_acceptance_program(
+                self.program,
+                pr_author_login="NotSkittlz",
+                approving_founder_login="CDanTheMan",
+                approved_head_sha=sha,
             )
+            with pinned_github_receipt(candidate):
+                CHECKER.validate(candidate, root)
 
 
 if __name__ == "__main__":
