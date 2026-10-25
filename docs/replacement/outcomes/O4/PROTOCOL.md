@@ -50,7 +50,7 @@ Candidate command, not a completion gate:
 python -X utf8 -B docs/replacement/outcomes/O4/validate.py
 ```
 
-A clean command prints fourteen negative-control failures and one researched-maturity
+A clean command prints fifteen negative-control failures and one researched-maturity
 line. Exit 0 means those controls failed as designed and the candidate packet
 stayed internally consistent. It does not promote the outcome.
 
@@ -258,6 +258,7 @@ two-stage ladder; the other controls preserve the complete schema shape:
 | `preresult-receipt-dropped.json` | The replay entry gates drop the pre-result receipt criterion and evidence. |
 | `stages-missing-rung.json` | The former replay/demo ladder omits simulation, shadow and paper; rejected as `missing_promotion_rung`. |
 | `shadow-data-scope-dropped.json` | Shadow entry drops the acquisition-scope criterion and its required receipt; rejected as `promotion_gates`. |
+| `hypothesis-cost-excluded.json` | Both hypotheses name every cost and then exclude venue fees, spread/slippage, funding/collateral, and tax/accounting. Rejected as `hypothesis_costs`. |
 
 The checker prints each rejection. A control that passes, or that fails for a
 different reason, rejects the run.

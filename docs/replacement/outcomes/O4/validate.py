@@ -141,6 +141,7 @@ CONTROL_ORDER = (
     "promotion_gates",
     "missing_promotion_rung",
     "promotion_gates",
+    "hypothesis_costs",
 )
 REQUIRED_STAGE_GATES = {
     "replay": {
@@ -392,9 +393,67 @@ def _costs(packet: dict[str, Any], failures: list[Failure]) -> None:
     )
 
 
-def _hypothesis_names_cost(text: str, key: str) -> bool:
-    folded = " ".join("".join(ch if ch.isalnum() else " " for ch in text.casefold()).split())
-    return f" {key.replace('_', ' ')} " in f" {folded} "
+# Contiguous folded form of the required net-of clause. Naming a cost anywhere
+# else, including after "excluded" or "except", does not satisfy it.
+_INCLUSION_CLAUSE = " ".join((
+    "after all eight retained costs",
+    "transaction latency data model venue fees",
+    "spread slippage funding collateral and tax accounting",
+))
+# Token prefixes, or full phrases, that take a named cost back out of the net.
+_EXCLUSION_MARKERS = (
+    "exclud",
+    "except",
+    "without",
+    "omitt",
+    "ignor",
+    "other than",
+    "apart from",
+    "aside from",
+    "not including",
+    "not retained",
+    "not count",
+    "not apply",
+    "not part",
+    "leave out",
+    "left out",
+    "does not include",
+    "do not include",
+)
+
+
+def _fold_hypothesis(text: str) -> str:
+    return " ".join("".join(ch if ch.isalnum() else " " for ch in text.casefold()).split())
+
+
+def _exclusion_marker(folded: str) -> str | None:
+    tokens = folded.split()
+    for marker in _EXCLUSION_MARKERS:
+        if " " in marker:
+            if f" {marker} " in f" {folded} ":
+                return marker
+            continue
+        if any(token.startswith(marker) for token in tokens):
+            return marker
+    return None
+
+
+def _hypothesis_defects(name: str, text: object) -> list[str]:
+    if not isinstance(text, str):
+        return [f"{name}.{key}" for key in COST_KEYS]
+    folded = _fold_hypothesis(text)
+    padded = f" {folded} "
+    defects: list[str] = []
+    if _INCLUSION_CLAUSE not in folded:
+        defects.append(f"{name}.inclusion")
+    for key in COST_KEYS:
+        needle = f" {key.replace('_', ' ')} "
+        if padded.count(needle) != 1:
+            defects.append(f"{name}.{key}")
+    marker = _exclusion_marker(folded)
+    if marker is not None:
+        defects.append(f"{name}.exclusion:{marker}")
+    return defects
 
 
 def _hypotheses(packet: dict[str, Any], failures: list[Failure]) -> None:
@@ -402,18 +461,15 @@ def _hypotheses(packet: dict[str, Any], failures: list[Failure]) -> None:
         ("experiment", packet.get("experiment")),
         ("strategy_contract", packet.get("strategy_contract")),
     )
-    missing: list[str] = []
+    defects: list[str] = []
     for name, section in sections:
         text = section.get("hypothesis") if isinstance(section, dict) else None
-        if not isinstance(text, str):
-            missing.extend(f"{name}.{key}" for key in COST_KEYS)
-            continue
-        missing.extend(f"{name}.{key}" for key in COST_KEYS if not _hypothesis_names_cost(text, key))
+        defects.extend(_hypothesis_defects(name, text))
     _fail_if(
         failures,
-        bool(missing),
+        bool(defects),
         "hypothesis_costs",
-        "hypothesis omits a retained cost: " + ", ".join(missing),
+        "hypothesis does not retain every cost: " + ", ".join(defects),
     )
 
 

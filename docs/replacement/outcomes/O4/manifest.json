@@ -5,7 +5,7 @@
   "files": [
     {
       "path": "PROTOCOL.md",
-      "sha256": "1c4a2e592e09db281699f02500206011804961e48c8319a5215f680568ff6867"
+      "sha256": "2c9b0297ca503a263e97d79bb17504fd4883a07517536bfbbb1af3e8abb9a866"
     },
     {
       "path": "fixtures/candidate-packet.json",
@@ -18,6 +18,10 @@
     {
       "path": "fixtures/negative/dropped-empty-outcome.json",
       "sha256": "50d738f1cc32ac6e89af54ef87b45ef61ce1258befafee8ea3f583d21d45ebfd"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-cost-excluded.json",
+      "sha256": "7d5b41bb3d45ceb588466ce6c947d8924c862c617c2808a67871981e78a3231d"
     },
     {
       "path": "fixtures/negative/leakage-control-satisfied.json",
@@ -101,7 +105,7 @@
     },
     {
       "path": "validate.py",
-      "sha256": "33aa391ddd460036bc5bfbf6037461c24724c251d8c88f317fe567f92eb51b6e"
+      "sha256": "11f7db5dd40a250ed030928f0ffb1e2242d0fccf6faa1aa6404795e6aecf70eb"
     }
   ],
   "linear_issue": "CSL-216",
@@ -162,6 +166,10 @@
     {
       "expect": "promotion_gates",
       "path": "fixtures/negative/shadow-data-scope-dropped.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-cost-excluded.json"
     }
   ],
   "outcome": "O4",

@@ -46,6 +46,7 @@ FAILURES = (
     "O4 negative control FAIL promotion_gates:",
     "O4 negative control FAIL missing_promotion_rung:",
     "O4 negative control FAIL promotion_gates:",
+    "O4 negative control FAIL hypothesis_costs:",
 )
 CHECKED = (
     "O4 candidate packet checked at maturity researched; "
@@ -223,6 +224,22 @@ def test_o4_hypothesis_names_every_retained_cost() -> None:
             found = validate.assess(broken)
             assert [item.code for item in found] == ["hypothesis_costs"]
             assert f"{section}.{key}" in found[0].message
+        excluded = deepcopy(packet)
+        excluded[section]["hypothesis"] = text + " Venue fees are excluded."
+        found = validate.assess(excluded)
+        assert [item.code for item in found] == ["hypothesis_costs"]
+        assert f"{section}.exclusion:exclud" in found[0].message
+    devin_example = (
+        "Beats cash after transaction, latency, data and model costs; "
+        "venue fees, spread/slippage, funding/collateral and tax/accounting are excluded."
+    )
+    both = deepcopy(packet)
+    both["experiment"]["hypothesis"] = devin_example
+    both["strategy_contract"]["hypothesis"] = devin_example
+    found = validate.assess(both)
+    assert [item.code for item in found] == ["hypothesis_costs"]
+    assert "experiment.inclusion" in found[0].message
+    assert "experiment.exclusion:exclud" in found[0].message
 
 
 def test_o4_leaves_accepted_csl212_digests_unchanged() -> None:
