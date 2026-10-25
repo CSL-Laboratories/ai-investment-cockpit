@@ -88,6 +88,27 @@ def _paper_gateway(st, broker=None):
     return scenario, broker
 
 
+def test_gateway_records_the_single_process_limit():
+    """The single-process paper/dry-run limit is in the gateway docstring.
+
+    Samir's review 5641550354: the inline comment is not enough. CSL-490
+    blocks live and multi-process dispatch.
+    """
+    import brokers.gateway as gateway_module
+
+    text = "\n".join(
+        part or ""
+        for part in (
+            gateway_module.__doc__,
+            OrderGateway.__doc__,
+            OrderGateway.submit.__doc__,
+        )
+    )
+    assert "CSL-490" in text
+    assert "safety_admission_lock" in text
+    assert 'execution_scope="live"' in text
+
+
 def test_execution_scope_is_pinned_at_construction(st):
     gateway = OrderGateway(_CountingPaper(), st=st, execution_scope="paper")
     assert gateway.execution_scope == "paper"
@@ -1963,6 +1984,101 @@ def test_local_cancel_with_terminal_broker_history_clears_the_landed_block(st, m
     )
     assert nxt.ok is True
     assert broker.calls == 2
+
+
+def test_watch_only_during_the_send_hold_exposure_scan_does_not_submit(
+    st, monkeypatch,
+):
+    """A watch-only reason that appears during the locked exposure scan is not sent.
+
+    The cheap sample runs before that scan. bbde94cc does not sample it again
+    before transport. A trip that must take the admission lock still waits
+    until the hold ends; this covers a reason that changes without the lock.
+    """
+    scenario, broker = _paper_gateway(st)
+    scanned = {"v": False}
+    real_pending = scenario.gateway._pending_ok
+
+    def pending(st_arg, order):
+        result = real_pending(st_arg, order)
+        if st_arg.safety_admission_lock.locked():
+            scanned["v"] = True
+        return result
+
+    monkeypatch.setattr(scenario.gateway, "_pending_ok", pending)
+    original = scenario.breaker.watch_only_reason
+
+    def watch(vendor=None):
+        if scanned["v"]:
+            return "watch_only admitted during the send-hold exposure scan"
+        if vendor is None:
+            return original()
+        return original(vendor)
+
+    scenario.breaker.watch_only_reason = watch
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=lambda: None, **scenario.submit_kwargs()
+    )
+    assert scanned["v"] is True
+    assert outcome.ok is False
+    assert outcome.stage == "mode"
+    assert "send-hold exposure scan" in outcome.reason
+    assert broker.calls == 0
+    assert scenario.st.audit.unresolved_intents() == []
+
+
+def test_shrunk_landed_order_keeps_the_signed_exposure_floor(st, monkeypatch):
+    """A landed send whose in-memory size was shrunk still blocks at the signed floor.
+
+    The row stays proposed, so the open-set scan does not count the signed
+    history. The marker has to carry that floor. A $1 in-memory notional would
+    otherwise be the only record of a $1,500 send.
+    """
+    from tests.brokers.test_pending_exposure_chain import _fresh_submittable
+
+    scenario, broker = _capped_paper(st)
+    real = scenario.st.audit.record_state_change
+    fail = {"v": True}
+
+    def record(obj, event_type, *args, **kwargs):
+        if fail["v"] and broker.calls >= 1:
+            scenario.order.notional = Decimal("1")
+            scenario.order.qty = Decimal("1")
+            scenario.order.limit_price = Decimal("1")
+            raise OSError("local write failed")
+        return real(obj, event_type, *args, **kwargs)
+
+    monkeypatch.setattr(scenario.st.audit, "record_state_change", record)
+    outcome = scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+    fail["v"] = False
+    assert broker.calls == 1
+    assert outcome.ok is False
+    assert outcome.stage == "broker_error"
+    with scenario.st.session_factory() as session:
+        rows = session.execute(
+            select(AuditEntry)
+            .where(AuditEntry.event_type == "unreconciled_landed_exposure")
+            .order_by(AuditEntry.seq)
+        ).scalars().all()
+    marked = [
+        row for row in rows
+        if str((row.refs or {}).get("order_id") or "") == str(scenario.order.id)
+    ]
+    assert marked
+    assert marked[-1].payload.get("kind") == "block"
+    assert Decimal(marked[-1].payload["notional"]) == Decimal("1500")
+    second, approval, risk = _fresh_submittable(
+        st, scenario, proposal="p-next", nonce="n-next",
+    )
+    nxt = scenario.gateway.submit(
+        second,
+        **scenario.submit_kwargs(
+            approval=approval, risk_decision=risk, token_nonce="n-next",
+        ),
+    )
+    assert nxt.ok is False
+    assert nxt.stage == "pending_exposure"
+    assert broker.calls == 1
 
 
 def test_quote_that_expires_during_the_send_hold_exposure_scan_does_not_submit(

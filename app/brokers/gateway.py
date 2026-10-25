@@ -23,6 +23,20 @@ records a ``BYPASS_EVENTS`` event so the performance gate (SEC-20) sees the atte
 Only if ALL gates pass does it perform the two-phase submit (SEC-13): an intent AuditEntry
 BEFORE the private broker call, the broker call, then a result AuditEntry AFTER — followed by
 consuming the single-use approval and advancing the order to ``submitted`` (both audited).
+
+Known limit (CSL-490): one dispatcher process for paper and dry-run. ``st.lock`` and
+``safety_admission_lock`` do not see another process that shares the database. A
+sibling approved, or a ladder change committed, after the final read in the send
+hold is outside this process. A head-seq reread is not a cross-process reservation.
+Live and multi-process dispatch stay blocked on CSL-490 until a reservation the
+resource itself checks is in place. This module does not refuse
+``execution_scope="live"`` on its own.
+
+A breaker trip that must take ``safety_admission_lock`` (``enter_watch_only``)
+waits out the send hold and applies to the next order, the same way a stalled
+broker call delays an in-process kill switch that needs that lock. ``watch_only_reason``
+is read again after the exposure scan and the final quote read, so a reason that
+changes without that lock is refused before transport.
 """
 from __future__ import annotations
 
@@ -292,6 +306,13 @@ def _halt_active(path) -> bool:
 
 
 class OrderGateway:
+    """The single broker submit path.
+
+    Paper and dry-run assume one dispatcher process. ``st.lock`` and
+    ``safety_admission_lock`` are process-local. Live and multi-process
+    dispatch stay blocked on CSL-490. See the module note and ``submit``.
+    """
+
     def __init__(
         self,
         broker,
@@ -607,6 +628,46 @@ class OrderGateway:
                 total += amount
         return total
 
+    def _signed_exposure_floor(self, st, order) -> Decimal:
+        """Historical max of the signed exposure and notional for this order.
+
+        ``Infinity`` when this order has no verified transition, or a
+        transition cannot be verified. ``0`` when those signed fields are
+        absent or non-positive. The caller still applies ``_order_notional``.
+        """
+        order_id = "" if getattr(order, "id", None) is None else str(order.id)
+        audit = None if st is None else getattr(st, "audit", None)
+        if not order_id or audit is None or not hasattr(audit, "_rows"):
+            return Decimal("Infinity")
+        floor = Decimal("0")
+        saw = False
+        for row in audit._rows():
+            refs = getattr(row, "refs", None) or {}
+            if str(refs.get("row_id") or "") != order_id:
+                continue
+            if getattr(row, "event_type", None) != EVENT_ORDER_TRANSITION:
+                continue
+            saw = True
+            try:
+                verified = audit.verify_entry(row)
+            except Exception:  # noqa: BLE001 - an unreadable row is not a floor
+                return Decimal("Infinity")
+            if not verified:
+                return Decimal("Infinity")
+            payload = getattr(row, "payload", None) or {}
+            for key in ("exposure", "notional"):
+                text = payload.get(key)
+                if type(text) is not str or not text:
+                    continue
+                amount = _dec(text)
+                if not amount.is_finite():
+                    return Decimal("Infinity")
+                if amount > floor:
+                    floor = amount
+        if not saw:
+            return Decimal("Infinity")
+        return floor
+
     def _persist_unreconciled_landed(self, st, order, actor) -> None:
         """Stick a refusal when a landed send never became an open row.
 
@@ -625,6 +686,13 @@ class OrderGateway:
         if state in counted:
             return
         amount = self._order_notional(order)
+        # A proposed row is outside the open-set scan, so the marker is the
+        # only count. Use the signed historical floor when the in-memory
+        # notional was shrunk after that signature. An unreadable chain is
+        # Infinity and fails closed.
+        signed = self._signed_exposure_floor(st, order)
+        if not signed.is_finite() or signed > amount:
+            amount = signed
         text = str(amount) if amount.is_finite() and amount > 0 else "Infinity"
         # A local terminal row is not broker confirmation. Write the block
         # unless the broker history's latest status is itself terminal.
@@ -1719,6 +1787,15 @@ class OrderGateway:
         fence that returns None does not admit. The fence must not call ``submit`` again
         on the same state and order. After it returns, the feed, risk re-run, approval
         TTL, consumed approval and order state are checked again on the pinned state clock.
+
+        Known limit (CSL-490): this hold serializes one process. Another process
+        sharing the database can still change mode or pending exposure after the
+        last read. Live and multi-process use stay blocked until that reservation
+        exists. The code does not lock out a live profile by itself.
+
+        ``watch_only_reason`` is sampled again after the locked exposure scan,
+        immediately before transport. A trip that needs ``safety_admission_lock``
+        cannot publish during this hold and applies to the next order.
         """
         st = self._resolve_state(ladder)
         clock = clock or st.clock
@@ -2257,9 +2334,11 @@ class OrderGateway:
                 #
                 # ``st.lock`` serializes this process only. Another process that
                 # shares the database is outside both locks. This gateway assumes
-                # a single dispatcher. A head-seq reread is not a reservation: it
-                # misses a keyless UPDATE and does not fence a second process.
-                # Cross-process dispatch needs an owner-signed reservation.
+                # a single dispatcher (CSL-490). A head-seq reread is not a
+                # reservation: it misses a keyless UPDATE and does not fence a
+                # second process. Live and multi-process dispatch stay blocked
+                # on CSL-490. Cross-process dispatch needs a reservation the
+                # resource itself checks.
                 def _heavy_dispatch_refusal():
                     if claim_fence is None:
                         return None
@@ -2416,10 +2495,20 @@ class OrderGateway:
                     if final_refusal is None:
                         # The exposure scan above can outlast the quote sampled
                         # at the start of this hold. Sample it again here. The
-                        # read can block, so HALT and the lease are checked
-                        # after it. Watch-only is published after this lock
-                        # releases. Nothing blocking follows those two checks.
+                        # read can block, so watch-only, HALT and the lease are
+                        # checked after it. A quote denial is published after
+                        # this lock releases. Nothing blocking follows the
+                        # watch-only, HALT and lease checks.
                         final_refusal = self._quote_age_refusal(st, order, st.clock)
+                    if final_refusal is None:
+                        # Cheap admission sampled watch-only before the exposure
+                        # scan. A reason that changes without safety_admission_lock
+                        # during that scan, or during the quote read above, is
+                        # visible here. enter_watch_only takes the same lock, so
+                        # that trip waits and applies to the next order (CSL-490).
+                        denial = breaker_engine.watch_only_reason()
+                        if denial is not None:
+                            final_refusal = ("mode", None, denial)
                     if final_refusal is None:
                         final_refusal = _halt_decision()
                     if final_refusal is None:
