@@ -1016,6 +1016,8 @@ class P9ProbeWorkflowTests(unittest.TestCase):
         self.assertIn('CANARY_ISOLATION PASS requires completed P9PROBE2OK', p2)
         self.assertIn('[ "$MCPRO" = PASS ]', p2)
         self.assertIn('MCPRO=INCONCLUSIVE', p2)
+        self.assertIn('MCPRO PASS requires user hook marker', p2)
+        self.assertIn('skipping hooked OAuth trials; bootstrap did not PASS', p2)
         self.assertNotIn('session_ok', p2)
         self.assertIn('Probe 2 OAuth bootstrap in clean cwd', self.text)
         self.assertIn('Probe 2 OAuth hooked trials without token env', self.text)

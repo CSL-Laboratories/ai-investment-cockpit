@@ -478,10 +478,13 @@ jobs:
               esac
             fi
           fi
+          # MCPRO PASS requires user hook marker so Bash actually ran
           if ! completed "$MCPRO_RC" "$mcpro_combined"; then
             MCPRO=INCONCLUSIVE
           elif [ -f "$mcpro_hooks/project" ] || [ -f "$mcpro_hooks/local" ]; then
             MCPRO=FAIL
+          elif [ ! -f "$mcpro_hooks/user" ]; then
+            MCPRO=INCONCLUSIVE
           else
             case "$mcpro_combined" in
               *P9PROBE2OK*) MCPRO=PASS ;;
@@ -605,6 +608,14 @@ jobs:
             exit 1
           fi
           rec TOKEN_IN_ENV 0
+          boot_verdict="$(cat "${RUNNER_TEMP}/csl-p9-oauth-boot.verdict" 2>/dev/null || echo missing)"
+          rec AUTH_BOOTSTRAP_PRIOR "$boot_verdict"
+          if [ "$boot_verdict" != PASS ]; then
+            rec AUTH_OK 0
+            rec DONE 0
+            echo "skipping hooked OAuth trials; bootstrap did not PASS" >&2
+            exit 1
+          fi
           CLI="${RUNNER_TEMP}/csl-p9-cli/claude"
           WORK="${RUNNER_TEMP}/csl-p9-work"
           MCP_RO="${RUNNER_TEMP}/csl-p9-mcp.empty.ro.json"
@@ -772,10 +783,13 @@ jobs:
                 ;;
             esac
           fi
+          # MCPRO PASS requires user hook marker so Bash actually ran
           if ! completed "$MCPRO_RC" "$mcpro_combined"; then
             MCPRO=INCONCLUSIVE
           elif [ -f "$mcpro_hooks/project" ] || [ -f "$mcpro_hooks/local" ]; then
             MCPRO=FAIL
+          elif [ ! -f "$mcpro_hooks/user" ]; then
+            MCPRO=INCONCLUSIVE
           else
             case "$mcpro_combined" in
               *P9PROBE2OK*) MCPRO=PASS ;;
