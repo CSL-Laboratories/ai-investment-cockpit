@@ -634,8 +634,8 @@ MODEL_BASH = 'Bash(python3 ${{ runner.temp }}/claude-fixer-guard/model-api --:*)
 # `--git-dir path`, `--no-pager`), then `push`, across backslash continuations. Argv: any
 # `[`/`(` list or a quoted `"git"` list, then `"push"` — helpers named `run_git`, `GIT`,
 # `_git`, `run`, or `cmd` all count. Quotes may be backslash-escaped. False positives are
-# excluded narrowly: a bare `"push"` passed to print/logging, or a confirmed
-# display list (`allowed_commands = ["push", "origin"]`). Value-taking git options
+# excluded narrowly: a bare `"push"` passed to print/logging, or the confirmed
+# display list `allowed_commands` / `ALLOWED_COMMANDS`. Value-taking git options
 # (`--git-dir`, `--work-tree`, `--namespace`, `-C`, `-c`) consume their following token.
 _Q = r'\\?["\']'
 _STR = r'[rbfuRBFU]{0,2}' + _Q + r'[^"\'\n]*' + _Q
@@ -651,8 +651,10 @@ _PUSH_RAW = re.compile(
     rf'(?:[\[(]\s*|{_Q}git{_Q}{_SEP})(?:{_TOKEN}{_SEP}){{0,12}}{_Q}push{_Q}'
     rf'|\bgit(?:{_GAP}{_GIT_OPT})*{_GAP}push\b|/git/refs/'
 )
-_BENIGN_CALL = re.compile(r'(?:print|pprint|logging(?:\.\w+)+|logger(?:\.\w+)*|\blog)\s*\(?\s*$'
-                           r'|\b\w*(?:allowed|words|display|verbs)\w*\s*[:=]\s*$', re.IGNORECASE)
+_BENIGN_CALL = re.compile(
+    r'(?i:(?:print|pprint|logging(?:\.\w+)+|logger(?:\.\w+)*|\blog)\s*\(?\s*$)'
+    r'|\b(?:allowed_commands|ALLOWED_COMMANDS)\s*[:=]\s*$'
+)
 
 
 class _PushMatcher:
@@ -1071,12 +1073,17 @@ class CrossLaneAdmissionTests(unittest.TestCase):
                      'subprocess.run(["git", "push", "pull", "HEAD"])',
                      'run_git(["push", "pull", "HEAD"])', 'run_git(["push", "pull"])',
                      'args = ["push", "pull"]\nrepo.run_git(args)',
-                     'git_cmd = ["push", "pull"]'):
+                     'git_cmd = ["push", "pull"]',
+                     'allowed_args = ["push", "origin", "HEAD"]\n_git(*allowed_args)',
+                     'push_display = ["push","origin"]\nsubprocess.run(["git", *push_display])',
+                     'disallowed = ["push", "origin"]',
+                     'keywords = ["push"]'):
             with self.subTest(push=push):
                 self.assertTrue(PUSH.search(push))
         for other in ('"check", "commit", "diff", "gh", "git", "log", "origin", "pr", "push", "pytest",',
                       'NEVER push or force-push', 'subprocess.run(["git", "-C", repo, "status"])',
                       'print("push")', 'allowed_commands = ["push", "pull"]', 'allowed_commands = ["push", "origin"]',
+                      'ALLOWED_COMMANDS = ["push", "origin"]',
                       'logging.info("push")', 'logger.debug("push")'):
             with self.subTest(other=other):
                 self.assertFalse(PUSH.search(other))
