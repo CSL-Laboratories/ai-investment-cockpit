@@ -69,10 +69,14 @@ dependency digest, JUnit inventory, and SHA-256s of `junit.xml`,
 substitute for those observed fields. The hosted suite is
 `tools/test_qualification_evidence.py`. It does not call a broker, a model
 provider, or a market-data vendor. The hosted six-cell matrix runs only when
-Linux, Windows, and macOS are all authorized: a pull request with `ci:full`,
-or a full workflow dispatch. An ordinary pull request, a `scope=linux`
-dispatch, the nightly schedule, and an ordinary push to `main` do not start
-it. A partial matrix is not a pass. On a full run, validation starts
+Linux, Windows, and macOS are all authorized: a same-repository pull request
+with `ci:full` whose author and actor are not Dependabot, or a full workflow
+dispatch of a ref in this repository. A fork pull request, a Dependabot pull
+request, and a `ci:full` label on either do not start it. Fork and Dependabot
+workflows do not receive the OIDC `id-token: write` permission attestation
+needs, so those contexts are rejected before any paid cell and no unattested
+bundle is published. An ordinary pull request, a `scope=linux` dispatch, the
+nightly schedule, and an ordinary push to `main` do not start it. A partial matrix is not a pass. On a full run, validation starts
 unless the qualification job itself was skipped, and it fails when any
 expected cell is missing, cancelled, or skipped. After a complete
 bundle validates, the workflow writes `manifest.json` with the SHA-256

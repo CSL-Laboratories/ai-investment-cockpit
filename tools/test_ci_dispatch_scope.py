@@ -37,6 +37,8 @@ def evaluate(expression, **overrides):
         'github.sha': 'a' * 40,
         'github.ref': 'refs/pull/149/merge',
         'github.repository': 'owner/repo',
+        'github.actor': 'contributor',
+        'github.event.pull_request.user.login': 'contributor',
         'github.event.pull_request.head.repo.full_name': 'owner/repo',
         'github.event.pull_request.head.sha': 'a' * 40,
         'github.event.pull_request.draft': False,
@@ -58,6 +60,7 @@ def evaluate(expression, **overrides):
         'inputs.dispatch_nonce': '',
         'needs.filter.outputs.run-tests': 'true',
         'needs.filter.outputs.run-macos': 'true',
+        'needs.qualification-admission.outputs.eligible': 'true',
         'needs.filter.outputs.has-cells': 'true',
     }
     values.update(overrides)
@@ -604,10 +607,29 @@ class DispatchScopeTests(unittest.TestCase):
     def test_qualification_evidence_jobs_stay_on_blacksmith_and_the_pr_head(self):
         matrix = json.loads((ROOT / 'docs/evidence/csl221/qualification-matrix.json').read_text())
         qualification = self.ci['jobs']['qualification']
+        admission = self.ci['jobs']['qualification-admission']
         negative = self.ci['jobs']['qualification-negative-controls']
         validate = self.ci['jobs']['qualification-validate']
-        self.assertEqual(qualification['needs'], 'filter')
+        self.assertEqual(admission['needs'], 'filter')
+        self.assertEqual(admission['runs-on'], 'ubuntu-latest')
+        self.assertEqual(admission['permissions'], {'contents': 'read', 'pull-requests': 'read'})
+        self.assertFalse(any('checkout' in step.get('uses', '') for step in admission['steps']))
+        self.assertNotIn('id-token', admission['permissions'])
+        self.assertNotIn('attestations', admission['permissions'])
+        self.assertEqual(qualification['needs'], 'qualification-admission')
         self.assertNotIn("github.ref == 'refs/heads/main'", qualification['if'])
+        self.assertIn(
+            "github.event.pull_request.head.repo.full_name == github.repository",
+            admission['if'],
+        )
+        self.assertIn("github.actor != 'dependabot[bot]'", admission['if'])
+        self.assertIn("github.event.pull_request.user.login != 'dependabot[bot]'", admission['if'])
+        self.assertIn(
+            "github.event.pull_request.head.repo.full_name == github.repository",
+            qualification['if'],
+        )
+        self.assertIn("github.actor != 'dependabot[bot]'", qualification['if'])
+        self.assertIn("needs.qualification-admission.outputs.eligible == 'true'", qualification['if'])
         # linux/windows now wait on settle; negative-controls is still the
         # cheap Linux-only control and follows the filter's run-tests bit.
         self.assertEqual(
@@ -634,11 +656,39 @@ class DispatchScopeTests(unittest.TestCase):
                 context = {'github.event_name': event, 'inputs.scope': scope,
                            'github.ref': 'refs/heads/main',
                            'github.event.pull_request.labels.*.name': labels}
-                self.assertEqual(bool(evaluate(qualification['if'], **context)), expected)
-        self.assertFalse(evaluate(qualification['if'], **{
+                self.assertEqual(bool(evaluate(admission['if'], **context)), expected)
+        self.assertFalse(evaluate(admission['if'], **{
             'github.event_name': 'pull_request',
             'github.event.pull_request.labels.*.name': ['ci:full'],
             'needs.filter.outputs.run-tests': 'false',
+        }))
+        for override in (
+            {'github.event.pull_request.head.repo.full_name': 'fork/repo'},
+            {'github.actor': 'dependabot[bot]'},
+            {'github.event.pull_request.user.login': 'dependabot[bot]'},
+        ):
+            with self.subTest(blocked=override):
+                self.assertFalse(evaluate(admission['if'], **{
+                    'github.event_name': 'pull_request',
+                    'github.event.pull_request.labels.*.name': ['ci:full'],
+                    **override,
+                }))
+                self.assertFalse(evaluate(qualification['if'], **{
+                    'github.event_name': 'pull_request',
+                    'needs.qualification-admission.outputs.eligible': 'true',
+                    **override,
+                }))
+        self.assertTrue(evaluate(qualification['if'], **{
+            'github.event_name': 'pull_request',
+            'needs.qualification-admission.outputs.eligible': 'true',
+        }))
+        self.assertFalse(evaluate(qualification['if'], **{
+            'github.event_name': 'pull_request',
+            'needs.qualification-admission.outputs.eligible': 'false',
+        }))
+        self.assertTrue(evaluate(qualification['if'], **{
+            'github.event_name': 'workflow_dispatch',
+            'needs.qualification-admission.outputs.eligible': 'true',
         }))
         self.assertEqual(qualification['strategy']['fail-fast'], 'false')
         self.assertEqual(qualification['strategy']['matrix']['platform'], ['linux', 'windows', 'macos'])
@@ -698,6 +748,167 @@ class DispatchScopeTests(unittest.TestCase):
         self.assertEqual(attest['uses'], 'actions/attest-build-provenance@v3')
         self.assertIn('qualification-evidence-bundle/*.json', attest['with']['subject-path'])
         self.assertNotIn('qualification', self.ci['jobs']['linux-gates']['needs'])
+
+        self.assertNotIn('qualification-admission', self.ci['jobs']['linux-gates']['needs'])
+
+    def test_qualification_admission_rejects_fork_and_dependabot_before_paid_cells(self):
+        # Execute the checked-in admission script. A fake gh stands in for the API.
+        step = self.ci['jobs']['qualification-admission']['steps'][0]
+        self.assertEqual(step['name'], 'Verify attested qualification source')
+        self.assertNotIn('uses', step)
+        script = step['run']
+        self.assertIn('actor == "dependabot[bot]"', script)
+        self.assertIn('head_repo != repository', script)
+        self.assertIn('login == "dependabot[bot]"', script)
+        self.assertIn('gh", "api"', script)
+        head = 'a' * 40
+        merge = 'b' * 40
+        pr = {
+            'number': 149,
+            'state': 'open',
+            'draft': False,
+            'head': {'sha': head, 'repo': {'full_name': 'owner/repo'}},
+            'base': {'repo': {'full_name': 'owner/repo'}},
+            'user': {'login': 'contributor'},
+        }
+
+        def run_case(env, body=None, api_fails=False):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                output = root / 'output'
+                log = root / 'gh.log'
+                fixture = root / 'pr.json'
+                fixture.write_text(json.dumps(body if body is not None else pr))
+                bindir = root / 'bin'
+                bindir.mkdir()
+                gh = bindir / 'gh'
+                gh.write_text(
+                    "#!/bin/sh\n"
+                    f"printf '%s\\n' \"$*\" >> '{log}'\n"
+                    + ("exit 1\n" if api_fails else f"cat '{fixture}'\n")
+                )
+                gh.chmod(0o755)
+                kept = {k: v for k, v in os.environ.items() if k not in ('GH_TOKEN', 'GITHUB_TOKEN')}
+                result = subprocess.run(
+                    ['bash', '-c', script],
+                    capture_output=True, text=True,
+                    env={
+                        **kept,
+                        'PATH': f'{bindir}{os.pathsep}{os.environ.get("PATH", "")}',
+                        'GITHUB_OUTPUT': str(output),
+                        'GH_TOKEN': 'test-token',
+                        **env,
+                    },
+                )
+                calls = log.read_text() if log.exists() else ''
+                eligible = ''
+                if output.exists():
+                    for line in output.read_text().splitlines():
+                        if line.startswith('eligible='):
+                            eligible = line.split('=', 1)[1]
+                return result.returncode, eligible, calls, result.stderr
+
+        same = {
+            'EVENT_NAME': 'pull_request',
+            'ACTOR': 'contributor',
+            'REPOSITORY': 'owner/repo',
+            'GITHUB_SHA': head,
+            'HEAD_REPO': 'owner/repo',
+            'BASE_REPO': 'owner/repo',
+            'PR_AUTHOR': 'contributor',
+            'PR_NUMBER': '',
+            'PR_HEAD_SHA': '',
+            'MERGE_SHA': '',
+        }
+        code, eligible, calls, err = run_case(same)
+        self.assertEqual((code, eligible, calls), (0, 'true', ''), err)
+        for name, override, reason in (
+            ('fork', {'HEAD_REPO': 'fork/repo'}, 'same-repository, non-Dependabot'),
+            ('dependabot-author', {'PR_AUTHOR': 'dependabot[bot]'}, 'same-repository, non-Dependabot'),
+            ('dependabot-actor', {'ACTOR': 'dependabot[bot]'}, 'Dependabot actor'),
+            ('missing-head', {'HEAD_REPO': ''}, 'same-repository, non-Dependabot'),
+            ('missing-author', {'PR_AUTHOR': ''}, 'same-repository, non-Dependabot'),
+            ('wrong-base', {'BASE_REPO': 'other/repo'}, 'same-repository, non-Dependabot'),
+        ):
+            with self.subTest(case=name):
+                code, eligible, calls, err = run_case({**same, **override})
+                self.assertEqual(code, 1, err)
+                self.assertEqual(eligible, 'false')
+                self.assertEqual(calls, '')
+                self.assertIn(reason, err)
+                self.assertIn('No qualification PASS', err)
+
+        manual = {
+            'EVENT_NAME': 'workflow_dispatch',
+            'ACTOR': 'maintainer',
+            'REPOSITORY': 'owner/repo',
+            'GITHUB_SHA': head,
+            'HEAD_REPO': '',
+            'BASE_REPO': '',
+            'PR_AUTHOR': '',
+            'PR_NUMBER': '',
+            'PR_HEAD_SHA': '',
+            'MERGE_SHA': '',
+        }
+        code, eligible, calls, err = run_case(manual, api_fails=True)
+        self.assertEqual((code, eligible, calls), (0, 'true', ''), err)
+
+        dispatch = {
+            **manual,
+            'PR_NUMBER': '149',
+            'PR_HEAD_SHA': head,
+            'MERGE_SHA': merge,
+        }
+        code, eligible, calls, err = run_case(dispatch)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(eligible, 'true')
+        self.assertIn('repos/owner/repo/pulls/149', calls)
+
+        for name, body, reason in (
+            ('dependabot-author', {**pr, 'user': {'login': 'dependabot[bot]'}},
+             'same-repository, non-Dependabot'),
+            ('fork', {**pr, 'head': {'sha': head, 'repo': {'full_name': 'fork/repo'}}},
+             'same-repository, non-Dependabot'),
+            ('missing-repo', {**pr, 'head': {'sha': head, 'repo': None}},
+             'same-repository, non-Dependabot'),
+            ('wrong-base', {**pr, 'base': {'repo': {'full_name': 'other/repo'}}},
+             'same-repository, non-Dependabot'),
+            ('closed', {**pr, 'state': 'closed'}, 'open ready head'),
+            ('draft', {**pr, 'draft': True}, 'open ready head'),
+            ('stale-body', {**pr, 'head': {'sha': 'c' * 40, 'repo': {'full_name': 'owner/repo'}}},
+             'open ready head'),
+        ):
+            with self.subTest(dispatch=name):
+                code, eligible, calls, err = run_case(dispatch, body=body)
+                self.assertEqual(code, 1, err)
+                self.assertEqual(eligible, 'false')
+                self.assertIn(reason, err)
+
+        code, eligible, calls, err = run_case({**dispatch, 'ACTOR': 'dependabot[bot]'})
+        self.assertEqual(code, 1)
+        self.assertEqual(eligible, 'false')
+        self.assertEqual(calls, '')
+        self.assertIn('Dependabot actor', err)
+
+        code, eligible, calls, err = run_case({**dispatch, 'GITHUB_SHA': 'd' * 40})
+        self.assertEqual(code, 1)
+        self.assertEqual(calls, '')
+        self.assertIn('invalid or stale dispatch identity', err)
+
+        code, eligible, calls, err = run_case({**dispatch, 'PR_HEAD_SHA': ''})
+        self.assertEqual(code, 1)
+        self.assertEqual(calls, '')
+        self.assertIn('invalid or stale dispatch identity', err)
+
+        code, eligible, calls, err = run_case(dispatch, api_fails=True)
+        self.assertEqual(code, 1)
+        self.assertEqual(eligible, 'false')
+        self.assertIn('PR lookup failed', err)
+
+        for name in ('linux', 'windows', 'macos', 'linux-gates', 'qualification-negative-controls'):
+            self.assertNotIn('qualification-admission', self.ci['jobs'][name].get('needs') or [])
+
+
 
 
 

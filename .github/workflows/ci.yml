@@ -17,6 +17,9 @@ run-name: ${{ inputs.candidate_id && format('candidate:{0}:ci:{1}', inputs.candi
 #                  main pushes: ~$0.93/run would dominate a ~$50 budget.
 #   qualification — CSL-221 evidence only. Blacksmith Linux, Windows, and macOS
 #                  (blacksmith-6vcpu-macos-15) for the provider-free tier.
+#                  Same-repository, non-Dependabot heads only. A fork or
+#                  Dependabot pull request does not start it, even with ci:full:
+#                  those tokens cannot mint the attestation OIDC credential.
 #                  This does not replace DEC-09 and is not a release decision.
 #   benchmarks   — pull_request only, and only when filter runs the code gates.
 #                  Same-runner median comparison against the PR base SHA. Warns
@@ -894,11 +897,143 @@ jobs:
   # CSL-221 provider-free evidence. Not a DEC-09 cell, not linux-gates, and not
   # a release decision. Checkout is the PR head, because pull_request GITHUB_SHA
   # is the merge commit. The six-cell matrix runs only when Linux, Windows, and
-  # macOS are all authorized: a pull request with ci:full, or a full dispatch.
-  # Ordinary PRs, scope=linux, the nightly schedule, and an ordinary push to
-  # main do not start it. A partial matrix is not a pass. Artifact names
-  # include the run attempt so a rerun does not collide, and a partial rerun
-  # cannot mix attempts.
+  # macOS are all authorized and the head can be attested: a same-repository
+  # pull request with ci:full whose author and actor are not Dependabot, or a
+  # full dispatch of a ref in this repository. Fork pull requests and Dependabot
+  # pull requests do not start it, including when they carry ci:full. A ci:full
+  # label dispatch is workflow_dispatch and has no pull_request payload, so
+  # admission reads the current PR before any paid cell. Fork and Dependabot
+  # workflows do not receive id-token: write, so attestation cannot succeed and
+  # the bundle upload would never run. Ordinary PRs, scope=linux, the nightly
+  # schedule, and an ordinary push to main do not start it. A partial matrix
+  # is not a pass. Artifact names include the run attempt so a rerun does not
+  # collide, and a partial rerun cannot mix attempts.
+  # Admission is free on this public repository and has no checkout. It rejects
+  # unsupported attestation contexts before any of the six cells are allocated.
+  # It stays off filter so a lookup failure cannot suppress ordinary CI.
+  qualification-admission:
+    name: qualification-admission
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    needs: filter
+    if: >
+      needs.filter.outputs.run-tests == 'true' &&
+      (
+        (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') ||
+        (
+          github.event_name == 'pull_request' &&
+          contains(github.event.pull_request.labels.*.name, 'ci:full') &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          github.actor != 'dependabot[bot]' &&
+          github.event.pull_request.user.login != 'dependabot[bot]'
+        )
+      )
+    outputs:
+      eligible: ${{ steps.admit.outputs.eligible }}
+    steps:
+      - name: Verify attested qualification source
+        id: admit
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          ACTOR: ${{ github.actor }}
+          REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PR_HEAD_SHA: ${{ inputs.pr_head_sha }}
+          MERGE_SHA: ${{ inputs.merge_sha }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess, sys
+
+          def emit(eligible):
+              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+                  handle.write("eligible=true\n" if eligible else "eligible=false\n")
+
+          def fail(reason):
+              emit(False)
+              print(
+                  f"Qualification not admitted: {reason}. No qualification PASS.",
+                  file=sys.stderr,
+              )
+              raise SystemExit(1)
+
+          actor = os.environ.get("ACTOR", "")
+          repository = os.environ.get("REPOSITORY", "")
+          event = os.environ.get("EVENT_NAME", "")
+          sha = os.environ.get("GITHUB_SHA", "")
+          if actor == "dependabot[bot]":
+              fail("Dependabot actor cannot publish attested qualification")
+          if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
+              fail("invalid repository identity")
+
+          def same_repo_author(head_repo, base_repo, login):
+              if (
+                  not head_repo
+                  or head_repo != repository
+                  or base_repo != repository
+                  or not login
+                  or login == "dependabot[bot]"
+              ):
+                  fail("same-repository, non-Dependabot PR required")
+
+          if event == "workflow_dispatch":
+              number = os.environ.get("PR_NUMBER", "")
+              head = os.environ.get("PR_HEAD_SHA", "")
+              merge = os.environ.get("MERGE_SHA", "")
+              if number == "" and head == "" and merge == "":
+                  emit(True)
+                  raise SystemExit(0)
+              if (
+                  not re.fullmatch(r"[1-9][0-9]*", number)
+                  or not re.fullmatch(r"[0-9a-f]{40}", head)
+                  or not re.fullmatch(r"[0-9a-f]{40}", merge)
+                  or sha != head
+              ):
+                  fail("invalid or stale dispatch identity")
+              proc = subprocess.run(
+                  ["gh", "api", f"repos/{repository}/pulls/{number}"],
+                  check=False,
+                  capture_output=True,
+                  text=True,
+              )
+              if proc.returncode != 0 or not proc.stdout.strip():
+                  fail("PR lookup failed")
+              try:
+                  pr = json.loads(proc.stdout)
+              except json.JSONDecodeError:
+                  fail("PR lookup failed")
+              head_body = pr.get("head") or {}
+              base_body = pr.get("base") or {}
+              if (
+                  pr.get("number") != int(number)
+                  or head_body.get("sha") != head
+                  or pr.get("state") != "open"
+                  or pr.get("draft") is not False
+              ):
+                  fail("PR dispatch no longer identifies an open ready head")
+              same_repo_author(
+                  (head_body.get("repo") or {}).get("full_name") or "",
+                  (base_body.get("repo") or {}).get("full_name") or "",
+                  (pr.get("user") or {}).get("login") or "",
+              )
+              emit(True)
+              raise SystemExit(0)
+
+          if event != "pull_request":
+              fail("unsupported qualification event")
+          same_repo_author(
+              os.environ.get("HEAD_REPO", ""),
+              os.environ.get("BASE_REPO", ""),
+              os.environ.get("PR_AUTHOR", ""),
+          )
+          emit(True)
+          PY
   qualification:
     name: qualification (${{ matrix.platform }}, ${{ matrix.python-version }})
     # actions: read lists this attempt's jobs. actions: write is the
@@ -907,14 +1042,19 @@ jobs:
     permissions:
       contents: read
       actions: read
-    needs: filter
+    needs: qualification-admission
+    # The pull-request arm repeats the head-repo and Dependabot gate so a
+    # fork or Dependabot pull_request cannot run the matrix even if admission
+    # reported eligible. workflow_dispatch has no pull_request payload;
+    # admission's PR lookup is what blocks a ci:full label on Dependabot.
     if: >
-      needs.filter.outputs.run-tests == 'true' &&
+      needs.qualification-admission.outputs.eligible == 'true' &&
       (
-        (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') ||
+        github.event_name != 'pull_request' ||
         (
-          github.event_name == 'pull_request' &&
-          contains(github.event.pull_request.labels.*.name, 'ci:full')
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          github.actor != 'dependabot[bot]' &&
+          github.event.pull_request.user.login != 'dependabot[bot]'
         )
       )
     strategy:
