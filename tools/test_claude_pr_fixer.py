@@ -609,16 +609,19 @@ class WorkflowStructureTests(unittest.TestCase):
             self.assertNotIn("HEAD:refs/heads/", job)
 
     def test_setup_python_does_not_enable_pip_cache(self) -> None:
-        # CSL-471 REVIEW-D8 J3: cache: pip on a PR/model job poisons the
-        # default-branch Actions cache by prefix restore (including the
-        # conflict writer that holds the OAuth token).
+        # CSL-471 REVIEW-D8 J3: a YAML `cache: pip` key on a PR/model job
+        # poisons the default-branch Actions cache by prefix restore
+        # (including the conflict writer that holds the OAuth token).
+        # Comments may mention the banned key; match YAML keys only.
+        pip_cache_line = re.compile(r"^[ \t]*cache:[ \t]*pip[ \t]*$", re.M)
+        cache_dep_line = re.compile(r"^[ \t]*cache-dependency-path:", re.M)
         for job_name in ("claude-mention", "devin-review-fix"):
             body = self._job(job_name)
-            self.assertNotIn("cache: pip", body, job_name)
-            self.assertNotIn("cache-dependency-path:", body, job_name)
+            self.assertIsNone(pip_cache_line.search(body), job_name)
+            self.assertIsNone(cache_dep_line.search(body), job_name)
         writer = WRITER_WORKFLOW_PATH.read_text(encoding="utf-8")
-        self.assertNotIn("cache: pip", writer)
-        self.assertNotIn("cache-dependency-path:", writer)
+        self.assertIsNone(pip_cache_line.search(writer), writer)
+        self.assertIsNone(cache_dep_line.search(writer), writer)
 
     def test_prompt_treats_review_and_files_as_untrusted(self) -> None:
         self.assertIn("UNTRUSTED DATA", self.text)
@@ -1976,6 +1979,87 @@ jobs:
                 path.write_text(body)
                 result = subprocess.run([exe, str(path)], cwd=root, capture_output=True, text=True)
                 self.assertEqual(result.returncode == 0, passes, result.stdout + result.stderr)
+
+
+class ConflictWriterFileCommandHardeningTests(unittest.TestCase):
+    """CSL-467 leftover: conflict-writer model job, not claude.yml (#256)."""
+
+    FILE_COMMAND_DENIES = (
+        "Bash(dangerouslyDisableSandbox:true)",
+        "Read(/${{ runner.temp }}/_runner_file_commands/**)",
+        "Edit(/${{ runner.temp }}/_runner_file_commands/**)",
+        "Edit(/${{ runner.tool_cache }}/**)",
+        "Edit(//home/runner/work/_actions/**)",
+        "Edit(//home/runner/externals/**)",
+        "Edit(~/.bashrc)",
+        "Edit(~/.profile)",
+        "Edit(~/.bash_profile)",
+    )
+    PINNED_ENV = {
+        "BASH_ENV": "", "ENV": "", "LD_PRELOAD": "", "LD_AUDIT": "", "LD_LIBRARY_PATH": "",
+        "GCONV_PATH": "", "PYTHONPATH": "", "PYTHONHOME": "", "PYTHONSTARTUP": "",
+        "NODE_OPTIONS": "", "PATH": "/usr/bin:/bin",
+        "GIT": "/usr/bin/git", "PYTHON3": "/usr/bin/python3", "JQ": "/usr/bin/jq",
+    }
+    HELPER_NETWORK = ("api.github.com", "github.com")
+    POST_CLAUDE = ("Report tool-permission denials", "Package untrusted model output",
+                   "Upload untrusted model output")
+
+    def test_conflict_writer_model_job_blocks_file_command_poisoning(self) -> None:
+        # Write/Edit can reach $RUNNER_TEMP/_runner_file_commands. #256 hardens
+        # claude.yml; this pins the same controls on claude-conflict-writer.yml.
+        import yaml
+
+        workflow = yaml.load(WRITER_WORKFLOW_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+        model = workflow["jobs"]["model"]
+        action = [s for s in model["steps"] if s.get("id") == "claude"][0]
+        settings = json.loads(action["with"]["settings"])
+        self.assertEqual(settings["sandbox"]["enabled"], True)
+        self.assertEqual(settings["sandbox"]["allowUnsandboxedCommands"], False)
+        self.assertEqual(settings["sandbox"]["autoAllowBashIfSandboxed"], False)
+        self.assertEqual(settings["sandbox"]["failIfUnavailable"], True)
+        deny_write = settings["sandbox"]["filesystem"]["denyWrite"]
+        for path in ("${{ runner.temp }}/_runner_file_commands", "${{ runner.tool_cache }}",
+                     "/home/runner/work/_actions", "/home/runner/externals"):
+            self.assertIn(path, deny_write)
+            self.assertNotIn("*", path)  # Linux denyWrite skips wildcard entries
+        network = settings["sandbox"]["network"]
+        self.assertEqual(network["allowedDomains"], list(self.HELPER_NETWORK))
+        self.assertEqual(network["strictAllowlist"], True)
+        deny = settings["permissions"]["deny"]
+        for rule in self.FILE_COMMAND_DENIES:
+            self.assertIn(rule, deny)
+        self.assertFalse([r for r in deny if r.startswith("Write(") and "_runner_file_commands" in r],
+                         deny)  # Write(path) never matches
+        names = [s.get("name") or s.get("id") for s in model["steps"]]
+        claude = names.index("claude")
+        self.assertEqual(names[claude + 1:claude + 4], list(self.POST_CLAUDE))
+        denials = [s for s in model["steps"] if s.get("name") == "Report tool-permission denials"][0]
+        self.assertIn('"${PYTHON3:-python3}" - "$EXECUTION_FILE"', denials["run"])
+        package = [s for s in model["steps"] if s.get("name") == "Package untrusted model output"][0]
+        self.assertIn('git_bin="${GIT:-git}"', package["run"])
+        self.assertIn('jq_bin="${JQ:-jq}"', package["run"])
+        self.assertNotIn("/usr/bin/git", package["run"])  # PATH shims in publish wiring tests
+        for step_name in self.POST_CLAUDE:
+            env = [s for s in model["steps"] if s.get("name") == step_name][0]["env"]
+            for key, value in self.PINNED_ENV.items():
+                self.assertEqual(env[key], value, (step_name, key))
+            self.assertNotIn("PATH pins over GITHUB_PATH", yaml.dump(env))
+        workflow_text = WRITER_WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertIn("# CSL-467: Edit denies for /home/runner/work/_actions and", workflow_text)
+        self.assertNotIn("PATH pins over GITHUB_PATH prepends when step env wins.", workflow_text)
+        install = [s for s in model["steps"] if s.get("name") == "Install acceptance-gate deps"][0]
+        self.assertEqual(install["working-directory"], "${{ runner.temp }}")
+        self.assertTrue(install["run"].lstrip().startswith("python -P -m pip install"), install["run"])
+        self.assertNotEqual(install.get("working-directory"), "app")
+        self.assertNotIn("python -m pip", install["run"])
+        setup_python = [s for s in model["steps"] if str(s.get("uses", "")).startswith("actions/setup-python@")]
+        self.assertEqual(len(setup_python), 1)
+        self.assertNotIn("cache", setup_python[0].get("with", {}))
+        self.assertNotIn("cache-dependency-path", setup_python[0].get("with", {}))
+        dumped = yaml.dump(model)
+        self.assertNotIn("cache: pip", dumped)
+        self.assertNotIn("cache-dependency-path", dumped)
 
 
 class ClaudeActionInlineCommentTests(unittest.TestCase):
