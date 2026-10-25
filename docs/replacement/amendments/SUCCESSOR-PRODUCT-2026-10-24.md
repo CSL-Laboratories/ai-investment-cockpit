@@ -31,23 +31,26 @@ This comment is not an acceptance receipt.
 
 The Cockpit spec is **dynamic**: it changes with the issues and the research
 that is published. (Relayed by Grok Bot Liaison from Lucas's 2026-10-24 chat
-answers, 11:57 PM PT.) Living state is
-`docs/replacement/amendments/RESEARCH-REGISTER.md`, keyed to CSL-511..CSL-519
-plus shared CSL-520..CSL-522 (umbrella CSL-493). That register is **not** part
-of this amendment's exact-digest product text and is **not** copied into
-`docs/replacement/SUCCESSOR-PRODUCT.md` on promotion.
+answers, 11:57 PM PT.) Research for this amendment lives in the vault, not in
+this repository:
 
-Update rule (`docs/replacement/amendments/README.md`): when a csl-research
-record for a parent is published at `submissions/<record_id>/`, update the
-register row in a docs-only PR. Samir and Dan (or their agents, attributed)
-may change the product spec as research is synthesized. A spec change they
-author is accepted when a founder other than the author (Lucas, Samir
-`samir-shah-ahmed`, or Dan/Chaandan `CDanTheMan`) approves that versioned
-amendment PR; that approval counts as acceptance. (Relayed by Grok Bot
-Liaison from Lucas's 2026-10-24 chat answers, 11:58 PM PT.) A reviewed
-promotion then moves the pins. This proposed path is not yet wired into
-`program.json`, `tools/check_replacement_program.py`, or `AGENTS.md`. Check:
-`python3 -X utf8 -B tools/check_cockpit_research_register.py`.
+- repository: `CSL-Laboratories/csl-research`
+- commit: `250fdbbe2964e4889096a487e2dfb6d7794046a6`
+- path: `submissions/20261025-cockpit-csl511-cp0-successor-research-01/`
+- claim: CP0 successor-product research (Lucas 2026-10-24 answers and the
+  parent register) is recorded as this vault submission, not as cockpit bytes.
+- limitation: candidate evidence only; vault PR
+  https://github.com/CSL-Laboratories/csl-research/pull/41 is pending review
+  and is not human product acceptance.
+
+Samir and Dan (or their agents, attributed) may change the product spec as
+research is synthesized. A spec change they author is accepted when a founder
+other than the author (Lucas, Samir `samir-shah-ahmed`, or Dan/Chaandan
+`CDanTheMan`) approves that versioned amendment PR; that approval counts as
+acceptance. (Relayed by Grok Bot Liaison from Lucas's 2026-10-24 chat
+answers, 11:58 PM PT.) A reviewed promotion then moves the pins. This
+proposed path is not yet wired into `program.json`,
+`tools/check_replacement_program.py`, or `AGENTS.md`.
 
 ## Product outcome
 
@@ -275,42 +278,23 @@ without a human receipt would falsely claim acceptance.
 
 ## Research basis (candidate-only)
 
-This amendment is grounded as follows. It is not a research-vault record; the
-csl-research repository returned HTTP 404 from this session (access denial; not
-routed around). Material below is **candidate-only** except where it cites the
-already-accepted CSL-212 digest receipt.
+Vault record (candidate evidence; not human product acceptance):
 
-Lucas's product answers are **relayed by Grok Bot Liaison from Lucas's 2026-10-24
-chat answers (times PT)**. They are not Linear comments. Pointers:
+- repository: `CSL-Laboratories/csl-research`
+- commit: `250fdbbe2964e4889096a487e2dfb6d7794046a6`
+- path: `submissions/20261025-cockpit-csl511-cp0-successor-research-01/`
+- claim: CP0 successor-product research (Lucas 2026-10-24 answers and the
+  parent register) is recorded as this vault submission, not as cockpit bytes.
+- limitation: candidate evidence only; vault PR
+  https://github.com/CSL-Laboratories/csl-research/pull/41 is pending review.
+
+Already-accepted CSL-212 digest receipt `25c50b43-6de4-4f6d-9652-47a649ccc5ae`
+still pins `docs/replacement/SUCCESSOR-PRODUCT.md`. Lucas's product answers
+remain **relayed by Grok Bot Liaison from Lucas's 2026-10-24 chat answers
+(times PT)**; they are not Linear comments. Pointers:
 [CSL-511](https://linear.app/csl-laboratories/issue/CSL-511),
 [CSL-493](https://linear.app/csl-laboratories/issue/CSL-493),
 frontier Page
 <https://cursor.com/canvas/store-94f1dcae-bdc6-4db1-ac26-f52f26b24460/551b01dc-6417-49dd-842c-23cf35afff08>.
-
-| Claim in this amendment | Source | Date |
-|---|---|---|
-| Open-source research instrument; publish results; category verdict; closed testing | Relayed by Grok Bot Liaison from Lucas's 2026-10-24 chat answers (10:44 PT): research-instrument outcome and category verdict | 2026-10-24 |
-| Crypto + stocks + prediction markets | Relayed by Grok Bot Liaison from Lucas's 2026-10-24 chat answers (10:25 PT): asset scope includes crypto | 2026-10-24 |
-| GUI on Linux, Windows, macOS + CLI; Linux-first sprint | Relayed by Grok Bot Liaison from Lucas's 2026-10-24 chat answers (10:30 PT): three-OS GUI plus CLI | 2026-10-24 |
-| First users Lucas, Chaandan, Samir as US individuals | Relayed by Grok Bot Liaison from Lucas's 2026-10-24 chat answers: three founders as US individuals | 2026-10-24 |
-| Data off GitHub; private three-person collaboration | Relayed by Grok Bot Liaison from Lucas's 2026-10-24 chat answers: founder data stays off GitHub | 2026-10-24 |
-| No Discord; standalone (keys, servers, subscriptions, brokers) | Relayed by Grok Bot Liaison from Lucas's 2026-10-24 chat answers (10:44 PT): no Discord; standalone software | 2026-10-24 |
-| Taxes out of Nov 11; legacy tax code carry-forward only | Relayed by Grok Bot Liaison from Lucas's 2026-10-24 chat answers (10:49 PT): tax treatment out of Nov 11 scope. Separate from the paper-dashboard base. | 2026-10-24 |
-| Lean no paid data; optional Alpaca key Lucas may buy | Relayed by Grok Bot Liaison from Lucas's 2026-10-24 chat answers: prefer unpaid data; optional Alpaca key is Lucas's purchase | 2026-10-24 |
-| Live trading is research, not decided; Lucas's explicit go to arm | Relayed by Grok Bot Liaison from Lucas's 2026-10-24 chat answers: live trading is research, not an activation | 2026-10-24 |
-| Any pairing; BYOK in OS keyring; OpenRouter, OpenCode Go, OpenCode Zen first; CSL adds no pay-per-token keys | Relayed by Grok Bot Liaison from Lucas's 2026-10-24 chat answers (10:30 PT and 11:19 PM PT): preference-synced pairings and named first providers | 2026-10-24 |
-| Kalshi demo first still fits | Relayed by Grok Bot Liaison from Lucas's 2026-10-24 chat answers: Kalshi demo first is kept; [Kalshi demo env](https://docs.kalshi.com/getting_started/demo_env) | retrieved 2026-10-25 |
-| Operator MCP inspect/stop only | Relayed by Grok Bot Liaison from Lucas's 2026-10-24 chat answers (10:30 PT): operator MCP is inspect/stop only | 2026-10-24 |
-| Seven bars; no SWE-bench | Relayed by Grok Bot Liaison from Lucas's 2026-10-24 chat answers (10:30 PT): seven bars; no benchmaxxing | 2026-10-24 |
-| $2,000 paper vs SPY+cash | Relayed by Grok Bot Liaison from Lucas's 2026-10-24 chat answers: paper-dashboard base of $2,000 versus SPY plus cash. Separate from tax treatment. | 2026-10-24 |
-| $210/mo narrative dropped | Relayed by Grok Bot Liaison from Lucas's 2026-10-24 chat answers: drop the $210/mo pays-for-itself narrative | 2026-10-24 |
-| Legacy live, Polymarket, tax code = carry-forward | Relayed by Grok Bot Liaison from Lucas's 2026-10-24 chat answers (10:30 PT): carry-forward capability, not new invention | 2026-10-24 |
-| Last accepted successor digest | CSL-212 comment `25c50b43-6de4-4f6d-9652-47a649ccc5ae`; `program.json` | 2026-10-16 |
-| Provider-neutral routes; Profile A reference; no second order path | 2026-10-16 accepted SUCCESSOR-PRODUCT.md (retained) | 2026-10-16 |
-| OpenRouter BYOK exists as a user-held key product | [OpenRouter BYOK](https://openrouter.ai/docs/guides/overview/auth/byok) **vendor docs** | retrieved 2026-10-25 |
-| OpenCode Go / Zen are optional user API-key providers | [OpenCode Go](https://opencode.ai/docs/go/), [Zen](https://opencode.ai/docs/zen/) **vendor docs** | retrieved 2026-10-25 |
-| Retail agentic brokers expose model-held place-order tools; Cockpit must not copy that | [Robinhood: Trading with your agent](https://robinhood.com/us/en/support/articles/trading-with-your-agent/) **vendor copy** | retrieved 2026-10-25 |
-| Real-capital prediction-market agents can lose money (prior, not a forecast) | Prediction Arena [arXiv:2604.07355](https://arxiv.org/html/2604.07355) **paper result** | cited on the frontier Page 2026-10-25 |
-
 The frontier Page is Grok Bot preparing research for Lucas; it is not a
-decision. Publishing that brief did not mark this amendment decided.
+decision.
