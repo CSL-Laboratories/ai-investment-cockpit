@@ -36,7 +36,9 @@ the paper/live switch. The lists in AGENTS.md are examples, not a boundary; a
 failing test there is not a clear defect to fix alone.
 
 Current implementation:
-A solo-developer, subscription-powered, **human-gated** AI investing copilot.
+A three-founder, subscription-powered, **human-gated** AI investing copilot.
+The three founders are Lucas (NotSkittlz), Chaandan (CDanTheMan), and
+Samir (samir-shah-ahmed).
 **Paper-first** — no live capital moves until the pre-live gates pass. Think of it
 as **two engines**:
 1. **Awareness + discipline** — the reliable value (time saved, not missing things,
@@ -72,7 +74,8 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 ## Current load-bearing rules
 - **New data feeds are UNTRUSTED input** — wrap in `<untrusted-content>`,
   canary-scan (SEC-02). Inv 3 validates model *output*; this governs tool/feed *input*.
-- **The current operator surface is Discord + loopback API.** A general
+- **The current operator surface is Discord + loopback API** (current state,
+  pending the CP0 amendment on CSL-511 / #274; not the product target). A general
   `OperatorSurface` abstraction is planned, not merged; do not create new order authority or
   assume another adapter already exists.
 - **The current order universe is a static operator-approved allowlist.** Dynamic discovery is
@@ -80,11 +83,13 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 - **Execution stays model-free.** Models serve awareness/reasoning only.
 - **Research/dev host is Cursor Cloud Agent Linux VM.** Cursor-native fresh
   sessions are preferred; Codex/OpenCode development routes require exact-host
-  qualification and admitted budgets. Devin is retired from research/dev swarm dispatch;
-  its GitHub PR-review role in `AGENTS.md` remains active. Muse synthesis requires
+  qualification and admitted budgets. Devin is retired from this cockpit's
+  research/dev swarm dispatch only; its GitHub PR-review role in `AGENTS.md`
+  remains active. Devin may still post research briefs, which, like all
+  research, land in CSL-Laboratories/csl-research. Muse synthesis requires
   a different model family; OpenRouter/Hive are capped fallback synthesis only.
-  Current process: `docs/research/agent-swarm-rebase-2026-09-14.md`.
-  Cloud handoff: `docs/research/cursor-cloud-rdt-handoff-2026-09-14.md`.
+  Historical Cloud process (legacy, frozen): `docs/research/agent-swarm-rebase-2026-09-14.md`.
+  Historical Cloud handoff (legacy, frozen): `docs/research/cursor-cloud-rdt-handoff-2026-09-14.md`.
   No swarm broker tools, secrets or soak starts. Product authority is unchanged.
 
 ## Session workflow
@@ -104,7 +109,19 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
    `Grok Bot, preparing research for <owner>`. Only the designated human
    decision-maker, or an explicitly authorized research team, decides.
    Publishing a brief never marks the issue decided, never clears a hold, and
-   never authorizes implementation.
+   never authorizes implementation. Every research pass posts a digest on the
+   Linear issue and a `submissions/<record_id>/` record in
+   CSL-Laboratories/csl-research (README, AGENTS.md, templates,
+   `tools/check_submission.py`) and opens a PR there before releasing the
+   issue claim. Research may use any deep-research source the team has, such
+   as Parallel, Exa, Claude Deep Research, Open Deep Research, ChatGPT Deep
+   Research or the web. Each run records its tool, its run id and its cost
+   (or `unknown` plus a reason) in its csl-research record. Every new
+   non-public doc goes to csl-research through a PR there; this repo only
+   links to it. Gate and operational evidence that code or a runbook in this repo already reads
+   stays in `docs/evidence/` until CSL-536. Contract fixtures under
+   `docs/replacement/outcomes/**` stay. Existing files stay until CSL-536.
+   `docs/research/**` is legacy (no new files).
 3. Implement. Preserve the invariants. Add tests alongside.
 4. Run the gates (below). Green before you stop.
 5. **Do not re-litigate settled decisions** — the corpus is a one-way pipeline
@@ -177,8 +194,9 @@ decision.
 - **Data feeds:** `app/ingest/`. **LLM pipelines:** `app/workflows/`.
 - **Operator surfaces:** `app/bridge/` (Discord) and `app/orchestrator/app.py` (loopback API).
   A general `app/surfaces/` abstraction is not merged.
-- **Design corpus:** `docs/` — index at `docs/README.md`. Current Cloud process:
-  `docs/research/agent-swarm-rebase-2026-09-14.md`.
+- **Design corpus:** `docs/` — index at `docs/README.md`. Historical Cloud
+  process (legacy, frozen): `docs/research/agent-swarm-rebase-2026-09-14.md`.
+  Current research landing: CSL-Laboratories/csl-research.
 
 ## Review loop
 

@@ -438,6 +438,10 @@ def test_run_posts_one_codex_comment_and_files_linear():
     body = gh.posts[0][1]["body"]
     assert body.startswith("@codex review")
     assert "Linear-first (CSL-88)" in body
+    assert "any deep-research source the team has" in body
+    assert "web research (Parallel)" not in body
+    assert "CSL-Laboratories/csl-research as a submissions record through a PR" in body
+    assert "Never commit research content to this repo" in body
     assert "<!-- codex-mediation:PRRT_kwDOabc -->" in body
     assert "UNTRUSTED DATA" in body
     assert "do **not** push" in body.lower() or "Do **not** push" in body
