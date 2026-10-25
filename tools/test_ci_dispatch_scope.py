@@ -776,9 +776,20 @@ def job_uses(job):
     return [str(step.get('uses')) for step in job.get('steps') or [] if step.get('uses')]
 
 
+_THIRD_PARTY_SHA = re.compile(r'^[^@\s]+@[0-9a-f]{40}$')
+
+
+def uses_sha_pinned(uses):
+    """GitHub-owned actions/* may use a tag. Everything else needs a 40-hex SHA."""
+    return uses.startswith('actions/') or bool(_THIRD_PARTY_SHA.fullmatch(uses))
+
+
 def uses_allowed(job, role):
     allowed = ROLE_USES[role]
-    return all(any(uses.startswith(prefix) for prefix in allowed) for uses in job_uses(job))
+    return all(
+        any(uses.startswith(prefix) for prefix in allowed) and uses_sha_pinned(uses)
+        for uses in job_uses(job)
+    )
 
 
 def model_github_token_ok(job):
@@ -1244,6 +1255,19 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         live = workflow('claude.yml')['jobs']['claude-mention']
         self.assertTrue(any(u.startswith('oven-sh/setup-bun@') for u in job_uses(live)))
         self.assertTrue(uses_allowed(live, 'model'))
+        tagged = copy.deepcopy(live)
+        for step in tagged['steps']:
+            uses = str(step.get('uses') or '')
+            if uses.startswith('oven-sh/setup-bun@'):
+                step['uses'] = 'oven-sh/setup-bun@v1.2.3'
+                break
+        self.assertTrue(any(u.startswith('oven-sh/setup-bun@') for u in job_uses(tagged)))
+        self.assertTrue(any(u.startswith('oven-sh/setup-bun@') for u in ROLE_USES['model']))
+        self.assertFalse(uses_sha_pinned('oven-sh/setup-bun@v1.2.3'))
+        self.assertFalse(uses_allowed(tagged, 'model'))
+        pin = next(u for u in job_uses(live) if u.startswith('oven-sh/setup-bun@'))
+        self.assertRegex(pin, r'@([0-9a-f]{40})$')
+        self.assertTrue(uses_sha_pinned(pin))
 
     def test_runbook_names_the_github_token_dispatch_exception(self):
         runbook = next(path for path in (ROOT / 'docs').iterdir() if path.name == 'ci-runbook.md')
