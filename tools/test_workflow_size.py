@@ -95,7 +95,15 @@ class WorkflowSizeTests(unittest.TestCase):
         self.assertIn('install -m 0755 "$TRUSTED/claude_fixer_outbox.py"', text)
         self.assertIn('python3 -I "$TRUSTED/claude_fixer_preflight.py"', text)
         self.assertIn('python3 -I "$TRUSTED/claude_pr_fixer_gate.py"', text)
-        self.assertIn('"$interpreter" -I "$TRUSTED/claude_denials.py" "$EXECUTION_FILE"', text)
+        self.assertIn(
+            'install -m 0444 "$TRUSTED/claude_denials.py" /opt/csl-claude/lib/claude_denials.py',
+            text,
+        )
+        self.assertIn('"$interpreter" -I "$DENIALS" "$EXECUTION_FILE"', text)
+        self.assertNotIn(
+            '"$interpreter" -I "$TRUSTED/claude_denials.py" "$EXECUTION_FILE"',
+            text,
+        )
         self.assertNotIn("ref: ${{ github.event.pull_request.head.sha }}", text)
         for tag in BANNED_CLAUDE_HEREDOCS:
             self.assertNotIn(f"<<'{tag}'", text, tag)

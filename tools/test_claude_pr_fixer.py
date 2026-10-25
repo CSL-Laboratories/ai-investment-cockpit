@@ -1084,7 +1084,25 @@ class FixerGateAndPromptTests(unittest.TestCase):
             self.assertIn("steps.claude.outputs.execution_file", body, job)
             self.assertIn('interpreter="${PYTHON3:?}"', body, job)
             self.assertNotIn('python3="$PYTHON3"', body, job)
-            self.assertIn('"$interpreter" -I "$TRUSTED/claude_denials.py" "$EXECUTION_FILE"', body, job)
+            self.assertIn(
+                'install -m 0444 "$TRUSTED/claude_denials.py" /opt/csl-claude/lib/claude_denials.py',
+                body,
+                job,
+            )
+            _helpers, after_helpers = body.split("E3-0-early write python helpers", 1)
+            before_pr_checkout = after_helpers.split("uses: actions/checkout@", 1)[0]
+            self.assertIn(
+                'install -m 0444 "$TRUSTED/claude_denials.py" /opt/csl-claude/lib/claude_denials.py',
+                before_pr_checkout,
+                job,
+            )
+            denials_step = body.split("Report tool-permission denials", 1)[1].split(
+                "\n      - name:", 1
+            )[0]
+            self.assertIn("DENIALS=/opt/csl-claude/lib/claude_denials.py", denials_step, job)
+            self.assertNotIn("$TRUSTED", denials_step, job)
+            self.assertIn('test "$(stat -c %U "$DENIALS")" = root', denials_step, job)
+            self.assertIn('"$interpreter" -I "$DENIALS" "$EXECUTION_FILE"', denials_step, job)
             self.assertIn("/usr/bin/env -i", body, job)
             self.assertIn('GITHUB_STEP_SUMMARY="${GITHUB_STEP_SUMMARY:-}"', body, job)
             self.assertIn('GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-}"', body, job)
@@ -1104,6 +1122,19 @@ class FixerGateAndPromptTests(unittest.TestCase):
             self.assertNotIn("A credential in any config scope fails the package", body, job)
             self.assertNotIn("show_full_output", body, job)
 
+    def test_model_jobs_do_not_read_trusted_after_pr_head_checkout(self) -> None:
+        # Samir #280: $TRUSTED/ after the PR-head checkout is the wiped
+        # workspace tree (or PR/model bytes), not the workflow_sha install.
+        for job in ("claude-mention", "devin-review-fix"):
+            body = self._job(job)
+            checkouts = body.split("uses: actions/checkout@")
+            self.assertGreaterEqual(len(checkouts), 3, job)
+            after_pr = checkouts[2]
+            after_claude = body.split("\n      - id: claude\n", 1)[1]
+            self.assertIn("$TRUSTED", checkouts[1], job)
+            self.assertNotIn("$TRUSTED", after_pr, job)
+            self.assertNotIn("$TRUSTED", after_claude, job)
+
     def test_mention_job_installs_gate_deps(self) -> None:
         # Preferred I5: no setup-python/pip before uses:. Gates run in linux-gates.
         mention = self._job("claude-mention")
@@ -1116,11 +1147,16 @@ class FixerGateAndPromptTests(unittest.TestCase):
         self.assertNotIn("Bash(python -m pytest -q app/tests)", mention)
 
     def test_embedded_denials_match_source(self) -> None:
-        # Mention/fixer copy claude_denials.py from github.workflow_sha. Conflict-writer
-        # still inlines until a later PR.
-        trusted = '"$interpreter" -I "$TRUSTED/claude_denials.py" "$EXECUTION_FILE"'
+        # Mention/fixer copy claude_denials.py from github.workflow_sha into
+        # /opt/csl-claude before the PR-head checkout. Conflict-writer still
+        # inlines until a later PR.
+        preserved = '"$interpreter" -I "$DENIALS" "$EXECUTION_FILE"'
         writer_start = f"\"${{PYTHON3:-python3}}\" - \"$EXECUTION_FILE\" <<'{DENIALS_HEREDOC}'\n"
-        self.assertEqual(self.text.count(trusted), 2)
+        self.assertEqual(self.text.count(preserved), 2)
+        self.assertNotIn(
+            '"$interpreter" -I "$TRUSTED/claude_denials.py" "$EXECUTION_FILE"',
+            self.text,
+        )
         self.assertNotIn(f"<<'{DENIALS_HEREDOC}'", self.text)
         writer = WRITER_WORKFLOW_PATH.read_text(encoding="utf-8")
         self.assertEqual(writer.count(writer_start), 1)

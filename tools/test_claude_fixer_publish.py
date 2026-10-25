@@ -2301,7 +2301,9 @@ class WorkflowWiringTests(unittest.TestCase):
                 self.assertEqual(denials["env"]["PYTHONUSERBASE"], "")
                 self.assertIn('interpreter="${PYTHON3:?}"', denials["run"])
                 self.assertNotIn('python3="$PYTHON3"', denials["run"])
-                self.assertIn('"$interpreter" -I "$TRUSTED/claude_denials.py" "$EXECUTION_FILE"', denials["run"])
+                self.assertIn("DENIALS=/opt/csl-claude/lib/claude_denials.py", denials["run"])
+                self.assertNotIn("$TRUSTED", denials["run"])
+                self.assertIn('"$interpreter" -I "$DENIALS" "$EXECUTION_FILE"', denials["run"])
                 self.assertIn("/usr/bin/env -i PATH=\"/usr/bin:/bin\" PYTHONNOUSERSITE=1", denials["run"])
                 self.assertIn('GITHUB_STEP_SUMMARY="${GITHUB_STEP_SUMMARY:-}"', denials["run"])
                 self.assertIn('GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-}"', denials["run"])
@@ -2621,7 +2623,11 @@ class WorkflowWiringTests(unittest.TestCase):
             self.assertIn(f'install -m {mode} "$TRUSTED/{source}"', claude, source)
         self.assertIn('python3 -I "$TRUSTED/claude_fixer_preflight.py"', claude)
         self.assertIn('python3 -I "$TRUSTED/claude_pr_fixer_gate.py"', claude)
-        self.assertIn('"$TRUSTED/claude_denials.py"', claude)
+        self.assertIn(
+            'install -m 0444 "$TRUSTED/claude_denials.py" /opt/csl-claude/lib/claude_denials.py',
+            claude,
+        )
+        self.assertIn('"$interpreter" -I "$DENIALS" "$EXECUTION_FILE"', claude)
 
     def test_conflict_merge_is_bundled_against_head_and_base(self):
         model = jobs("claude-conflict-writer.yml")["model"]

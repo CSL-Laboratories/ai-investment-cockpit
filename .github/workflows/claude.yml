@@ -396,6 +396,9 @@ jobs:
           install -m 0444 "$TRUSTED/sandbox_e3_environ.py" /opt/csl-claude/lib/sandbox_e3_environ.py
           install -m 0444 "$TRUSTED/sandbox_e3_record.py" /opt/csl-claude/lib/sandbox_e3_record.py
           install -m 0444 "$TRUSTED/sandbox_e3_bind.py" /opt/csl-claude/lib/sandbox_e3_bind.py
+          # Outside the workspace: the later PR-head checkout wipes
+          # .csl-trusted-workflow. The denials step must not reread it.
+          install -m 0444 "$TRUSTED/claude_denials.py" /opt/csl-claude/lib/claude_denials.py
 
       - name: E3-0-early write C sources A
         shell: /usr/bin/sudo -n /bin/bash --noprofile --norc -e -o pipefail {0}
@@ -778,11 +781,10 @@ jobs:
           PATH: "/usr/bin:/bin"
         run: |
           set -euo pipefail
-          TRUSTED="${{ github.workspace }}/.csl-trusted-workflow/scripts/ci"
-          test -d "$TRUSTED"
-          test ! -L "$TRUSTED"
-          test ! -L "${{ github.workspace }}/.csl-trusted-workflow"
-          test "$(git -C "${{ github.workspace }}/.csl-trusted-workflow" rev-parse HEAD)" = "${{ github.workflow_sha }}"
+          DENIALS=/opt/csl-claude/lib/claude_denials.py
+          test -f "$DENIALS"
+          test ! -L "$DENIALS"
+          test "$(stat -c %U "$DENIALS")" = root
           interpreter="${PYTHON3:?}"
           case "$interpreter" in
             /usr/bin/python3|/usr/bin/python3.*) ;;
@@ -797,7 +799,7 @@ jobs:
           /usr/bin/env -i PATH="/usr/bin:/bin" PYTHONNOUSERSITE=1 \
             GITHUB_STEP_SUMMARY="${GITHUB_STEP_SUMMARY:-}" \
             GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-}" \
-            "$interpreter" -I "$TRUSTED/claude_denials.py" "$EXECUTION_FILE"
+            "$interpreter" -I "$DENIALS" "$EXECUTION_FILE"
       - name: Package untrusted model output
         id: package
         if: always()
@@ -1285,6 +1287,9 @@ jobs:
           install -m 0444 "$TRUSTED/sandbox_e3_environ.py" /opt/csl-claude/lib/sandbox_e3_environ.py
           install -m 0444 "$TRUSTED/sandbox_e3_record.py" /opt/csl-claude/lib/sandbox_e3_record.py
           install -m 0444 "$TRUSTED/sandbox_e3_bind.py" /opt/csl-claude/lib/sandbox_e3_bind.py
+          # Outside the workspace: the later PR-head checkout wipes
+          # .csl-trusted-workflow. The denials step must not reread it.
+          install -m 0444 "$TRUSTED/claude_denials.py" /opt/csl-claude/lib/claude_denials.py
 
       - name: E3-0-early write C sources A
         shell: /usr/bin/sudo -n /bin/bash --noprofile --norc -e -o pipefail {0}
@@ -1668,11 +1673,10 @@ jobs:
           PATH: "/usr/bin:/bin"
         run: |
           set -euo pipefail
-          TRUSTED="${{ github.workspace }}/.csl-trusted-workflow/scripts/ci"
-          test -d "$TRUSTED"
-          test ! -L "$TRUSTED"
-          test ! -L "${{ github.workspace }}/.csl-trusted-workflow"
-          test "$(git -C "${{ github.workspace }}/.csl-trusted-workflow" rev-parse HEAD)" = "${{ github.workflow_sha }}"
+          DENIALS=/opt/csl-claude/lib/claude_denials.py
+          test -f "$DENIALS"
+          test ! -L "$DENIALS"
+          test "$(stat -c %U "$DENIALS")" = root
           interpreter="${PYTHON3:?}"
           case "$interpreter" in
             /usr/bin/python3|/usr/bin/python3.*) ;;
@@ -1687,7 +1691,7 @@ jobs:
           /usr/bin/env -i PATH="/usr/bin:/bin" PYTHONNOUSERSITE=1 \
             GITHUB_STEP_SUMMARY="${GITHUB_STEP_SUMMARY:-}" \
             GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-}" \
-            "$interpreter" -I "$TRUSTED/claude_denials.py" "$EXECUTION_FILE"
+            "$interpreter" -I "$DENIALS" "$EXECUTION_FILE"
       - name: Package untrusted model output
         id: package
         if: always()
