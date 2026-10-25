@@ -689,7 +689,7 @@ WRITER_CALL = re.compile(
     r'(?m)^\s+uses:\s*["\']?(?:\./)?\.github/workflows/claude-conflict-writer\.ya?ml["\']?\s*(?:#.*)?$'
 )
 _SECRET_EXPR = re.compile(
-    r'''secrets(?:\.[A-Z0-9_]+|\[\s*['"][A-Z0-9_]+['"]\s*\])'''
+    r'''secrets(?:\.[A-Za-z0-9_]+|\[\s*['"][A-Za-z0-9_]+['"]\s*\])'''
 )
 _GH_EXPR = re.compile(r'\$\{\{(.*?)\}\}', re.DOTALL)
 _OAUTH_ACTION_INPUT = re.compile(
@@ -1260,6 +1260,12 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         indexed = copy.deepcopy(live)
         indexed.setdefault('env', {})['GH_TOKEN'] = "${{ secrets['MY_PAT'] }}"
         self.assertIsNotNone(MODEL_SECRETS.search(indexed))
+        lower = copy.deepcopy(live)
+        lower.setdefault('env', {})['GH_TOKEN'] = '${{ secrets.my_pat }}'
+        self.assertIsNotNone(MODEL_SECRETS.search(lower))
+        mixed = copy.deepcopy(live)
+        mixed.setdefault('env', {})['GH_TOKEN'] = "${{ secrets['My_Pat'] }}"
+        self.assertIsNotNone(MODEL_SECRETS.search(mixed))
         quoted_indexed = copy.deepcopy(live)
         run = 'echo "${{ secrets[\'MY_PAT\'] }}"'
         quoted_indexed['steps'][0]['run'] = run
