@@ -628,9 +628,12 @@ MODEL_ACCESS = re.compile(r'ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN|anthropics
 HOSTED = {'ubuntu-latest', 'ubuntu-24.04', 'ubuntu-22.04', 'windows-2025', 'windows-latest', 'macos-latest'}
 MODEL_BASH = 'Bash(python3 ${{ runner.temp }}/claude-fixer-guard/model-api --:*)'
 # A push, in shell or argv form. Shell: `git`, then global options (`-C dir`, `-c k=v`,
-# `--git-dir path`, `--no-pager`), then `push`, across backslash continuations. Argv: a quoted
-# `"git"` list, `run_git([...]`, or `prefix + ["push"` / `*prefix, "push"`. Quotes may be
-# backslash-escaped. `print("push")` and `["push", "pull"]` are not pushes.
+# `--git-dir path`, `--no-pager`), then `push`, across backslash continuations. Argv: any
+# `[`/`(` list or a quoted `"git"` list, then `"push"` — helpers named `run_git`, `GIT`,
+# `_git`, `run`, or `cmd` all count. Quotes may be backslash-escaped. False positives are
+# excluded narrowly: a bare `"push"` passed to print/logging, or a list whose next quoted
+# token is another git subcommand (`["push", "pull"]`). Value-taking git options
+# (`--git-dir`, `--work-tree`, `--namespace`, `-C`, `-c`) consume their following token.
 _Q = r'\\?["\']'
 _STR = r'[rbfuRBFU]{0,2}' + _Q + r'[^"\'\n]*' + _Q
 _OPT = r'[rbfuRBFU]{0,2}' + _Q + r'-[^"\'\n]*' + _Q
@@ -641,12 +644,45 @@ _GAP = r'(?:\s|\\\n)+'
 _GIT_VAL = (r'(?:--(?:git-dir|work-tree|namespace|config-env|super-prefix|attr-source))'
             rf'(?:={_GAP}?\S+|{_GAP}\S+)')
 _GIT_OPT = rf'(?:-[Cc]{_GAP}\S+|{_GIT_VAL}|--?[A-Za-z][\w-]*(?:=\S+)?)'
-PUSH = re.compile(
-    rf'(?:{_Q}git{_Q}{_SEP}(?:{_TOKEN}{_SEP}){{0,12}}'
-    rf'|(?:run_git|\.run_git)\s*\(\s*\[\s*(?:{_TOKEN}{_SEP}){{0,12}}'
-    rf'|(?:[A-Za-z_][\w.]*\s*\+\s*\[\s*|\*\s*[A-Za-z_][\w.]*\s*,\s*)){_Q}push{_Q}'
+_PUSH_RAW = re.compile(
+    rf'(?:[\[(]\s*|{_Q}git{_Q}{_SEP})(?:{_TOKEN}{_SEP}){{0,12}}{_Q}push{_Q}'
     rf'|\bgit(?:{_GAP}{_GIT_OPT})*{_GAP}push\b|/git/refs/'
 )
+_GIT_SUBCOMMANDS = frozenset({
+    'add', 'am', 'annotate', 'apply', 'archive', 'bisect', 'blame', 'branch',
+    'bundle', 'checkout', 'cherry-pick', 'clean', 'clone', 'commit', 'config',
+    'describe', 'diff', 'fetch', 'format-patch', 'gc', 'grep', 'init', 'log',
+    'ls-files', 'merge', 'mv', 'notes', 'pull', 'rebase', 'reflog', 'remote',
+    'reset', 'restore', 'revert', 'rm', 'show', 'stash', 'status', 'submodule',
+    'switch', 'tag', 'worktree',
+})
+_BENIGN_CALL = re.compile(r'(?:print|pprint|logging(?:\.\w+)+|logger(?:\.\w+)*|\blog)\s*\(?\s*$')
+_NEXT_QUOTED = re.compile(rf'{_SEP}[rbfuRBFU]{{0,2}}{_Q}([A-Za-z][\w.-]*){_Q}')
+
+
+class _PushMatcher:
+    """Broad argv/shell push detector with narrow exclusions for prompt/log word lists."""
+
+    def finditer(self, text):
+        for match in _PUSH_RAW.finditer(text):
+            if not self._benign(text, match):
+                yield match
+
+    def search(self, text):
+        return next(self.finditer(text), None)
+
+    @staticmethod
+    def _benign(text, match):
+        snippet = match.group(0)
+        if snippet.startswith(('git', '/git/refs/')):
+            return False
+        if _BENIGN_CALL.search(text[max(0, match.start() - 80):match.start()]):
+            return True
+        nxt = _NEXT_QUOTED.match(text[match.end():])
+        return bool(nxt and nxt.group(1).lower() in _GIT_SUBCOMMANDS)
+
+
+PUSH = _PushMatcher()
 CI_LABELS = frozenset({'ci:full', 'enhancement'})
 HANDOFF_CONST = re.compile(
     r"(?m)^\s*(?:HANDOFF_LABEL|MODEL_API_LABEL)\s*[=:]\s*(?:['\"]([^'\"]+)['\"]|(\S+))"
@@ -658,7 +694,20 @@ ISSUE_RESOURCE = re.compile(r'/issues/(?:\{[^}]+\}|\$[\w.]+|\d+)(?!/)')
 WRITER_CALL = re.compile(
     r'(?m)^\s+uses:\s*["\']?(?:\./)?\.github/workflows/claude-conflict-writer\.ya?ml["\']?\s*(?:#.*)?$'
 )
-MODEL_SECRETS = re.compile(r'\$\{\{\s*secrets\.(?!CLAUDE_CODE_OAUTH_TOKEN\b)[A-Z0-9_]+\s*\}\}')
+_SECRET_EXPR = re.compile(r'\$\{\{\s*secrets\.[A-Z0-9_]+\s*\}\}')
+_OAUTH_ACTION_INPUT = re.compile(
+    r'''['"]?claude_code_oauth_token['"]?\s*:\s*['"]?\$\{\{\s*secrets\.CLAUDE_CODE_OAUTH_TOKEN\s*\}\}['"]?'''
+)
+
+
+class _ModelSecrets:
+    """secrets.* in a model job. The OAuth token is allowed only as the action input."""
+
+    def search(self, text):
+        return _SECRET_EXPR.search(_OAUTH_ACTION_INPUT.sub('', text))
+
+
+MODEL_SECRETS = _ModelSecrets()
 EXPECTED_LOCK = {
     'claude.yml': 'claude-${{ needs.resolve-pr.outputs.pr_number }}',
     'claude-conflict-writer.yml': 'claude-${{ inputs.pr_number }}',
@@ -911,12 +960,16 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         for push in ('subprocess.run(["git", "-C", repo, "push", ...])', 'run_git(["-C", repo, "push"])',
                      'subprocess.run(prefix + ["push", "origin", "HEAD"])', 'run([*prefix, "push", "origin"])',
                      'python3 -c "run([\\"git\\", \\"-C\\", \\"$R\\", \\"push\\"])"', 'git -C "$dir" \\\n  push origin',
-                     'repo.run_git(["push", "-q", "--no-verify", url, ref], token=token)'):
+                     'repo.run_git(["push", "-q", "--no-verify", url, ref], token=token)',
+                     'subprocess.run([GIT, "push", url])', 'git("push", url)', 'self.git("push")',
+                     '_git(["push", url])', 'run(["push", url])', 'cmd(["push", "--force", url])',
+                     'git_cmd = ["push", url]'):
             with self.subTest(push=push):
                 self.assertTrue(PUSH.search(push))
         for other in ('"check", "commit", "diff", "gh", "git", "log", "origin", "pr", "push", "pytest",',
                       'NEVER push or force-push', 'subprocess.run(["git", "-C", repo, "status"])',
-                      'print("push")', 'allowed_commands = ["push", "pull"]'):
+                      'print("push")', 'allowed_commands = ["push", "pull"]',
+                      'logging.info("push")', 'logger.debug("push")'):
             with self.subTest(other=other):
                 self.assertFalse(PUSH.search(other))
         for push in ('git --git-dir "$X" push origin HEAD',
@@ -973,6 +1026,10 @@ class CrossLaneAdmissionTests(unittest.TestCase):
                         # Values, not only scope names: the model token stays read-only.
                         self.assertEqual(perms, MODEL_PERMS)
                         self.assertIsNone(MODEL_SECRETS.search(str(job)))
+                        # Read-only job token is an explicit allow-listed mapping (Samir on
+                        # cockpit#271; Grok Bot Liaison recorded Lucas's same direction on CSL-428).
+                        self.assertIn('${{ github.token }}', str(job))
+                        self.assertIsNone(re.search(r'github_token:\s*\$\{\{\s*secrets\.', str(job)))
                     self.assertTrue(uses_allowed(job, role), job_uses(job))
                     uses_model = any(str(s.get('uses', '')).startswith('anthropics/claude-code-action') for s in job['steps'])
                     self.assertEqual(uses_model, role == 'model')
@@ -1067,7 +1124,8 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         self.assertEqual(ci_label_add_violations(title), [])
 
     def test_handoff_constant_mutations_reject_empty_and_wrong_values(self):
-        old = lambda text: set(re.findall(r'HANDOFF_LABEL = "([^"]+)"', text)) - {'needs-decision'}
+        def old(text):
+            return set(re.findall(r'HANDOFF_LABEL = "([^"]+)"', text)) - {'needs-decision'}
         self.assertEqual(old(''), set())
         self.assertEqual(handoff_constants(''), [])
         quoted = "HANDOFF_LABEL = 'needs-decision'\nMODEL_API_LABEL: needs-decision\n"
@@ -1085,7 +1143,17 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         leaked['steps'][0]['env'] = {**(leaked['steps'][0].get('env') or {}),
                                      'GH_TOKEN': '${{ secrets.MY_PAT }}'}
         self.assertIsNotNone(MODEL_SECRETS.search(str(leaked)))
-        self.assertIsNone(MODEL_SECRETS.search(str(workflow('claude.yml')['jobs']['claude-mention'])))
+        live = workflow('claude.yml')['jobs']['claude-mention']
+        self.assertIsNone(MODEL_SECRETS.search(str(live)))
+        oauth_env = copy.deepcopy(live)
+        oauth_env['steps'][0]['env'] = {**(oauth_env['steps'][0].get('env') or {}),
+                                        'CLAUDE_CODE_OAUTH_TOKEN':
+                                            '${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}'}
+        self.assertIsNotNone(MODEL_SECRETS.search(str(oauth_env)))
+        gh_secret = copy.deepcopy(live)
+        gh_secret['steps'][0]['env'] = {**(gh_secret['steps'][0].get('env') or {}),
+                                        'GH_TOKEN': '${{ secrets.GITHUB_TOKEN }}'}
+        self.assertIsNotNone(MODEL_SECRETS.search(str(gh_secret)))
 
     def test_quoted_job_key_mutation_is_inventoried(self):
         text = (WORKFLOWS / 'claude.yml').read_text()
