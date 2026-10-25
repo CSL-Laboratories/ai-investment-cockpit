@@ -713,7 +713,9 @@ ISSUE_RESOURCE = re.compile(r'/issues/(?:\{[^}]+\}|\$[\w.]+|\d+)(?!/)')
 WRITER_CALL = re.compile(
     r'(?m)^\s+uses:\s*["\']?(?:\./)?\.github/workflows/claude-conflict-writer\.ya?ml["\']?\s*(?:#.*)?$'
 )
-_SECRET_EXPR = re.compile(r'\$\{\{\s*secrets\.[A-Z0-9_]+\s*\}\}')
+_SECRET_EXPR = re.compile(
+    r'''secrets(?:\.[A-Z0-9_]+|\[\s*['"][A-Z0-9_]+['"]\s*\])'''
+)
 _OAUTH_ACTION_INPUT = re.compile(
     r'''['"]?claude_code_oauth_token['"]?\s*:\s*['"]?\$\{\{\s*secrets\.CLAUDE_CODE_OAUTH_TOKEN\s*\}\}['"]?'''
 )
@@ -725,26 +727,16 @@ class _ModelSecrets:
 
     def search(self, job):
         if not isinstance(job, dict):
-            return _SECRET_EXPR.search(_OAUTH_ACTION_INPUT.sub('', str(job)))
-        if self._secrets(job.get('env')):
-            return True
-        for step in job.get('steps') or []:
-            uses = str(step.get('uses') or '')
-            with_block = dict(step.get('with') or {})
-            if uses.startswith('anthropics/claude-code-action'):
-                token = with_block.pop('claude_code_oauth_token', None)
-                if (token is not None
-                        and not _OAUTH_VALUE.fullmatch(str(token).strip())
-                        and _SECRET_EXPR.search(str(token))):
-                    return True
-            if (self._secrets(step.get('env')) or self._secrets(with_block)
-                    or _SECRET_EXPR.search(str(step.get('run') or ''))):
-                return True
-        return None
-
-    @staticmethod
-    def _secrets(mapping):
-        return mapping is not None and _SECRET_EXPR.search(str(mapping)) is not None
+            return _SECRET_EXPR.search(str(job))
+        scanned = copy.deepcopy(job)
+        for step in scanned.get('steps') or []:
+            with_block = step.get('with') or {}
+            token = with_block.get('claude_code_oauth_token')
+            if (str(step.get('uses') or '').startswith('anthropics/claude-code-action')
+                    and token is not None
+                    and _OAUTH_VALUE.fullmatch(str(token).strip())):
+                with_block.pop('claude_code_oauth_token')
+        return _SECRET_EXPR.search(str(scanned))
 
 
 MODEL_SECRETS = _ModelSecrets()
@@ -1246,6 +1238,18 @@ class CrossLaneAdmissionTests(unittest.TestCase):
                 break
         self.assertIsNone(_SECRET_EXPR.search(_OAUTH_ACTION_INPUT.sub('', str(oauth_step_env))))
         self.assertIsNotNone(MODEL_SECRETS.search(oauth_step_env))
+        if_secret = copy.deepcopy(live)
+        if_secret['steps'][0]['if'] = "${{ secrets.MY_PAT != '' }}"
+        self.assertIsNotNone(MODEL_SECRETS.search(if_secret))
+        container = copy.deepcopy(live)
+        container['container'] = {
+            'image': 'x',
+            'credentials': {'password': '${{ secrets.MY_PAT }}'},
+        }
+        self.assertIsNotNone(MODEL_SECRETS.search(container))
+        indexed = copy.deepcopy(live)
+        indexed.setdefault('env', {})['GH_TOKEN'] = "${{ secrets['MY_PAT'] }}"
+        self.assertIsNotNone(MODEL_SECRETS.search(indexed))
         self.assertTrue(model_github_token_ok(live))
         self.assertFalse(model_github_token_ok(job))
         pat_input = copy.deepcopy(live)
