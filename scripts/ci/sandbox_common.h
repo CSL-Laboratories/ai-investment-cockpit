@@ -87,6 +87,7 @@ int csl_proc_exe(pid_t pid, char *buf, size_t len);
 pid_t csl_proc_ppid(pid_t pid);
 int csl_proc_cmdline(pid_t pid, char *buf, size_t len, size_t *nuls);
 int csl_e3_record_ok(const char *text, size_t n);
+int csl_e3_set_handoff(char *text, size_t cap, size_t *n, unsigned count, int conflict);
 int csl_mkdir_p(const char *path, mode_t mode);
 int csl_write_file(const char *path, const void *data, size_t n, mode_t mode);
 int csl_read_file(const char *path, char *buf, size_t cap, size_t *n);
