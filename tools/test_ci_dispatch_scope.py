@@ -914,5 +914,104 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         self.assertIn(pause_py, job_text(scan_job))
         self.assertIn('${{ vars.CLAUDE_FIXER_PAUSE }}', str(scan_job))
 
+
+class P9ProbeWorkflowTests(unittest.TestCase):
+    """CSL-474 P9 Probes 0/2: dispatch-only measurement, not a writer."""
+
+    def setUp(self):
+        self.path = WORKFLOWS / P9_PROBE_FILE
+        self.text = self.path.read_text(encoding='utf-8')
+        self.doc = workflow(P9_PROBE_FILE)
+
+    def test_dispatch_only_least_privilege(self):
+        header = self.text.split('\njobs:', 1)[0]
+        self.assertIn('workflow_dispatch:', header)
+        self.assertNotIn('\npull_request:', header)
+        self.assertNotIn('\npush:', header)
+        self.assertNotIn('\nschedule:', header)
+        self.assertNotIn('\nissue_comment:', header)
+        self.assertNotIn('\nrepository_dispatch:', header)
+        self.assertNotIn('\nworkflow_call:', header)
+        self.assertNotIn('\nworkflow_run:', header)
+        self.assertEqual(self.doc.get('permissions'), {'contents': 'read'})
+        self.assertEqual(set(self.doc['jobs']), {'probe-0', 'probe-2'})
+        for name, job in self.doc['jobs'].items():
+            with self.subTest(job=name):
+                self.assertEqual(job['runs-on'], 'ubuntu-24.04')
+                self.assertEqual(job.get('permissions'), {'contents': 'read'})
+                self.assertNotIn('id-token', job.get('permissions') or {})
+                self.assertFalse(PUSH.search(job_text(job)))
+                uses = [str(s.get('uses') or '') for s in job.get('steps') or []]
+                self.assertFalse(any(u.startswith('anthropics/claude-code-action') for u in uses))
+
+    def test_oauth_input_defaults_off_and_gates_the_secret(self):
+        spec = self.doc['on']['workflow_dispatch']['inputs']['enable_probe2_oauth']
+        self.assertEqual(spec['type'], 'boolean')
+        self.assertIn(spec['default'], (False, 'false'))
+        oauth_steps = [s for s in self.doc['jobs']['probe-2']['steps']
+                       if 'secrets.CLAUDE_CODE_OAUTH_TOKEN' in str(s)]
+        self.assertEqual(len(oauth_steps), 1)
+        self.assertIn('enable_probe2_oauth', str(oauth_steps[0].get('if')))
+        self.assertNotIn('secrets.CLAUDE_CODE_OAUTH_TOKEN', str(self.doc['jobs']['probe-0']))
+        self.assertNotIn('secrets: inherit', self.text)
+        hooked = [s for s in self.doc['jobs']['probe-2']['steps']
+                  if s.get('name') == 'Probe 2 OAuth hooked trials without token env']
+        self.assertEqual(len(hooked), 1)
+        self.assertNotIn('secrets.CLAUDE_CODE_OAUTH_TOKEN', str(hooked[0]))
+
+    def test_same_cli_pin_as_e3(self):
+        pin = (ROOT / 'scripts' / 'ci' / 'claude-code-2.1.306-linux-x64.pin').read_text(encoding='utf-8')
+        sha = [line.split('=', 1)[1].strip() for line in pin.splitlines() if line.startswith('sha256=')][0]
+        self.assertIn('2.1.306', self.text)
+        self.assertIn(sha, self.text)
+        self.assertIn('a5a423f75c251dcbff8a74e99f83b2cb03c72bfa', self.text)
+        self.assertIn('https://downloads.claude.ai/claude-code-releases', self.text)
+        self.assertIn('${RELEASE_BASE}/${CLAUDE_VERSION}/${PLATFORM}/claude', self.text)
+        self.assertNotIn('claude.ai/install', self.text)
+        self.assertNotIn('anthropics/claude-code', self.text)
+
+    def test_probe_bodies_record_host_and_p1_facts(self):
+        p0 = job_text(self.doc['jobs']['probe-0'])
+        self.assertIn('cgroup.controllers', p0)
+        self.assertIn('cgroup.kill', p0)
+        self.assertIn('cgroup.procs', p0)
+        self.assertIn('apparmor_restrict_unprivileged_userns', p0)
+        self.assertIn('unshare --user --pid', p0)
+        self.assertIn('HOSTED_ONLY', p0)
+        self.assertIn('CLASS_CGROUP_PROCS observational', p0)
+        self.assertIn('} 2>/tmp/csl-p9-cgroup-procs.err', p0)
+        p2 = job_text(self.doc['jobs']['probe-2'])
+        self.assertIn('settings.local.json', p2)
+        self.assertIn('$WORK/AGENTS.md', p2)
+        self.assertIn('instructionFiles', p2)
+        self.assertIn('CSL474_AGENTS_CANARY', p2)
+        self.assertIn('--setting-sources user', p2)
+        self.assertIn('mcp.empty', p2)
+
+    def test_probe2_oracle_forces_tool_and_positive_control(self):
+        jobs = self.doc['jobs']
+        self.assertEqual(jobs['probe-0']['timeout-minutes'], '10')
+        self.assertEqual(jobs['probe-2']['timeout-minutes'], '20')
+        p2 = job_text(jobs['probe-2'])
+        self.assertIn('--allowedTools "Bash(true)"', p2)
+        self.assertIn('--max-turns 4', p2)
+        self.assertIn('CSL474_AGENTS_LOADED', p2)
+        self.assertIn('HOOK_CONTROL', p2)
+        self.assertIn('INCONCLUSIVE', p2)
+        self.assertIn('EVIDENCE_EXIT non-green', p2)
+        self.assertIn('Positive control omits --setting-sources user', p2)
+        self.assertIn('run_probe_invoke CONTROL ""', p2)
+        self.assertIn('run_probe_invoke ISOLATION user', p2)
+        self.assertIn('run_probe_invoke MCPRO user "$MCP_RO"', p2)
+        self.assertIn('} 2>/tmp/csl-p9-mcp-write.err', p2)
+        self.assertIn('refused-unverified-isolation', p2)
+        self.assertIn('TOKEN_EXPOSURE', p2)
+        self.assertNotIn("absent = pass", p2)
+        self.assertIn('AUTH_BOOTSTRAP FAIL', p2)
+        self.assertIn('not recording DONE', p2)
+        self.assertIn('Probe 2 OAuth bootstrap in clean cwd', self.text)
+        self.assertIn('Probe 2 OAuth hooked trials without token env', self.text)
+
 if __name__ == '__main__':
     unittest.main()
+
