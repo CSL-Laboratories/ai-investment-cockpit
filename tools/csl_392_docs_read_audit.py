@@ -58,6 +58,7 @@ LINUX_NEEDLES = (
 # after building a wheel. That file is already in `python -m pytest -q`.
 
 _ORIG_OPEN = builtins.open
+_ORIG_IO_OPEN = io.open
 _ORIG_OS_OPEN = os.open
 _ORIG_OPEN_CODE = getattr(io, "open_code", None)
 _ORIG_UNITTEST_RUN = unittest.case.TestCase.run
@@ -161,6 +162,13 @@ def _wrapped_open(file, *args, **kwargs):
     return _ORIG_OPEN(file, *args, **kwargs)
 
 
+def _wrapped_io_open(file, *args, **kwargs):
+    # pathlib.Path.read_text/read_bytes call io.open, which is bound at
+    # import of io and is NOT updated when builtins.open is rebound.
+    _record(file, "io.open")
+    return _ORIG_IO_OPEN(file, *args, **kwargs)
+
+
 def _wrapped_os_open(path, *args, **kwargs):
     _record(path, "os.open")
     return _ORIG_OS_OPEN(path, *args, **kwargs)
@@ -187,6 +195,7 @@ def _wrapped_unittest_run(self, result=None):
 def install_hooks() -> None:
     """Install the open/os.open/open_code and unittest name hooks."""
     builtins.open = _wrapped_open
+    io.open = _wrapped_io_open
     os.open = _wrapped_os_open
     if _ORIG_OPEN_CODE is not None:
         io.open_code = _wrapped_open_code
