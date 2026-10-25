@@ -1719,10 +1719,27 @@ class WorkflowStructureTests(unittest.TestCase):
             "This repository takes contracts, specs, fixtures and runbooks only",
             self.agents,
         )
+        self.assertIn("docs/replacement/outcomes/**", self.agents)
+        carve_out = (
+            "Gate and operational evidence that code or a runbook in this repo already reads"
+        )
         runbook = (ROOT / "docs" / "runbooks" / "w25-worm-audit-witness.md").read_text(
             encoding="utf-8"
         )
-        self.assertIn("docs/evidence/", runbook)
+        screens = (ROOT / "app" / "feasibility" / "screens.py").read_text(
+            encoding="utf-8"
+        )
+        writers_use_docs_evidence = (
+            "docs/evidence/" in runbook and "docs/evidence/" in screens
+        )
+        agents_allows_docs_evidence = (
+            carve_out in self.agents and "docs/evidence/" in self.agents
+        )
+        self.assertEqual(
+            writers_use_docs_evidence,
+            agents_allows_docs_evidence,
+            "W-25 / feasibility docs/evidence/ writers must match the AGENTS.md carve-out",
+        )
         self.assertIn(
             "this cockpit's research/dev swarm dispatch", self.agents
         )
@@ -1766,6 +1783,9 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertNotIn(
             "docs/evidence/**` are legacy and frozen", claude
         )
+        self.assertIn(carve_out, claude)
+        self.assertIn("docs/replacement/outcomes/**", claude)
+        self.assertIn("docs/evidence/", claude)
         self.assertIn("three-founder", claude)
         self.assertIn("CSL-511", claude)
         self.assertIn("this cockpit's", claude)
@@ -1788,6 +1808,9 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertNotIn(
             "docs/evidence/**` are legacy and frozen", skill
         )
+        self.assertIn(carve_out, skill)
+        self.assertIn("docs/replacement/outcomes/**", skill)
+        self.assertIn("docs/evidence/", skill)
         self.assertIn(
             "If csl-research is not accessible, stop and post a blocker", skill
         )

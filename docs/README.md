@@ -32,8 +32,12 @@ Linear issue. Never commit research content to this repo; specs, amendments and
 code only link to the vault record (repo, 40-hex commit, path, claim,
 limitations). If csl-research is not accessible, stop and post a blocker on the
 Linear issue; do not fall back to this repo. Every new non-public doc goes to
-csl-research through a PR there; this repo only links to it. Existing files
-stay until [CSL-536](https://linear.app/csl-laboratories/issue/CSL-536).
+csl-research through a PR there; this repo only links to it.
+Gate and operational evidence that code or a runbook in this repo already reads
+stays in `docs/evidence/` until
+[CSL-536](https://linear.app/csl-laboratories/issue/CSL-536). Contract
+fixtures under `docs/replacement/outcomes/**` stay. Existing files stay until
+[CSL-536](https://linear.app/csl-laboratories/issue/CSL-536).
 `docs/research/**` is **legacy** (no new files). Navigation:
 [CSL research index](https://github.com/CSL-Laboratories/csl-research/blob/main/INDEX.md),
 [Cockpit context](https://github.com/CSL-Laboratories/csl-research/blob/main/knowledge/cockpit/README.md)
