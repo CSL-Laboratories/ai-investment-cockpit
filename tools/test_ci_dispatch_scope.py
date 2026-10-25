@@ -610,6 +610,9 @@ class DispatchScopeTests(unittest.TestCase):
 # eight-commit guard, the one-attempt publish guard and the pause. Retry behaviour itself is
 # exercised by tools/test_claude_fixer_*.py and tools/test_claude_pr_fixer.py.
 WRITER_FILES = ('claude.yml', 'claude-conflict-writer.yml', 'conflict-scan.yml')
+# CSL-474 P9: dispatch-only measurement. Not a writer. Optional OAuth is an
+# explicit workflow_dispatch input defaulting off; Lucas dispatches.
+P9_PROBE_FILE = 'csl-474-p9-probes.yml'
 # Roles: prep, model, publish. No job has the credential-free 'verify' role yet; CSL-409 adds one,
 # and the 'verify' branches below are ready for it.
 WRITER_JOBS = {
@@ -712,7 +715,7 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         # A new Claude workflow must be added here (and to the contract) before it can merge.
         found = {p.name for p in WORKFLOWS.glob('*.y*ml')
                  if re.search(r'anthropics/claude-code|ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN', p.read_text())}
-        self.assertEqual(found, set(WRITER_FILES))
+        self.assertEqual(found, set(WRITER_FILES) | {P9_PROBE_FILE})
         for name, jobs in WRITER_JOBS.items():
             self.assertEqual(set(workflow(name)['jobs']), set(jobs) | NON_WRITER_JOBS[name])
         self.assertEqual(set(workflow('conflict-scan.yml')['jobs']), set(SCAN_JOBS))
