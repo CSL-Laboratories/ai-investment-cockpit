@@ -193,8 +193,9 @@ def _parsed_history_time(value) -> datetime | None:
     """An aware UTC instant, or None when ``value`` is not a usable timestamp.
 
     ``Z`` and ``+00:00`` are the same instant. Fractional seconds are kept.
-    A naive value, or text ``datetime.fromisoformat`` cannot parse, is not
-    usable: the caller keeps the landed block.
+    A naive value, text ``datetime.fromisoformat`` cannot parse, or an
+    instant whose UTC conversion raises ``OverflowError`` or ``OSError``,
+    is not usable: the caller keeps the landed block.
     """
     if isinstance(value, datetime):
         parsed = value
@@ -208,7 +209,10 @@ def _parsed_history_time(value) -> datetime | None:
             return None
     if parsed.tzinfo is None or parsed.tzinfo.utcoffset(parsed) is None:
         return None
-    return parsed.astimezone(timezone.utc)
+    try:
+        return parsed.astimezone(timezone.utc)
+    except (OverflowError, OSError):
+        return None
 
 
 def _broker_order_is_terminal(history, order_id) -> bool:

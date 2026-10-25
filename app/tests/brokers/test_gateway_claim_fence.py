@@ -2877,6 +2877,33 @@ def test_unparseable_history_timestamp_keeps_the_landed_block(st, monkeypatch):
     )
 
 
+def test_overflowing_history_timestamp_keeps_the_landed_block(st, monkeypatch):
+    """A timestamp that parses but cannot convert to UTC is not confirmation.
+
+    ``0001-01-01T00:00:00+01:00`` is valid ISO text. ``astimezone`` raises
+    ``OverflowError`` (``OSError`` on some platforms). That is an unusable
+    stamp, so the cancel does not clear the landed block.
+    """
+    scenario, broker = _cancel_landed_order(st, monkeypatch)
+    oid = scenario.order.id
+    history = [
+        {
+            "order_id": oid,
+            "status": "accepted",
+            "updated_at": "2026-10-24T00:00:02Z",
+        },
+        {
+            "order_id": oid,
+            "status": "cancelled",
+            "updated_at": "0001-01-01T00:00:00+01:00",
+        },
+    ]
+    terminal, kind, nxt, calls = _history_keeps_block(scenario, broker, history)
+    assert (terminal, kind, nxt.ok, nxt.stage, calls) == (
+        False, "block", False, "pending_exposure", 1,
+    )
+
+
 def test_history_cancellation_is_not_replaced_when_the_block_write_fails(
     st, monkeypatch,
 ):
