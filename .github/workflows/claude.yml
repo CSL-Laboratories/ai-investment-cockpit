@@ -1,6 +1,11 @@
 name: Claude PR Fixer
 
 on:
+  # CSL-474 scratch proof only — not for merge. Temporary push trigger so a
+  # branch push can show jobs after the 500 KB extraction. Keep issue_comment
+  # so GitHub still registers that event on this file.
+  push:
+    branches: [cursor/csl-474-claude-yml-load-proof-e528]
   workflow_dispatch:
     inputs:
       pr_number:
@@ -69,6 +74,28 @@ permissions:
   issues: read
 
 jobs:
+  load-probe:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    steps:
+      - name: Prove claude.yml loaded
+        run: |
+          set -euo pipefail
+          echo "claude.yml loaded; jobs appeared; event=${GITHUB_EVENT_NAME}"
+
+  issue-comment-capable:
+    if: github.event_name == 'issue_comment'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    steps:
+      - name: Prove issue_comment path parsed
+        run: echo "issue_comment-capable job would run on a comment event"
+
   resolve-pr:
     # Job-level `if` is the runner gate (CSL-103): bot-noise and non-@claude
     # comments start no runner. Trusted Devin submitted reviews may fix directly.
