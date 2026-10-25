@@ -2291,6 +2291,12 @@ class WorkflowWiringTests(unittest.TestCase):
                 self.assertIn("GIT_CONFIG_PARAMETERS=", package["run"])
                 self.assertIn("GIT_EXEC_PATH=", package["run"])
                 self.assertIn('GIT="${GIT:-/usr/bin/git}"', package["run"])
+                self.assertIn("HOME=/home/runner", package["run"])
+                self.assertNotIn('HOME="${HOME:-/home/runner}"', package["run"])
+                self.assertIn("/home/runner/.gitconfig", package["run"])
+                self.assertIn("/home/runner/.config/git/config", package["run"])
+                self.assertIn("/etc/gitconfig", package["run"])
+                self.assertNotIn("A credential in any config scope fails the package", package["run"])
                 self.assertIn('git_bin="${GIT:-git}"', package["run"])
                 self.assertIn('jq_bin="${JQ:-jq}"', package["run"])
                 for step_name in self.POST_CLAUDE:
@@ -2340,6 +2346,48 @@ class WorkflowWiringTests(unittest.TestCase):
                 subprocess.run(["bash", "-c", script], cwd=work.path, env=env, check=True,
                                capture_output=True)
                 self.assertEqual(output.read_text(), "package_status=unchanged\n")
+
+    def test_package_greps_blanked_global_and_system_gitconfig_files(self):
+        # Samir 5637688318: GIT_CONFIG_GLOBAL/SYSTEM blanking means
+        # `git config --list --includes` only sees local. Grep the files git
+        # ignores so a credential there still fails the package. Rewrite the
+        # hosted-runner paths onto a temp tree so this stays offline.
+        git_bin = shutil.which("git")
+        self.assertTrue(git_bin)
+        cases = (
+            ("home-gitconfig", ".gitconfig", None),
+            ("xdg", ".config/git/config", None),
+            ("etc", None, "etc-gitconfig"),
+        )
+        for name, _prep, model, _pub, _group, ids in self.pipelines():
+            if name != "claude.yml":
+                continue
+            script = [s for s in model["steps"] if s.get("name") == "Package untrusted model output"][0]["run"]
+            for case, home_rel, _etc_name in cases:
+                with self.subTest(job=ids[1], case=case), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    runner_home = root / "runner-home"
+                    (runner_home / ".config" / "git").mkdir(parents=True)
+                    etc = root / "etc-gitconfig"
+                    rewritten = (script.replace("/home/runner", str(runner_home))
+                                 .replace("/etc/gitconfig", str(etc)))
+                    work = Work(root / "repo")
+                    subprocess.run(["git", "init", "-q", "-b", "main", str(work.path)],
+                                   env=git_env(), check=True)
+                    head = work.commit({"a.txt": "a\n"}, message="head")
+                    work.git("remote", "add", "origin", "https://github.com/acme/example.git")
+                    poison = "[http]\n\textraheader = AUTHORIZATION: basic bm90YXRva2Vu\n"
+                    if home_rel:
+                        (runner_home / home_rel).write_text(poison, encoding="utf-8")
+                    else:
+                        etc.write_text(poison, encoding="utf-8")
+                    output = root / "output"
+                    env = dict(git_env(), PATH="/usr/bin:/bin", RUNNER_TEMP=str(root),
+                               GITHUB_OUTPUT=str(output), HEAD_SHA=head, EXECUTION_FILE="",
+                               HOME=str(root / "poison-home"), GIT=git_bin)
+                    subprocess.run(["bash", "-c", rewritten], cwd=work.path, env=env, check=True,
+                                   capture_output=True)
+                    self.assertEqual(output.read_text(), "package_status=failed\n")
 
     @unittest.skipIf(os.name == "nt", "POSIX python -I")
     def test_isolated_python_skips_user_site_usercustomize(self):
@@ -2513,8 +2561,6 @@ class WorkflowWiringTests(unittest.TestCase):
 
     def test_no_pip_call_runs_with_checkout_cwd(self):
         # CSL-471: python -m pip from a checkout cwd can run app/pip/__main__.py as runner.
-        # claude-conflict-writer.yml is owned by another agent; its install step is an open item.
-        skip = {"claude-conflict-writer.yml"}
         found = 0
         for path in sorted((ROOT / ".github" / "workflows").glob("*.y*ml")):
             data = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
@@ -2522,13 +2568,11 @@ class WorkflowWiringTests(unittest.TestCase):
                 for index, step in enumerate(job.get("steps") or []):
                     run = step.get("run") or ""
                     # Ignore embedded sources: a comment in publish.py is not a pip invocation.
-                    run = re.sub(r"<<'([A-Z_]+)'\n.*?\n[ \t]*\1(?:\n|$)", "<<heredoc\n",
+                    run = re.sub(r"<<'([A-Z0-9_]+)'\n.*?\n[ \t]*\1(?:\n|$)", "<<heredoc\n",
                                  run, flags=re.DOTALL)
                     if not _has_pip_module_install(run):
                         continue
                     found += 1
-                    if path.name in skip:
-                        continue
                     wd = "".join((step.get("working-directory") or "").split())
                     with self.subTest(workflow=path.name, job=job_name, step=index):
                         self.assertTrue(_pip_uses_safe_path_flag(run), run)
@@ -2541,9 +2585,22 @@ class WorkflowWiringTests(unittest.TestCase):
     def test_claude_acceptance_gate_pip_uses_runner_temp(self):
         # Preferred I5: mention/fixer no longer install pip deps before uses:.
         for job_name in ("claude-mention", "devin-review-fix"):
-            with self.subTest(job=job_name):
+            with self.subTest(workflow="claude.yml", job=job_name):
                 names = [s.get("name") for s in jobs("claude.yml")[job_name]["steps"]]
                 self.assertNotIn("Install acceptance-gate deps", names)
+        # CSL-471: remaining pip installs (conflict-writer) use the hashed lock.
+        install = step(jobs("claude-conflict-writer.yml")["model"], "Install acceptance-gate deps")
+        run = install["run"]
+        self.assertEqual(install["working-directory"], "${{ runner.temp }}")
+        self.assertIn("python -P -m pip install --no-cache-dir --require-hashes", run)
+        self.assertIn("--only-binary=:all:", run)
+        self.assertIn("--no-deps", run)
+        self.assertIn("--no-cache-dir", run)
+        self.assertIn("<<'CSL_PIP_HASH_LOCK'", run)
+        self.assertIn("$RUNNER_TEMP/csl471-pip.lock", run)
+        self.assertNotIn("working-directory: app", yaml.dump(install))
+        self.assertNotIn("requirements.txt", run)
+        self.assertNotIn("git show", run)
 
     def test_benchmarks_requirements_come_from_the_base_tree(self):
         # CSL-471 / REVIEW-D7 I5: a PR-controlled requirements file still chooses packages.
@@ -2677,6 +2734,10 @@ class ClaudeCodeInstallerPinTests(unittest.TestCase):
         self.assertIn("python3 -I -c", script)
         self.assertNotIn("python3 -c '", script)
         self.assertIn("reference copy", script)
+        self.assertIn("scripts/ci/install_pinned_claude_code.sh is the", script)
+        self.assertIn("Do not execute that", script)
+        self.assertIn("copy from GITHUB_WORKSPACE", script)
+        self.assertNotIn("Do not execute the copy from GITHUB_WORKSPACE", script)
         self.assertNotIn("install.sh", script)
         self.assertNotIn("| bash", script)
 
@@ -2716,6 +2777,31 @@ class ClaudeCodeInstallerPinTests(unittest.TestCase):
                 self.assertNotRegex(text, r"https?://\S*bootstrap\.sh")
                 self.assertNotRegex(text, r"install\.sh\s*\|\s*bash")
                 self.assertNotIn("mkdir -m 0700 -p", text)
+
+    def test_inlined_installer_yaml_has_no_trailing_whitespace(self):
+        """Blank lines in the inlined installer must not be indent-only (git diff --check)."""
+        # conflict-writer still has the standalone installer step. claude.yml
+        # folded that into E3-0-early write C sources B / CSL_E3_CLI_PIN.
+        checks = (
+            ("claude-conflict-writer.yml", "      - name: Install hash-pinned Claude Code CLI"),
+            ("claude.yml", "          cat > /opt/csl-claude/lib/sandbox_e3_cli_pin.sh <<'CSL_E3_CLI_PIN'"),
+        )
+        for name, marker in checks:
+            path = ROOT / ".github/workflows" / name
+            text = path.read_text(encoding="utf-8")
+            lines = text.splitlines(keepends=True)
+            starts = [i for i, line in enumerate(lines) if line.startswith(marker)]
+            self.assertTrue(starts, msg=f"{name} missing installer bytes")
+            for start in starts:
+                for i in range(start, len(lines)):
+                    line = lines[i]
+                    if i > start and line.startswith("      - "):
+                        break
+                    body = line[:-1] if line.endswith("\n") else line
+                    self.assertEqual(
+                        body, body.rstrip(" \t"),
+                        msg=f"{name}:{i + 1} installer trailing whitespace",
+                    )
 
 
 if __name__ == "__main__":

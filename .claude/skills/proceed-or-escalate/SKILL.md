@@ -125,9 +125,14 @@ which you find only by its `<!-- stuck-pr-threads:owner/repo#N -->` marker (neve
 title), writing inside your own block. Product and architecture questions stay on
 the work issue.
 
-If you are the assignee or the claimant of a decision or direction issue, the Parallel Task API
-brief in AGENTS.md "Linear-first workflow" still comes first. Grok Bots do not
-research or resolve decision issues.
+If you are the assignee or the claimant of a decision or direction issue, the research
+requirement in AGENTS.md "Linear-first workflow" still comes first. A Grok Bot
+coordinator may research and recommend. Attribute the brief explicitly as
+`Grok Bot, preparing research for <owner>`; never phrase it as if the owner
+personally authored or endorsed the recommendation. Only the designated human
+decision-maker, or an explicitly authorized research team, decides. Publishing a
+brief never marks the issue decided, never clears a hold, and never authorizes
+implementation.
 
 Then stop that line of work, release your claim, if you hold one, with a release record (AGENTS.md
 "Bounded issue execution and shared evidence"), and take only other admitted work

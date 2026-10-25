@@ -2,6 +2,9 @@ set -euo pipefail
 # E3-1 folded into 0b (D10 step 8), already root: no sudo. Same pin literals as
 # scripts/ci/install_pinned_claude_code.sh / claude-code-2.1.306-linux-x64.pin.
 # Never executes the downloaded file before comparison. Never runs install.sh.
+# Trusted installer bytes. scripts/ci/install_pinned_claude_code.sh is the
+# test reference copy CI compares to these inlined bytes. Do not execute that
+# copy from GITHUB_WORKSPACE; the model-job checkout is untrusted.
 
 CLAUDE_VERSION="2.1.306"
 PLATFORM="linux-x64"
