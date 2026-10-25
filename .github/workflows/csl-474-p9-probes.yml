@@ -116,7 +116,8 @@ jobs:
           fi
           if sudo -n loginctl enable-linger "$(id -un)" >/dev/null 2>/tmp/csl-p9-linger.err; then
             rec LINGER ok
-            export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+            XDG_RUNTIME_DIR="/run/user/$(id -u)"
+            export XDG_RUNTIME_DIR
             if systemd-run --user --scope /bin/true >/tmp/csl-p9-scope-after.out 2>/tmp/csl-p9-scope-after.err; then
               rec SYSTEMD_USER_SCOPE_AFTER ok
             else
