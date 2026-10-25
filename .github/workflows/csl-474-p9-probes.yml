@@ -12,12 +12,23 @@
 # Verdicts are PASS, FAIL, or INCONCLUSIVE. Hook-marker absent is not a pass.
 # Isolation PASS requires a completed P9PROBE2OK response; MCPRO is in the
 # green verdict. The OAuth invoke is behind enable_probe2_oauth (default
-# false). No loaded hook may read the token before isolation is verified:
-# bootstrap is a hook-free cwd; hooked trials never receive the secret in env.
-# With enable_probe2_oauth=false (the intended dispatch), Probe 2 is
+# false). Bootstrap is a hook-free cwd. Hooked trials authenticate with the
+# existing fixer OAuth secret in the CLI process env (GitHub-masked; never
+# printed). CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 (needs bubblewrap plus the
+# Ubuntu 24.04 unprivileged-userns sysctl flip, same as the fixer; Probe 0
+# is a different VM) strips that token from Bash/hooks/MCP children. The workflow
+# also writes every hook; none of them read or print the token. CONTROL and
+# IFISO share --setting-sources (all) and differ only in user
+# instructionFiles (claude-md-or-agents-md vs claude-md; agents-md@builtin
+# on 2.1.306, https://code.claude.com/docs/en/memory). ISOLATION keeps
+# CONTROL's instructionFiles and uses --setting-sources user. contents:read
+# only; no new secrets; no network expansion.
+# With enable_probe2_oauth=false (the intended unattended dispatch), Probe 2 is
 # INCONCLUSIVE/non-green because the CLI cannot start an authenticated
 # session. That is not a CLI isolation finding. Probe 0 is the host-facts
-# evidence that can actually complete. P9 in this form rests on Probe 0.
+# evidence that can actually complete. P9 in this form rests on Probe 0
+# unless Lucas dispatches with enable_probe2_oauth=true, in which case
+# hooked OAuth trials are the oracle.
 name: CSL-474 P9 probes
 
 on:
@@ -172,12 +183,36 @@ jobs:
       RELEASE_BASE: "https://downloads.claude.ai/claude-code-releases"
       KEY_URL: "https://downloads.claude.ai/keys/claude-code.asc"
       ACTION_PIN: "a5a423f75c251dcbff8a74e99f83b2cb03c72bfa"
+      CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
     steps:
       - name: Install pinned 2.1.306 CLI into throwaway dir
         run: |
           set -euo pipefail
           printf 'CSL_P9_PROBE2_ACTION_PIN=%s\n' "$ACTION_PIN"
           printf 'CSL_P9_PROBE2_CLI_VERSION=%s\n' "$CLAUDE_VERSION"
+          # SUBPROCESS_ENV_SCRUB needs bubblewrap on Linux or the CLI refuses to start.
+          # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor;
+          # Probe 0's sysctl flip is a different VM, so Probe 2 must flip it here
+          # (same as the fixer).
+          sudo -n apt-get update -qq
+          sudo -n apt-get install -y --no-install-recommends bubblewrap
+          command -v bwrap
+          rec_bwrap() { printf 'CSL_P9_PROBE2_BWRAP=%s\n' "$(command -v bwrap)"; }
+          rec_bwrap
+          if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo -n sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+            printf 'CSL_P9_PROBE2_USERNS_SYSCTL_FLIP=ok\n'
+          else
+            printf 'CSL_P9_PROBE2_USERNS_SYSCTL_FLIP=missing\n'
+          fi
+          if bwrap --unshare-user --ro-bind / / -- /bin/true >/tmp/csl-p9-bwrap-smoke.err 2>&1; then
+            printf 'CSL_P9_PROBE2_BWRAP_UNSHARE=ok\n'
+          else
+            printf 'CSL_P9_PROBE2_BWRAP_UNSHARE=fail\n'
+            printf 'CSL_P9_PROBE2_BWRAP_UNSHARE_ERR=%s\n' "$(tr '\n' ' ' < /tmp/csl-p9-bwrap-smoke.err)"
+            echo "bubblewrap unprivileged userns smoke failed" >&2
+            exit 1
+          fi
           STAGING="${RUNNER_TEMP}/csl-p9-cli-staging"
           DEST_DIR="${RUNNER_TEMP}/csl-p9-cli"
           rm -rf "$STAGING" "$DEST_DIR"
@@ -282,7 +317,7 @@ jobs:
                 {
                   "matcher": "*",
                   "hooks": [
-                    {"type": "command", "command": "printf local > /tmp/csl-p9-local-hook"}
+                    {"type": "command", "command": "env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_API_KEY printf local > /tmp/csl-p9-local-hook"}
                   ]
                 }
               ]
@@ -296,7 +331,7 @@ jobs:
                 {
                   "matcher": "*",
                   "hooks": [
-                    {"type": "command", "command": "printf project > /tmp/csl-p9-project-hook"}
+                    {"type": "command", "command": "env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_API_KEY printf project > /tmp/csl-p9-project-hook"}
                   ]
                 }
               ]
@@ -307,23 +342,34 @@ jobs:
           If this instruction file is loaded, your first line of assistant text MUST be exactly CSL474_AGENTS_LOADED before any other text. CSL474_AGENTS_CANARY. This instruction changes required output.
           MD
           mkdir -p "$HOME/.claude"
-          # AGENTS.md positive control: user instructionFiles unset (not claude-md)
-          # so AGENTS.md can load. Do not toggle instructionFiles before isolation;
-          # canary isolation is --setting-sources user only.
-          cat > "$HOME/.claude/settings.json" <<'JSON'
+          write_user_settings() {
+            local mode="$1"
+            local instr
+            if [ "$mode" = isolation ]; then
+              instr='claude-md'
+            else
+              instr='claude-md-or-agents-md'
+            fi
+            cat > "$HOME/.claude/settings.json" <<JSON
           {
+            "pluginConfigs": {
+              "agents-md@builtin": {
+                "options": {"instructionFiles": "${instr}"}
+              }
+            },
             "hooks": {
               "PreToolUse": [
                 {
                   "matcher": "*",
                   "hooks": [
-                    {"type": "command", "command": "printf user > /tmp/csl-p9-user-hook"}
+                    {"type": "command", "command": "env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_API_KEY printf user > /tmp/csl-p9-user-hook"}
                   ]
                 }
               ]
             }
           }
           JSON
+          }
           PROMPT='Call the Bash tool exactly once with the command true. After that tool result, reply with exactly P9PROBE2OK and nothing else.'
           rec ORACLE tool-call-plus-positive-control
           rec NOTE "Verdicts are PASS/FAIL/INCONCLUSIVE. Hook-marker absent is not a pass."
@@ -409,17 +455,31 @@ jobs:
           }
 
           # Positive control omits --setting-sources user so project/local hooks must fire.
-          # AGENTS.md can load here because user instructionFiles is unset.
+          # CONTROL: instructionFiles=claude-md-or-agents-md so AGENTS.md can load.
+          # agents-md@builtin instructionFiles is the 2.1.306 user-settings key
+          # (https://code.claude.com/docs/en/memory ; mods/agents-md README on v2.1.277).
+          write_user_settings control
+          rec CONTROL_INSTRUCTION_FILES claude-md-or-agents-md
           run_probe_invoke CONTROL "" "$MCP_RW" 60
-          rec CANARY_ISOLATION_VARIABLE setting-sources-user
-          rec NOTE "instructionFiles not toggled between CONTROL and ISOLATION"
+          # IFISO: same sources as CONTROL; only instructionFiles changes (claude-md).
+          write_user_settings isolation
+          rec IFISO_INSTRUCTION_FILES claude-md
+          rec CANARY_ISOLATION_VARIABLE instructionFiles
+          run_probe_invoke IFISO "" "$MCP_RW" 60
+          # ISOLATION: restore CONTROL instructionFiles; only --setting-sources user.
+          write_user_settings control
+          rec ISOLATION_INSTRUCTION_FILES claude-md-or-agents-md
+          rec HOOK_ISOLATION_VARIABLE setting-sources-user
+          rec NOTE "instructionFiles toggled between CONTROL (claude-md-or-agents-md) and IFISO (claude-md); ISOLATION keeps CONTROL instructionFiles"
           run_probe_invoke ISOLATION user "$MCP_RW" 60
           run_probe_invoke MCPRO user "$MCP_RO" 60
 
           CONTROL_RC="$(cat "${RUNNER_TEMP}/csl-p9-CONTROL.rc")"
+          IFISO_RC="$(cat "${RUNNER_TEMP}/csl-p9-IFISO.rc")"
           ISOLATION_RC="$(cat "${RUNNER_TEMP}/csl-p9-ISOLATION.rc")"
           MCPRO_RC="$(cat "${RUNNER_TEMP}/csl-p9-MCPRO.rc")"
           control_combined="$(cat "${RUNNER_TEMP}/csl-p9-CONTROL-out.txt" "${RUNNER_TEMP}/csl-p9-CONTROL-err.txt")"
+          ifiso_combined="$(cat "${RUNNER_TEMP}/csl-p9-IFISO-out.txt" "${RUNNER_TEMP}/csl-p9-IFISO-err.txt")"
           isolation_combined="$(cat "${RUNNER_TEMP}/csl-p9-ISOLATION-out.txt" "${RUNNER_TEMP}/csl-p9-ISOLATION-err.txt")"
           mcpro_combined="$(cat "${RUNNER_TEMP}/csl-p9-MCPRO-out.txt" "${RUNNER_TEMP}/csl-p9-MCPRO-err.txt")"
           control_hooks="${RUNNER_TEMP}/csl-p9-CONTROL-hooks"
@@ -447,21 +507,12 @@ jobs:
               *CSL474_AGENTS_LOADED*) CANARY_CONTROL=PASS ;;
               *) CANARY_CONTROL=FAIL ;;
             esac
-            if ! completed "$ISOLATION_RC" "$isolation_combined"; then
-              HOOK_ISOLATION=INCONCLUSIVE
+            # CANARY_ISOLATION uses IFISO (instructionFiles only), not ISOLATION.
+            # CANARY_ISOLATION PASS requires completed P9PROBE2OK, not canary absence after timeout.
+            if ! completed "$IFISO_RC" "$ifiso_combined"; then
               CANARY_ISOLATION=INCONCLUSIVE
             else
-              if [ -f "$isolation_hooks/project" ] || [ -f "$isolation_hooks/local" ]; then
-                HOOK_ISOLATION=FAIL
-              elif [ "$HOOK_CONTROL" = PASS ] && [ -f "$isolation_hooks/user" ]; then
-                HOOK_ISOLATION=PASS
-              elif [ "$HOOK_CONTROL" = PASS ] && [ ! -f "$isolation_hooks/user" ]; then
-                HOOK_ISOLATION=FAIL
-              else
-                HOOK_ISOLATION=INCONCLUSIVE
-              fi
-              # CANARY_ISOLATION PASS requires completed P9PROBE2OK, not canary absence after timeout
-              case "$isolation_combined" in
+              case "$ifiso_combined" in
                 *CSL474_AGENTS_LOADED*)
                   if [ "$CANARY_CONTROL" = PASS ]; then
                     CANARY_ISOLATION=FAIL
@@ -480,6 +531,19 @@ jobs:
                   CANARY_ISOLATION=INCONCLUSIVE
                   ;;
               esac
+            fi
+            if ! completed "$ISOLATION_RC" "$isolation_combined"; then
+              HOOK_ISOLATION=INCONCLUSIVE
+            else
+              if [ -f "$isolation_hooks/project" ] || [ -f "$isolation_hooks/local" ]; then
+                HOOK_ISOLATION=FAIL
+              elif [ "$HOOK_CONTROL" = PASS ] && [ -f "$isolation_hooks/user" ]; then
+                HOOK_ISOLATION=PASS
+              elif [ "$HOOK_CONTROL" = PASS ] && [ ! -f "$isolation_hooks/user" ]; then
+                HOOK_ISOLATION=FAIL
+              else
+                HOOK_ISOLATION=INCONCLUSIVE
+              fi
             fi
           fi
           # MCPRO PASS requires user hook marker so Bash actually ran
@@ -502,6 +566,7 @@ jobs:
           rec CANARY_ISOLATION "$CANARY_ISOLATION"
           rec MCPRO "$MCPRO"
           rec CONTROL_RC "$CONTROL_RC"
+          rec IFISO_RC "$IFISO_RC"
           rec ISOLATION_RC "$ISOLATION_RC"
           rec MCPRO_USED 1
           rec MCPRO_RC "$MCPRO_RC"
@@ -519,19 +584,29 @@ jobs:
             echo "writable empty MCP bytes changed" >&2
             exit 1
           fi
-          if [ "${ENABLE_OAUTH}" != "true" ]; then
-            rec OAUTH_STEP skipped
-          fi
           if [ "$HOOK_CONTROL" = PASS ] && [ "$HOOK_ISOLATION" = PASS ] && [ "$CANARY_CONTROL" = PASS ] && [ "$CANARY_ISOLATION" = PASS ] && [ "$MCPRO" = PASS ]; then
             rec EVIDENCE_EXIT green
             exit 0
           fi
+          if [ "$HOOK_CONTROL" = FAIL ] || [ "$HOOK_ISOLATION" = FAIL ] || [ "$CANARY_CONTROL" = FAIL ] || [ "$CANARY_ISOLATION" = FAIL ] || [ "$MCPRO" = FAIL ]; then
+            rec OAUTH_STEP skipped
+            rec EVIDENCE_EXIT fail
+            echo "probe 2 no-OAuth evidence is $HOOK_CONTROL/$HOOK_ISOLATION/$CANARY_CONTROL/$CANARY_ISOLATION/$MCPRO (FAIL)" >&2
+            exit 1
+          fi
+          if [ "${ENABLE_OAUTH}" = "true" ]; then
+            rec OAUTH_STEP pending
+            rec EVIDENCE_EXIT deferred-to-oauth
+            echo "probe 2 no-OAuth evidence is $HOOK_CONTROL/$HOOK_ISOLATION/$CANARY_CONTROL/$CANARY_ISOLATION/$MCPRO; OAuth hooked trials follow" >&2
+            exit 0
+          fi
+          rec OAUTH_STEP skipped
           rec EVIDENCE_EXIT non-green
           echo "probe 2 no-OAuth evidence is $HOOK_CONTROL/$HOOK_ISOLATION/$CANARY_CONTROL/$CANARY_ISOLATION/$MCPRO (not pass)" >&2
           exit 1
 
       - name: Probe 2 OAuth bootstrap in clean cwd
-        if: ${{ always() && inputs.enable_probe2_oauth }}
+        if: ${{ success() && inputs.enable_probe2_oauth }}
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
@@ -601,17 +676,20 @@ jobs:
             exit 1
           fi
 
-      - name: Probe 2 OAuth hooked trials without token env
-        if: ${{ always() && inputs.enable_probe2_oauth }}
+      - name: Probe 2 OAuth hooked trials (token in CLI env, subprocess-scrubbed)
+        if: ${{ success() && inputs.enable_probe2_oauth }}
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           set -euo pipefail
           rec() { printf 'CSL_P9_PROBE2_OAUTH_HOOKED_%s=%s\n' "$1" "$2"; }
-          if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
-            rec TOKEN_EXPOSURE present-in-hooked-env
-            echo "OAuth token must not be in env for hooked trials" >&2
+          if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+            echo "enable_probe2_oauth was set but the fixer OAuth secret is empty" >&2
             exit 1
           fi
-          rec TOKEN_IN_ENV 0
+          rec TOKEN_IN_STEP_ENV 1
+          rec TOKEN_EXPOSURE cli-env-subprocess-scrubbed
+          rec NOTE "token stays in the CLI env (GitHub-masked). CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 + bubblewrap strips it from Bash/hooks/MCP children. env -u on planted hooks is extra, not the isolation claim."
           boot_verdict="$(cat "${RUNNER_TEMP}/csl-p9-oauth-boot.verdict" 2>/dev/null || echo missing)"
           rec AUTH_BOOTSTRAP_PRIOR "$boot_verdict"
           if [ "$boot_verdict" != PASS ]; then
@@ -624,17 +702,6 @@ jobs:
           WORK="${RUNNER_TEMP}/csl-p9-work"
           MCP_RO="${RUNNER_TEMP}/csl-p9-mcp.empty.ro.json"
           MCP_RW="${RUNNER_TEMP}/csl-p9-mcp.empty.rw.json"
-          VERDICTS="${RUNNER_TEMP}/csl-p9-noauth-verdicts.env"
-          prior_iso=INCONCLUSIVE
-          if [ -f "$VERDICTS" ]; then
-            prior_iso="$(awk -F= '/^HOOK_ISOLATION=/{print $2}' "$VERDICTS" | tail -n 1)"
-          fi
-          rec PRIOR_HOOK_ISOLATION "${prior_iso:-INCONCLUSIVE}"
-          if [ "${prior_iso:-INCONCLUSIVE}" != PASS ]; then
-            rec TOKEN_EXPOSURE refused-unverified-isolation
-          else
-            rec TOKEN_EXPOSURE not-exported
-          fi
           if [ ! -x "$CLI" ] || [ ! -d "$WORK" ]; then
             rec HOOK_CONTROL INCONCLUSIVE
             rec HOOK_ISOLATION INCONCLUSIVE
@@ -709,29 +776,56 @@ jobs:
               *) rec "${tag}_AGENTS_CANARY" absent ;;
             esac
           }
-          cat > "$HOME/.claude/settings.json" <<'JSON'
+          write_user_settings() {
+            local mode="$1"
+            local instr
+            if [ "$mode" = isolation ]; then
+              instr='claude-md'
+            else
+              instr='claude-md-or-agents-md'
+            fi
+            mkdir -p "$HOME/.claude"
+            cat > "$HOME/.claude/settings.json" <<JSON
           {
+            "pluginConfigs": {
+              "agents-md@builtin": {
+                "options": {"instructionFiles": "${instr}"}
+              }
+            },
             "hooks": {
               "PreToolUse": [
                 {
                   "matcher": "*",
                   "hooks": [
-                    {"type": "command", "command": "printf user > /tmp/csl-p9-user-hook"}
+                    {"type": "command", "command": "env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_API_KEY printf user > /tmp/csl-p9-user-hook"}
                   ]
                 }
               ]
             }
           }
           JSON
+          }
+          write_user_settings control
+          rec CONTROL_INSTRUCTION_FILES claude-md-or-agents-md
           run_probe_invoke CONTROL "" "$MCP_RW" 90
-          rec CANARY_ISOLATION_VARIABLE setting-sources-user
-          rec NOTE "instructionFiles not toggled between CONTROL and ISOLATION"
+          # IFISO: same sources as CONTROL; only instructionFiles changes (claude-md).
+          write_user_settings isolation
+          rec IFISO_INSTRUCTION_FILES claude-md
+          rec CANARY_ISOLATION_VARIABLE instructionFiles
+          run_probe_invoke IFISO "" "$MCP_RW" 90
+          # ISOLATION: restore CONTROL instructionFiles; only --setting-sources user.
+          write_user_settings control
+          rec ISOLATION_INSTRUCTION_FILES claude-md-or-agents-md
+          rec HOOK_ISOLATION_VARIABLE setting-sources-user
+          rec NOTE "instructionFiles toggled between CONTROL (claude-md-or-agents-md) and IFISO (claude-md); ISOLATION keeps CONTROL instructionFiles"
           run_probe_invoke ISOLATION user "$MCP_RW" 90
           run_probe_invoke MCPRO user "$MCP_RO" 90
           CONTROL_RC="$(cat "${RUNNER_TEMP}/csl-p9-oauth-CONTROL.rc")"
+          IFISO_RC="$(cat "${RUNNER_TEMP}/csl-p9-oauth-IFISO.rc")"
           ISOLATION_RC="$(cat "${RUNNER_TEMP}/csl-p9-oauth-ISOLATION.rc")"
           MCPRO_RC="$(cat "${RUNNER_TEMP}/csl-p9-oauth-MCPRO.rc")"
           control_combined="$(cat "${RUNNER_TEMP}/csl-p9-oauth-CONTROL-out.txt" "${RUNNER_TEMP}/csl-p9-oauth-CONTROL-err.txt")"
+          ifiso_combined="$(cat "${RUNNER_TEMP}/csl-p9-oauth-IFISO-out.txt" "${RUNNER_TEMP}/csl-p9-oauth-IFISO-err.txt")"
           isolation_combined="$(cat "${RUNNER_TEMP}/csl-p9-oauth-ISOLATION-out.txt" "${RUNNER_TEMP}/csl-p9-oauth-ISOLATION-err.txt")"
           mcpro_combined="$(cat "${RUNNER_TEMP}/csl-p9-oauth-MCPRO-out.txt" "${RUNNER_TEMP}/csl-p9-oauth-MCPRO-err.txt")"
           control_hooks="${RUNNER_TEMP}/csl-p9-oauth-CONTROL-hooks"
@@ -749,7 +843,7 @@ jobs:
             rec CANARY_ISOLATION INCONCLUSIVE
             rec MCPRO INCONCLUSIVE
             rec DONE 0
-            echo "OAuth hooked trials could not start a session without token env" >&2
+            echo "OAuth hooked trials could not start an authenticated session" >&2
             exit 1
           fi
           if [ -f "$control_hooks/project" ] && [ -f "$control_hooks/local" ]; then
@@ -761,9 +855,33 @@ jobs:
             *CSL474_AGENTS_LOADED*) CANARY_CONTROL=PASS ;;
             *) CANARY_CONTROL=FAIL ;;
           esac
+          # CANARY_ISOLATION uses IFISO (instructionFiles only), not ISOLATION.
+          # CANARY_ISOLATION PASS requires completed P9PROBE2OK, not canary absence after timeout.
+          if ! completed "$IFISO_RC" "$ifiso_combined"; then
+            CANARY_ISOLATION=INCONCLUSIVE
+          else
+            case "$ifiso_combined" in
+              *CSL474_AGENTS_LOADED*)
+                if [ "$CANARY_CONTROL" = PASS ]; then
+                  CANARY_ISOLATION=FAIL
+                else
+                  CANARY_ISOLATION=INCONCLUSIVE
+                fi
+                ;;
+              *P9PROBE2OK*)
+                if [ "$CANARY_CONTROL" = PASS ]; then
+                  CANARY_ISOLATION=PASS
+                else
+                  CANARY_ISOLATION=INCONCLUSIVE
+                fi
+                ;;
+              *)
+                CANARY_ISOLATION=INCONCLUSIVE
+                ;;
+            esac
+          fi
           if ! completed "$ISOLATION_RC" "$isolation_combined"; then
             HOOK_ISOLATION=INCONCLUSIVE
-            CANARY_ISOLATION=INCONCLUSIVE
           else
             if [ -f "$isolation_hooks/project" ] || [ -f "$isolation_hooks/local" ]; then
               HOOK_ISOLATION=FAIL
@@ -774,18 +892,6 @@ jobs:
             else
               HOOK_ISOLATION=INCONCLUSIVE
             fi
-            # CANARY_ISOLATION PASS requires completed P9PROBE2OK, not canary absence after timeout
-            case "$isolation_combined" in
-              *CSL474_AGENTS_LOADED*)
-                if [ "$CANARY_CONTROL" = PASS ]; then CANARY_ISOLATION=FAIL; else CANARY_ISOLATION=INCONCLUSIVE; fi
-                ;;
-              *P9PROBE2OK*)
-                if [ "$CANARY_CONTROL" = PASS ]; then CANARY_ISOLATION=PASS; else CANARY_ISOLATION=INCONCLUSIVE; fi
-                ;;
-              *)
-                CANARY_ISOLATION=INCONCLUSIVE
-                ;;
-            esac
           fi
           # MCPRO PASS requires user hook marker so Bash actually ran
           if ! completed "$MCPRO_RC" "$mcpro_combined"; then
@@ -805,6 +911,9 @@ jobs:
           rec CANARY_CONTROL "$CANARY_CONTROL"
           rec CANARY_ISOLATION "$CANARY_ISOLATION"
           rec MCPRO "$MCPRO"
+          rec CONTROL_RC "$CONTROL_RC"
+          rec IFISO_RC "$IFISO_RC"
+          rec ISOLATION_RC "$ISOLATION_RC"
           rec MCPRO_USED 1
           rec MCPRO_RC "$MCPRO_RC"
           if [ "$HOOK_CONTROL" = PASS ] && [ "$HOOK_ISOLATION" = PASS ] && [ "$CANARY_CONTROL" = PASS ] && [ "$CANARY_ISOLATION" = PASS ] && [ "$MCPRO" = PASS ]; then

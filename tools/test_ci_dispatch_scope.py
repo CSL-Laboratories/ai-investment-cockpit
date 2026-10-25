@@ -948,7 +948,7 @@ class P9ProbeWorkflowTests(unittest.TestCase):
         header = self.text.split('\njobs:', 1)[0]
         self.assertIn('workflow_dispatch:', header)
         self.assertIn(
-            'With enable_probe2_oauth=false (the intended dispatch), Probe 2 is',
+            'With enable_probe2_oauth=false (the intended unattended dispatch), Probe 2 is',
             header,
         )
         self.assertIn('INCONCLUSIVE/non-green', header)
@@ -978,14 +978,23 @@ class P9ProbeWorkflowTests(unittest.TestCase):
         self.assertIn(spec['default'], (False, 'false'))
         oauth_steps = [s for s in self.doc['jobs']['probe-2']['steps']
                        if 'secrets.CLAUDE_CODE_OAUTH_TOKEN' in str(s)]
-        self.assertEqual(len(oauth_steps), 1)
-        self.assertIn('enable_probe2_oauth', str(oauth_steps[0].get('if')))
+        self.assertEqual(len(oauth_steps), 2)
+        for step in oauth_steps:
+            with self.subTest(step=step.get('name')):
+                self.assertIn('enable_probe2_oauth', str(step.get('if')))
+                self.assertIn('success()', str(step.get('if')))
+                self.assertNotIn('always()', str(step.get('if')))
         self.assertNotIn('secrets.CLAUDE_CODE_OAUTH_TOKEN', str(self.doc['jobs']['probe-0']))
         self.assertNotIn('secrets: inherit', self.text)
         hooked = [s for s in self.doc['jobs']['probe-2']['steps']
-                  if s.get('name') == 'Probe 2 OAuth hooked trials without token env']
+                  if s.get('name') == 'Probe 2 OAuth hooked trials (token in CLI env, subprocess-scrubbed)']
         self.assertEqual(len(hooked), 1)
-        self.assertNotIn('secrets.CLAUDE_CODE_OAUTH_TOKEN', str(hooked[0]))
+        self.assertIn('secrets.CLAUDE_CODE_OAUTH_TOKEN', str(hooked[0]))
+        self.assertIn('env -u CLAUDE_CODE_OAUTH_TOKEN', job_text(self.doc['jobs']['probe-2']))
+        self.assertEqual(
+            self.doc['jobs']['probe-2']['env'].get('CLAUDE_CODE_SUBPROCESS_ENV_SCRUB'),
+            '1',
+        )
 
     def test_same_cli_pin_as_e3(self):
         pin = (ROOT / 'scripts' / 'ci' / 'claude-code-2.1.306-linux-x64.pin').read_text(encoding='utf-8')
@@ -1028,15 +1037,27 @@ class P9ProbeWorkflowTests(unittest.TestCase):
         self.assertIn('INCONCLUSIVE', p2)
         self.assertIn('EVIDENCE_EXIT non-green', p2)
         self.assertIn('Positive control omits --setting-sources user', p2)
-        self.assertIn('AGENTS.md positive control: user instructionFiles unset', p2)
-        self.assertIn('canary isolation is --setting-sources user only', p2)
-        self.assertIn('instructionFiles not toggled between CONTROL and ISOLATION', p2)
+        self.assertIn('CONTROL: instructionFiles=claude-md-or-agents-md', p2)
+        self.assertIn('IFISO: same sources as CONTROL', p2)
+        self.assertIn('ISOLATION: restore CONTROL instructionFiles', p2)
+        self.assertIn('instructionFiles toggled between CONTROL', p2)
+        self.assertIn('claude-md-or-agents-md', p2)
         self.assertIn('run_probe_invoke CONTROL ""', p2)
+        self.assertIn('run_probe_invoke IFISO ""', p2)
         self.assertIn('run_probe_invoke ISOLATION user', p2)
         self.assertIn('run_probe_invoke MCPRO user "$MCP_RO"', p2)
         self.assertIn('} 2>/tmp/csl-p9-mcp-write.err', p2)
-        self.assertIn('refused-unverified-isolation', p2)
+        self.assertNotIn('refused-unverified-isolation', p2)
+        self.assertNotIn('hooks-stripped', p2)
+        self.assertIn('TOKEN_EXPOSURE cli-env-subprocess-scrubbed', p2)
         self.assertIn('TOKEN_EXPOSURE', p2)
+        self.assertIn('CLAUDE_CODE_SUBPROCESS_ENV_SCRUB', p2)
+        self.assertIn('bubblewrap', p2)
+        self.assertIn('kernel.apparmor_restrict_unprivileged_userns=0', p2)
+        self.assertIn('bwrap --unshare-user --ro-bind / / -- /bin/true', p2)
+        self.assertNotIn('always() && inputs.enable_probe2_oauth', self.text)
+        self.assertIn('success() && inputs.enable_probe2_oauth', self.text)
+        self.assertIn('https://code.claude.com/docs/en/memory', p2)
         self.assertNotIn("absent = pass", p2)
         self.assertIn('AUTH_BOOTSTRAP FAIL', p2)
         self.assertIn('not recording DONE', p2)
@@ -1048,7 +1069,36 @@ class P9ProbeWorkflowTests(unittest.TestCase):
         self.assertIn('skipping hooked OAuth trials; bootstrap did not PASS', p2)
         self.assertNotIn('session_ok', p2)
         self.assertIn('Probe 2 OAuth bootstrap in clean cwd', self.text)
-        self.assertIn('Probe 2 OAuth hooked trials without token env', self.text)
+        self.assertIn('Probe 2 OAuth hooked trials (token in CLI env, subprocess-scrubbed)', self.text)
+        self.assertIn('deferred-to-oauth', p2)
+        self.assertIn('env -u CLAUDE_CODE_OAUTH_TOKEN', p2)
+        self.assertIn('not the isolation claim', p2)
+
+    def test_probe2_fail_is_not_deferred_to_oauth(self):
+        """Samir #278: FAIL still exits non-zero when OAuth is enabled."""
+        p2 = job_text(self.doc['jobs']['probe-2'])
+        fail_idx = p2.find('EVIDENCE_EXIT fail')
+        defer_idx = p2.find('deferred-to-oauth')
+        self.assertGreaterEqual(fail_idx, 0)
+        self.assertGreaterEqual(defer_idx, 0)
+        self.assertLess(fail_idx, defer_idx)
+        self.assertIn(
+            '[ "$HOOK_CONTROL" = FAIL ] || [ "$HOOK_ISOLATION" = FAIL ] || [ "$CANARY_CONTROL" = FAIL ] || [ "$CANARY_ISOLATION" = FAIL ] || [ "$MCPRO" = FAIL ]',
+            p2,
+        )
+        self.assertIn('EVIDENCE_EXIT fail', p2)
+        noauth = [s for s in self.doc['jobs']['probe-2']['steps']
+                  if s.get('name') == 'Probe 2 without OAuth']
+        self.assertEqual(len(noauth), 1)
+        body = noauth[0]['run']
+        after_fail = body.split('rec EVIDENCE_EXIT fail', 1)[1]
+        before_defer = after_fail.split('deferred-to-oauth', 1)[0]
+        self.assertIn('exit 1', before_defer)
+        oauth_steps = [s for s in self.doc['jobs']['probe-2']['steps']
+                       if 'secrets.CLAUDE_CODE_OAUTH_TOKEN' in str(s)]
+        self.assertEqual(len(oauth_steps), 2)
+        for step in oauth_steps:
+            self.assertIn('success()', str(step.get('if')))
 
 if __name__ == '__main__':
     unittest.main()
