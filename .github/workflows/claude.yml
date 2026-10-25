@@ -4664,6 +4664,18 @@ jobs:
           #endif
           }
 
+          static void handoff_fail(int cfd, int aux, int aux2)
+          {
+              extra_handoffs++;
+              if (aux2 >= 0) {
+                  close(aux2);
+              }
+              if (aux >= 0) {
+                  close(aux);
+              }
+              close(cfd);
+          }
+
           static void accept_handoff(void)
           {
               int cfd = accept4(listen_fd, NULL, NULL, SOCK_CLOEXEC);
@@ -4683,28 +4695,29 @@ jobs:
                   return;
               }
               /* First success owns pair_fd. Later accepts (including a backlog
-               * connect after unlink) are extras, not a second pair. */
+               * connect after unlink) are extras, not a second pair. Any accepted
+               * peer that does not become that pair also counts as extra, so a
+               * rejected impostor before the launcher still sets conflict. */
               if (pair_fd >= 0 || ok_handoffs > 0) {
-                  extra_handoffs++;
-                  close(cfd);
+                  handoff_fail(cfd, -1, -1);
                   return;
               }
               /* Blocking accept + SO_RCVTIMEO: connect-before-sendmsg must not EAGAIN. */
               if (setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &rcv, sizeof rcv) < 0) {
-                  close(cfd);
+                  handoff_fail(cfd, -1, -1);
                   return;
               }
               /* N11: do not unlink until the peer is verified. */
               if (setsockopt(cfd, SOL_SOCKET, SO_PASSCRED, &pass, sizeof pass) < 0) {
-                  close(cfd);
+                  handoff_fail(cfd, -1, -1);
                   return;
               }
               if (getsockopt(cfd, SOL_SOCKET, SO_PEERCRED, &peer, &plen) < 0) {
-                  close(cfd);
+                  handoff_fail(cfd, -1, -1);
                   return;
               }
               if (!peer_uid_ok(peer.uid)) {
-                  close(cfd);
+                  handoff_fail(cfd, -1, -1);
                   return;
               }
               memset(&msg, 0, sizeof msg);
@@ -4715,12 +4728,12 @@ jobs:
               msg.msg_control = cmsgbuf;
               msg.msg_controllen = sizeof cmsgbuf;
               if (recvmsg(cfd, &msg, 0) < 0) {
-                  close(cfd);
+                  handoff_fail(cfd, -1, -1);
                   return;
               }
               if (msg.msg_flags & MSG_CTRUNC) {
                   close_rights(&msg, -1);
-                  close(cfd);
+                  handoff_fail(cfd, -1, -1);
                   return;
               }
               for (cmsg = CMSG_FIRSTHDR(&msg); cmsg; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
@@ -4729,7 +4742,7 @@ jobs:
                       int *fds = (int *)CMSG_DATA(cmsg);
                       if (nfds != 1 || got_pair >= 0) {
                           close_rights(&msg, -1);
-                          close(cfd);
+                          handoff_fail(cfd, -1, -1);
                           return;
                       }
                       got_pair = fds[0];
@@ -4739,7 +4752,7 @@ jobs:
                       memcpy(&scm, CMSG_DATA(cmsg), sizeof scm);
                       if (scm.pid != peer.pid || scm.uid != peer.uid) {
                           close_rights(&msg, -1);
-                          close(cfd);
+                          handoff_fail(cfd, -1, -1);
                           return;
                       }
                       saw_cred = 1;
@@ -4747,7 +4760,7 @@ jobs:
               }
               if (got_pair < 0 || !saw_cred) {
                   close_rights(&msg, -1);
-                  close(cfd);
+                  handoff_fail(cfd, -1, -1);
                   return;
               }
               /* F5: SO_PEERPIDFD identity. Fail closed if unavailable. */
@@ -4760,34 +4773,25 @@ jobs:
                   size_t pn = 0;
                   pid_t pfd_pid = 0;
                   if (getsockopt(cfd, SOL_SOCKET, SO_PEERPIDFD, &peerpidfd, &sl) < 0) {
-                      close(cfd);
-                      close(got_pair);
+                      handoff_fail(cfd, got_pair, -1);
                       return;
                   }
                   if (csl_read_pidfd_pid(peerpidfd, &pfd_pid) < 0 || pfd_pid != peer.pid) {
-                      close(peerpidfd);
-                      close(cfd);
-                      close(got_pair);
+                      handoff_fail(cfd, got_pair, peerpidfd);
                       return;
                   }
                   if (csl_proc_exe(peer.pid, exe, sizeof exe) < 0) {
-                      close(peerpidfd);
-                      close(cfd);
-                      close(got_pair);
+                      handoff_fail(cfd, got_pair, peerpidfd);
                       return;
                   }
                   if (strcmp(exe, CSL_LAUNCH_PATH) != 0) {
-                      close(peerpidfd);
-                      close(cfd);
-                      close(got_pair);
+                      handoff_fail(cfd, got_pair, peerpidfd);
                       return;
                   }
                   if (csl_sha256_file(exe, dig) != 0 ||
                       csl_read_file(CSL_LAUNCH_SHA_PATH, pinhex, sizeof pinhex, &pn) != 0 ||
                       pn == 0) {
-                      close(peerpidfd);
-                      close(cfd);
-                      close(got_pair);
+                      handoff_fail(cfd, got_pair, peerpidfd);
                       return;
                   }
                   while (pn && (pinhex[pn - 1] == '\n' || pinhex[pn - 1] == '\r' ||
@@ -4795,15 +4799,11 @@ jobs:
                       pinhex[--pn] = 0;
                   }
                   if (!csl_hex_eq(dig, pinhex)) {
-                      close(peerpidfd);
-                      close(cfd);
-                      close(got_pair);
+                      handoff_fail(cfd, got_pair, peerpidfd);
                       return;
                   }
                   if (!f1_armed || !f2_launcher_parent_is_bun(peer.pid)) {
-                      close(peerpidfd);
-                      close(cfd);
-                      close(got_pair);
+                      handoff_fail(cfd, got_pair, peerpidfd);
                       return;
                   }
                   close(peerpidfd);
@@ -4818,8 +4818,7 @@ jobs:
                   struct cmsghdr *sc;
                   char d = 'S';
                   if (wfd < 0) {
-                      close(cfd);
-                      close(got_pair);
+                      handoff_fail(cfd, got_pair, -1);
                       return;
                   }
                   memset(&sm, 0, sizeof sm);
@@ -4836,8 +4835,7 @@ jobs:
                   memcpy(CMSG_DATA(sc), &wfd, sizeof wfd);
                   if (sendmsg(got_pair, &sm, 0) < 0) {
                       close(wfd);
-                      close(cfd);
-                      close(got_pair);
+                      handoff_fail(cfd, got_pair, -1);
                       return;
                   }
                   close(wfd); /* F4c send copy */
@@ -5476,7 +5474,7 @@ jobs:
           ce7d40fb65fb34f5adb4e6089d7f26423ffc299f52b77acf32d446f6d09753fe  sandbox_argv.h
           53d9e830a9a3e54da837bda920af5d8ca392faf46600cfcc47ffb2d6fcf0da7f  sandbox_argv.c
           e5aa27f1b63924ee9b1aa653a65674ea35aebe0279bd7e1bce0239e15c514217  sandbox_launch.c
-          8e3404507fa9e8f1ed6e8882e148205b098c4b83078e113dcf41a9a555bb490e  sandbox_capture.c
+          910acf89a867eed49b3c526cab15d35e80ee6b4eb424ae0ac83540e69416c716  sandbox_capture.c
           1ddc020a8929b5b9d4184bfc07a36c49b37c6f37eaf073a72d6db6bcb9f9c5fe  sandbox_relay.c
           CSL_C_PIN
           cat > /opt/csl-claude/lib/sandbox_e3_cli_pin.sh <<'CSL_E3_CLI_PIN'
@@ -12766,6 +12764,18 @@ jobs:
           #endif
           }
 
+          static void handoff_fail(int cfd, int aux, int aux2)
+          {
+              extra_handoffs++;
+              if (aux2 >= 0) {
+                  close(aux2);
+              }
+              if (aux >= 0) {
+                  close(aux);
+              }
+              close(cfd);
+          }
+
           static void accept_handoff(void)
           {
               int cfd = accept4(listen_fd, NULL, NULL, SOCK_CLOEXEC);
@@ -12785,28 +12795,29 @@ jobs:
                   return;
               }
               /* First success owns pair_fd. Later accepts (including a backlog
-               * connect after unlink) are extras, not a second pair. */
+               * connect after unlink) are extras, not a second pair. Any accepted
+               * peer that does not become that pair also counts as extra, so a
+               * rejected impostor before the launcher still sets conflict. */
               if (pair_fd >= 0 || ok_handoffs > 0) {
-                  extra_handoffs++;
-                  close(cfd);
+                  handoff_fail(cfd, -1, -1);
                   return;
               }
               /* Blocking accept + SO_RCVTIMEO: connect-before-sendmsg must not EAGAIN. */
               if (setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &rcv, sizeof rcv) < 0) {
-                  close(cfd);
+                  handoff_fail(cfd, -1, -1);
                   return;
               }
               /* N11: do not unlink until the peer is verified. */
               if (setsockopt(cfd, SOL_SOCKET, SO_PASSCRED, &pass, sizeof pass) < 0) {
-                  close(cfd);
+                  handoff_fail(cfd, -1, -1);
                   return;
               }
               if (getsockopt(cfd, SOL_SOCKET, SO_PEERCRED, &peer, &plen) < 0) {
-                  close(cfd);
+                  handoff_fail(cfd, -1, -1);
                   return;
               }
               if (!peer_uid_ok(peer.uid)) {
-                  close(cfd);
+                  handoff_fail(cfd, -1, -1);
                   return;
               }
               memset(&msg, 0, sizeof msg);
@@ -12817,12 +12828,12 @@ jobs:
               msg.msg_control = cmsgbuf;
               msg.msg_controllen = sizeof cmsgbuf;
               if (recvmsg(cfd, &msg, 0) < 0) {
-                  close(cfd);
+                  handoff_fail(cfd, -1, -1);
                   return;
               }
               if (msg.msg_flags & MSG_CTRUNC) {
                   close_rights(&msg, -1);
-                  close(cfd);
+                  handoff_fail(cfd, -1, -1);
                   return;
               }
               for (cmsg = CMSG_FIRSTHDR(&msg); cmsg; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
@@ -12831,7 +12842,7 @@ jobs:
                       int *fds = (int *)CMSG_DATA(cmsg);
                       if (nfds != 1 || got_pair >= 0) {
                           close_rights(&msg, -1);
-                          close(cfd);
+                          handoff_fail(cfd, -1, -1);
                           return;
                       }
                       got_pair = fds[0];
@@ -12841,7 +12852,7 @@ jobs:
                       memcpy(&scm, CMSG_DATA(cmsg), sizeof scm);
                       if (scm.pid != peer.pid || scm.uid != peer.uid) {
                           close_rights(&msg, -1);
-                          close(cfd);
+                          handoff_fail(cfd, -1, -1);
                           return;
                       }
                       saw_cred = 1;
@@ -12849,7 +12860,7 @@ jobs:
               }
               if (got_pair < 0 || !saw_cred) {
                   close_rights(&msg, -1);
-                  close(cfd);
+                  handoff_fail(cfd, -1, -1);
                   return;
               }
               /* F5: SO_PEERPIDFD identity. Fail closed if unavailable. */
@@ -12862,34 +12873,25 @@ jobs:
                   size_t pn = 0;
                   pid_t pfd_pid = 0;
                   if (getsockopt(cfd, SOL_SOCKET, SO_PEERPIDFD, &peerpidfd, &sl) < 0) {
-                      close(cfd);
-                      close(got_pair);
+                      handoff_fail(cfd, got_pair, -1);
                       return;
                   }
                   if (csl_read_pidfd_pid(peerpidfd, &pfd_pid) < 0 || pfd_pid != peer.pid) {
-                      close(peerpidfd);
-                      close(cfd);
-                      close(got_pair);
+                      handoff_fail(cfd, got_pair, peerpidfd);
                       return;
                   }
                   if (csl_proc_exe(peer.pid, exe, sizeof exe) < 0) {
-                      close(peerpidfd);
-                      close(cfd);
-                      close(got_pair);
+                      handoff_fail(cfd, got_pair, peerpidfd);
                       return;
                   }
                   if (strcmp(exe, CSL_LAUNCH_PATH) != 0) {
-                      close(peerpidfd);
-                      close(cfd);
-                      close(got_pair);
+                      handoff_fail(cfd, got_pair, peerpidfd);
                       return;
                   }
                   if (csl_sha256_file(exe, dig) != 0 ||
                       csl_read_file(CSL_LAUNCH_SHA_PATH, pinhex, sizeof pinhex, &pn) != 0 ||
                       pn == 0) {
-                      close(peerpidfd);
-                      close(cfd);
-                      close(got_pair);
+                      handoff_fail(cfd, got_pair, peerpidfd);
                       return;
                   }
                   while (pn && (pinhex[pn - 1] == '\n' || pinhex[pn - 1] == '\r' ||
@@ -12897,15 +12899,11 @@ jobs:
                       pinhex[--pn] = 0;
                   }
                   if (!csl_hex_eq(dig, pinhex)) {
-                      close(peerpidfd);
-                      close(cfd);
-                      close(got_pair);
+                      handoff_fail(cfd, got_pair, peerpidfd);
                       return;
                   }
                   if (!f1_armed || !f2_launcher_parent_is_bun(peer.pid)) {
-                      close(peerpidfd);
-                      close(cfd);
-                      close(got_pair);
+                      handoff_fail(cfd, got_pair, peerpidfd);
                       return;
                   }
                   close(peerpidfd);
@@ -12920,8 +12918,7 @@ jobs:
                   struct cmsghdr *sc;
                   char d = 'S';
                   if (wfd < 0) {
-                      close(cfd);
-                      close(got_pair);
+                      handoff_fail(cfd, got_pair, -1);
                       return;
                   }
                   memset(&sm, 0, sizeof sm);
@@ -12938,8 +12935,7 @@ jobs:
                   memcpy(CMSG_DATA(sc), &wfd, sizeof wfd);
                   if (sendmsg(got_pair, &sm, 0) < 0) {
                       close(wfd);
-                      close(cfd);
-                      close(got_pair);
+                      handoff_fail(cfd, got_pair, -1);
                       return;
                   }
                   close(wfd); /* F4c send copy */
@@ -13578,7 +13574,7 @@ jobs:
           ce7d40fb65fb34f5adb4e6089d7f26423ffc299f52b77acf32d446f6d09753fe  sandbox_argv.h
           53d9e830a9a3e54da837bda920af5d8ca392faf46600cfcc47ffb2d6fcf0da7f  sandbox_argv.c
           e5aa27f1b63924ee9b1aa653a65674ea35aebe0279bd7e1bce0239e15c514217  sandbox_launch.c
-          8e3404507fa9e8f1ed6e8882e148205b098c4b83078e113dcf41a9a555bb490e  sandbox_capture.c
+          910acf89a867eed49b3c526cab15d35e80ee6b4eb424ae0ac83540e69416c716  sandbox_capture.c
           1ddc020a8929b5b9d4184bfc07a36c49b37c6f37eaf073a72d6db6bcb9f9c5fe  sandbox_relay.c
           CSL_C_PIN
           cat > /opt/csl-claude/lib/sandbox_e3_cli_pin.sh <<'CSL_E3_CLI_PIN'
