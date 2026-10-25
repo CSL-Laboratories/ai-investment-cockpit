@@ -699,20 +699,24 @@ _OAUTH_VALUE = re.compile(r'^\$\{\{\s*secrets\.CLAUDE_CODE_OAUTH_TOKEN\s*\}\}$')
 
 
 class _ModelSecrets:
-    """secrets.* in a model job. The OAuth token is allowed only as the Claude action `with` input."""
+    """secrets.* in a model job or inherited workflow env. OAuth only as the Claude action `with` input."""
 
-    def search(self, job):
+    def search(self, job, inherited=None):
         if not isinstance(job, dict):
-            return self._in_exprs(str(job))
-        scanned = copy.deepcopy(job)
-        for step in scanned.get('steps') or []:
-            with_block = step.get('with') or {}
-            token = with_block.get('claude_code_oauth_token')
-            if (str(step.get('uses') or '').startswith('anthropics/claude-code-action')
-                    and token is not None
-                    and _OAUTH_VALUE.fullmatch(str(token).strip())):
-                with_block.pop('claude_code_oauth_token')
-        return self._walk(scanned)
+            hit = self._in_exprs(str(job))
+        else:
+            scanned = copy.deepcopy(job)
+            for step in scanned.get('steps') or []:
+                with_block = step.get('with') or {}
+                token = with_block.get('claude_code_oauth_token')
+                if (str(step.get('uses') or '').startswith('anthropics/claude-code-action')
+                        and token is not None
+                        and _OAUTH_VALUE.fullmatch(str(token).strip())):
+                    with_block.pop('claude_code_oauth_token')
+            hit = self._walk(scanned)
+        if hit:
+            return hit
+        return None if inherited is None else self._walk(inherited)
 
     def _walk(self, value):
         if isinstance(value, str):
@@ -1100,7 +1104,7 @@ class CrossLaneAdmissionTests(unittest.TestCase):
                     if role == 'model':
                         # Values, not only scope names: the model token stays read-only.
                         self.assertEqual(perms, MODEL_PERMS)
-                        self.assertIsNone(MODEL_SECRETS.search(job))
+                        self.assertIsNone(MODEL_SECRETS.search(job, inherited=doc.get('env')))
                         self.assertTrue(model_github_token_ok(job))
                     self.assertTrue(uses_allowed(job, role), job_uses(job))
                     uses_model = any(str(s.get('uses', '')).startswith('anthropics/claude-code-action') for s in job['steps'])
@@ -1217,6 +1221,9 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         self.assertIsNotNone(MODEL_SECRETS.search(leaked))
         live = workflow('claude.yml')['jobs']['claude-mention']
         self.assertIsNone(MODEL_SECRETS.search(live))
+        self.assertIsNone(MODEL_SECRETS.search(live, inherited=workflow('claude.yml').get('env')))
+        workflow_env = {'GH_TOKEN': '${{ secrets.MY_PAT }}'}
+        self.assertIsNotNone(MODEL_SECRETS.search(live, inherited=workflow_env))
         oauth_env = copy.deepcopy(live)
         oauth_env['steps'][0]['env'] = {**(oauth_env['steps'][0].get('env') or {}),
                                         'CLAUDE_CODE_OAUTH_TOKEN':
