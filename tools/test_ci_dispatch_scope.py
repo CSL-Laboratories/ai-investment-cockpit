@@ -664,6 +664,22 @@ def job_text(job):
     return '\n'.join(parts)
 
 
+def claude_trusted_sources(role):
+    """scripts/ci files claude.yml copies from github.workflow_sha for that role."""
+    names = {
+        'prep': ('claude_fixer_preflight.py', 'claude_fixer_receipts.py'),
+        'publish': ('claude_fixer_publish.py', 'claude_fixer_receipts.py'),
+    }.get(role, ())
+    return '\n'.join((ROOT / 'scripts' / 'ci' / name).read_text(encoding='utf-8') for name in names)
+
+
+def writer_contract_text(name, job, role):
+    text = job_text(job)
+    if name == 'claude.yml':
+        text = text + '\n' + claude_trusted_sources(role)
+    return text
+
+
 def command_span(text, pos):
     """The whole command or call around text[pos].
 
@@ -837,7 +853,7 @@ class CrossLaneAdmissionTests(unittest.TestCase):
             doc = workflow(name)
             for job_name, role in jobs.items():
                 job = doc['jobs'][job_name]
-                text = job_text(job)
+                text = writer_contract_text(name, job, role)
                 perms = job.get('permissions') or {}
                 with self.subTest(workflow=name, job=job_name, role=role):
                     self.assertEqual(bool(PUSH.search(granted(text))), role == 'publish')
@@ -876,24 +892,29 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         claude = (WORKFLOWS / 'claude.yml').read_text()
         writer = (WORKFLOWS / 'claude-conflict-writer.yml').read_text()
         scan = (WORKFLOWS / 'conflict-scan.yml').read_text()
-        # Eight-commit guard: one constant per claude.yml prepare job, compared in the @claude path,
-        # and the Devin path's `cap` step; no other cap value anywhere.
-        self.assertEqual(re.findall(r'^\s*LOOP_CAP = (\d+)$', claude, re.MULTILINE), ['8', '8'])
+        preflight = (ROOT / 'scripts' / 'ci' / 'claude_fixer_preflight.py').read_text()
+        receipts = (ROOT / 'scripts' / 'ci' / 'claude_fixer_receipts.py').read_text()
+        # Eight-commit guard lives in the trusted preflight source copied twice.
+        self.assertEqual(re.findall(r'^\s*LOOP_CAP = (\d+)$', preflight, re.MULTILINE), ['8'])
+        self.assertEqual(claude.count('python3 -I "$TRUSTED/claude_fixer_preflight.py"'), 2)
         # A conflict-writer guard (CSL-419) may add one, but only at the same cap.
         self.assertTrue(set(re.findall(r'^\s*LOOP_CAP = (\d+)$', writer + scan, re.MULTILINE)) <= {'8'})
-        self.assertIn('if streak >= LOOP_CAP:', job_text(workflow('claude.yml')['jobs']['mention-prepare']))
+        self.assertIn('if streak >= LOOP_CAP:', preflight)
         cap = job_text(workflow('claude.yml')['jobs']['fixer-prepare'])
         self.assertRegex(cap, r'if \[ "\$total" -ge 250 \] && \[ "\$count" -lt 8 \]')
         self.assertIn('echo "loop_commit_count=$count"', cap)
         # The Devin path reserves bounded attempts; every publisher allows one publish per prepared run.
-        self.assertEqual(set(re.findall(r'^\s*MAX_ATTEMPTS = (\d+)$', claude, re.MULTILINE)), {'3'})
+        self.assertEqual(set(re.findall(r'^\s*MAX_ATTEMPTS = (\d+)$', receipts, re.MULTILINE)), {'3'})
         self.assertIn('Select pending findings and reserve bounded attempt', claude)
         for name, jobs in WRITER_JOBS.items():
             doc = workflow(name)
             for job_name, role in jobs.items():
                 if role == 'publish':
                     with self.subTest(publisher=f'{name}:{job_name}'):
-                        self.assertIn('publish attempt already used; nothing published', job_text(doc['jobs'][job_name]))
+                        self.assertIn(
+                            'publish attempt already used; nothing published',
+                            writer_contract_text(name, doc['jobs'][job_name], role),
+                        )
         # The human pause, per job: every prepare and publish job reads both labels and the repository
         # variable, every publisher refuses on them before pushing, and the scan skips paused PRs.
         pause_py = 'PAUSE_LABELS = frozenset({"claude:pause", "hold"})'
@@ -904,7 +925,7 @@ class CrossLaneAdmissionTests(unittest.TestCase):
                 if role not in ('prep', 'publish'):
                     continue
                 job = doc['jobs'][job_name]
-                text = job_text(job)
+                text = writer_contract_text(name, job, role)
                 with self.subTest(pause=f'{name}:{job_name}'):
                     self.assertTrue(pause_py in text or pause_jq in text)
                     self.assertIn('${{ vars.CLAUDE_FIXER_PAUSE }}', str(job))
