@@ -604,7 +604,7 @@ class DispatchScopeTests(unittest.TestCase):
                     self.assertEqual(result.returncode == 0, expected, result.stderr)
 
 
-    def test_qualification_evidence_jobs_stay_on_blacksmith_and_the_pr_head(self):
+    def test_qualification_evidence_jobs_use_free_github_hosted_runners_and_the_pr_head(self):
         matrix = json.loads((ROOT / 'docs/evidence/csl221/qualification-matrix.json').read_text())
         qualification = self.ci['jobs']['qualification']
         admission = self.ci['jobs']['qualification-admission']
@@ -696,8 +696,9 @@ class DispatchScopeTests(unittest.TestCase):
         runners = {cell['runner_image'] for cell in matrix['cells'] if cell['requirement'] == 'required'}
         for runner in runners:
             self.assertIn(runner, qualification['runs-on'])
-        self.assertEqual(negative['runs-on'], 'blacksmith-2vcpu-ubuntu-2404')
-        self.assertEqual(validate['runs-on'], 'blacksmith-2vcpu-ubuntu-2404')
+        self.assertEqual(negative['runs-on'], 'ubuntu-24.04')
+        self.assertEqual(validate['runs-on'], 'ubuntu-24.04')
+        self.assertNotIn('blacksmith', qualification['runs-on'])
         self.assertEqual(validate['needs'], 'qualification')
         self.assertIn('always()', validate['if'])
         self.assertIn("needs.qualification.result != 'skipped'", validate['if'])

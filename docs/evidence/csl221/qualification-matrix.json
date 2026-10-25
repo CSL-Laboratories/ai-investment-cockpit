@@ -1,7 +1,7 @@
 {
   "schema_version": "csl221.qualification-matrix.v1",
   "issue": "CSL-221",
-  "protocol": "hosted-blacksmith-provider-free",
+  "protocol": "hosted-github-provider-free",
   "does_not_replace": "DEC-09",
   "release_decision": "not_made",
   "owners": {
@@ -11,17 +11,17 @@
   "executed_tier": "provider-free",
   "platforms": {
     "linux": {
-      "runner_image": "blacksmith-2vcpu-ubuntu-2404",
+      "runner_image": "ubuntu-24.04",
       "runner_os": "Linux",
       "runner_arch": "X64"
     },
     "windows": {
-      "runner_image": "blacksmith-2vcpu-windows-2025",
+      "runner_image": "windows-2025",
       "runner_os": "Windows",
       "runner_arch": "X64"
     },
     "macos": {
-      "runner_image": "blacksmith-6vcpu-macos-15",
+      "runner_image": "macos-latest",
       "runner_os": "macOS",
       "runner_arch": "ARM64"
     }
@@ -46,7 +46,7 @@
       "pass_allowed": true,
       "recorded_status": "not_run",
       "owner": "CSL-221 qualification evidence",
-      "runner_image": "blacksmith-2vcpu-ubuntu-2404",
+      "runner_image": "ubuntu-24.04",
       "runner_os": "Linux",
       "runner_arch": "X64",
       "evidence_requirement": "Hosted Blacksmith provider-free qualification suite. The JUnit inventory must contain zero failures, errors, and skips. Commit SHA, tree SHA, workflow run id, job id, runner image, CPython version, dependency digest, and artifact SHA-256s must match this candidate. A technical pass of this cell is not a release qualification."
@@ -60,7 +60,7 @@
       "pass_allowed": false,
       "recorded_status": "not_run",
       "owner": "release owner",
-      "runner_image": "blacksmith-2vcpu-ubuntu-2404",
+      "runner_image": "ubuntu-24.04",
       "runner_os": "Linux",
       "runner_arch": "X64",
       "evidence_requirement": "Not collected in CSL-221. Excluded, skipped, and unknown cells are not pass. Release scope for this tier stays with the release owner."
@@ -74,7 +74,7 @@
       "pass_allowed": false,
       "recorded_status": "not_run",
       "owner": "release owner",
-      "runner_image": "blacksmith-2vcpu-ubuntu-2404",
+      "runner_image": "ubuntu-24.04",
       "runner_os": "Linux",
       "runner_arch": "X64",
       "evidence_requirement": "Not collected in CSL-221. Excluded, skipped, and unknown cells are not pass. Release scope for this tier stays with the release owner."
@@ -88,7 +88,7 @@
       "pass_allowed": false,
       "recorded_status": "not_run",
       "owner": "release owner",
-      "runner_image": "blacksmith-2vcpu-ubuntu-2404",
+      "runner_image": "ubuntu-24.04",
       "runner_os": "Linux",
       "runner_arch": "X64",
       "evidence_requirement": "Not collected in CSL-221. Excluded, skipped, and unknown cells are not pass. Release scope for this tier stays with the release owner."
@@ -102,7 +102,7 @@
       "pass_allowed": true,
       "recorded_status": "not_run",
       "owner": "CSL-221 qualification evidence",
-      "runner_image": "blacksmith-2vcpu-ubuntu-2404",
+      "runner_image": "ubuntu-24.04",
       "runner_os": "Linux",
       "runner_arch": "X64",
       "evidence_requirement": "Hosted Blacksmith provider-free qualification suite. The JUnit inventory must contain zero failures, errors, and skips. Commit SHA, tree SHA, workflow run id, job id, runner image, CPython version, dependency digest, and artifact SHA-256s must match this candidate. A technical pass of this cell is not a release qualification."
@@ -116,7 +116,7 @@
       "pass_allowed": false,
       "recorded_status": "not_run",
       "owner": "release owner",
-      "runner_image": "blacksmith-2vcpu-ubuntu-2404",
+      "runner_image": "ubuntu-24.04",
       "runner_os": "Linux",
       "runner_arch": "X64",
       "evidence_requirement": "Not collected in CSL-221. Excluded, skipped, and unknown cells are not pass. Release scope for this tier stays with the release owner."
@@ -130,7 +130,7 @@
       "pass_allowed": false,
       "recorded_status": "not_run",
       "owner": "release owner",
-      "runner_image": "blacksmith-2vcpu-ubuntu-2404",
+      "runner_image": "ubuntu-24.04",
       "runner_os": "Linux",
       "runner_arch": "X64",
       "evidence_requirement": "Not collected in CSL-221. Excluded, skipped, and unknown cells are not pass. Release scope for this tier stays with the release owner."
@@ -144,7 +144,7 @@
       "pass_allowed": false,
       "recorded_status": "not_run",
       "owner": "release owner",
-      "runner_image": "blacksmith-2vcpu-ubuntu-2404",
+      "runner_image": "ubuntu-24.04",
       "runner_os": "Linux",
       "runner_arch": "X64",
       "evidence_requirement": "Not collected in CSL-221. Excluded, skipped, and unknown cells are not pass. Release scope for this tier stays with the release owner."
@@ -158,7 +158,7 @@
       "pass_allowed": true,
       "recorded_status": "not_run",
       "owner": "CSL-221 qualification evidence",
-      "runner_image": "blacksmith-2vcpu-windows-2025",
+      "runner_image": "windows-2025",
       "runner_os": "Windows",
       "runner_arch": "X64",
       "evidence_requirement": "Hosted Blacksmith provider-free qualification suite. The JUnit inventory must contain zero failures, errors, and skips. Commit SHA, tree SHA, workflow run id, job id, runner image, CPython version, dependency digest, and artifact SHA-256s must match this candidate. A technical pass of this cell is not a release qualification."
@@ -172,7 +172,7 @@
       "pass_allowed": false,
       "recorded_status": "not_run",
       "owner": "release owner",
-      "runner_image": "blacksmith-2vcpu-windows-2025",
+      "runner_image": "windows-2025",
       "runner_os": "Windows",
       "runner_arch": "X64",
       "evidence_requirement": "Not collected in CSL-221. Excluded, skipped, and unknown cells are not pass. Release scope for this tier stays with the release owner."
@@ -186,7 +186,7 @@
       "pass_allowed": false,
       "recorded_status": "not_run",
       "owner": "release owner",
-      "runner_image": "blacksmith-2vcpu-windows-2025",
+      "runner_image": "windows-2025",
       "runner_os": "Windows",
       "runner_arch": "X64",
       "evidence_requirement": "Not collected in CSL-221. Excluded, skipped, and unknown cells are not pass. Release scope for this tier stays with the release owner."
@@ -200,7 +200,7 @@
       "pass_allowed": false,
       "recorded_status": "not_run",
       "owner": "release owner",
-      "runner_image": "blacksmith-2vcpu-windows-2025",
+      "runner_image": "windows-2025",
       "runner_os": "Windows",
       "runner_arch": "X64",
       "evidence_requirement": "Not collected in CSL-221. Excluded, skipped, and unknown cells are not pass. Release scope for this tier stays with the release owner."
@@ -214,7 +214,7 @@
       "pass_allowed": true,
       "recorded_status": "not_run",
       "owner": "CSL-221 qualification evidence",
-      "runner_image": "blacksmith-2vcpu-windows-2025",
+      "runner_image": "windows-2025",
       "runner_os": "Windows",
       "runner_arch": "X64",
       "evidence_requirement": "Hosted Blacksmith provider-free qualification suite. The JUnit inventory must contain zero failures, errors, and skips. Commit SHA, tree SHA, workflow run id, job id, runner image, CPython version, dependency digest, and artifact SHA-256s must match this candidate. A technical pass of this cell is not a release qualification."
@@ -228,7 +228,7 @@
       "pass_allowed": false,
       "recorded_status": "not_run",
       "owner": "release owner",
-      "runner_image": "blacksmith-2vcpu-windows-2025",
+      "runner_image": "windows-2025",
       "runner_os": "Windows",
       "runner_arch": "X64",
       "evidence_requirement": "Not collected in CSL-221. Excluded, skipped, and unknown cells are not pass. Release scope for this tier stays with the release owner."
@@ -242,7 +242,7 @@
       "pass_allowed": false,
       "recorded_status": "not_run",
       "owner": "release owner",
-      "runner_image": "blacksmith-2vcpu-windows-2025",
+      "runner_image": "windows-2025",
       "runner_os": "Windows",
       "runner_arch": "X64",
       "evidence_requirement": "Not collected in CSL-221. Excluded, skipped, and unknown cells are not pass. Release scope for this tier stays with the release owner."
@@ -256,7 +256,7 @@
       "pass_allowed": false,
       "recorded_status": "not_run",
       "owner": "release owner",
-      "runner_image": "blacksmith-2vcpu-windows-2025",
+      "runner_image": "windows-2025",
       "runner_os": "Windows",
       "runner_arch": "X64",
       "evidence_requirement": "Not collected in CSL-221. Excluded, skipped, and unknown cells are not pass. Release scope for this tier stays with the release owner."
@@ -270,7 +270,7 @@
       "pass_allowed": true,
       "recorded_status": "not_run",
       "owner": "CSL-221 qualification evidence",
-      "runner_image": "blacksmith-6vcpu-macos-15",
+      "runner_image": "macos-latest",
       "runner_os": "macOS",
       "runner_arch": "ARM64",
       "evidence_requirement": "Hosted Blacksmith provider-free qualification suite. The JUnit inventory must contain zero failures, errors, and skips. Commit SHA, tree SHA, workflow run id, job id, runner image, CPython version, dependency digest, and artifact SHA-256s must match this candidate. A technical pass of this cell is not a release qualification."
@@ -284,7 +284,7 @@
       "pass_allowed": false,
       "recorded_status": "not_run",
       "owner": "release owner",
-      "runner_image": "blacksmith-6vcpu-macos-15",
+      "runner_image": "macos-latest",
       "runner_os": "macOS",
       "runner_arch": "ARM64",
       "evidence_requirement": "Not collected in CSL-221. Excluded, skipped, and unknown cells are not pass. Release scope for this tier stays with the release owner."
@@ -298,7 +298,7 @@
       "pass_allowed": false,
       "recorded_status": "not_run",
       "owner": "release owner",
-      "runner_image": "blacksmith-6vcpu-macos-15",
+      "runner_image": "macos-latest",
       "runner_os": "macOS",
       "runner_arch": "ARM64",
       "evidence_requirement": "Not collected in CSL-221. Excluded, skipped, and unknown cells are not pass. Release scope for this tier stays with the release owner."
@@ -312,7 +312,7 @@
       "pass_allowed": false,
       "recorded_status": "not_run",
       "owner": "release owner",
-      "runner_image": "blacksmith-6vcpu-macos-15",
+      "runner_image": "macos-latest",
       "runner_os": "macOS",
       "runner_arch": "ARM64",
       "evidence_requirement": "Not collected in CSL-221. Excluded, skipped, and unknown cells are not pass. Release scope for this tier stays with the release owner."
@@ -326,7 +326,7 @@
       "pass_allowed": true,
       "recorded_status": "not_run",
       "owner": "CSL-221 qualification evidence",
-      "runner_image": "blacksmith-6vcpu-macos-15",
+      "runner_image": "macos-latest",
       "runner_os": "macOS",
       "runner_arch": "ARM64",
       "evidence_requirement": "Hosted Blacksmith provider-free qualification suite. The JUnit inventory must contain zero failures, errors, and skips. Commit SHA, tree SHA, workflow run id, job id, runner image, CPython version, dependency digest, and artifact SHA-256s must match this candidate. A technical pass of this cell is not a release qualification."
@@ -340,7 +340,7 @@
       "pass_allowed": false,
       "recorded_status": "not_run",
       "owner": "release owner",
-      "runner_image": "blacksmith-6vcpu-macos-15",
+      "runner_image": "macos-latest",
       "runner_os": "macOS",
       "runner_arch": "ARM64",
       "evidence_requirement": "Not collected in CSL-221. Excluded, skipped, and unknown cells are not pass. Release scope for this tier stays with the release owner."
@@ -354,7 +354,7 @@
       "pass_allowed": false,
       "recorded_status": "not_run",
       "owner": "release owner",
-      "runner_image": "blacksmith-6vcpu-macos-15",
+      "runner_image": "macos-latest",
       "runner_os": "macOS",
       "runner_arch": "ARM64",
       "evidence_requirement": "Not collected in CSL-221. Excluded, skipped, and unknown cells are not pass. Release scope for this tier stays with the release owner."
@@ -368,7 +368,7 @@
       "pass_allowed": false,
       "recorded_status": "not_run",
       "owner": "release owner",
-      "runner_image": "blacksmith-6vcpu-macos-15",
+      "runner_image": "macos-latest",
       "runner_os": "macOS",
       "runner_arch": "ARM64",
       "evidence_requirement": "Not collected in CSL-221. Excluded, skipped, and unknown cells are not pass. Release scope for this tier stays with the release owner."

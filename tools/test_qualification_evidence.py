@@ -84,7 +84,7 @@ class QualificationEvidenceTests(unittest.TestCase):
         self.assertEqual(self.matrix["does_not_replace"], "DEC-09")
         self.assertEqual(self.matrix["release_decision"], "not_made")
         for cell in self.matrix["cells"]:
-            self.assertTrue(cell["runner_image"].startswith("blacksmith-"))
+            self.assertEqual(cell["runner_image"], MOD.HOSTED_RUNNER_IMAGES[cell["platform"]])
 
     def test_schema_matches_the_validator_keys(self) -> None:
         schema = json.loads(

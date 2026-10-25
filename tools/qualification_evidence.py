@@ -25,6 +25,11 @@ MATRIX_VERSION = "csl221.qualification-matrix.v1"
 JOB_KEY = "qualification"
 EXECUTED_TIER = "provider-free"
 PLATFORMS = ("linux", "windows", "macos")
+HOSTED_RUNNER_IMAGES = {
+    "linux": "ubuntu-24.04",
+    "windows": "windows-2025",
+    "macos": "macos-latest",
+}
 PYTHONS = ("3.11", "3.12")
 TIERS = ("provider-free", "replay", "simulation", "paper-demo")
 NON_PASS_STATUSES = frozenset(
@@ -196,8 +201,8 @@ def load_matrix(path: Path) -> dict:
         for key in ("runner_image", "runner_os", "runner_arch"):
             if not isinstance(spec.get(key), str) or not spec[key]:
                 raise QualificationError(f"platform {name} {key}")
-        if not spec["runner_image"].startswith("blacksmith-"):
-            raise QualificationError(f"platform {name} runner is not Blacksmith")
+        if spec["runner_image"] != HOSTED_RUNNER_IMAGES[name]:
+            raise QualificationError(f"platform {name} runner is not a free GitHub-hosted label")
     cells = document.get("cells")
     if not isinstance(cells, list):
         raise QualificationError("matrix cells")

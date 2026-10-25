@@ -15,8 +15,9 @@ run-name: ${{ inputs.candidate_id && format('candidate:{0}:ci:{1}', inputs.candi
 #   macos        — nightly 07:17 UTC on main (skipped if idle 24h), ci:full, or
 #                  workflow_dispatch. GitHub-hosted macos-latest. Not on ordinary
 #                  main pushes: ~$0.93/run would dominate a ~$50 budget.
-#   qualification — CSL-221 evidence only. Blacksmith Linux, Windows, and macOS
-#                  (blacksmith-6vcpu-macos-15) for the provider-free tier.
+#   qualification — CSL-221 evidence only. Free GitHub-hosted runners
+#                  (ubuntu-24.04, windows-2025, macos-latest) for the
+#                  provider-free tier. CSL-408: no Blacksmith labels.
 #                  Same-repository, non-Dependabot heads only. A fork or
 #                  Dependabot pull request does not start it, even with ci:full:
 #                  those tokens cannot mint the attestation OIDC credential.
@@ -1066,7 +1067,7 @@ jobs:
       matrix:
         platform: [linux, windows, macos]
         python-version: ["3.11", "3.12"]
-    runs-on: ${{ matrix.platform == 'linux' && 'blacksmith-2vcpu-ubuntu-2404' || matrix.platform == 'windows' && 'blacksmith-2vcpu-windows-2025' || 'blacksmith-6vcpu-macos-15' }}
+    runs-on: ${{ matrix.platform == 'linux' && 'ubuntu-24.04' || matrix.platform == 'windows' && 'windows-2025' || 'macos-latest' }}
     timeout-minutes: 20
     defaults:
       run:
@@ -1191,7 +1192,7 @@ jobs:
       contents: read
     needs: filter
     if: needs.filter.outputs.run-tests == 'true'
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
@@ -1230,7 +1231,7 @@ jobs:
     # skip this job again. Ordinary runs leave qualification skipped,
     # and this job stays skipped with it.
     if: ${{ always() && needs.qualification.result != 'skipped' }}
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:

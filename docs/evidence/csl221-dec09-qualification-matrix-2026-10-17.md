@@ -54,9 +54,9 @@ Axes are platform, CPython, and tier. Tiers are `provider-free`, `replay`,
 
 | Platform | Runner label | OS | Arch | Python | Tier | Requirement | Owner |
 |---|---|---|---|---|---|---|---|
-| linux | `blacksmith-2vcpu-ubuntu-2404` | Linux | X64 | 3.11, 3.12 | provider-free | required | CSL-221 qualification evidence |
-| windows | `blacksmith-2vcpu-windows-2025` | Windows | X64 | 3.11, 3.12 | provider-free | required | CSL-221 qualification evidence |
-| macos | `blacksmith-6vcpu-macos-15` | macOS | ARM64 | 3.11, 3.12 | provider-free | required | CSL-221 qualification evidence |
+| linux | `ubuntu-24.04` | Linux | X64 | 3.11, 3.12 | provider-free | required | CSL-221 qualification evidence |
+| windows | `windows-2025` | Windows | X64 | 3.11, 3.12 | provider-free | required | CSL-221 qualification evidence |
+| macos | `macos-latest` | macOS | ARM64 | 3.11, 3.12 | provider-free | required | CSL-221 qualification evidence |
 | linux, windows, macos | same labels | same | same | 3.11, 3.12 | replay, simulation, paper-demo | excluded | release owner |
 
 Required evidence for a provider-free cell is the exact-candidate bundle:
@@ -74,7 +74,7 @@ with `ci:full` whose author and actor are not Dependabot, or a full workflow
 dispatch of a ref in this repository. A fork pull request, a Dependabot pull
 request, and a `ci:full` label on either do not start it. Fork and Dependabot
 workflows do not receive the OIDC `id-token: write` permission attestation
-needs, so those contexts are rejected before any paid cell and no unattested
+needs, so those contexts are rejected before any qualification cell and no unattested
 bundle is published. An ordinary pull request, a `scope=linux` dispatch, the
 nightly schedule, and an ordinary push to `main` do not start it. A partial matrix is not a pass. On a full run, validation starts
 unless the qualification job itself was skipped, and it fails when any
