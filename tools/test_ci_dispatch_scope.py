@@ -949,11 +949,15 @@ class P9ProbeWorkflowTests(unittest.TestCase):
         self.assertEqual(spec['type'], 'boolean')
         self.assertIn(spec['default'], (False, 'false'))
         oauth_steps = [s for s in self.doc['jobs']['probe-2']['steps']
-                       if 'CLAUDE_CODE_OAUTH_TOKEN' in str(s)]
+                       if 'secrets.CLAUDE_CODE_OAUTH_TOKEN' in str(s)]
         self.assertEqual(len(oauth_steps), 1)
         self.assertIn('enable_probe2_oauth', str(oauth_steps[0].get('if')))
-        self.assertNotIn('CLAUDE_CODE_OAUTH_TOKEN', str(self.doc['jobs']['probe-0']))
+        self.assertNotIn('secrets.CLAUDE_CODE_OAUTH_TOKEN', str(self.doc['jobs']['probe-0']))
         self.assertNotIn('secrets: inherit', self.text)
+        hooked = [s for s in self.doc['jobs']['probe-2']['steps']
+                  if s.get('name') == 'Probe 2 OAuth hooked trials without token env']
+        self.assertEqual(len(hooked), 1)
+        self.assertNotIn('secrets.CLAUDE_CODE_OAUTH_TOKEN', str(hooked[0]))
 
     def test_same_cli_pin_as_e3(self):
         pin = (ROOT / 'scripts' / 'ci' / 'claude-code-2.1.306-linux-x64.pin').read_text(encoding='utf-8')
@@ -973,18 +977,40 @@ class P9ProbeWorkflowTests(unittest.TestCase):
         self.assertIn('cgroup.procs', p0)
         self.assertIn('apparmor_restrict_unprivileged_userns', p0)
         self.assertIn('unshare --user --pid', p0)
+        self.assertIn('HOSTED_ONLY', p0)
+        self.assertIn('CLASS_CGROUP_PROCS observational', p0)
+        self.assertIn('} 2>/tmp/csl-p9-cgroup-procs.err', p0)
         p2 = job_text(self.doc['jobs']['probe-2'])
         self.assertIn('settings.local.json', p2)
-        # Probe-2 writes a throwaway canary at $WORK/AGENTS.md; it does not
-        # read tracked AGENTS.md. Assert the work-dir path so the skip-path
-        # scanner (exact quoted skipped names) does not treat this as a
-        # docs-only coverage gap.
         self.assertIn('$WORK/AGENTS.md', p2)
         self.assertIn('instructionFiles', p2)
         self.assertIn('CSL474_AGENTS_CANARY', p2)
         self.assertIn('--setting-sources user', p2)
         self.assertIn('mcp.empty', p2)
 
+    def test_probe2_oracle_forces_tool_and_positive_control(self):
+        jobs = self.doc['jobs']
+        self.assertEqual(jobs['probe-0']['timeout-minutes'], '10')
+        self.assertEqual(jobs['probe-2']['timeout-minutes'], '20')
+        p2 = job_text(jobs['probe-2'])
+        self.assertIn('--allowedTools "Bash(true)"', p2)
+        self.assertIn('--max-turns 4', p2)
+        self.assertIn('CSL474_AGENTS_LOADED', p2)
+        self.assertIn('HOOK_CONTROL', p2)
+        self.assertIn('INCONCLUSIVE', p2)
+        self.assertIn('EVIDENCE_EXIT non-green', p2)
+        self.assertIn('Positive control omits --setting-sources user', p2)
+        self.assertIn('run_probe_invoke CONTROL ""', p2)
+        self.assertIn('run_probe_invoke ISOLATION user', p2)
+        self.assertIn('run_probe_invoke MCPRO user "$MCP_RO"', p2)
+        self.assertIn('} 2>/tmp/csl-p9-mcp-write.err', p2)
+        self.assertIn('refused-unverified-isolation', p2)
+        self.assertIn('TOKEN_EXPOSURE', p2)
+        self.assertNotIn("absent = pass", p2)
+        self.assertIn('AUTH_BOOTSTRAP FAIL', p2)
+        self.assertIn('not recording DONE', p2)
+        self.assertIn('Probe 2 OAuth bootstrap in clean cwd', self.text)
+        self.assertIn('Probe 2 OAuth hooked trials without token env', self.text)
 
 if __name__ == '__main__':
     unittest.main()
