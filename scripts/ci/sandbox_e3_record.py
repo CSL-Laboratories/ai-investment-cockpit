@@ -184,6 +184,8 @@ def write_e3_record(state_dir: str = "/var/lib/csl-relay") -> str:
         "socat_sha256": _sha256_file("/usr/bin/socat"),
         "bash_sha256": _sha256_file("/bin/bash"),
         "match": match,
+        # Placeholders only. The C relay overwrites these from daemon STATUS
+        # ok= / extra= before it emits. This helper does not rewrite them.
         "handoff_count": "0",
         "handoff_conflict": "false",
     }
