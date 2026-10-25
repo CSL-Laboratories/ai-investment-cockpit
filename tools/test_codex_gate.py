@@ -1679,9 +1679,14 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("CODEX-GATE: READY", self.agents)
         self.assertIn("CODEX-GATE: MEDIATE", self.agents)
         self.assertIn("When you are the assignee", self.agents)
-        self.assertIn("Parallel Task API deep research", self.agents)
-        self.assertIn("in addition to Search/Extract", self.agents)
-        self.assertIn("Grok Bots do not research or resolve decision issues", self.agents)
+        self.assertIn("## Research", self.agents)
+        self.assertIn("post a cited brief", self.agents)
+        self.assertIn("Grok Bot, preparing research for <owner>", self.agents)
+        self.assertIn("Only the designated human decision-maker", self.agents)
+        self.assertIn("never marks the issue decided", self.agents)
+        self.assertNotIn(
+            "Grok Bots do not research or resolve decision issues", self.agents
+        )
         self.assertIn("neither a Devin substitute", self.agents)
         self.assertIn("Human-only findings need a human `@claude` mention", self.agents)
         self.assertIn("A founder may have their own bot", self.agents)
@@ -1698,7 +1703,17 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("ci-label-retrigger.yml", self.agents)
         claude = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
         self.assertIn("AGENTS.md", claude)
-        self.assertIn("Grok Bots", claude)
+        self.assertIn("Grok Bot, preparing research for <owner>", claude)
+        self.assertNotIn(
+            "Grok Bots do not research or resolve those issues", claude
+        )
+        skill = (
+            ROOT / ".claude" / "skills" / "proceed-or-escalate" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Grok Bot, preparing research for <owner>", skill)
+        self.assertNotIn(
+            "Grok Bots do not research or resolve decision issues", skill
+        )
 
     def test_pat_job_token_has_narrow_receipt_scope_and_actionlint_is_checksummed(self) -> None:
         self.assertIn("contents: read", self.text)
