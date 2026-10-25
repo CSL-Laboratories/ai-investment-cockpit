@@ -117,14 +117,14 @@ chmod 0644 "$STATE/bun.tofu"
 "$PYTHON" -I "$LIB/sandbox_e3_bind.py" empty-bun-bin
 "$PYTHON" -I "$LIB/sandbox_e3_bind.py" hash-setup-bun
 
-# 0b step 2: fixer helper already written by the workflow YAML into the
-# compiled-in runner temp (same constant as CSL_RUNNER_TEMP; not from env).
+# 0b step 2: fixer helper was written as root then installed as runner-uid
+# (sudo env_reset drops REPO/PR_NUMBER/…). Root only chowns and verifies.
 GUARD="/home/runner/work/_temp/claude-fixer-guard"
 if [ -f "$GUARD/model-api" ]; then
-  "$PYTHON" -I "$GUARD/model-api" install
+  test -f "$GUARD/context.json" || { echo "e3-0b: helper context.json missing" >&2; exit 1; }
   chown -R root:root "$GUARD"
   chmod 0755 "$GUARD" "$GUARD/model-api"
-  if [ -f "$GUARD/context.json" ]; then chmod 0644 "$GUARD/context.json"; fi
+  chmod 0644 "$GUARD/context.json"
   if [ -e "$GUARD/read-token" ]; then chmod 0644 "$GUARD/read-token"; fi
   test "$(stat -c %U "$GUARD/model-api")" = root
 fi
@@ -204,8 +204,8 @@ git -C "$BUNREF" ls-tree -r FETCH_HEAD > "$STATE/setup-bun.ls-tree"
 "$PYTHON" -I "$LIB/sandbox_e3_bind.py" verify-pins
 "$PYTHON" -I "$LIB/sandbox_e3_bind.py" hash-node-modules
 # Pre-create the action's pin-bun destination after the extra-file check and
-# before the ro remount so mkdir -p "$AP/bin" is a no-op. Live proof that the
-# action's later bun install --production is a no-op on this tree is still P9.
+# before the ro remount so mkdir -p "$AP/bin" is a no-op. Touch/mkdir after
+# the remount fail closed if $AP is still writable.
 mkdir -p "$AP/bin"
 install -D -m0755 -o root -g root "$BUN_DST" "$AP/bin/bun"
 chown -R root:root "$AP"
@@ -218,6 +218,14 @@ mount --bind /home/runner/work/_actions/anthropics /home/runner/work/_actions/an
 mount --bind /home/runner/work/_actions/anthropics/claude-code-action /home/runner/work/_actions/anthropics/claude-code-action
 mount --bind "$AP" "$AP"
 mount -o remount,bind,ro "$AP"
+if touch "$AP/csl-e3-ro-probe" 2>/dev/null; then
+  echo "e3-0b: $AP still writable (touch)" >&2
+  exit 1
+fi
+if mkdir "$AP/csl-e3-ro-dir" 2>/dev/null; then
+  echo "e3-0b: $AP still writable (mkdir)" >&2
+  exit 1
+fi
 
 awk '$5=="'"$AP"'" || $5=="/home/runner/work" || $5=="/home/runner/work/_actions" || $5=="/home/runner/work/_actions/anthropics" || $5=="/home/runner/work/_actions/anthropics/claude-code-action"' /proc/self/mountinfo > "$STATE/mountinfo"
 # Worker ns/mnt must equal 0b's (fail closed, H4). Compare Worker with

@@ -852,6 +852,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /opt/csl-claude/lib /opt/csl-claude/src /opt/csl-relay/bin /opt/csl-bun /var/lib/csl-relay
+          # sudo env_reset drops $RUNNER_TEMP; use the compiled-in path.
           mkdir -p /home/runner/work/_temp/claude-fixer-guard
           cat > /home/runner/work/_temp/claude-fixer-guard/model-api <<'CLAUDE_FIXER_OUTBOX'
           #!/usr/bin/env python3
@@ -1238,6 +1239,28 @@ jobs:
           if __name__ == "__main__":
               raise SystemExit(main())
           CLAUDE_FIXER_OUTBOX
+          # Runner-uid install needs to write context.json; sudo env_reset drops REPO.
+          chown -R runner:runner /home/runner/work/_temp/claude-fixer-guard
+          chmod 0755 /home/runner/work/_temp/claude-fixer-guard /home/runner/work/_temp/claude-fixer-guard/model-api
+
+      - name: E3-0-early helper context
+        env:
+          BASH_ENV: ""
+          LD_PRELOAD: ""
+          LD_LIBRARY_PATH: ""
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.resolve-pr.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.mention-prepare.outputs.head_sha }}
+          HEAD_REF: ${{ needs.mention-prepare.outputs.head_ref }}
+          WRITER_MODE: mention
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          # Runner-uid: workflow env reaches python. Root bootstrap only chowns.
+          test -x /home/runner/work/_temp/claude-fixer-guard/model-api
+          /usr/bin/python3 -I /home/runner/work/_temp/claude-fixer-guard/model-api install
+          test -f /home/runner/work/_temp/claude-fixer-guard/context.json
 
       - name: E3-0-early write python helpers
         shell: /usr/bin/sudo -n /bin/bash --noprofile --norc -e -o pipefail {0}
@@ -4067,6 +4090,7 @@ jobs:
           #include <signal.h>
           #include <sys/prctl.h>
           #include <sys/socket.h>
+          #include <sys/time.h>
           #include <sys/un.h>
           #include <sys/wait.h>
 
@@ -4565,7 +4589,7 @@ jobs:
 
           static void accept_handoff(void)
           {
-              int cfd = accept4(listen_fd, NULL, NULL, SOCK_CLOEXEC | SOCK_NONBLOCK);
+              int cfd = accept4(listen_fd, NULL, NULL, SOCK_CLOEXEC);
               struct msghdr msg;
               struct iovec iov;
               char cmsgbuf[CMSG_SPACE(sizeof(int)) * 4];
@@ -4576,11 +4600,17 @@ jobs:
               struct ucred peer;
               socklen_t plen = sizeof peer;
               int pass = 1;
+              struct timeval rcv = {.tv_sec = 2, .tv_usec = 0};
 
               if (cfd < 0) {
                   return;
               }
               extra_handoffs++;
+              /* Blocking accept + SO_RCVTIMEO: connect-before-sendmsg must not EAGAIN. */
+              if (setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &rcv, sizeof rcv) < 0) {
+                  close(cfd);
+                  return;
+              }
               /* N11: do not unlink until the peer is verified. */
               if (setsockopt(cfd, SOL_SOCKET, SO_PASSCRED, &pass, sizeof pass) < 0) {
                   close(cfd);
@@ -5333,7 +5363,7 @@ jobs:
           ce7d40fb65fb34f5adb4e6089d7f26423ffc299f52b77acf32d446f6d09753fe  sandbox_argv.h
           53d9e830a9a3e54da837bda920af5d8ca392faf46600cfcc47ffb2d6fcf0da7f  sandbox_argv.c
           e5aa27f1b63924ee9b1aa653a65674ea35aebe0279bd7e1bce0239e15c514217  sandbox_launch.c
-          38affc484ad7f1260e76141c28e86637431ad373db0edc8343691dfae4bc7e1a  sandbox_capture.c
+          1ba66e9436768c8d5c0fa67fd742bb9bf19120a00aa6c2a554ab6298e069a262  sandbox_capture.c
           5497efe24944dc3a792a9b1b96679af39bf4c89b8251119f8f79f30be1a137b0  sandbox_relay.c
           CSL_C_PIN
           cat > /opt/csl-claude/lib/sandbox_e3_cli_pin.sh <<'CSL_E3_CLI_PIN'
@@ -5613,14 +5643,14 @@ jobs:
           "$PYTHON" -I "$LIB/sandbox_e3_bind.py" empty-bun-bin
           "$PYTHON" -I "$LIB/sandbox_e3_bind.py" hash-setup-bun
 
-          # 0b step 2: fixer helper already written by the workflow YAML into the
-          # compiled-in runner temp (same constant as CSL_RUNNER_TEMP; not from env).
+          # 0b step 2: fixer helper was written as root then installed as runner-uid
+          # (sudo env_reset drops REPO/PR_NUMBER/…). Root only chowns and verifies.
           GUARD="/home/runner/work/_temp/claude-fixer-guard"
           if [ -f "$GUARD/model-api" ]; then
-            "$PYTHON" -I "$GUARD/model-api" install
+            test -f "$GUARD/context.json" || { echo "e3-0b: helper context.json missing" >&2; exit 1; }
             chown -R root:root "$GUARD"
             chmod 0755 "$GUARD" "$GUARD/model-api"
-            if [ -f "$GUARD/context.json" ]; then chmod 0644 "$GUARD/context.json"; fi
+            chmod 0644 "$GUARD/context.json"
             if [ -e "$GUARD/read-token" ]; then chmod 0644 "$GUARD/read-token"; fi
             test "$(stat -c %U "$GUARD/model-api")" = root
           fi
@@ -5700,8 +5730,8 @@ jobs:
           "$PYTHON" -I "$LIB/sandbox_e3_bind.py" verify-pins
           "$PYTHON" -I "$LIB/sandbox_e3_bind.py" hash-node-modules
           # Pre-create the action's pin-bun destination after the extra-file check and
-          # before the ro remount so mkdir -p "$AP/bin" is a no-op. Live proof that the
-          # action's later bun install --production is a no-op on this tree is still P9.
+          # before the ro remount so mkdir -p "$AP/bin" is a no-op. Touch/mkdir after
+          # the remount fail closed if $AP is still writable.
           mkdir -p "$AP/bin"
           install -D -m0755 -o root -g root "$BUN_DST" "$AP/bin/bun"
           chown -R root:root "$AP"
@@ -5714,6 +5744,14 @@ jobs:
           mount --bind /home/runner/work/_actions/anthropics/claude-code-action /home/runner/work/_actions/anthropics/claude-code-action
           mount --bind "$AP" "$AP"
           mount -o remount,bind,ro "$AP"
+          if touch "$AP/csl-e3-ro-probe" 2>/dev/null; then
+            echo "e3-0b: $AP still writable (touch)" >&2
+            exit 1
+          fi
+          if mkdir "$AP/csl-e3-ro-dir" 2>/dev/null; then
+            echo "e3-0b: $AP still writable (mkdir)" >&2
+            exit 1
+          fi
 
           awk '$5=="'"$AP"'" || $5=="/home/runner/work" || $5=="/home/runner/work/_actions" || $5=="/home/runner/work/_actions/anthropics" || $5=="/home/runner/work/_actions/anthropics/claude-code-action"' /proc/self/mountinfo > "$STATE/mountinfo"
           # Worker ns/mnt must equal 0b's (fail closed, H4). Compare Worker with
@@ -8763,6 +8801,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /opt/csl-claude/lib /opt/csl-claude/src /opt/csl-relay/bin /opt/csl-bun /var/lib/csl-relay
+          # sudo env_reset drops $RUNNER_TEMP; use the compiled-in path.
           mkdir -p /home/runner/work/_temp/claude-fixer-guard
           cat > /home/runner/work/_temp/claude-fixer-guard/model-api <<'CLAUDE_FIXER_OUTBOX'
           #!/usr/bin/env python3
@@ -9149,6 +9188,29 @@ jobs:
           if __name__ == "__main__":
               raise SystemExit(main())
           CLAUDE_FIXER_OUTBOX
+          # Runner-uid install needs to write context.json; sudo env_reset drops REPO.
+          chown -R runner:runner /home/runner/work/_temp/claude-fixer-guard
+          chmod 0755 /home/runner/work/_temp/claude-fixer-guard /home/runner/work/_temp/claude-fixer-guard/model-api
+
+      - name: E3-0-early helper context
+        env:
+          BASH_ENV: ""
+          LD_PRELOAD: ""
+          LD_LIBRARY_PATH: ""
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.resolve-pr.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.fixer-prepare.outputs.head_sha }}
+          HEAD_REF: ${{ needs.fixer-prepare.outputs.head_ref }}
+          WRITER_MODE: fixer
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          RECEIPT_CONTEXT: ${{ needs.fixer-prepare.outputs.receipt_context }}
+        run: |
+          set -euo pipefail
+          # Runner-uid: workflow env reaches python. Root bootstrap only chowns.
+          test -x /home/runner/work/_temp/claude-fixer-guard/model-api
+          /usr/bin/python3 -I /home/runner/work/_temp/claude-fixer-guard/model-api install
+          test -f /home/runner/work/_temp/claude-fixer-guard/context.json
 
       - name: E3-0-early write python helpers
         shell: /usr/bin/sudo -n /bin/bash --noprofile --norc -e -o pipefail {0}
@@ -11981,6 +12043,7 @@ jobs:
           #include <signal.h>
           #include <sys/prctl.h>
           #include <sys/socket.h>
+          #include <sys/time.h>
           #include <sys/un.h>
           #include <sys/wait.h>
 
@@ -12479,7 +12542,7 @@ jobs:
 
           static void accept_handoff(void)
           {
-              int cfd = accept4(listen_fd, NULL, NULL, SOCK_CLOEXEC | SOCK_NONBLOCK);
+              int cfd = accept4(listen_fd, NULL, NULL, SOCK_CLOEXEC);
               struct msghdr msg;
               struct iovec iov;
               char cmsgbuf[CMSG_SPACE(sizeof(int)) * 4];
@@ -12490,11 +12553,17 @@ jobs:
               struct ucred peer;
               socklen_t plen = sizeof peer;
               int pass = 1;
+              struct timeval rcv = {.tv_sec = 2, .tv_usec = 0};
 
               if (cfd < 0) {
                   return;
               }
               extra_handoffs++;
+              /* Blocking accept + SO_RCVTIMEO: connect-before-sendmsg must not EAGAIN. */
+              if (setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &rcv, sizeof rcv) < 0) {
+                  close(cfd);
+                  return;
+              }
               /* N11: do not unlink until the peer is verified. */
               if (setsockopt(cfd, SOL_SOCKET, SO_PASSCRED, &pass, sizeof pass) < 0) {
                   close(cfd);
@@ -13247,7 +13316,7 @@ jobs:
           ce7d40fb65fb34f5adb4e6089d7f26423ffc299f52b77acf32d446f6d09753fe  sandbox_argv.h
           53d9e830a9a3e54da837bda920af5d8ca392faf46600cfcc47ffb2d6fcf0da7f  sandbox_argv.c
           e5aa27f1b63924ee9b1aa653a65674ea35aebe0279bd7e1bce0239e15c514217  sandbox_launch.c
-          38affc484ad7f1260e76141c28e86637431ad373db0edc8343691dfae4bc7e1a  sandbox_capture.c
+          1ba66e9436768c8d5c0fa67fd742bb9bf19120a00aa6c2a554ab6298e069a262  sandbox_capture.c
           5497efe24944dc3a792a9b1b96679af39bf4c89b8251119f8f79f30be1a137b0  sandbox_relay.c
           CSL_C_PIN
           cat > /opt/csl-claude/lib/sandbox_e3_cli_pin.sh <<'CSL_E3_CLI_PIN'
@@ -13528,14 +13597,14 @@ jobs:
           "$PYTHON" -I "$LIB/sandbox_e3_bind.py" empty-bun-bin
           "$PYTHON" -I "$LIB/sandbox_e3_bind.py" hash-setup-bun
 
-          # 0b step 2: fixer helper already written by the workflow YAML into the
-          # compiled-in runner temp (same constant as CSL_RUNNER_TEMP; not from env).
+          # 0b step 2: fixer helper was written as root then installed as runner-uid
+          # (sudo env_reset drops REPO/PR_NUMBER/…). Root only chowns and verifies.
           GUARD="/home/runner/work/_temp/claude-fixer-guard"
           if [ -f "$GUARD/model-api" ]; then
-            "$PYTHON" -I "$GUARD/model-api" install
+            test -f "$GUARD/context.json" || { echo "e3-0b: helper context.json missing" >&2; exit 1; }
             chown -R root:root "$GUARD"
             chmod 0755 "$GUARD" "$GUARD/model-api"
-            if [ -f "$GUARD/context.json" ]; then chmod 0644 "$GUARD/context.json"; fi
+            chmod 0644 "$GUARD/context.json"
             if [ -e "$GUARD/read-token" ]; then chmod 0644 "$GUARD/read-token"; fi
             test "$(stat -c %U "$GUARD/model-api")" = root
           fi
@@ -13615,8 +13684,8 @@ jobs:
           "$PYTHON" -I "$LIB/sandbox_e3_bind.py" verify-pins
           "$PYTHON" -I "$LIB/sandbox_e3_bind.py" hash-node-modules
           # Pre-create the action's pin-bun destination after the extra-file check and
-          # before the ro remount so mkdir -p "$AP/bin" is a no-op. Live proof that the
-          # action's later bun install --production is a no-op on this tree is still P9.
+          # before the ro remount so mkdir -p "$AP/bin" is a no-op. Touch/mkdir after
+          # the remount fail closed if $AP is still writable.
           mkdir -p "$AP/bin"
           install -D -m0755 -o root -g root "$BUN_DST" "$AP/bin/bun"
           chown -R root:root "$AP"
@@ -13629,6 +13698,14 @@ jobs:
           mount --bind /home/runner/work/_actions/anthropics/claude-code-action /home/runner/work/_actions/anthropics/claude-code-action
           mount --bind "$AP" "$AP"
           mount -o remount,bind,ro "$AP"
+          if touch "$AP/csl-e3-ro-probe" 2>/dev/null; then
+            echo "e3-0b: $AP still writable (touch)" >&2
+            exit 1
+          fi
+          if mkdir "$AP/csl-e3-ro-dir" 2>/dev/null; then
+            echo "e3-0b: $AP still writable (mkdir)" >&2
+            exit 1
+          fi
 
           awk '$5=="'"$AP"'" || $5=="/home/runner/work" || $5=="/home/runner/work/_actions" || $5=="/home/runner/work/_actions/anthropics" || $5=="/home/runner/work/_actions/anthropics/claude-code-action"' /proc/self/mountinfo > "$STATE/mountinfo"
           # Worker ns/mnt must equal 0b's (fail closed, H4). Compare Worker with
