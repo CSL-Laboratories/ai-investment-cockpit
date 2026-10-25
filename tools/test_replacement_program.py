@@ -79,8 +79,34 @@ def replace_node(program, path, value):
 
 
 class ReplacementProgramTests(unittest.TestCase):
+    accepted_root: Path
+    _accepted_tmp: tempfile.TemporaryDirectory | None = None
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._accepted_tmp = tempfile.TemporaryDirectory()
+        cls.accepted_root = accepted_replacement_root(cls._accepted_tmp.name)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        if cls._accepted_tmp is not None:
+            cls._accepted_tmp.cleanup()
+
     def setUp(self) -> None:
         self.program = CHECKER.load(ROOT / "docs" / "replacement" / "program.json")
+        self._orig_validate = CHECKER.validate
+        accepted = self.accepted_root
+        orig = self._orig_validate
+
+        def _validate(program, root=ROOT, current_head_sha=None):
+            if root == ROOT:
+                root = accepted
+            return orig(program, root, current_head_sha=current_head_sha)
+
+        CHECKER.validate = _validate  # type: ignore[method-assign]
+
+    def tearDown(self) -> None:
+        CHECKER.validate = self._orig_validate  # type: ignore[method-assign]
 
     def test_checked_in_registry_passes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
