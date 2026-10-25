@@ -20,8 +20,12 @@ empirical and release gates remain pending. Acceptance does not change current r
 invariants, credentials, order routing, or live-trading controls. A PR, merge, test
 or contract decision is not empirical acceptance.
 
-All research output (notes, briefs, findings, source tables, competitor or
-frontier writeups, research registers or indexes) goes to
+Research may use any deep-research source the team has, such as Parallel,
+Exa, Claude Deep Research, Open Deep Research, ChatGPT Deep Research or the
+web. Each run records its tool, its run id and its cost (or `unknown` plus a
+reason) in its csl-research record. All research output (notes, briefs,
+findings, source tables, competitor or frontier writeups, research registers
+or indexes) goes to
 [CSL-Laboratories/csl-research](https://github.com/CSL-Laboratories/csl-research)
 as `submissions/<record_id>/`, through a PR in that repo, with a digest on the
 Linear issue. Never commit research content to this repo; specs, amendments and

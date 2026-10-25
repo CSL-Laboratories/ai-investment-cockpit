@@ -132,10 +132,14 @@ coordinator may research and recommend. Attribute the brief explicitly as
 personally authored or endorsed the recommendation. Only the designated human
 decision-maker, or an explicitly authorized research team, decides. Publishing a
 brief never marks the issue decided, never clears a hold, and never authorizes
-implementation. All research output (notes, briefs, findings, source tables,
-competitor or frontier writeups, research registers or indexes) goes to
-CSL-Laboratories/csl-research as `submissions/<record_id>/`, through a PR in
-that repo, with a digest on the Linear issue. Never commit research content
+implementation. Research may use any deep-research source the team has, such
+as Parallel, Exa, Claude Deep Research, Open Deep Research, ChatGPT Deep
+Research or the web. Each run records its tool, its run id and its cost (or
+`unknown` plus a reason) in its csl-research record. All research output
+(notes, briefs, findings, source tables, competitor or frontier writeups,
+research registers or indexes) goes to CSL-Laboratories/csl-research as
+`submissions/<record_id>/`, through a PR in that repo, with a digest on the
+Linear issue. Never commit research content
 to this repo; specs, amendments and code only link to the vault record.
 If csl-research is not accessible, stop and post a blocker on the Linear
 issue; do not fall back to this repo. Existing `docs/research/**` and

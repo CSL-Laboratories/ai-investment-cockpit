@@ -113,9 +113,13 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
    Linear issue and a `submissions/<record_id>/` record in
    CSL-Laboratories/csl-research (README, AGENTS.md, templates,
    `tools/check_submission.py`) and opens a PR there before releasing the
-   issue claim. Research content is never committed here; existing
-   `docs/research/**` and `docs/evidence/**` are legacy and frozen, except
-   contract fixtures under `docs/replacement/outcomes/**`.
+   issue claim. Research may use any deep-research source the team has, such
+   as Parallel, Exa, Claude Deep Research, Open Deep Research, ChatGPT Deep
+   Research or the web. Each run records its tool, its run id and its cost
+   (or `unknown` plus a reason) in its csl-research record. Research content
+   is never committed here; existing `docs/research/**` and `docs/evidence/**`
+   are legacy and frozen, except contract fixtures under
+   `docs/replacement/outcomes/**`.
 3. Implement. Preserve the invariants. Add tests alongside.
 4. Run the gates (below). Green before you stop.
 5. **Do not re-litigate settled decisions** — the corpus is a one-way pipeline

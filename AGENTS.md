@@ -77,7 +77,7 @@ Scope is exactly `whole issue` or `sub-issue CSL-M`, where CSL-M is a sub-issue 
 
 This guide sets no numeric project WIP cap; any new cap is a separate founder decision. RW-33 swarm depth and leaf limits are unaffected. Claim records are conventions, not locks: a comment is not atomic, and a misbehaving agent is made auditable, not prevented. Atomic compare-and-set claims, machine-enforced leases, fencing, a transactional cost ledger and WIP enforcement are proposed and unimplemented; do not treat them as current machine guarantees. This section changes no platform state, status or REGISTER claim schema and does not rewrite REGISTER policy.
 
-Shared research lives in the private repository [CSL-Laboratories/csl-research](https://github.com/CSL-Laboratories/csl-research). A research body produced under an admitted issue is published there as `submissions/<record_id>/` as part of that issue; no separate admission is needed. This guide grants no extra write route, access or spend. All research output (notes, briefs, findings, source tables, competitor or frontier writeups, research registers or indexes) goes to CSL-Laboratories/csl-research as `submissions/<record_id>/`, through a PR in that repo, with a digest on the Linear issue. Never commit research content to this repo; specs, amendments and code only link to the vault record (repo, 40-hex commit, path, claim, limitations). If csl-research is not accessible, stop and post a blocker on the Linear issue; do not fall back to this repo. Follow that repository's README, AGENTS.md, templates and `tools/check_submission.py`. The record carries the sanitized report, its SHA-256, the tool/processor, run id, retrieval time, cost or `unknown` plus a reason, a source-to-claim mapping, and `issue_urls`. An exact evidence reference requires the repository, the full 40-hex commit, the record path, and the claim and its limitations. Cite the owning product's authenticated exact-digest human receipt when the consumed fragment requires acceptance; otherwise label the material candidate-only and cite its authorized research scope. A receipt identifier alone does not verify identity, digest, scope, conditions or revocation; the responsible reviewer checks those at the source. A bootstrap commit alone proves no research finding. Keep submissions, reviewed knowledge and human decision pointers separate; agents do not promote their own submissions. This repository takes contracts, specs, fixtures and runbooks only. Existing `docs/research/**` and `docs/evidence/**` are legacy and frozen (no new files), except contract fixtures under `docs/replacement/outcomes/**`, which stay.
+Shared research lives in the private repository [CSL-Laboratories/csl-research](https://github.com/CSL-Laboratories/csl-research). A research body produced under an admitted issue is published there as `submissions/<record_id>/` as part of that issue; no separate admission is needed. This guide grants no extra write route, access or spend. All research output (notes, briefs, findings, source tables, competitor or frontier writeups, research registers or indexes) goes to CSL-Laboratories/csl-research as `submissions/<record_id>/`, through a PR in that repo, with a digest on the Linear issue. Never commit research content to this repo; specs, amendments and code only link to the vault record (repo, 40-hex commit, path, claim, limitations). If csl-research is not accessible, stop and post a blocker on the Linear issue; do not fall back to this repo. Follow that repository's README, AGENTS.md, templates and `tools/check_submission.py`. Each run records its tool, its run id and its cost (or `unknown` plus a reason) in its csl-research record. The record also carries the sanitized report, its SHA-256, retrieval time, a source-to-claim mapping, and `issue_urls`. An exact evidence reference requires the repository, the full 40-hex commit, the record path, and the claim and its limitations. Cite the owning product's authenticated exact-digest human receipt when the consumed fragment requires acceptance; otherwise label the material candidate-only and cite its authorized research scope. A receipt identifier alone does not verify identity, digest, scope, conditions or revocation; the responsible reviewer checks those at the source. A bootstrap commit alone proves no research finding. Keep submissions, reviewed knowledge and human decision pointers separate; agents do not promote their own submissions. This repository takes contracts, specs, fixtures and runbooks only. Existing `docs/research/**` and `docs/evidence/**` are legacy and frozen (no new files), except contract fixtures under `docs/replacement/outcomes/**`, which stay.
 
 Never commit secrets, private account details, raw chats, signed URLs, bulk copyrighted material or large dataset dumps to Git; reference approved storage through manifests only. An access denial stops the affected transfer; do not look for alternative routes. Existing approved budgets and subscription routes remain subject to their actual authority; this section activates no API fallback, overage or new spend. New research spend follows the founder decisions section above: Lucas retains spend and new services; any founder may decide research continuation within an already approved budget.
 
@@ -348,16 +348,16 @@ provisioned.
 Every issue and every execution step is grounded in research before the work.
 This applies to decision issues and implementation alike. Size the research to
 the task. No specific tool is required, and there is no separate mandatory
-research pipeline. Use whatever research resources you already have access to.
-Examples include ChatGPT Pro Deep Research, Claude Max research, Exa, Parallel,
-current library docs (for example Context7), the web, and primary sources and
-repo evidence; none of these is required.
+research pipeline. Research may use any deep-research source the team has,
+such as Parallel, Exa, Claude Deep Research, Open Deep Research, ChatGPT Deep
+Research or the web. Current library docs (for example Context7), primary
+sources and repo evidence remain available; none of these is required.
 
 Prefer already-paid subscriptions. Keep the standing no-pay-per-token-API rule:
 only already-paid subscriptions or existing allowances are used. Metered tools
 such as Exa and Parallel stay within their existing per-person ceilings. No new
-pay-per-token spend. Scheduled routines never start metered or paid research on
-their own.
+pay-per-token spend. This section adds no spend ceiling. Scheduled routines
+never start metered or paid research on their own.
 
 Record which source or tool produced each piece of evidence, with the date and
 the key sources, so the research can be checked. All research output (notes,
@@ -368,18 +368,19 @@ Linear issue. Never commit research content to this repo; specs, amendments
 and code only link to the vault record (repo, 40-hex commit, path, claim,
 limitations). If csl-research is not accessible, stop and post a blocker on
 the Linear issue; do not fall back to this repo. Follow that repository's
-README, AGENTS.md, templates and `tools/check_submission.py`. The record
-carries the sanitized report, its SHA-256, the tool/processor, run id,
-retrieval time, cost or `unknown` plus a reason, a source-to-claim mapping,
-and `issue_urls`. Existing `docs/research/**` and `docs/evidence/**` are
+README, AGENTS.md, templates and `tools/check_submission.py`. Each run
+records its tool, its run id and its cost (or `unknown` plus a reason) in
+its csl-research record. The record also carries the sanitized report, its
+SHA-256, retrieval time, a source-to-claim mapping, and `issue_urls`.
+Existing `docs/research/**` and `docs/evidence/**` are
 legacy and frozen (no new files), except contract fixtures under
 `docs/replacement/outcomes/**`, which stay.
 
 ## Engineering stack (Oct 2026)
 
-- **Parallel Search MCP** — web search and fetch at https://search.parallel.ai/mcp (no key).
+- **Parallel Search MCP** — available web search and fetch at https://search.parallel.ai/mcp (no key); not a required research route.
 - **Context7 MCP** — up-to-date library docs at https://mcp.context7.com/mcp (works without a key).
-- **Exa MCP** — available research source at https://mcp.exa.ai/mcp. Declared in `.cursor/mcp.json` and `.mcp.json`. The key goes in the `x-api-key` header from env var `EXA_API_KEY` (Cursor `${env:EXA_API_KEY}`, Claude Code `${EXA_API_KEY:-}`, so a missing key falls back to Exa's free rate-limited mode instead of breaking the file) and lives only in each environment's secret settings, never in tracked files, prompts, chat or logs. Capped at $50 per person per month (Lucas's decision, CSL-378 comment ff7227ac). Start a billable run only when it keeps you under the cap, and record each run's cost in its research record. Same query rules as Parallel: keep queries generic, with no secrets, proprietary code or private data.
+- **Exa MCP** — available research source at https://mcp.exa.ai/mcp. Declared in `.cursor/mcp.json` and `.mcp.json`. The key goes in the `x-api-key` header from env var `EXA_API_KEY` (Cursor `${env:EXA_API_KEY}`, Claude Code `${EXA_API_KEY:-}`, so a missing key falls back to Exa's free rate-limited mode instead of breaking the file) and lives only in each environment's secret settings, never in tracked files, prompts, chat or logs. Capped at $50 per person per month (Lucas's decision, CSL-378 comment ff7227ac). Start a billable run only when it keeps you under the cap, and record each run's cost in its research record. Keep queries generic, with no secrets, proprietary code or private data.
 - **Linear MCP** — issues, comments, and status at https://mcp.linear.app/mcp (or the Devin Linear integration).
 - **Linear** — source of truth for work. Workspace **CSL laboratories**, team key **CSL**, project **ai-investment-cockpit**.
 - **GitHub** — org **CSL-Laboratories**.

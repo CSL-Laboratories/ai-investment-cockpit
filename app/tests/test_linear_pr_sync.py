@@ -117,6 +117,8 @@ def test_render_contains_marker_and_fields():
     )
     assert "<!-- pr-sync:CSL-Laboratories/ai-investment-cockpit#124 -->" in text
     assert "Linear-first (CSL-88)" in text
+    assert "any deep-research source the team has" in text
+    assert "web research (Parallel)" not in text
     assert "CSL-Laboratories/csl-research as a submission record" in text
     assert "never to this repo" in text
     assert "digest on the Linear issue" in text

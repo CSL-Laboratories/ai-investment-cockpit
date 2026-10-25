@@ -1686,6 +1686,17 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("never marks the issue decided", self.agents)
         self.assertIn("No specific tool is required", self.agents)
         self.assertIn(
+            "any deep-research source the team has", self.agents
+        )
+        self.assertIn("Open Deep Research", self.agents)
+        self.assertIn("Claude Deep Research", self.agents)
+        self.assertIn("ChatGPT Deep Research", self.agents)
+        self.assertIn(
+            "Each run records its tool, its run id and its cost", self.agents
+        )
+        self.assertIn("no-pay-per-token-API", self.agents)
+        self.assertIn("This section adds no spend ceiling", self.agents)
+        self.assertIn(
             "Record which source or tool produced each piece of evidence",
             self.agents,
         )
@@ -1776,6 +1787,12 @@ class WorkflowStructureTests(unittest.TestCase):
             ),
             2,
         )
+        self.assertIn(
+            "any deep-research source the team has", writer
+        )
+        self.assertNotIn("web research (Parallel)", writer)
+        self.assertNotIn("web research (Parallel)", claude)
+        self.assertNotIn("web research (Parallel)", self.agents)
 
     def test_pat_job_token_has_narrow_receipt_scope_and_actionlint_is_checksummed(self) -> None:
         self.assertIn("contents: read", self.text)
