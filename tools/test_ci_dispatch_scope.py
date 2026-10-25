@@ -677,10 +677,25 @@ class _PushMatcher:
         snippet = match.group(0)
         if snippet.startswith(('git', '/git/refs/')):
             return False
+        # `"git", "push", "pull"` is a real push to a remote named `pull`, not a
+        # subcommand word list. Only treat later `"pull"` as data when `push` is
+        # the first list element.
+        if re.search(rf'{_Q}git{_Q}', snippet):
+            return False
+        if match.start() and text[match.start() - 1] == '(':
+            return False
         if _BENIGN_CALL.search(text[max(0, match.start() - 80):match.start()]):
             return True
-        nxt = _NEXT_QUOTED.match(text[match.end():])
-        return bool(nxt and nxt.group(1).lower() in _GIT_SUBCOMMANDS)
+        pos = match.end()
+        sibling = False
+        while True:
+            nxt = _NEXT_QUOTED.match(text[pos:])
+            if nxt is None:
+                return sibling and bool(re.match(r'\s*[\])]', text[pos:]))
+            if nxt.group(1).lower() not in _GIT_SUBCOMMANDS:
+                return False
+            sibling = True
+            pos += nxt.end()
 
 
 PUSH = _PushMatcher()
@@ -964,7 +979,9 @@ class CrossLaneAdmissionTests(unittest.TestCase):
                      'repo.run_git(["push", "-q", "--no-verify", url, ref], token=token)',
                      'subprocess.run([GIT, "push", url])', 'git("push", url)', 'self.git("push")',
                      '_git(["push", url])', 'run(["push", url])', 'cmd(["push", "--force", url])',
-                     'git_cmd = ["push", url]'):
+                     'git_cmd = ["push", url]',
+                     'subprocess.run(["git", "push", "pull", "HEAD"])',
+                     'run_git(["push", "pull", "HEAD"])', 'run_git(["push", "pull"])'):
             with self.subTest(push=push):
                 self.assertTrue(PUSH.search(push))
         for other in ('"check", "commit", "diff", "gh", "git", "log", "origin", "pr", "push", "pytest",',
