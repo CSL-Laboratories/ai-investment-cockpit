@@ -119,8 +119,8 @@ def test_render_contains_marker_and_fields():
     assert "Linear-first (CSL-88)" in text
     assert "any deep-research source the team has" in text
     assert "web research (Parallel)" not in text
-    assert "CSL-Laboratories/csl-research as a submission record" in text
-    assert "never to this repo" in text
+    assert "CSL-Laboratories/csl-research as a submissions record through a PR" in text
+    assert "Never commit research content to this repo" in text
     assert "digest on the Linear issue" in text
     assert "**Status:** draft" in text
     assert "**Devin review on head:** no" in text

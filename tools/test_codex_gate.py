@@ -1778,15 +1778,23 @@ class WorkflowStructureTests(unittest.TestCase):
             ROOT / ".github" / "workflows" / "claude-conflict-writer.yml"
         ).read_text(encoding="utf-8")
         self.assertIn(
-            "All research output goes to CSL-Laboratories/csl-research as a submission record, never to this repo",
+            "Research bodies go to CSL-Laboratories/csl-research as a submissions record through a PR there",
             writer,
         )
         self.assertGreaterEqual(
             writer.count(
-                "All research output goes to CSL-Laboratories/csl-research as a submission record, never to this repo"
+                "Research bodies go to CSL-Laboratories/csl-research as a submissions record through a PR there"
             ),
             2,
         )
+        self.assertIn("Never commit research content to this repo", writer)
+        self.assertIn(
+            "An agent working in both repos follows each repo's own rule",
+            self.agents,
+        )
+        self.assertIn("This note changes neither rule", self.agents)
+        self.assertNotIn("research-attestations/", self.agents)
+        self.assertNotIn("research-attestations/", claude)
         self.assertIn(
             "any deep-research source the team has", writer
         )
