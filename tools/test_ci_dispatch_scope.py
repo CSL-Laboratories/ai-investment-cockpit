@@ -3,6 +3,7 @@
 Run: python -m unittest discover -s tools -p test_ci_dispatch_scope.py -v
 Requires PyYAML (already part of the repository validation dependencies).
 """
+import copy
 import json
 import os
 import re
@@ -626,12 +627,10 @@ SCAN_JOBS = {'conflict-scan': 'scan', 'conflict-resolve': 'caller'}
 MODEL_ACCESS = re.compile(r'ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN|anthropics/claude-code-action', re.IGNORECASE)
 HOSTED = {'ubuntu-latest', 'ubuntu-24.04', 'ubuntu-22.04', 'windows-2025', 'windows-latest', 'macos-latest'}
 MODEL_BASH = 'Bash(python3 ${{ runner.temp }}/claude-fixer-guard/model-api --:*)'
-# A push, in shell or argv form. Shell: `git`, then global options (`-C dir`, `-c k=v`, `--no-pager`),
-# then `push`, across backslash continuations. Argv: a quoted `"push"` element that opens a list or
-# tuple (`["push"`, `prefix + ["push"`) or follows only option tokens and bare expressions after the
-# opening bracket or a quoted `"git"` (`[*prefix, "push"`, `run_git(["-C", repo, "push"`,
-# `["git", "-C", repo, "push"`). Quotes may be backslash-escaped. A quoted non-option word before
-# `"push"` (a prompt word list such as `"git", "log", "origin", "pr", "push"`) is not a push.
+# A push, in shell or argv form. Shell: `git`, then global options (`-C dir`, `-c k=v`,
+# `--git-dir path`, `--no-pager`), then `push`, across backslash continuations. Argv: a quoted
+# `"git"` list, `run_git([...]`, or `prefix + ["push"` / `*prefix, "push"`. Quotes may be
+# backslash-escaped. `print("push")` and `["push", "pull"]` are not pushes.
 _Q = r'\\?["\']'
 _STR = r'[rbfuRBFU]{0,2}' + _Q + r'[^"\'\n]*' + _Q
 _OPT = r'[rbfuRBFU]{0,2}' + _Q + r'-[^"\'\n]*' + _Q
@@ -639,8 +638,39 @@ _EXPR = r'\*?[A-Za-z_][\w.]*(?:\([^()\n]*\)|\[[^\[\]\n]*\])*'
 _SEP = r'\s*,\s*'
 _TOKEN = rf'(?:{_OPT}(?:{_SEP}(?:{_STR}|{_EXPR}))?|{_EXPR})'
 _GAP = r'(?:\s|\\\n)+'
-PUSH = re.compile(rf'(?:[\[(]\s*|{_Q}git{_Q}{_SEP})(?:{_TOKEN}{_SEP}){{0,12}}{_Q}push{_Q}'
-                  rf'|\bgit(?:{_GAP}(?:-[Cc]{_GAP}\S+|--?[A-Za-z][\w-]*(?:=\S+)?))*{_GAP}push\b|/git/refs/')
+_GIT_VAL = (r'(?:--(?:git-dir|work-tree|namespace|config-env|super-prefix|attr-source))'
+            rf'(?:={_GAP}?\S+|{_GAP}\S+)')
+_GIT_OPT = rf'(?:-[Cc]{_GAP}\S+|{_GIT_VAL}|--?[A-Za-z][\w-]*(?:=\S+)?)'
+PUSH = re.compile(
+    rf'(?:{_Q}git{_Q}{_SEP}(?:{_TOKEN}{_SEP}){{0,12}}'
+    rf'|(?:run_git|\.run_git)\s*\(\s*\[\s*(?:{_TOKEN}{_SEP}){{0,12}}'
+    rf'|(?:[A-Za-z_][\w.]*\s*\+\s*\[\s*|\*\s*[A-Za-z_][\w.]*\s*,\s*)){_Q}push{_Q}'
+    rf'|\bgit(?:{_GAP}{_GIT_OPT})*{_GAP}push\b|/git/refs/'
+)
+CI_LABELS = frozenset({'ci:full', 'enhancement'})
+HANDOFF_CONST = re.compile(
+    r"(?m)^\s*(?:HANDOFF_LABEL|MODEL_API_LABEL)\s*[=:]\s*(?:['\"]([^'\"]+)['\"]|(\S+))"
+)
+LABEL_ARRAY = re.compile(
+    r'''(?:["']labels["']\s*:|labels\s*=)\s*\[([^\]]*)\]''', re.IGNORECASE | re.DOTALL
+)
+ISSUE_RESOURCE = re.compile(r'/issues/(?:\{[^}]+\}|\$[\w.]+|\d+)(?!/)')
+WRITER_CALL = re.compile(
+    r'(?m)^\s+uses:\s*["\']?(?:\./)?\.github/workflows/claude-conflict-writer\.ya?ml["\']?\s*(?:#.*)?$'
+)
+MODEL_SECRETS = re.compile(r'\$\{\{\s*secrets\.(?!CLAUDE_CODE_OAUTH_TOKEN\b)[A-Z0-9_]+\s*\}\}')
+EXPECTED_LOCK = {
+    'claude.yml': 'claude-${{ needs.resolve-pr.outputs.pr_number }}',
+    'claude-conflict-writer.yml': 'claude-${{ inputs.pr_number }}',
+}
+ROLE_USES = {
+    'prep': (),
+    'model': ('actions/checkout@', 'actions/setup-python@',
+              'anthropics/claude-code-action@', 'actions/upload-artifact@'),
+    'publish': ('actions/download-artifact@',),
+    'verify': (),
+}
+MODEL_PERMS = {'contents': 'read', 'pull-requests': 'read', 'issues': 'read'}
 # Inside a whole push command: force, lease, mirror or delete options (also in short-option clusters
 # such as `-fq`), and a refspec that starts with `+` (forced) or `:` (delete).
 FORCED_PUSH = re.compile(r'--force|--mirror|--delete|(?<![\w-])-[A-Za-z]*[fd][A-Za-z]*(?![\w-])'
@@ -650,6 +680,86 @@ FORCED_PUSH = re.compile(r'--force|--mirror|--delete|(?<![\w-])-[A-Za-z]*[fd][A-
 LABEL_WRITE = re.compile(r'\b(?:POST|PUT|PATCH)\b|(?<![\w-])(?:-f|-F|--field|--raw-field|--input|-d|--data[\w-]*'
                          r'|--json)(?![\w-])')
 SPAN_LINES = 40
+
+
+def job_keys(text):
+    """Job ids at the `jobs:` indent, including quoted keys such as `"extra-job":`."""
+    match = re.search(r'(?m)^jobs:\s*(?:#.*)?$', text)
+    if not match:
+        return set()
+    rest = text[match.end():]
+    stop = re.search(r'(?m)^[^\s#]', rest)
+    block = rest[:stop.start()] if stop else rest
+    keys = []
+    for item in re.finditer(r'(?m)^  (?:["\']([^"\']+)["\']|([A-Za-z_][\w-]*)):', block):
+        keys.append(item.group(1) or item.group(2))
+    return set(keys)
+
+
+def job_uses(job):
+    return [str(step.get('uses')) for step in job.get('steps') or [] if step.get('uses')]
+
+
+def uses_allowed(job, role):
+    allowed = ROLE_USES[role]
+    return all(any(uses.startswith(prefix) for prefix in allowed) for uses in job_uses(job))
+
+
+def writer_callers(directory):
+    return {path.name for path in Path(directory).glob('*.y*ml')
+            if WRITER_CALL.search(path.read_text(encoding='utf-8'))}
+
+
+def handoff_constants(text):
+    return [match.group(1) or match.group(2) for match in HANDOFF_CONST.finditer(text)]
+
+
+def labels_in_span(span):
+    names = []
+    for match in LABEL_ARRAY.finditer(span):
+        for token in re.finditer(r'HANDOFF_LABEL|[rbfuRBFU]{0,2}["\']([^"\']+)["\']', match.group(1)):
+            names.append('needs-decision' if token.group(0) == 'HANDOFF_LABEL' else token.group(1))
+    if re.search(r'addLabelsToLabelable', span, re.IGNORECASE):
+        if 'HANDOFF_LABEL' in span:
+            names.append('needs-decision')
+        names.extend(token.group(1) for token in re.finditer(r'["\']([^"\']+)["\']', span)
+                     if token.group(1) in CI_LABELS | {'needs-decision'})
+    return names
+
+
+def ci_label_add_violations(text):
+    """CI-label adds the writers must not perform, including issue PATCH and GraphQL."""
+    hits, seen = [], set()
+
+    def consider(pos, kind):
+        span = command_span(text, pos)
+        key = (kind, span)
+        if key in seen:
+            return
+        seen.add(key)
+        names = labels_in_span(span)
+        if kind == 'graphql':
+            if set(names) & CI_LABELS or (
+                    'HANDOFF_LABEL' not in span and 'needs-decision' not in names):
+                hits.append(span)
+            return
+        if not LABEL_WRITE.search(span):
+            return
+        if kind == 'issue-patch' and not names and not re.search(r'\blabels\b', span):
+            return
+        if set(names) & CI_LABELS:
+            hits.append(span)
+            return
+        if kind == 'labels-path' and 'HANDOFF_LABEL' not in span and 'needs-decision' not in names:
+            hits.append(span)
+
+    for match in re.finditer(r'/labels\b', text):
+        consider(match.start(), 'labels-path')
+    for match in ISSUE_RESOURCE.finditer(text):
+        consider(match.start(), 'issue-patch')
+    for match in re.finditer(r'addLabelsToLabelable', text, re.IGNORECASE):
+        consider(match.start(), 'graphql')
+    return hits
 
 
 def job_text(job):
@@ -714,8 +824,13 @@ class CrossLaneAdmissionTests(unittest.TestCase):
                  if re.search(r'anthropics/claude-code|ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN', p.read_text())}
         self.assertEqual(found, set(WRITER_FILES))
         for name, jobs in WRITER_JOBS.items():
-            self.assertEqual(set(workflow(name)['jobs']), set(jobs) | NON_WRITER_JOBS[name])
-        self.assertEqual(set(workflow('conflict-scan.yml')['jobs']), set(SCAN_JOBS))
+            parsed = set(workflow(name)['jobs'])
+            self.assertEqual(parsed, set(jobs) | NON_WRITER_JOBS[name])
+            self.assertEqual(job_keys((WORKFLOWS / name).read_text()), parsed)
+        scan_jobs = set(workflow('conflict-scan.yml')['jobs'])
+        self.assertEqual(scan_jobs, set(SCAN_JOBS))
+        self.assertEqual(job_keys((WORKFLOWS / 'conflict-scan.yml').read_text()), scan_jobs)
+        self.assertEqual(writer_callers(WORKFLOWS), {'conflict-scan.yml'})
 
     def test_writers_never_dispatch_rerun_or_ready_ci(self):
         for name in WRITER_FILES:
@@ -739,13 +854,14 @@ class CrossLaneAdmissionTests(unittest.TestCase):
                 self.assertNotRegex(text, r'--add-label|gh pr edit|labels\[\]=')
                 self.assertNotRegex(text, r'"labels":\s*\[\s*"(ci:full|enhancement)"')
                 # Every label write is the handoff label; ci:full is only ever removed (DELETE of a
-                # gate-owned label event). Each check reads the whole call or continued shell command
-                # around `/labels`, so a method or body written on another line still counts.
-                for match in re.finditer(r'/labels\b', text):
-                    span = command_span(text, match.start())
-                    if LABEL_WRITE.search(span):
-                        self.assertIn('HANDOFF_LABEL', span)
-                self.assertEqual(set(re.findall(r'HANDOFF_LABEL = "([^"]+)"', text)) - {'needs-decision'}, set())
+                # gate-owned label event). The span covers `/labels`, PATCH of the issue resource,
+                # and GraphQL addLabelsToLabelable, and the complete label set — not the first name.
+                self.assertEqual(ci_label_add_violations(text), [])
+                constants = handoff_constants(text)
+                self.assertTrue(set(constants) <= {'needs-decision'}, constants)
+                if name != 'conflict-scan.yml':
+                    self.assertTrue(constants)
+                    self.assertEqual(set(constants), {'needs-decision'})
 
     def test_conflict_resolve_caller_permissions_are_exact(self):
         # The reusable-workflow caller grants its inner jobs their ceiling; it holds no lock itself.
@@ -799,9 +915,15 @@ class CrossLaneAdmissionTests(unittest.TestCase):
             with self.subTest(push=push):
                 self.assertTrue(PUSH.search(push))
         for other in ('"check", "commit", "diff", "gh", "git", "log", "origin", "pr", "push", "pytest",',
-                      'NEVER push or force-push', 'subprocess.run(["git", "-C", repo, "status"])'):
+                      'NEVER push or force-push', 'subprocess.run(["git", "-C", repo, "status"])',
+                      'print("push")', 'allowed_commands = ["push", "pull"]'):
             with self.subTest(other=other):
                 self.assertFalse(PUSH.search(other))
+        for push in ('git --git-dir "$X" push origin HEAD',
+                     'git --work-tree "$W" --git-dir "$G" push',
+                     'git --namespace foo push origin'):
+            with self.subTest(valued=push):
+                self.assertTrue(PUSH.search(push))
         # The force check reads the whole wrapped command.
         for forced in ('run_git([\n    "push",\n    "--force-with-lease", url])', 'run_git(["push",\n    "-f"])',
                        'git push \\\n  --force origin HEAD', 'run_git(["push", url, f"+{sha}:refs/heads/x"])',
@@ -825,7 +947,7 @@ class CrossLaneAdmissionTests(unittest.TestCase):
                 self.assertIn('concurrency', doc['jobs'][job_name], f'{name}:{job_name} needs the claude-<PR> lock')
                 conc = doc['jobs'][job_name]['concurrency']
                 with self.subTest(workflow=name, job=job_name):
-                    self.assertRegex(conc['group'], r'^claude-\$\{\{ (needs\.resolve-pr\.outputs\.pr_number|inputs\.pr_number) \}\}$')
+                    self.assertEqual(conc['group'], EXPECTED_LOCK[name])
                     self.assertEqual(conc['cancel-in-progress'], 'false')
                     self.assertEqual(conc['queue'], 'max')
 
@@ -847,6 +969,11 @@ class CrossLaneAdmissionTests(unittest.TestCase):
                         self.assertEqual(perms.get('contents'), 'read')
                         # No writer job may write code, workflows or packages; PR and issue writes only.
                         self.assertTrue(set(perms) <= {'contents', 'pull-requests', 'issues', 'id-token'})
+                    if role == 'model':
+                        # Values, not only scope names: the model token stays read-only.
+                        self.assertEqual(perms, MODEL_PERMS)
+                        self.assertIsNone(MODEL_SECRETS.search(str(job)))
+                    self.assertTrue(uses_allowed(job, role), job_uses(job))
                     uses_model = any(str(s.get('uses', '')).startswith('anthropics/claude-code-action') for s in job['steps'])
                     self.assertEqual(uses_model, role == 'model')
                     if role != 'model':
@@ -910,6 +1037,95 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         scan_job = workflow('conflict-scan.yml')['jobs']['conflict-scan']
         self.assertIn(pause_py, job_text(scan_job))
         self.assertIn('${{ vars.CLAUDE_FIXER_PAUSE }}', str(scan_job))
+
+    def test_lock_group_mutation_rejects_the_other_workflows_expression(self):
+        # Before: any of the two expressions passed. After: each workflow is pinned.
+        old = re.compile(r'^claude-\$\{\{ (needs\.resolve-pr\.outputs\.pr_number|inputs\.pr_number) \}\}$')
+        swapped = 'claude-${{ inputs.pr_number }}'
+        self.assertRegex(swapped, old)
+        self.assertNotEqual(swapped, EXPECTED_LOCK['claude.yml'])
+        job = copy.deepcopy(workflow('claude.yml')['jobs']['claude-mention'])
+        job['concurrency']['group'] = swapped
+        self.assertNotEqual(job['concurrency']['group'], EXPECTED_LOCK['claude.yml'])
+
+    def test_label_write_mutations_cover_issue_patch_graphql_and_full_set(self):
+        mixed = 'write("POST", f"{root}/issues/{n}/labels", {"labels": [HANDOFF_LABEL, "ci:full"]})'
+        self.assertIn('HANDOFF_LABEL', mixed)
+        self.assertTrue(ci_label_add_violations(mixed))
+        patch = ('check_call(["gh", "api", "--method", "PATCH", '
+                 'f"repos/{r}/issues/{n}", "--input", '
+                 '\'{"labels": [HANDOFF_LABEL, "ci:full"]}\'])')
+        self.assertFalse(re.search(r'/labels\b', patch))
+        self.assertTrue(ci_label_add_violations(patch))
+        graphql = ('gh api graphql -f query=\'mutation { addLabelsToLabelable(input: '
+                   '{labelableId: $id, labelIds: ["ci:full"]}) { clientMutationId } }\'')
+        self.assertFalse(re.search(r'/labels\b', graphql))
+        self.assertTrue(ci_label_add_violations(graphql))
+        handoff = 'write("POST", f"{root}/issues/{n}/labels", {"labels": [HANDOFF_LABEL]})'
+        self.assertEqual(ci_label_add_violations(handoff), [])
+        title = 'check_call(["gh", "api", "--method", "PATCH", f"repos/{r}/issues/{n}", "-f", "title=x"])'
+        self.assertEqual(ci_label_add_violations(title), [])
+
+    def test_handoff_constant_mutations_reject_empty_and_wrong_values(self):
+        old = lambda text: set(re.findall(r'HANDOFF_LABEL = "([^"]+)"', text)) - {'needs-decision'}
+        self.assertEqual(old(''), set())
+        self.assertEqual(handoff_constants(''), [])
+        quoted = "HANDOFF_LABEL = 'needs-decision'\nMODEL_API_LABEL: needs-decision\n"
+        self.assertEqual(old(quoted), set())
+        self.assertEqual(set(handoff_constants(quoted)), {'needs-decision'})
+        self.assertEqual(set(handoff_constants('HANDOFF_LABEL = \'ci:full\'\n')), {'ci:full'})
+        self.assertEqual(set(handoff_constants('MODEL_API_LABEL: enhancement\n')), {'enhancement'})
+
+    def test_model_job_permission_and_secret_mutations(self):
+        job = copy.deepcopy(workflow('claude.yml')['jobs']['claude-mention'])
+        job['permissions']['issues'] = 'write'
+        self.assertTrue(set(job['permissions']) <= {'contents', 'pull-requests', 'issues', 'id-token'})
+        self.assertNotEqual(job['permissions'], MODEL_PERMS)
+        leaked = copy.deepcopy(workflow('claude.yml')['jobs']['claude-mention'])
+        leaked['steps'][0]['env'] = {**(leaked['steps'][0].get('env') or {}),
+                                     'GH_TOKEN': '${{ secrets.MY_PAT }}'}
+        self.assertIsNotNone(MODEL_SECRETS.search(str(leaked)))
+        self.assertIsNone(MODEL_SECRETS.search(str(workflow('claude.yml')['jobs']['claude-mention'])))
+
+    def test_quoted_job_key_mutation_is_inventoried(self):
+        text = (WORKFLOWS / 'claude.yml').read_text()
+        mutated = text.replace('\n  claude-mention:',
+                               '\n  "extra-job":\n    runs-on: ubuntu-latest\n  claude-mention:', 1)
+        expected = set(WRITER_JOBS['claude.yml']) | NON_WRITER_JOBS['claude.yml']
+        self.assertEqual(job_keys(text), expected)
+        self.assertIn('extra-job', job_keys(mutated))
+        self.assertIn('extra-job', yaml.load(mutated, Loader=yaml.BaseLoader)['jobs'])
+        self.assertNotEqual(job_keys(mutated), expected)
+
+    def test_reusable_writer_caller_without_model_markers_is_inventoried(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            (tmp / 'quiet.yml').write_text(
+                'name: quiet\non: workflow_dispatch\njobs:\n  call:\n'
+                '    uses: ./.github/workflows/claude-conflict-writer.yml\n'
+                '    secrets: inherit\n', encoding='utf-8')
+            markers = {path.name for path in tmp.glob('*.y*ml')
+                       if re.search(r'anthropics/claude-code|ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN',
+                                    path.read_text(encoding='utf-8'))}
+            self.assertEqual(markers, set())
+            self.assertEqual(writer_callers(tmp), {'quiet.yml'})
+
+    def test_unapproved_action_in_prep_or_model_is_rejected(self):
+        prep = copy.deepcopy(workflow('claude.yml')['jobs']['mention-prepare'])
+        prep.setdefault('steps', []).append({'uses': 'ad-m/github-push-action@v0.8.0'})
+        self.assertFalse(PUSH.search(job_text(prep)))
+        self.assertFalse(uses_allowed(prep, 'prep'))
+        model = copy.deepcopy(workflow('claude.yml')['jobs']['claude-mention'])
+        model['steps'].append({'uses': './.github/actions/publish/action.yml'})
+        self.assertFalse(uses_allowed(model, 'model'))
+        self.assertTrue(uses_allowed(workflow('claude.yml')['jobs']['claude-mention'], 'model'))
+
+    def test_runbook_names_the_github_token_dispatch_exception(self):
+        runbook = next(path for path in (ROOT / 'docs').iterdir() if path.name == 'ci-runbook.md')
+        section = runbook.read_text(encoding='utf-8').split('## 5.', 1)[0]
+        self.assertIn('workflow_dispatch', section)
+        self.assertIn('repository_dispatch', section)
+        self.assertIn('forward-conflict-scan', section)
 
 if __name__ == '__main__':
     unittest.main()

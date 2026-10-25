@@ -56,8 +56,10 @@ adds `ci:full` / `enhancement` (AGENTS.md:143-144, 155-159). Escalate on the Lin
    approval setting (contract G14); a writer reviews the fork diff, then approves. A `pull_request`
    opened, synchronized or reopened by a `GITHUB_TOKEN` automation also waits for approval (GitHub
    docs, triggering a workflow); the Claude writers push with an App token instead (contract §7).
-   Any other event a `GITHUB_TOKEN` triggers, such as a label or `ready_for_review`, creates no run
-   at all, so recovery is a human action or an App or PAT identity.
+   `workflow_dispatch` and `repository_dispatch` are the documented exception: a `GITHUB_TOKEN`
+   identity still creates those runs. That includes `forward-conflict-scan` dispatching
+   `conflict-scan.yml`. Any other event a `GITHUB_TOKEN` triggers, such as a label or
+   `ready_for_review`, creates no run at all, so recovery is a human action or an App or PAT identity.
 3. A run is queued for minutes: check the org runner capacity (Team plan: 60 concurrent jobs, 5
    macOS, shared with recursion and every bot workflow; GitHub docs, Actions limits). macOS
    saturates first.
