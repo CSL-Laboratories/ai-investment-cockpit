@@ -717,13 +717,34 @@ _SECRET_EXPR = re.compile(r'\$\{\{\s*secrets\.[A-Z0-9_]+\s*\}\}')
 _OAUTH_ACTION_INPUT = re.compile(
     r'''['"]?claude_code_oauth_token['"]?\s*:\s*['"]?\$\{\{\s*secrets\.CLAUDE_CODE_OAUTH_TOKEN\s*\}\}['"]?'''
 )
+_OAUTH_VALUE = re.compile(r'^\$\{\{\s*secrets\.CLAUDE_CODE_OAUTH_TOKEN\s*\}\}$')
 
 
 class _ModelSecrets:
-    """secrets.* in a model job. The OAuth token is allowed only as the action input."""
+    """secrets.* in a model job. The OAuth token is allowed only as the Claude action `with` input."""
 
-    def search(self, text):
-        return _SECRET_EXPR.search(_OAUTH_ACTION_INPUT.sub('', text))
+    def search(self, job):
+        if not isinstance(job, dict):
+            return _SECRET_EXPR.search(_OAUTH_ACTION_INPUT.sub('', str(job)))
+        if self._secrets(job.get('env')):
+            return True
+        for step in job.get('steps') or []:
+            uses = str(step.get('uses') or '')
+            with_block = dict(step.get('with') or {})
+            if uses.startswith('anthropics/claude-code-action'):
+                token = with_block.pop('claude_code_oauth_token', None)
+                if (token is not None
+                        and not _OAUTH_VALUE.fullmatch(str(token).strip())
+                        and _SECRET_EXPR.search(str(token))):
+                    return True
+            if (self._secrets(step.get('env')) or self._secrets(with_block)
+                    or _SECRET_EXPR.search(str(step.get('run') or ''))):
+                return True
+        return None
+
+    @staticmethod
+    def _secrets(mapping):
+        return mapping is not None and _SECRET_EXPR.search(str(mapping)) is not None
 
 
 MODEL_SECRETS = _ModelSecrets()
@@ -1084,7 +1105,7 @@ class CrossLaneAdmissionTests(unittest.TestCase):
                     if role == 'model':
                         # Values, not only scope names: the model token stays read-only.
                         self.assertEqual(perms, MODEL_PERMS)
-                        self.assertIsNone(MODEL_SECRETS.search(str(job)))
+                        self.assertIsNone(MODEL_SECRETS.search(job))
                         self.assertTrue(model_github_token_ok(job))
                     self.assertTrue(uses_allowed(job, role), job_uses(job))
                     uses_model = any(str(s.get('uses', '')).startswith('anthropics/claude-code-action') for s in job['steps'])
@@ -1198,18 +1219,33 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         leaked = copy.deepcopy(workflow('claude.yml')['jobs']['claude-mention'])
         leaked['steps'][0]['env'] = {**(leaked['steps'][0].get('env') or {}),
                                      'GH_TOKEN': '${{ secrets.MY_PAT }}'}
-        self.assertIsNotNone(MODEL_SECRETS.search(str(leaked)))
+        self.assertIsNotNone(MODEL_SECRETS.search(leaked))
         live = workflow('claude.yml')['jobs']['claude-mention']
-        self.assertIsNone(MODEL_SECRETS.search(str(live)))
+        self.assertIsNone(MODEL_SECRETS.search(live))
         oauth_env = copy.deepcopy(live)
         oauth_env['steps'][0]['env'] = {**(oauth_env['steps'][0].get('env') or {}),
                                         'CLAUDE_CODE_OAUTH_TOKEN':
                                             '${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}'}
-        self.assertIsNotNone(MODEL_SECRETS.search(str(oauth_env)))
+        self.assertIsNotNone(MODEL_SECRETS.search(oauth_env))
         gh_secret = copy.deepcopy(live)
         gh_secret['steps'][0]['env'] = {**(gh_secret['steps'][0].get('env') or {}),
                                         'GH_TOKEN': '${{ secrets.GITHUB_TOKEN }}'}
-        self.assertIsNotNone(MODEL_SECRETS.search(str(gh_secret)))
+        self.assertIsNotNone(MODEL_SECRETS.search(gh_secret))
+        oauth_job_env = copy.deepcopy(live)
+        oauth_job_env['env'] = {**(oauth_job_env.get('env') or {}),
+                                'claude_code_oauth_token':
+                                    '${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}'}
+        self.assertIsNone(_SECRET_EXPR.search(_OAUTH_ACTION_INPUT.sub('', str(oauth_job_env))))
+        self.assertIsNotNone(MODEL_SECRETS.search(oauth_job_env))
+        oauth_step_env = copy.deepcopy(live)
+        for step in oauth_step_env['steps']:
+            if str(step.get('uses') or '').startswith('anthropics/claude-code-action'):
+                step['env'] = {**(step.get('env') or {}),
+                               'claude_code_oauth_token':
+                                   '${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}'}
+                break
+        self.assertIsNone(_SECRET_EXPR.search(_OAUTH_ACTION_INPUT.sub('', str(oauth_step_env))))
+        self.assertIsNotNone(MODEL_SECRETS.search(oauth_step_env))
         self.assertTrue(model_github_token_ok(live))
         self.assertFalse(model_github_token_ok(job))
         pat_input = copy.deepcopy(live)
