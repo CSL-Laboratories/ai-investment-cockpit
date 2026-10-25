@@ -691,6 +691,7 @@ WRITER_CALL = re.compile(
 _SECRET_EXPR = re.compile(
     r'''secrets(?:\.[A-Za-z0-9_]+|\[\s*['"][A-Za-z0-9_]+['"]\s*\])'''
 )
+_SECRETS_CONTEXT = re.compile(r'\bsecrets\b')
 _GH_EXPR = re.compile(r'\$\{\{(.*?)\}\}', re.DOTALL)
 _OAUTH_ACTION_INPUT = re.compile(
     r'''['"]?claude_code_oauth_token['"]?\s*:\s*['"]?\$\{\{\s*secrets\.CLAUDE_CODE_OAUTH_TOKEN\s*\}\}['"]?'''
@@ -738,7 +739,7 @@ class _ModelSecrets:
     @staticmethod
     def _in_exprs(text):
         for body in _GH_EXPR.findall(text):
-            hit = _SECRET_EXPR.search(body)
+            hit = _SECRETS_CONTEXT.search(body)
             if hit:
                 return hit
         return None
@@ -1274,6 +1275,12 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         literal = copy.deepcopy(live)
         literal['steps'][0]['run'] = "echo 'secrets.MY_PAT'"
         self.assertIsNone(MODEL_SECRETS.search(literal))
+        for dump in ('echo ${{ toJSON(secrets) }}', 'echo ${{ toJson(secrets) }}',
+                     'echo ${{ join(secrets.*) }}',
+                     "echo ${{ secrets[format('MY_{0}','PAT')] }}"):
+            dumped = copy.deepcopy(live)
+            dumped['steps'][0]['run'] = dump
+            self.assertIsNotNone(MODEL_SECRETS.search(dumped), dump)
         self.assertTrue(model_github_token_ok(live))
         self.assertFalse(model_github_token_ok(job))
         pat_input = copy.deepcopy(live)
