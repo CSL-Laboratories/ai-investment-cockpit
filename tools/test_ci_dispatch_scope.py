@@ -746,6 +746,7 @@ MODEL_SECRETS = _ModelSecrets()
 MODEL_GITHUB_TOKEN_EXCEPTION = re.compile(
     r'''['"]?github_token['"]?\s*:\s*['"]?\$\{\{\s*github\.token\s*\}\}['"]?'''
 )
+_GITHUB_TOKEN_VALUE = re.compile(r'^\$\{\{\s*github\.token\s*\}\}$')
 _SECRET_GITHUB_TOKEN = re.compile(
     r'''['"]?github_token['"]?\s*:\s*['"]?\$\{\{\s*secrets\.'''
 )
@@ -813,16 +814,15 @@ def model_github_token_ok(job):
     hide a PAT or `vars.*` mapping on the Claude action.
     """
     perms = job.get('permissions') or {}
-    if not perms or any(value != 'read' for value in perms.values()):
+    if (not isinstance(perms, dict) or not perms
+            or any(value != 'read' for value in perms.values())):
         return False
     tokens = []
     for step in job.get('steps') or []:
         token = (step.get('with') or {}).get('github_token')
         if token is not None:
             tokens.append(str(token).strip())
-    return bool(tokens) and all(
-        MODEL_GITHUB_TOKEN_EXCEPTION.search(f'github_token: {token}') for token in tokens
-    )
+    return bool(tokens) and all(_GITHUB_TOKEN_VALUE.fullmatch(token) for token in tokens)
 
 
 def writer_callers(directory):
@@ -1290,6 +1290,20 @@ class CrossLaneAdmissionTests(unittest.TestCase):
             {'name': 'decoy', 'run': 'echo github_token: ${{ github.token }}'})
         self.assertIsNotNone(MODEL_GITHUB_TOKEN_EXCEPTION.search(str(vars_pat)))
         self.assertFalse(model_github_token_ok(vars_pat))
+        multiline = copy.deepcopy(live)
+        decoy = '${{ vars.MY_PAT }}\ngithub_token: ${{ github.token }}'
+        for step in multiline['steps']:
+            with_block = step.get('with') or {}
+            if 'github_token' in with_block:
+                with_block['github_token'] = decoy
+                step['with'] = with_block
+                break
+        self.assertIsNotNone(MODEL_GITHUB_TOKEN_EXCEPTION.search(f'github_token: {decoy}'))
+        self.assertIsNone(MODEL_SECRETS.search(multiline))
+        self.assertFalse(model_github_token_ok(multiline))
+        string_perms = copy.deepcopy(live)
+        string_perms['permissions'] = 'read-all'
+        self.assertFalse(model_github_token_ok(string_perms))
 
     def test_quoted_job_key_mutation_is_inventoried(self):
         text = (WORKFLOWS / 'claude.yml').read_text()
