@@ -2,9 +2,10 @@
 
 > **How CSL works:** start with the Linear doc [How CSL works](https://linear.app/csl-laboratories/document/how-csl-works-922e0df6026f).
 
-This project is a solo-developer, subscription-powered, human-gated investing
-copilot. It is paper-first: no live capital moves until the pre-live gates in
-`docs/security-hardening-backlog.md` are satisfied.
+This project is a three-founder, subscription-powered, human-gated investing
+copilot. The three founders are Lucas (NotSkittlz), Chaandan (CDanTheMan), and
+Samir (samir-shah-ahmed). It is paper-first: no live capital moves until the
+pre-live gates in `docs/security-hardening-backlog.md` are satisfied.
 
 The ratified [PRODUCT.md](PRODUCT.md) owns the autonomous paper-product target and
 acceptance; [docs/PLAN.md](docs/PLAN.md) owns delivery order. The current human-gated
@@ -76,7 +77,7 @@ Scope is exactly `whole issue` or `sub-issue CSL-M`, where CSL-M is a sub-issue 
 
 This guide sets no numeric project WIP cap; any new cap is a separate founder decision. RW-33 swarm depth and leaf limits are unaffected. Claim records are conventions, not locks: a comment is not atomic, and a misbehaving agent is made auditable, not prevented. Atomic compare-and-set claims, machine-enforced leases, fencing, a transactional cost ledger and WIP enforcement are proposed and unimplemented; do not treat them as current machine guarantees. This section changes no platform state, status or REGISTER claim schema and does not rewrite REGISTER policy.
 
-Shared research lives in the private repository [CSL-Laboratories/csl-research](https://github.com/CSL-Laboratories/csl-research). Do not assume published records, a record schema or a validator exist until they are actually present there. A research record should carry sanitized prompt and result hashes; provider, model and processor; run ID or the reason no paid run was made; retrieval date; estimated, reserved and actual costs and any unknowns; a mapping from sources to claims; limitations; what it supersedes; and an artifact manifest. An exact evidence reference requires the repository, the full 40-hex commit, the record path, and the claim and its limitations. Cite the owning product's authenticated exact-digest human receipt when the consumed fragment requires acceptance; otherwise label the material candidate-only and cite its authorized research scope. A receipt identifier alone does not verify identity, digest, scope, conditions or revocation; the responsible reviewer checks those at the source. A bootstrap commit alone proves no research finding. Keep submissions, reviewed knowledge and human decision pointers separate; agents do not promote their own submissions.
+Shared research lives in the private repository [CSL-Laboratories/csl-research](https://github.com/CSL-Laboratories/csl-research). A research body produced under an admitted issue is published there as `submissions/<record_id>/` as part of that issue; no separate admission is needed. This guide grants no extra write route, access or spend. All research output (notes, briefs, findings, source tables, competitor or frontier writeups, research registers or indexes) goes to CSL-Laboratories/csl-research as `submissions/<record_id>/`, through a PR in that repo, with a digest on the Linear issue. Never commit research content to this repo; specs, amendments and code only link to the vault record (repo, 40-hex commit, path, claim, limitations). If csl-research is not accessible, stop and post a blocker on the Linear issue; do not fall back to this repo. Follow that repository's README, AGENTS.md, templates and `tools/check_submission.py`. The record carries the sanitized report, its SHA-256, the tool/processor, run id, retrieval time, cost or `unknown` plus a reason, a source-to-claim mapping, and `issue_urls`. An exact evidence reference requires the repository, the full 40-hex commit, the record path, and the claim and its limitations. Cite the owning product's authenticated exact-digest human receipt when the consumed fragment requires acceptance; otherwise label the material candidate-only and cite its authorized research scope. A receipt identifier alone does not verify identity, digest, scope, conditions or revocation; the responsible reviewer checks those at the source. A bootstrap commit alone proves no research finding. Keep submissions, reviewed knowledge and human decision pointers separate; agents do not promote their own submissions. This repository takes contracts, specs, fixtures and runbooks only. Existing `docs/research/**` and `docs/evidence/**` are legacy and frozen (no new files), except contract fixtures under `docs/replacement/outcomes/**`, which stay.
 
 Never commit secrets, private account details, raw chats, signed URLs, bulk copyrighted material or large dataset dumps to Git; reference approved storage through manifests only. An access denial stops the affected transfer; do not look for alternative routes. Existing approved budgets and subscription routes remain subject to their actual authority; this section activates no API fallback, overage or new spend. New research spend follows the founder decisions section above: Lucas retains spend and new services; any founder may decide research continuation within an already approved budget.
 
@@ -237,7 +238,7 @@ research, REGISTER-claimed development and adversarial review. Codex and
 OpenCode are named for these bounded development roles off the order path.
 Naming and installation alone do not qualify a CLI or grant production authority.
 
-- No new Devin jobs. Keep `spawn_devin_leaf.py` frozen for historical audit.
+- No new Devin swarm-dispatch jobs in this cockpit. Keep `spawn_devin_leaf.py` frozen for historical audit. Devin may still post research briefs, which, like all research, land in csl-research.
 - No swarm changes to risk, OrderGateway, mode/approval, audit, eligibility or
   secrets; no broker tools/credentials, soaks or auto rungs. Current production
   Codex decision jobs still use the unchanged hardened runner above.
@@ -257,8 +258,9 @@ Naming and installation alone do not qualify a CLI or grant production authority
   commit/publication instructions and the founder integration rules above apply. Swarm tests
   and receipts never satisfy empirical, paper-day or pre-live gates.
 
-Current process: `docs/research/agent-swarm-rebase-2026-09-14.md`.
-Cloud start: `docs/research/cursor-cloud-rdt-handoff-2026-09-14.md`.
+Historical Cloud process (legacy, frozen): `docs/research/agent-swarm-rebase-2026-09-14.md`.
+Historical Cloud start (legacy, frozen): `docs/research/cursor-cloud-rdt-handoff-2026-09-14.md`.
+Current research landing: CSL-Laboratories/csl-research `submissions/<record_id>/` (see [Research](#research)).
 Market/paper soaks and DEC-09 operator cells stay on their designated hosts.
 
 ## Invariants
@@ -358,7 +360,20 @@ pay-per-token spend. Scheduled routines never start metered or paid research on
 their own.
 
 Record which source or tool produced each piece of evidence, with the date and
-the key sources, in the issue or the evidence so the research can be checked.
+the key sources, so the research can be checked. All research output (notes,
+briefs, findings, source tables, competitor or frontier writeups, research
+registers or indexes) goes to CSL-Laboratories/csl-research as
+`submissions/<record_id>/`, through a PR in that repo, with a digest on the
+Linear issue. Never commit research content to this repo; specs, amendments
+and code only link to the vault record (repo, 40-hex commit, path, claim,
+limitations). If csl-research is not accessible, stop and post a blocker on
+the Linear issue; do not fall back to this repo. Follow that repository's
+README, AGENTS.md, templates and `tools/check_submission.py`. The record
+carries the sanitized report, its SHA-256, the tool/processor, run id,
+retrieval time, cost or `unknown` plus a reason, a source-to-claim mapping,
+and `issue_urls`. Existing `docs/research/**` and `docs/evidence/**` are
+legacy and frozen (no new files), except contract fixtures under
+`docs/replacement/outcomes/**`, which stay.
 
 ## Engineering stack (Oct 2026)
 
@@ -426,7 +441,7 @@ Hosted split (PR #102):
 - **Codex** has two allowed GitHub review paths, neither a Devin substitute:
   1. **CI/fixer gate** (CSL-103/259, `.github/workflows/codex-gate.yml`) - one nonce-bound `@codex review` per exact head/base/merge/tree candidate and fixer generation; the reply echoes that identity and ends with `CODEX-GATE: READY|MEDIATE`. See Code Review Rules.
   2. **Stuck-thread watch** (CSL-86 / PR #124, `.github/workflows/stuck-thread-watch.yml`) — one advisory `@codex review` on unresolved Devin threads Claude could not settle, and **one** Linear `needs-decision` Triage roll-up per PR titled `Stuck PR threads: <repo>#<PR>`. Shared keys with the Codex CI/fixer gate: `<!-- stuck-pr-threads:owner/repo#N -->` and `<!-- codex-gate-mediate:owner/repo:N -->`; each writer owns only its fenced block. It adopts an existing roll-up only by that `stuck-pr-threads` HTML marker, never by title, and writes Linear only when at least one thread is actionable after the per-PR cap and `CODEX_TRIGGER_PAT` checks (or to create a missing roll-up after an earlier Linear outage). It skips already-approved PRs and updates that roll-up instead of filing a new issue per thread. That reply must **not** include a `CODEX-GATE:` line, and must not push, merge, resolve the thread, or open a fix PR.
-- **GitHub-hosted runners** host the test matrix. That is the GitHub test-CI path, not a revival of the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired from research/dev swarm dispatch" still apply to research/dev swarm jobs.
+- **GitHub-hosted runners** host the test matrix. That is the GitHub test-CI path, not a revival of this cockpit's retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired from this cockpit's research/dev swarm dispatch" still apply to cockpit research/dev swarm jobs. Devin may still post research briefs, which, like all research, land in csl-research.
 - Cursor, Codex (as a coding agent), Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs, except the stuck-thread watcher. A founder may have their own bot post reviews under their account when they direct it. The author agent may fix CI failures on its own PR.
 
 ## Review loop

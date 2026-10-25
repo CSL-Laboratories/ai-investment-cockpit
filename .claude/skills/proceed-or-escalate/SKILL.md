@@ -132,9 +132,17 @@ coordinator may research and recommend. Attribute the brief explicitly as
 personally authored or endorsed the recommendation. Only the designated human
 decision-maker, or an explicitly authorized research team, decides. Publishing a
 brief never marks the issue decided, never clears a hold, and never authorizes
-implementation.
+implementation. All research output (notes, briefs, findings, source tables,
+competitor or frontier writeups, research registers or indexes) goes to
+CSL-Laboratories/csl-research as `submissions/<record_id>/`, through a PR in
+that repo, with a digest on the Linear issue. Never commit research content
+to this repo; specs, amendments and code only link to the vault record.
+If csl-research is not accessible, stop and post a blocker on the Linear
+issue; do not fall back to this repo. Existing `docs/research/**` and
+`docs/evidence/**` are legacy and frozen, except contract fixtures under
+`docs/replacement/outcomes/**`.
 
-Then stop that line of work, release your claim, if you hold one, with a release record (AGENTS.md
+Then stop that line of work, release your claim, if you hold one, with a release record (AGENTS.md)
 "Bounded issue execution and shared evidence"), and take only other admitted work
 that is next under the human-approved order. If there is no such order, propose one and wait. Do not ask
 again until something changes.

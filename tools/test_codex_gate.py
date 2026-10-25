@@ -1684,6 +1684,39 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("Grok Bot, preparing research for <owner>", self.agents)
         self.assertIn("Only the designated human decision-maker", self.agents)
         self.assertIn("never marks the issue decided", self.agents)
+        self.assertIn("No specific tool is required", self.agents)
+        self.assertIn(
+            "Record which source or tool produced each piece of evidence",
+            self.agents,
+        )
+        self.assertIn("three-founder", self.agents)
+        self.assertIn("a digest on the Linear issue", self.agents)
+        self.assertIn("submissions/<record_id>/", self.agents)
+        self.assertIn("tools/check_submission.py", self.agents)
+        self.assertIn("legacy and frozen", self.agents)
+        self.assertIn("no separate admission is needed", self.agents)
+        self.assertIn(
+            "If csl-research is not accessible, stop and post a blocker",
+            self.agents,
+        )
+        self.assertIn("docs/evidence/**", self.agents)
+        self.assertIn("docs/replacement/outcomes/**", self.agents)
+        self.assertIn(
+            "this cockpit's research/dev swarm dispatch", self.agents
+        )
+        self.assertNotIn("solo-developer", self.agents)
+        self.assertNotIn(
+            "Current process: `docs/research/agent-swarm-rebase-2026-09-14.md`",
+            self.agents,
+        )
+        self.assertNotIn(
+            "in the issue or the evidence so the research can be checked",
+            self.agents,
+        )
+        self.assertNotIn(
+            "Do not assume published records, a record schema or a validator exist",
+            self.agents,
+        )
         self.assertNotIn(
             "Grok Bots do not research or resolve decision issues", self.agents
         )
@@ -1704,6 +1737,17 @@ class WorkflowStructureTests(unittest.TestCase):
         claude = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
         self.assertIn("AGENTS.md", claude)
         self.assertIn("Grok Bot, preparing research for <owner>", claude)
+        self.assertIn("submissions/<record_id>/", claude)
+        self.assertIn("legacy and frozen", claude)
+        self.assertIn("three-founder", claude)
+        self.assertIn("CSL-511", claude)
+        self.assertIn("this cockpit's", claude)
+        self.assertIn("Devin may still post research briefs", claude)
+        self.assertNotIn("solo-developer", claude)
+        self.assertNotIn(
+            "Current process: `docs/research/agent-swarm-rebase-2026-09-14.md`",
+            claude,
+        )
         self.assertNotIn(
             "Grok Bots do not research or resolve those issues", claude
         )
@@ -1711,8 +1755,26 @@ class WorkflowStructureTests(unittest.TestCase):
             ROOT / ".claude" / "skills" / "proceed-or-escalate" / "SKILL.md"
         ).read_text(encoding="utf-8")
         self.assertIn("Grok Bot, preparing research for <owner>", skill)
+        self.assertIn("submissions/<record_id>/", skill)
+        self.assertIn("legacy and frozen", skill)
+        self.assertIn(
+            "If csl-research is not accessible, stop and post a blocker", skill
+        )
         self.assertNotIn(
             "Grok Bots do not research or resolve decision issues", skill
+        )
+        writer = (
+            ROOT / ".github" / "workflows" / "claude-conflict-writer.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "All research output goes to CSL-Laboratories/csl-research as a submission record, never to this repo",
+            writer,
+        )
+        self.assertGreaterEqual(
+            writer.count(
+                "All research output goes to CSL-Laboratories/csl-research as a submission record, never to this repo"
+            ),
+            2,
         )
 
     def test_pat_job_token_has_narrow_receipt_scope_and_actionlint_is_checksummed(self) -> None:
