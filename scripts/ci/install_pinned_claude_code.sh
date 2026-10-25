@@ -5,8 +5,8 @@ set -euo pipefail
 # still runs (token mint, prompt, tools). Pin literals are inlined from the
 # default-branch workflow; scripts/ci/*.pin must match.
 # Trusted installer bytes. scripts/ci/install_pinned_claude_code.sh is the
-# test reference copy; workflows inline the same bytes because the model-job
-# checkout is untrusted. Do not execute the copy from GITHUB_WORKSPACE.
+# test reference copy CI compares to these inlined bytes. Do not execute that
+# copy from GITHUB_WORKSPACE; the model-job checkout is untrusted.
 # Sunset: retire this skip-path when frozen D10 E3 hosted-byte provenance
 # lands. Rollback is revert of the install step and path_to input.
 

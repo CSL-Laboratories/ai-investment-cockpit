@@ -418,7 +418,9 @@ class TerminalReceiptIntegrationTests(unittest.TestCase):
         self.assertIn('python3 "$RUNNER_TEMP/claude-fixer-guard/receipts.py"', text)
         self.assertIn('cat > "$RUNNER_TEMP/claude-fixer-publish/receipts.py"', text)
         # The model helper (allowed roots) and the publisher (receipt fields) both bind prepare's context.
-        self.assertEqual(text.count("RECEIPT_CONTEXT: ${{ needs.fixer-prepare.outputs.receipt_context }}"), 2)
+        # E3 copies the fixer 0b env into each prefix step, then the outbox verify
+        # step and the publisher: 5 0b + outbox + publish.
+        self.assertEqual(text.count("RECEIPT_CONTEXT: ${{ needs.fixer-prepare.outputs.receipt_context }}"), 7)
         env = {"REPO": CONFIG["repo"], "PR_NUMBER": "7", "HEAD_SHA": A, "HEAD_REF": "fix", "WRITER_MODE": "fixer",
                "RECEIPT_CONTEXT": json.dumps([self.item])}
         self.assertEqual(m.load_config(env)["receipts"], [self.item])
