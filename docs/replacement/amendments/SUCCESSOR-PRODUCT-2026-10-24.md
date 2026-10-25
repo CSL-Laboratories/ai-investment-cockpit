@@ -27,6 +27,23 @@ frontier Page
 <https://cursor.com/canvas/store-94f1dcae-bdc6-4db1-ac26-f52f26b24460/551b01dc-6417-49dd-842c-23cf35afff08>.
 This comment is not an acceptance receipt.
 
+## Research and open questions
+
+The Cockpit spec is **dynamic**: it changes with the issues and the research
+that is published. (Relayed by Grok Bot Liaison from Lucas's 2026-10-24 chat
+answers, 11:57 PM PT.) Living state is
+`docs/replacement/amendments/RESEARCH-REGISTER.md`, keyed to CSL-511..CSL-519
+plus shared CSL-520..CSL-522 (umbrella CSL-493). That register is **not** part
+of this amendment's exact-digest product text and is **not** copied into
+`docs/replacement/SUCCESSOR-PRODUCT.md` on promotion.
+
+Update rule (`docs/replacement/amendments/README.md`): when a csl-research
+record for a parent is published at `submissions/<record_id>/`, update the
+register row in a docs-only PR. Accepted product-text changes only via a
+versioned amendment that Lucas accepts by exact-digest receipt; a reviewed
+promotion then moves the pins. Check:
+`python3 -X utf8 -B tools/check_cockpit_research_register.py`.
+
 ## Product outcome
 
 Build an **open-source research instrument** that operators can test. By
