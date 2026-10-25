@@ -927,7 +927,7 @@ class P9ProbeWorkflowTests(unittest.TestCase):
         header = self.text.split('\njobs:', 1)[0]
         self.assertIn('workflow_dispatch:', header)
         self.assertIn(
-            'With enable_probe2_oauth=false (the intended dispatch), Probe 2 is',
+            'With enable_probe2_oauth=false (the intended unattended dispatch), Probe 2 is',
             header,
         )
         self.assertIn('INCONCLUSIVE/non-green', header)
@@ -957,14 +957,17 @@ class P9ProbeWorkflowTests(unittest.TestCase):
         self.assertIn(spec['default'], (False, 'false'))
         oauth_steps = [s for s in self.doc['jobs']['probe-2']['steps']
                        if 'secrets.CLAUDE_CODE_OAUTH_TOKEN' in str(s)]
-        self.assertEqual(len(oauth_steps), 1)
-        self.assertIn('enable_probe2_oauth', str(oauth_steps[0].get('if')))
+        self.assertEqual(len(oauth_steps), 2)
+        for step in oauth_steps:
+            with self.subTest(step=step.get('name')):
+                self.assertIn('enable_probe2_oauth', str(step.get('if')))
         self.assertNotIn('secrets.CLAUDE_CODE_OAUTH_TOKEN', str(self.doc['jobs']['probe-0']))
         self.assertNotIn('secrets: inherit', self.text)
         hooked = [s for s in self.doc['jobs']['probe-2']['steps']
-                  if s.get('name') == 'Probe 2 OAuth hooked trials without token env']
+                  if s.get('name') == 'Probe 2 OAuth hooked trials (token in CLI env, stripped from hooks)']
         self.assertEqual(len(hooked), 1)
-        self.assertNotIn('secrets.CLAUDE_CODE_OAUTH_TOKEN', str(hooked[0]))
+        self.assertIn('secrets.CLAUDE_CODE_OAUTH_TOKEN', str(hooked[0]))
+        self.assertIn('env -u CLAUDE_CODE_OAUTH_TOKEN', job_text(self.doc['jobs']['probe-2']))
 
     def test_same_cli_pin_as_e3(self):
         pin = (ROOT / 'scripts' / 'ci' / 'claude-code-2.1.306-linux-x64.pin').read_text(encoding='utf-8')
@@ -1007,14 +1010,16 @@ class P9ProbeWorkflowTests(unittest.TestCase):
         self.assertIn('INCONCLUSIVE', p2)
         self.assertIn('EVIDENCE_EXIT non-green', p2)
         self.assertIn('Positive control omits --setting-sources user', p2)
-        self.assertIn('AGENTS.md positive control: user instructionFiles unset', p2)
-        self.assertIn('canary isolation is --setting-sources user only', p2)
-        self.assertIn('instructionFiles not toggled between CONTROL and ISOLATION', p2)
+        self.assertIn('CONTROL: instructionFiles=claude-md-or-agents-md', p2)
+        self.assertIn('ISOLATION: instructionFiles=claude-md', p2)
+        self.assertIn('instructionFiles toggled between CONTROL', p2)
+        self.assertIn('claude-md-or-agents-md', p2)
         self.assertIn('run_probe_invoke CONTROL ""', p2)
         self.assertIn('run_probe_invoke ISOLATION user', p2)
         self.assertIn('run_probe_invoke MCPRO user "$MCP_RO"', p2)
         self.assertIn('} 2>/tmp/csl-p9-mcp-write.err', p2)
-        self.assertIn('refused-unverified-isolation', p2)
+        self.assertNotIn('refused-unverified-isolation', p2)
+        self.assertIn('TOKEN_EXPOSURE hooks-stripped', p2)
         self.assertIn('TOKEN_EXPOSURE', p2)
         self.assertNotIn("absent = pass", p2)
         self.assertIn('AUTH_BOOTSTRAP FAIL', p2)
@@ -1027,7 +1032,9 @@ class P9ProbeWorkflowTests(unittest.TestCase):
         self.assertIn('skipping hooked OAuth trials; bootstrap did not PASS', p2)
         self.assertNotIn('session_ok', p2)
         self.assertIn('Probe 2 OAuth bootstrap in clean cwd', self.text)
-        self.assertIn('Probe 2 OAuth hooked trials without token env', self.text)
+        self.assertIn('Probe 2 OAuth hooked trials (token in CLI env, stripped from hooks)', self.text)
+        self.assertIn('deferred-to-oauth', p2)
+        self.assertIn('env -u CLAUDE_CODE_OAUTH_TOKEN', p2)
 
 if __name__ == '__main__':
     unittest.main()
