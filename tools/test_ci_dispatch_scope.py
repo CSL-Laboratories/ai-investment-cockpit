@@ -656,7 +656,8 @@ _GIT_SUBCOMMANDS = frozenset({
     'reset', 'restore', 'revert', 'rm', 'show', 'stash', 'status', 'submodule',
     'switch', 'tag', 'worktree',
 })
-_BENIGN_CALL = re.compile(r'(?:print|pprint|logging(?:\.\w+)+|logger(?:\.\w+)*|\blog)\s*\(?\s*$')
+_BENIGN_CALL = re.compile(r'(?:print|pprint|logging(?:\.\w+)+|logger(?:\.\w+)*|\blog)\s*\(?\s*$'
+                           r'|\b\w*(?:allowed|words|display|verbs)\w*\s*[:=]\s*$', re.IGNORECASE)
 _NEXT_QUOTED = re.compile(rf'{_SEP}[rbfuRBFU]{{0,2}}{_Q}([A-Za-z][\w.-]*){_Q}')
 
 
@@ -968,7 +969,7 @@ class CrossLaneAdmissionTests(unittest.TestCase):
                 self.assertTrue(PUSH.search(push))
         for other in ('"check", "commit", "diff", "gh", "git", "log", "origin", "pr", "push", "pytest",',
                       'NEVER push or force-push', 'subprocess.run(["git", "-C", repo, "status"])',
-                      'print("push")', 'allowed_commands = ["push", "pull"]',
+                      'print("push")', 'allowed_commands = ["push", "pull"]', 'allowed_commands = ["push", "origin"]',
                       'logging.info("push")', 'logger.debug("push")'):
             with self.subTest(other=other):
                 self.assertFalse(PUSH.search(other))
