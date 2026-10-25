@@ -975,7 +975,11 @@ class P9ProbeWorkflowTests(unittest.TestCase):
         self.assertIn('unshare --user --pid', p0)
         p2 = job_text(self.doc['jobs']['probe-2'])
         self.assertIn('settings.local.json', p2)
-        self.assertIn('AGENTS.md', p2)
+        # Probe-2 writes a throwaway canary at $WORK/AGENTS.md; it does not
+        # read tracked AGENTS.md. Assert the work-dir path so the skip-path
+        # scanner (exact quoted skipped names) does not treat this as a
+        # docs-only coverage gap.
+        self.assertIn('$WORK/AGENTS.md', p2)
         self.assertIn('instructionFiles', p2)
         self.assertIn('CSL474_AGENTS_CANARY', p2)
         self.assertIn('--setting-sources user', p2)
