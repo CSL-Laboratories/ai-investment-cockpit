@@ -166,10 +166,14 @@ about or work that presupposes one). A stuck review thread instead goes in the
 PR's roll-up, found only by its `<!-- stuck-pr-threads:owner/repo#N -->` marker,
 in your own block; product and architecture questions stay on the work issue.
 For a decision or direction issue you are assigned or have claimed, the research requirement in
-[Linear-first workflow](#linear-first-workflow) still comes first, and Grok Bots do
-not research or resolve decision issues. Then release your claim, if you hold one, with a release
-record and take only other admitted work that is next under the human-approved
-order.
+[Linear-first workflow](#linear-first-workflow) still comes first. A Grok Bot coordinator may
+research and recommend on a decision or direction issue. Attribute the brief explicitly as
+`Grok Bot, preparing research for <owner>`; never phrase it as if the owner personally
+authored or endorsed the recommendation. Only the designated human decision-maker, or an
+explicitly authorized research team, decides. Publishing a brief never marks the issue
+decided, never clears a hold, and never authorizes implementation. Then release your claim,
+if you hold one, with a release record and take only other admitted work that is next under
+the human-approved order.
 
 **Comment labels.** Agents usually post through a developer's account, so start
 every agent comment with `Agent (<tool/session>, for <developer>):`; it carries no
@@ -388,7 +392,7 @@ Agents trigger CI and reviews via these commands/tools or the `ci:full` label.
 Agents must stay Linear-aware and proactive. Linear is the source of truth for execution: the assignee (the human owner), claim records, status and discussion. `docs/REGISTER.md` remains the package record: it allocates package IDs and holds package claims, scope and completion contracts. These are separate records, and neither replaces the other. An agent's execution claim is its Linear claim record; neither it nor the assignment allocates, replaces or closes a REGISTER package claim, and a runtime `claim_id` remains the existing REGISTER package ID. Process work with no package says so and does not mint an ID. Cycle decisions stay with [CSL-8](https://linear.app/csl-laboratories/issue/CSL-8); this section sets no cycle. Admission, blocker, claim-release, resume and evidence rules are in [Bounded issue execution and shared evidence](#bounded-issue-execution-and-shared-evidence). Releasing a blocked execution claim does not release the hold. After a blocker, take only a separately admitted issue that is next under an explicit human-approved order; if no such order exists or it is ambiguous, propose the next choice on Linear and wait.
 
 - **Before starting work**, find or create the Linear issue (team **CSL**, project **ai-investment-cockpit**) via the Linear MCP or the Devin Linear integration. Do not start a change without a `CSL-N`. Ground the issue and each execution step in research first; size it to the task (see [Research](#research)).
-- **When you are the assignee or the claimant** (developer or their coding agent working in the repo) of an issue that needs a decision or sets direction, post a cited brief (options, tradeoffs, recommendation, target metrics) on the Linear issue after the research that grounds the work, then decide or @mention for approval. Grok Bots do not research or resolve decision issues.
+- **When you are the assignee or the claimant** (developer or their coding agent working in the repo) of an issue that needs a decision or sets direction, post a cited brief (options, tradeoffs, recommendation, target metrics) on the Linear issue after the research that grounds the work. A Grok Bot coordinator may research and recommend on that issue. Attribute the brief explicitly as `Grok Bot, preparing research for <owner>`; never phrase it as if the owner personally authored or endorsed the recommendation. Only the designated human decision-maker, or an explicitly authorized research team, decides. Publishing a brief never marks the issue decided, never clears a hold, and never authorizes implementation. The agent @mentions the decision-maker for the decision.
 - Branch names come from Linear's copied branch name, so the PR auto-links. PR title includes `CSL-N`. One issue per PR; keep PRs small and stackable.
 - In the PR body, write `Related to CSL-N` by default; use a closing keyword (`Fixes CSL-N`) only when this PR completes the issue's acceptance criteria. Name the REGISTER package ID, or `none` for process work. Linear automation moving an issue to **Done**, a merge, or an AI PASS is not acceptance evidence.
 - **Formal review requests.** Every review ask needs both (a) an @mention on the Linear issue (`samirshahahmed`, `chaandansaini101`) and (b) a formal GitHub review request: `gh pr edit <n> --add-reviewer samir-shah-ahmed,CDanTheMan` (whichever apply). This is mandatory for agents too.

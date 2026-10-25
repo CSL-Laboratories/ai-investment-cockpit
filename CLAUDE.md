@@ -99,8 +99,12 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
    production). For process-only work, use one admitted CSL issue with
    `REGISTER: none`; do not allocate a package solely for that work. Confirm
    the chosen scope and its deterministic gate before writing code. Decision
-   or direction work: see `AGENTS.md` Linear-first (assignee or claimant
-   Parallel Task API brief; Grok Bots do not research or resolve those issues).
+   or direction work: see `AGENTS.md` Linear-first. A Grok Bot coordinator may
+   research and recommend; attribute the brief as
+   `Grok Bot, preparing research for <owner>`. Only the designated human
+   decision-maker, or an explicitly authorized research team, decides.
+   Publishing a brief never marks the issue decided, never clears a hold, and
+   never authorizes implementation.
 3. Implement. Preserve the invariants. Add tests alongside.
 4. Run the gates (below). Green before you stop.
 5. **Do not re-litigate settled decisions** — the corpus is a one-way pipeline
