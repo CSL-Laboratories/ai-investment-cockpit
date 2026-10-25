@@ -608,10 +608,133 @@ class WorkflowStructureTests(unittest.TestCase):
             self.assertIn("Bash(git push:*)", job.split("--disallowedTools", 1)[1])
             self.assertNotIn("HEAD:refs/heads/", job)
 
-    def test_setup_python_cache_uses_app_manifest(self) -> None:
-        devin = self._job("devin-review-fix")
-        self.assertIn("cache-dependency-path:", devin)
-        self.assertIn("app/pyproject.toml", devin)
+    def test_setup_python_does_not_enable_pip_cache(self) -> None:
+        # CSL-471 REVIEW-D8 J3: a YAML `cache: pip` key on a PR/model job
+        # poisons the default-branch Actions cache by prefix restore
+        # (including the conflict writer that holds the OAuth token).
+        # Comments may mention the banned key; match YAML keys only.
+        pip_cache_line = re.compile(r"^[ \t]*cache:[ \t]*pip[ \t]*$", re.M)
+        cache_dep_line = re.compile(r"^[ \t]*cache-dependency-path:", re.M)
+        for job_name in ("claude-mention", "devin-review-fix"):
+            body = self._job(job_name)
+            self.assertIsNone(pip_cache_line.search(body), job_name)
+            self.assertIsNone(cache_dep_line.search(body), job_name)
+        writer = WRITER_WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertIsNone(pip_cache_line.search(writer), writer)
+        self.assertIsNone(cache_dep_line.search(writer), writer)
+
+    def test_write_token_pip_uses_inline_hashed_lock(self) -> None:
+        # CSL-471 J6 (4): pip while passwordless sudo is on must install from a
+        # workflow-YAML heredoc with --require-hashes, never a checkout file.
+        marker = "CSL_PIP_HASH_LOCK"
+        writer = WRITER_WORKFLOW_PATH.read_text(encoding="utf-8")
+        jobs = (
+            ("claude.yml", "claude-mention", self._job("claude-mention")),
+            ("claude.yml", "devin-review-fix", self._job("devin-review-fix")),
+            ("claude-conflict-writer.yml", "model", self._job_text(writer, "model")),
+        )
+        locks: list[str] = []
+        pip_line = (
+            'python -P -m pip install --no-cache-dir --require-hashes '
+            '--only-binary=:all: --no-deps -r "$lock"'
+        )
+        for filename, job_name, body in jobs:
+            with self.subTest(workflow=filename, job=job_name):
+                step = self._named_step(body, "Install acceptance-gate deps")
+                self.assertIn("working-directory: ${{ runner.temp }}", step)
+                self.assertNotIn("working-directory: app", step)
+                self.assertIn(f"cat > \"$lock\" <<'{marker}'", step)
+                self.assertIn(f"lock=\"$RUNNER_TEMP/csl471-pip.lock\"", step)
+                self.assertIn(pip_line, step)
+                self.assertIn("--no-cache-dir", step)
+                self.assertNotIn("git show", step)
+                self.assertNotIn("github.workspace", step)
+                self.assertNotIn("requirements.txt", step)
+                self.assertNotIn("-U pip", step)
+                start = step.find(f"<<'{marker}'\n")
+                self.assertGreaterEqual(start, 0, step)
+                after = step[start + len(f"<<'{marker}'\n"):]
+                closer = after.find(f"\n{marker}\n")
+                if closer < 0:
+                    closer = after.find(f"\n          {marker}\n")
+                self.assertGreater(closer, 0, after[:200])
+                lock = textwrap.dedent(after[:closer]).strip()
+                self.assertTrue(lock, job_name)
+                hashes = 0
+                packages = 0
+                pending = False
+                for raw in lock.splitlines():
+                    line = raw.strip().rstrip("\\").strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if line.startswith("--hash=sha256:"):
+                        self.assertRegex(line, r"^--hash=sha256:[0-9a-f]{64}$")
+                        hashes += 1
+                        pending = False
+                        continue
+                    self.assertIn("==", line, line)
+                    packages += 1
+                    pending = True
+                self.assertFalse(pending, "lock ended on a continuation")
+                self.assertGreaterEqual(packages, 60, packages)
+                self.assertGreaterEqual(hashes, packages, (hashes, packages))
+                self.assertIn("pydantic==", lock)
+                self.assertIn("pip==", lock)
+                locks.append(lock)
+        self.assertEqual(len(set(locks)), 1)
+
+    def test_hashed_lock_heredocs_are_byte_identical(self) -> None:
+        # CSL-471 Observability I4: the three YAML heredoc bodies must match
+        # as source bytes, including indent and interior newlines.
+        marker = "CSL_PIP_HASH_LOCK"
+        writer = WRITER_WORKFLOW_PATH.read_text(encoding="utf-8")
+        bodies = []
+        for filename, job_name, job in (
+            ("claude.yml", "claude-mention", self._job("claude-mention")),
+            ("claude.yml", "devin-review-fix", self._job("devin-review-fix")),
+            ("claude-conflict-writer.yml", "model", self._job_text(writer, "model")),
+        ):
+            step = self._named_step(job, "Install acceptance-gate deps")
+            bodies.append((filename, job_name, self._heredoc_body(step, marker)))
+        first = bodies[0][2]
+        self.assertTrue(first.startswith(b"          "), first[:40])
+        self.assertIn(b"--hash=sha256:", first)
+        for filename, job_name, body in bodies[1:]:
+            self.assertEqual(body, first, f"{filename}:{job_name}")
+
+    @staticmethod
+    def _heredoc_body(step: str, marker: str) -> bytes:
+        start_token = f"<<'{marker}'\n"
+        start = step.find(start_token)
+        if start < 0:
+            raise AssertionError(marker)
+        after = step[start + len(start_token):]
+        closer = after.find(f"\n          {marker}\n")
+        if closer < 0:
+            closer = after.find(f"\n{marker}\n")
+        if closer < 0:
+            raise AssertionError("missing heredoc closer")
+        return after[:closer].encode("utf-8")
+
+    @staticmethod
+    def _job_text(text: str, name: str) -> str:
+        marker = f"  {name}:"
+        start = text.find(marker)
+        if start < 0:
+            raise AssertionError(name)
+        nxt = text.find("\n  ", start + len(marker))
+        while nxt != -1 and text[nxt + 3 : nxt + 4] in (" ", "\t"):
+            nxt = text.find("\n  ", nxt + 1)
+        return text[start:] if nxt == -1 else text[start:nxt]
+
+    @staticmethod
+    def _named_step(job: str, name: str) -> str:
+        marker = f"      - name: {name}\n"
+        start = job.find(marker)
+        if start < 0:
+            raise AssertionError(name)
+        nxt = job.find("\n      - ", start + len(marker))
+        return job[start:] if nxt == -1 else job[start:nxt]
 
     def test_prompt_treats_review_and_files_as_untrusted(self) -> None:
         self.assertIn("UNTRUSTED DATA", self.text)
@@ -799,6 +922,9 @@ class FixerGateAndPromptTests(unittest.TestCase):
             # CSL-377 (Samir, acecb2b): the fixed helper is the only Bash rule; no gate commands.
             allow = body.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0]
             self.assertEqual(re.findall(r"Bash\([^)]*\)", allow), [self.HELPER], job)
+            self.assertIn("Edit(/${{ github.workspace }}/**)", allow, job)
+            self.assertIn("Write(/${{ github.workspace }}/**)", allow, job)
+            self.assertNotIn('"Edit,Write,', allow, job)
             self.assertNotIn("Bash(ruff", body, job)
             for removed in self.REMOVED:
                 self.assertNotIn(removed, body, job)
@@ -837,8 +963,29 @@ class FixerGateAndPromptTests(unittest.TestCase):
         for job in ("claude-mention", "devin-review-fix"):
             body = self._job(job)
             self.assertIn("id: claude", body, job)
+            self.assertIn("id: pin-python", body, job)
             self.assertIn("Report tool-permission denials", body, job)
             self.assertIn("steps.claude.outputs.execution_file", body, job)
+            self.assertIn('interpreter="${PYTHON3:?}"', body, job)
+            self.assertNotIn('python3="$PYTHON3"', body, job)
+            self.assertIn('"$interpreter" -I - "$EXECUTION_FILE"', body, job)
+            self.assertIn("/usr/bin/env -i", body, job)
+            self.assertIn('GITHUB_STEP_SUMMARY="${GITHUB_STEP_SUMMARY:-}"', body, job)
+            self.assertIn('GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-}"', body, job)
+            self.assertIn("done < <(/usr/bin/env)", body, job)
+            self.assertIn("Edit(/${{ runner.temp }}/_runner_file_commands/**)", body, job)
+            self.assertIn("Edit(/${{ runner.temp }}/_runner_file_commands/set_env_*)", body, job)
+            self.assertIn("Edit(/${{ runner.temp }}/_runner_file_commands/add_path_*)", body, job)
+            self.assertNotIn("Write(/${{ runner.temp }}/_runner_file_commands/**)", body, job)
+            self.assertIn("Edit(~/.bash_login)", body, job)
+            self.assertIn("Edit(//home/runner/runners/*/externals/**)", body, job)
+            self.assertNotIn("Edit(//home/runner/externals/**)", body, job)
+            self.assertIn("HOME=/home/runner", body, job)
+            self.assertNotIn('HOME="${HOME:-/home/runner}"', body, job)
+            self.assertIn("/home/runner/.gitconfig", body, job)
+            self.assertIn("/home/runner/.config/git/config", body, job)
+            self.assertIn("/etc/gitconfig", body, job)
+            self.assertNotIn("A credential in any config scope fails the package", body, job)
             self.assertNotIn("show_full_output", body, job)
 
     def test_mention_job_installs_gate_deps(self) -> None:
@@ -850,13 +997,25 @@ class FixerGateAndPromptTests(unittest.TestCase):
         self.assertNotIn("Bash(python -m pytest -q app/tests)", mention)
 
     def test_embedded_denials_match_source(self) -> None:
-        start = f"python3 - \"$EXECUTION_FILE\" <<'{DENIALS_HEREDOC}'\n"
+        # Mention/fixer run the trusted pin-python path with -I. Conflict-writer
+        # still uses "${PYTHON3:-python3}" until a later PR.
+        starts = (
+            f"python3 - \"$EXECUTION_FILE\" <<'{DENIALS_HEREDOC}'\n",
+            f"\"${{PYTHON3:-python3}}\" - \"$EXECUTION_FILE\" <<'{DENIALS_HEREDOC}'\n",
+            f"\"$interpreter\" -I - \"$EXECUTION_FILE\" <<'{DENIALS_HEREDOC}'\n",
+        )
         combined = self.text + "\n" + WRITER_WORKFLOW_PATH.read_text(encoding="utf-8")
-        self.assertEqual(self.text.count(start), 2)
-        self.assertEqual(combined.count(start), 3)
-        self.assertNotIn(start, SCAN_WORKFLOW_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(self.text.count(starts[2]), 2)
+        self.assertEqual(sum(self.text.count(s) for s in starts), 2)
+        self.assertEqual(sum(combined.count(s) for s in starts), 3)
+        scan = SCAN_WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertTrue(all(s not in scan for s in starts))
         source = DENIALS_PATH.read_text(encoding="utf-8").rstrip("\n")
-        for chunk in combined.split(start)[1:]:
+        chunks: list[str] = []
+        for start in starts:
+            chunks.extend(combined.split(start)[1:])
+        self.assertEqual(len(chunks), 3)
+        for chunk in chunks:
             embedded = textwrap.dedent(chunk[: chunk.find(DENIALS_HEREDOC)]).rstrip("\n")
             self.assertEqual(embedded, source)
 
@@ -1823,17 +1982,21 @@ class GuardTamperDenyTests(unittest.TestCase):
     # Edit/Write deny rules also become sandbox write denies for Bash (CLAUDE_CODE_SUBPROCESS_ENV_SCRUB),
     # so a blanket .git/** deny would stop the helper's git from writing its index. Deny what git can
     # be made to execute or redirect through, the same set Claude Code's scrub profile protects.
-    GUARD_DENIES = tuple(f'"{tool}(.git/{path})"' for path in ("hooks/**", "config", "config.worktree", "info/**",
-                                                                "commondir", "modules/**", "worktrees/**")
-                         for tool in ("Edit", "Write")) + (
+    GUARD_PATHS = ("hooks/**", "config", "config.worktree", "info/**",
+                   "commondir", "modules/**", "worktrees/**")
+    GUARD_EDIT = tuple(f'"Edit(.git/{path})"' for path in GUARD_PATHS) + (
         '"Edit(/${{ runner.temp }}/claude-fixer-guard/**)"',
+    )
+    GUARD_WRITE = tuple(f'"Write(.git/{path})"' for path in GUARD_PATHS) + (
         '"Write(/${{ runner.temp }}/claude-fixer-guard/**)"',
     )
+    GUARD_DENIES = GUARD_EDIT + GUARD_WRITE
 
     def test_every_guarded_writer_denies_hook_tampering(self) -> None:
         # CSL-377: the model jobs hold no push credential; the publish job is the
         # boundary. These denials still keep Edit/Write away from .git and the
         # helper context (accidental-edit control, not isolation).
+        # claude.yml omits Write(path) denies (they never match); Edit is binding.
         for path, jobs in ((WORKFLOW_PATH, ("claude-mention", "devin-review-fix")),
                            (WRITER_WORKFLOW_PATH, ("model",))):
             text = path.read_text(encoding="utf-8")
@@ -1843,8 +2006,14 @@ class GuardTamperDenyTests(unittest.TestCase):
                 with self.subTest(workflow=path.name, job=job):
                     self.assertIn("claude-fixer-guard/model-api", body)
                     deny = body.split('"deny": [', 1)[1].split("]", 1)[0]
-                    for rule in self.GUARD_DENIES:
+                    for rule in self.GUARD_EDIT:
                         self.assertIn(rule, deny)
+                    if path.name == "claude.yml":
+                        for rule in self.GUARD_WRITE:
+                            self.assertNotIn(rule, deny)
+                    else:
+                        for rule in self.GUARD_WRITE:
+                            self.assertIn(rule, deny)
                     self.assertNotIn('"Edit(.git/**)"', deny)
                     self.assertNotIn('"Write(.git/**)"', deny)
 
@@ -1925,6 +2094,92 @@ jobs:
                 self.assertEqual(result.returncode == 0, passes, result.stdout + result.stderr)
 
 
+class ConflictWriterFileCommandHardeningTests(unittest.TestCase):
+    """CSL-467 leftover: conflict-writer model job, not claude.yml (#256)."""
+
+    FILE_COMMAND_DENIES = (
+        "Bash(dangerouslyDisableSandbox:true)",
+        "Read(/${{ runner.temp }}/_runner_file_commands/**)",
+        "Edit(/${{ runner.temp }}/_runner_file_commands/**)",
+        "Edit(/${{ runner.tool_cache }}/**)",
+        "Edit(//home/runner/work/_actions/**)",
+        "Edit(//home/runner/externals/**)",
+        "Edit(~/.bashrc)",
+        "Edit(~/.profile)",
+        "Edit(~/.bash_profile)",
+    )
+    PINNED_ENV = {
+        "BASH_ENV": "", "ENV": "", "LD_PRELOAD": "", "LD_AUDIT": "", "LD_LIBRARY_PATH": "",
+        "GCONV_PATH": "", "PYTHONPATH": "", "PYTHONHOME": "", "PYTHONSTARTUP": "",
+        "NODE_OPTIONS": "", "PATH": "/usr/bin:/bin",
+        "GIT": "/usr/bin/git", "PYTHON3": "/usr/bin/python3", "JQ": "/usr/bin/jq",
+    }
+    HELPER_NETWORK = ("api.github.com", "github.com")
+    POST_CLAUDE = ("Report tool-permission denials", "Package untrusted model output",
+                   "Upload untrusted model output")
+
+    def test_conflict_writer_model_job_blocks_file_command_poisoning(self) -> None:
+        # Write/Edit can reach $RUNNER_TEMP/_runner_file_commands. #256 hardens
+        # claude.yml; this pins the same controls on claude-conflict-writer.yml.
+        import yaml
+
+        workflow = yaml.load(WRITER_WORKFLOW_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+        model = workflow["jobs"]["model"]
+        action = [s for s in model["steps"] if s.get("id") == "claude"][0]
+        settings = json.loads(action["with"]["settings"])
+        self.assertEqual(settings["sandbox"]["enabled"], True)
+        self.assertEqual(settings["sandbox"]["allowUnsandboxedCommands"], False)
+        self.assertEqual(settings["sandbox"]["autoAllowBashIfSandboxed"], False)
+        self.assertEqual(settings["sandbox"]["failIfUnavailable"], True)
+        deny_write = settings["sandbox"]["filesystem"]["denyWrite"]
+        for path in ("${{ runner.temp }}/_runner_file_commands", "${{ runner.tool_cache }}",
+                     "/home/runner/work/_actions", "/home/runner/externals"):
+            self.assertIn(path, deny_write)
+            self.assertNotIn("*", path)  # Linux denyWrite skips wildcard entries
+        network = settings["sandbox"]["network"]
+        self.assertEqual(network["allowedDomains"], list(self.HELPER_NETWORK))
+        self.assertEqual(network["strictAllowlist"], True)
+        deny = settings["permissions"]["deny"]
+        for rule in self.FILE_COMMAND_DENIES:
+            self.assertIn(rule, deny)
+        self.assertFalse([r for r in deny if r.startswith("Write(") and "_runner_file_commands" in r],
+                         deny)  # Write(path) never matches
+        names = [s.get("name") or s.get("id") for s in model["steps"]]
+        claude = names.index("claude")
+        self.assertEqual(names[claude + 1:claude + 4], list(self.POST_CLAUDE))
+        denials = [s for s in model["steps"] if s.get("name") == "Report tool-permission denials"][0]
+        self.assertIn('"${PYTHON3:-python3}" - "$EXECUTION_FILE"', denials["run"])
+        package = [s for s in model["steps"] if s.get("name") == "Package untrusted model output"][0]
+        self.assertIn('git_bin="${GIT:-git}"', package["run"])
+        self.assertIn('jq_bin="${JQ:-jq}"', package["run"])
+        self.assertNotIn("/usr/bin/git", package["run"])  # PATH shims in publish wiring tests
+        for step_name in self.POST_CLAUDE:
+            env = [s for s in model["steps"] if s.get("name") == step_name][0]["env"]
+            for key, value in self.PINNED_ENV.items():
+                self.assertEqual(env[key], value, (step_name, key))
+            self.assertNotIn("PATH pins over GITHUB_PATH", yaml.dump(env))
+        workflow_text = WRITER_WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertIn("# CSL-467: Edit denies for /home/runner/work/_actions and", workflow_text)
+        self.assertNotIn("PATH pins over GITHUB_PATH prepends when step env wins.", workflow_text)
+        install = [s for s in model["steps"] if s.get("name") == "Install acceptance-gate deps"][0]
+        self.assertEqual(install["working-directory"], "${{ runner.temp }}")
+        # #260's step starts with `set -euo pipefail` then the hashed lock; #258
+        # asserted the run text started with `python -P -m pip install`.
+        self.assertIn(
+            "python -P -m pip install --no-cache-dir --require-hashes",
+            install["run"],
+        )
+        self.assertNotEqual(install.get("working-directory"), "app")
+        self.assertNotIn("python -m pip", install["run"])
+        setup_python = [s for s in model["steps"] if str(s.get("uses", "")).startswith("actions/setup-python@")]
+        self.assertEqual(len(setup_python), 1)
+        self.assertNotIn("cache", setup_python[0].get("with", {}))
+        self.assertNotIn("cache-dependency-path", setup_python[0].get("with", {}))
+        dumped = yaml.dump(model)
+        self.assertNotIn("cache: pip", dumped)
+        self.assertNotIn("cache-dependency-path", dumped)
+
+
 class ClaudeActionInlineCommentTests(unittest.TestCase):
     """CSL-383: no claude-code-action step publishes the model-writable comment buffer."""
 
@@ -1939,6 +2194,28 @@ class ClaudeActionInlineCommentTests(unittest.TestCase):
         for index, (name, inputs) in enumerate(steps):
             with self.subTest(workflow=name, step=index):
                 self.assertIn('\n          classify_inline_comments: "false"\n', inputs)
+
+
+class ClaudeCodeInstallerPinTests(unittest.TestCase):
+    """CSL-473 interim E3-1: every action use skips the unpinned installer."""
+
+    def test_every_claude_action_step_uses_the_hash_verified_binary(self) -> None:
+        import re
+
+        steps = []
+        for path in sorted(WORKFLOW_PATH.parent.glob("*.y*ml")):
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn("claude.ai/install", text)
+            self.assertNotRegex(text, r"uses:\s*[\"']?anthropics/claude-code-action@v\d")
+            self.assertNotRegex(text, r"install\.sh\s*\|\s*bash")
+            self.assertNotIn("mkdir -m 0700 -p", text)
+            for step in re.split(r"uses:\s*[\"']?anthropics/claude-code-action@", text)[1:]:
+                steps.append((path.name, re.split(r"\n      - ", step, maxsplit=1)[0]))
+        self.assertGreaterEqual(len(steps), 3)
+        for index, (name, inputs) in enumerate(steps):
+            with self.subTest(workflow=name, step=index):
+                self.assertIn("\n          path_to_claude_code_executable: /opt/csl-claude/2.1.306/claude\n", inputs)
+                self.assertIn("DISABLE_UPDATES", inputs)
 
 
 if __name__ == "__main__":
