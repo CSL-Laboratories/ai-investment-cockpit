@@ -121,7 +121,9 @@ chmod 0755 /opt/csl-claude "$DEST_DIR"
 install -o root -g root -m 0755 "$STAGING/claude" "$DEST"
 test "$(stat -c %U:%G:%a "$DEST")" = "root:root:755"
 test -x "$DEST"
-if [ -w "$DEST" ] || [ -w "$DEST_DIR" ]; then
+# 0b is already root, so `[ -w "$DEST" ]` is always true for a root-owned
+# 0755 file. Check as the runner uid instead.
+if runuser -u runner -- test -w "$DEST" || runuser -u runner -- test -w "$DEST_DIR"; then
   echo "install path is writable by the runner" >&2
   exit 1
 fi

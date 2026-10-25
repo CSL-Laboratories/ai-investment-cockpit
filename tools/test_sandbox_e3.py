@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -304,6 +305,17 @@ class GitTreeTests(unittest.TestCase):
             extra = bind.tree_digest(tmp)
             self.assertEqual(len(extra), 64)
 
+    def test_git_tree_rejects_bin_bun(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "action.yml").write_text("name: pin\n", encoding="utf-8")
+            blob = bind.git_blob_sha1(str(Path(tmp) / "action.yml"))
+            ls = f"100644 blob {blob}\taction.yml\n"
+            bind.check_git_tree(tmp, ls, skip_dirs=())
+            (Path(tmp) / "bin").mkdir()
+            (Path(tmp) / "bin" / "bun").write_bytes(b"bun")
+            with self.assertRaises(bind.BindError):
+                bind.check_git_tree(tmp, ls, skip_dirs=())
+
 
 class BootstrapContractTests(unittest.TestCase):
     def test_sudoers_and_negative_controls_are_in_0b(self) -> None:
@@ -364,6 +376,70 @@ class BootstrapContractTests(unittest.TestCase):
         text = (SCRIPTS / "sandbox_e3_cli_pin.sh").read_text(encoding="utf-8")
         self.assertIn('STAGING="/home/runner/work/_temp/csl-claude-staging"', text)
         self.assertNotIn("${RUNNER_TEMP:?}", text)
+
+    def test_gnu_install_refuses_same_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sudoers.new"
+            path.write_text("runner ALL=(root) NOPASSWD: /opt/csl-relay/bin/relay\n", encoding="utf-8")
+            proc = subprocess.run(
+                ["install", "-m0440", str(path), str(path)],
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("same file", proc.stderr.lower())
+
+    def test_bootstrap_installs_sudoers_from_a_temp_source(self) -> None:
+        text = (SCRIPTS / "sandbox_e3_bootstrap.sh").read_text(encoding="utf-8")
+        self.assertNotIn(
+            "install -m0440 -o root -g root /etc/sudoers.new /etc/sudoers.new",
+            text,
+        )
+        self.assertIn('SUDOERS_SRC="$(mktemp)"', text)
+        self.assertIn(
+            'install -m0440 -o root -g root "$SUDOERS_SRC" /etc/sudoers.new',
+            text,
+        )
+        self.assertIn("visudo -cf /etc/sudoers.new", text)
+        self.assertLess(text.find("mktemp"), text.find('install -m0440'))
+
+    def test_install_from_temp_source_sets_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "src"
+            dst = Path(tmp) / "sudoers.new"
+            src.write_text("x\n", encoding="utf-8")
+            subprocess.run(["install", "-m0440", str(src), str(dst)], check=True)
+            self.assertEqual(stat.S_IMODE(dst.stat().st_mode), 0o440)
+
+    def test_cli_pin_checks_writability_as_runner(self) -> None:
+        text = (SCRIPTS / "sandbox_e3_cli_pin.sh").read_text(encoding="utf-8")
+        self.assertNotIn('if [ -w "$DEST" ] || [ -w "$DEST_DIR" ]; then', text)
+        self.assertIn('runuser -u runner -- test -w "$DEST"', text)
+        self.assertIn('runuser -u runner -- test -w "$DEST_DIR"', text)
+
+    def test_dash_w_is_true_for_the_owner_of_a_755_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "claude"
+            dest.write_bytes(b"x")
+            dest.chmod(0o755)
+            proc = subprocess.run(
+                ["bash", "-c", 'test -w "$1"', "--", str(dest)],
+                check=False,
+            )
+            self.assertEqual(proc.returncode, 0)
+            mode = dest.stat().st_mode
+            self.assertFalse(mode & 0o022)
+
+    def test_bootstrap_seeds_ap_bin_bun_after_hash_git_tree(self) -> None:
+        text = (SCRIPTS / "sandbox_e3_bootstrap.sh").read_text(encoding="utf-8")
+        hash_at = text.find('sandbox_e3_bind.py" hash-git-tree')
+        bun_at = text.find(
+            'install -D -m0755 -o root -g root "$BUN_DST" "$AP/bin/bun"'
+        )
+        remount_at = text.find('mount -o remount,bind,ro "$AP"')
+        self.assertGreater(hash_at, 0)
+        self.assertGreater(bun_at, hash_at)
+        self.assertGreater(remount_at, bun_at)
 
 
 if __name__ == "__main__":
