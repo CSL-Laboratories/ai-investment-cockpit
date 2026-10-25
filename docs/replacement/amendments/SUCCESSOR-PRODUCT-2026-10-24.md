@@ -7,11 +7,11 @@ under [CSL-511](https://linear.app/csl-laboratories/issue/CSL-511); umbrella
 Exact-digest acceptance remains a separate human decision.
 
 This file is a **proposed amendment**. It does not replace the last accepted
-bytes, which remain [`docs/replacement/SUCCESSOR-PRODUCT.md`](../SUCCESSOR-PRODUCT.md)
+bytes, which remain `docs/replacement/SUCCESSOR-PRODUCT.md`
 at SHA-256
 `6e5f0d0cad102077fd058aac4970ac0eb31fd6f6e952f948c43edaa9fe0c919e`, bound by
 CSL-212 comment `25c50b43-6de4-4f6d-9652-47a649ccc5ae` and
-[`program.json`](../program.json). This path is a versioned proposal only. A new
+`docs/replacement/program.json`. This path is a versioned proposal only. A new
 exact-digest human receipt over this file's bytes, then a reviewed promotion
 that updates the pins, is required before these words are governing. Lucas's
 2026-10-24 answers win over the 2026-10-16 wording where they conflict;
@@ -106,7 +106,8 @@ answers: prefer unpaid data; optional Alpaca key is Lucas's purchase.)
   profile (bounded direct authorization after separately accepted eligibility,
   replay, simulation, demo or paper, shadow, limited-live, recovery and
   compliance gates) is not activated by this amendment.
-  [The completed authority research](../AUTHORITY-COMPLIANCE-RESEARCH.md) still
+  The completed authority research
+  (`docs/replacement/AUTHORITY-COMPLIANCE-RESEARCH.md`) still
   makes A proposal-only the reference qualification profile and C bounded direct
   authorization an owner-directed candidate future target pending a
   human-authored exact-digest receipt. All profiles share one independent
@@ -246,7 +247,7 @@ compliance, release readiness, or permission to trade live.
 This file is **not accepted** until Lucas posts an exact-digest human receipt
 over it. `program.json` and the replacement-program digest gate must keep
 pointing at the 2026-10-16 accepted bytes of
-[`docs/replacement/SUCCESSOR-PRODUCT.md`](../SUCCESSOR-PRODUCT.md) until that
+`docs/replacement/SUCCESSOR-PRODUCT.md` until that
 receipt exists and a reviewed promotion updates the pins. Updating those pins
 without a human receipt would falsely claim acceptance.
 
