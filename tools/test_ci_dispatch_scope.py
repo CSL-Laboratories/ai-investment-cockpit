@@ -691,7 +691,6 @@ WRITER_CALL = re.compile(
 _SECRET_EXPR = re.compile(
     r'''secrets(?:\.[A-Za-z0-9_]+|\[\s*['"][A-Za-z0-9_]+['"]\s*\])'''
 )
-_QUOTED_SECRETS_WORD = re.compile(r'''['"]secrets['"]''', re.IGNORECASE)
 _SECRETS_CONTEXT = re.compile(r'(?<![\w.])secrets\b')
 _GH_EXPR = re.compile(r'\$\{\{(.*?)\}\}', re.DOTALL)
 _OAUTH_ACTION_INPUT = re.compile(
@@ -740,9 +739,37 @@ class _ModelSecrets:
     @staticmethod
     def _in_exprs(text):
         for body in _GH_EXPR.findall(text):
-            hit = _SECRETS_CONTEXT.search(_QUOTED_SECRETS_WORD.sub('', body))
+            hit = _ModelSecrets._unquoted_secrets(body)
             if hit:
                 return hit
+        return None
+
+    @staticmethod
+    def _unquoted_secrets(body):
+        """secrets context in unquoted GitHub expression text. Doubled quotes are literals."""
+        i, n = 0, len(body)
+        while i < n:
+            if body[i] in "'\"":
+                quote = body[i]
+                i += 1
+                start = i
+                while i < n:
+                    if body[i] == quote:
+                        if i + 1 < n and body[i + 1] == quote:
+                            i += 2
+                            continue
+                        i += 1
+                        break
+                    i += 1
+                else:
+                    return _SECRETS_CONTEXT.search(body[start:])
+            else:
+                start = i
+                while i < n and body[i] not in "'\"":
+                    i += 1
+                hit = _SECRETS_CONTEXT.search(body[start:i])
+                if hit:
+                    return hit
         return None
 
 
@@ -1285,12 +1312,27 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         title = copy.deepcopy(live)
         title['steps'][0]['if'] = "${{ contains(github.event.pull_request.title, 'secrets') }}"
         self.assertIsNone(MODEL_SECRETS.search(title))
+        phrase = copy.deepcopy(live)
+        phrase['steps'][0]['if'] = (
+            "${{ contains(github.event.pull_request.title, 'update secrets handling') }}")
+        self.assertIsNone(MODEL_SECRETS.search(phrase))
+        doubled = copy.deepcopy(live)
+        doubled['steps'][0]['if'] = (
+            "${{ contains(github.event.pull_request.title, 'it''s secrets') }}")
+        self.assertIsNone(MODEL_SECRETS.search(doubled))
         inputs = copy.deepcopy(live)
         inputs['steps'][0]['if'] = '${{ github.event.inputs.secrets }}'
         self.assertIsNone(MODEL_SECRETS.search(inputs))
-        concealed = copy.deepcopy(live)
-        concealed['steps'][0]['run'] = '''echo ${{ 'x" && secrets.MY_PAT && "y' }}'''
-        self.assertIsNotNone(MODEL_SECRETS.search(concealed))
+        quoted_span = copy.deepcopy(live)
+        quoted_span['steps'][0]['run'] = '''echo ${{ 'x" && secrets.MY_PAT && "y' }}'''
+        self.assertIsNone(MODEL_SECRETS.search(quoted_span))
+        after_literal = copy.deepcopy(live)
+        after_literal['steps'][0]['run'] = "echo ${{ contains(foo, 'x') && secrets.MY_PAT }}"
+        self.assertIsNotNone(MODEL_SECRETS.search(after_literal))
+        after_doubled = copy.deepcopy(live)
+        after_doubled['steps'][0]['run'] = (
+            "echo ${{ contains(foo, 'it''s x') && secrets.MY_PAT }}")
+        self.assertIsNotNone(MODEL_SECRETS.search(after_doubled))
         self.assertTrue(model_github_token_ok(live))
         self.assertFalse(model_github_token_ok(job))
         pat_input = copy.deepcopy(live)
