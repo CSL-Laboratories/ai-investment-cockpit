@@ -634,8 +634,8 @@ MODEL_BASH = 'Bash(python3 ${{ runner.temp }}/claude-fixer-guard/model-api --:*)
 # `--git-dir path`, `--no-pager`), then `push`, across backslash continuations. Argv: any
 # `[`/`(` list or a quoted `"git"` list, then `"push"` — helpers named `run_git`, `GIT`,
 # `_git`, `run`, or `cmd` all count. Quotes may be backslash-escaped. False positives are
-# excluded narrowly: a bare `"push"` passed to print/logging, or a list whose next quoted
-# token is another git subcommand (`["push", "pull"]`). Value-taking git options
+# excluded narrowly: a bare `"push"` passed to print/logging, or a confirmed
+# display list (`allowed_commands = ["push", "origin"]`). Value-taking git options
 # (`--git-dir`, `--work-tree`, `--namespace`, `-C`, `-c`) consume their following token.
 _Q = r'\\?["\']'
 _STR = r'[rbfuRBFU]{0,2}' + _Q + r'[^"\'\n]*' + _Q
@@ -651,17 +651,8 @@ _PUSH_RAW = re.compile(
     rf'(?:[\[(]\s*|{_Q}git{_Q}{_SEP})(?:{_TOKEN}{_SEP}){{0,12}}{_Q}push{_Q}'
     rf'|\bgit(?:{_GAP}{_GIT_OPT})*{_GAP}push\b|/git/refs/'
 )
-_GIT_SUBCOMMANDS = frozenset({
-    'add', 'am', 'annotate', 'apply', 'archive', 'bisect', 'blame', 'branch',
-    'bundle', 'checkout', 'cherry-pick', 'clean', 'clone', 'commit', 'config',
-    'describe', 'diff', 'fetch', 'format-patch', 'gc', 'grep', 'init', 'log',
-    'ls-files', 'merge', 'mv', 'notes', 'pull', 'rebase', 'reflog', 'remote',
-    'reset', 'restore', 'revert', 'rm', 'show', 'stash', 'status', 'submodule',
-    'switch', 'tag', 'worktree',
-})
 _BENIGN_CALL = re.compile(r'(?:print|pprint|logging(?:\.\w+)+|logger(?:\.\w+)*|\blog)\s*\(?\s*$'
                            r'|\b\w*(?:allowed|words|display|verbs)\w*\s*[:=]\s*$', re.IGNORECASE)
-_NEXT_QUOTED = re.compile(rf'{_SEP}[rbfuRBFU]{{0,2}}{_Q}([A-Za-z][\w.-]*){_Q}')
 
 
 class _PushMatcher:
@@ -680,25 +671,9 @@ class _PushMatcher:
         snippet = match.group(0)
         if snippet.startswith(('git', '/git/refs/')):
             return False
-        # `"git", "push", "pull"` is a real push to a remote named `pull`, not a
-        # subcommand word list. Only treat later `"pull"` as data when `push` is
-        # the first list element.
-        if re.search(rf'{_Q}git{_Q}', snippet):
-            return False
-        if match.start() and text[match.start() - 1] == '(':
-            return False
-        if _BENIGN_CALL.search(text[max(0, match.start() - 80):match.start()]):
-            return True
-        pos = match.end()
-        sibling = False
-        while True:
-            nxt = _NEXT_QUOTED.match(text[pos:])
-            if nxt is None:
-                return sibling and bool(re.match(r'\s*[\])]', text[pos:]))
-            if nxt.group(1).lower() not in _GIT_SUBCOMMANDS:
-                return False
-            sibling = True
-            pos += nxt.end()
+        # Only confirmed display/log lists are excluded. `args = ["push", "pull"]`
+        # then `run_git(args)` is a push to a remote named `pull`.
+        return bool(_BENIGN_CALL.search(text[max(0, match.start() - 80):match.start()]))
 
 
 PUSH = _PushMatcher()
@@ -716,6 +691,7 @@ WRITER_CALL = re.compile(
 _SECRET_EXPR = re.compile(
     r'''secrets(?:\.[A-Z0-9_]+|\[\s*['"][A-Z0-9_]+['"]\s*\])'''
 )
+_GH_EXPR = re.compile(r'\$\{\{(.*?)\}\}', re.DOTALL)
 _OAUTH_ACTION_INPUT = re.compile(
     r'''['"]?claude_code_oauth_token['"]?\s*:\s*['"]?\$\{\{\s*secrets\.CLAUDE_CODE_OAUTH_TOKEN\s*\}\}['"]?'''
 )
@@ -727,7 +703,7 @@ class _ModelSecrets:
 
     def search(self, job):
         if not isinstance(job, dict):
-            return _SECRET_EXPR.search(str(job))
+            return self._in_exprs(str(job))
         scanned = copy.deepcopy(job)
         for step in scanned.get('steps') or []:
             with_block = step.get('with') or {}
@@ -736,7 +712,32 @@ class _ModelSecrets:
                     and token is not None
                     and _OAUTH_VALUE.fullmatch(str(token).strip())):
                 with_block.pop('claude_code_oauth_token')
-        return _SECRET_EXPR.search(str(scanned))
+        return self._walk(scanned)
+
+    def _walk(self, value):
+        if isinstance(value, str):
+            return self._in_exprs(value)
+        if isinstance(value, dict):
+            for item in value.values():
+                hit = self._walk(item)
+                if hit:
+                    return hit
+            return None
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                hit = self._walk(item)
+                if hit:
+                    return hit
+            return None
+        return None
+
+    @staticmethod
+    def _in_exprs(text):
+        for body in _GH_EXPR.findall(text):
+            hit = _SECRET_EXPR.search(body)
+            if hit:
+                return hit
+        return None
 
 
 MODEL_SECRETS = _ModelSecrets()
@@ -1035,7 +1036,9 @@ class CrossLaneAdmissionTests(unittest.TestCase):
                      '_git(["push", url])', 'run(["push", url])', 'cmd(["push", "--force", url])',
                      'git_cmd = ["push", url]',
                      'subprocess.run(["git", "push", "pull", "HEAD"])',
-                     'run_git(["push", "pull", "HEAD"])', 'run_git(["push", "pull"])'):
+                     'run_git(["push", "pull", "HEAD"])', 'run_git(["push", "pull"])',
+                     'args = ["push", "pull"]\nrepo.run_git(args)',
+                     'git_cmd = ["push", "pull"]'):
             with self.subTest(push=push):
                 self.assertTrue(PUSH.search(push))
         for other in ('"check", "commit", "diff", "gh", "git", "log", "origin", "pr", "push", "pytest",',
@@ -1250,6 +1253,14 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         indexed = copy.deepcopy(live)
         indexed.setdefault('env', {})['GH_TOKEN'] = "${{ secrets['MY_PAT'] }}"
         self.assertIsNotNone(MODEL_SECRETS.search(indexed))
+        quoted_indexed = copy.deepcopy(live)
+        run = 'echo "${{ secrets[\'MY_PAT\'] }}"'
+        quoted_indexed['steps'][0]['run'] = run
+        self.assertIsNone(_SECRET_EXPR.search(str({'run': run})))
+        self.assertIsNotNone(MODEL_SECRETS.search(quoted_indexed))
+        literal = copy.deepcopy(live)
+        literal['steps'][0]['run'] = "echo 'secrets.MY_PAT'"
+        self.assertIsNone(MODEL_SECRETS.search(literal))
         self.assertTrue(model_github_token_ok(live))
         self.assertFalse(model_github_token_ok(job))
         pat_input = copy.deepcopy(live)
