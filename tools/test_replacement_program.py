@@ -29,7 +29,13 @@ def accepted_replacement_root(tmp) -> Path:
         path = root / rel
         if hashlib.sha256(path.read_bytes()).hexdigest() == expected:
             continue
-        original = subprocess.check_output(["git", "-C", str(ROOT), "show", f"origin/main:{rel}"])
+        shown = subprocess.run(
+            ["git", "-C", str(ROOT), "show", f"origin/main:{rel}"],
+            capture_output=True,
+        )
+        if shown.returncode != 0:
+            raise unittest.SkipTest(f"origin/main unavailable to restore accepted {rel}")
+        original = shown.stdout
         if hashlib.sha256(original).hexdigest() != expected:
             raise AssertionError(f"origin/main {rel} does not match pin {expected}")
         path.write_bytes(original)

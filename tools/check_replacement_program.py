@@ -349,7 +349,18 @@ def _validate_github_founder_pr_approval(
     head = current_head_sha
     if not _nonempty(head):
         head = _git_head(root)
-    _require(head.lower() == approved, "stale github approval head")
+    if head.lower() != approved:
+        # The receipt is committed after approval, so HEAD legitimately moves past
+        # the approved revision; the digest map pins the governed bytes themselves.
+        try:
+            ancestry = subprocess.run(
+                ["git", "-C", str(root), "merge-base", "--is-ancestor", approved, head],
+                check=False,
+                capture_output=True,
+            )
+        except OSError as exc:
+            raise ContractError(f"github receipt ancestry unavailable: {exc}") from exc
+        _require(ancestry.returncode == 0, "stale github approval head")
     _require(_nonempty(receipt.get("accepted_at")), "github receipt timestamp missing")
     _require_digest_map(receipt.get("accepted_contracts"), "github receipt digest map invalid")
     _require(

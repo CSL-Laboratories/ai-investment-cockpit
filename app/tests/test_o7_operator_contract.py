@@ -96,11 +96,7 @@ def test_exact_candidate_command_shows_negative_controls_failing(pytestconfig) -
         "samir-shah-ahmed",
     ]
     for path, digest in ACCEPTED.items():
-        actual = _sha256(ROOT / path)
-        if path == "docs/replacement/ISSUE-CONTRACT.md" and actual != digest:
-            # Pin unchanged; working-tree governance amendment awaits a fresh receipt.
-            continue
-        assert actual == digest
+        assert _sha256(ROOT / path) == digest
     outcome = next(item for item in program["outcomes"] if item["key"] == "O7")
     assert outcome["evidence"]["claimed"] == "researched"
     assert outcome["completion_gate_status"] == "pending_outcome_artifact"
