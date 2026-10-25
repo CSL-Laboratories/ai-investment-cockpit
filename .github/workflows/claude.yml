@@ -1771,16 +1771,6 @@ jobs:
               return "\n".join(f"{name}={parsed[name]}" for name in FIELD_ORDER)
 
 
-          def apply_observed_handoff(text: str, count: int, conflict: bool) -> str:
-              """Replace bootstrap placeholders with daemon-observed handoff evidence."""
-              if count < 0:
-                  raise E3RecordError("handoff_count")
-              fields = parse_e3_text(text)
-              fields["handoff_count"] = str(int(count))
-              fields["handoff_conflict"] = "true" if conflict else "false"
-              return reconstruct_e3_record(fields)
-
-
           def parse_e3_text(text: str) -> Dict[str, str]:
               """Parse a daemon-written E3 record. No capture bytes; ``k=v`` lines only."""
               if not text or text.endswith("\n\n"):
@@ -1856,8 +1846,8 @@ jobs:
                   "socat_sha256": _sha256_file("/usr/bin/socat"),
                   "bash_sha256": _sha256_file("/bin/bash"),
                   "match": match,
-                  # Placeholders only. The relay overwrites these from daemon STATUS
-                  # extra= / pair_closed before it emits (Codex P2; Samir #264 APPROVE).
+                  # Placeholders only. The C relay overwrites these from daemon STATUS
+                  # ok= / extra= before it emits. This helper does not rewrite them.
                   "handoff_count": "0",
                   "handoff_conflict": "false",
               }
@@ -4189,7 +4179,8 @@ jobs:
           static int fifo_hup;
           static unsigned char capture_buf[CSL_CAP_BYTES];
           static size_t captured;
-          static unsigned extra_handoffs;
+          static unsigned extra_handoffs; /* attempts after a recorded success */
+          static unsigned ok_handoffs;    /* successful handoffs; 0 or 1 */
           static pid_t worker_pid;
           static pid_t f1_bun_pid;
 
@@ -4691,7 +4682,13 @@ jobs:
               if (cfd < 0) {
                   return;
               }
-              extra_handoffs++;
+              /* First success owns pair_fd. Later accepts (including a backlog
+               * connect after unlink) are extras, not a second pair. */
+              if (pair_fd >= 0 || ok_handoffs > 0) {
+                  extra_handoffs++;
+                  close(cfd);
+                  return;
+              }
               /* Blocking accept + SO_RCVTIMEO: connect-before-sendmsg must not EAGAIN. */
               if (setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &rcv, sizeof rcv) < 0) {
                   close(cfd);
@@ -4850,7 +4847,7 @@ jobs:
                   }
               }
               pair_fd = got_pair;
-              extra_handoffs--; /* first successful peer is the launcher */
+              ok_handoffs = 1;
               close(cfd);
           }
 
@@ -4890,10 +4887,11 @@ jobs:
               }
               req[n] = 0;
               if (strncmp(req, "STATUS", 6) == 0) {
-                  snprintf(resp, sizeof resp, "end=%d pair=%d writers=%d already=%d worker=%d extra=%u\n",
+                  snprintf(resp, sizeof resp,
+                           "end=%d pair=%d writers=%d already=%d worker=%d extra=%u ok=%u\n",
                            got_end ? 1 : 0, pair_closed ? 1 : 0, fifo_writers(),
                            access(CSL_ALREADY_PATH, F_OK) == 0 ? 1 : 0, (int)worker_pid,
-                           extra_handoffs);
+                           extra_handoffs, ok_handoffs);
                   (void)csl_write_all(cfd, resp, strlen(resp));
               } else if (strncmp(req, "RAN", 3) == 0) {
                   (void)csl_write_file(CSL_ALREADY_PATH, "1\n", 2, 0600);
@@ -5178,17 +5176,21 @@ jobs:
           }
 
           static int parse_status(const char *status, int *end, int *pair, int *writers,
-                                  int *already, unsigned *extra)
+                                  int *already, unsigned *extra, unsigned *ok)
           {
               int worker = 0;
-              unsigned ex = 0;
-              int n = sscanf(status, "end=%d pair=%d writers=%d already=%d worker=%d extra=%u",
-                             end, pair, writers, already, &worker, &ex);
+              unsigned ex = 0, okv = 0;
+              int n = sscanf(status,
+                             "end=%d pair=%d writers=%d already=%d worker=%d extra=%u ok=%u",
+                             end, pair, writers, already, &worker, &ex, &okv);
               if (n < 4) {
                   return -1;
               }
               if (extra) {
                   *extra = (n >= 6) ? ex : 0u;
+              }
+              if (ok) {
+                  *ok = (n >= 7) ? okv : 0u;
               }
               return 0;
           }
@@ -5317,7 +5319,7 @@ jobs:
               size_t e3n = 0;
               int already = 0, end = 0, pair = 0, writers = 1;
               int waited = 0;
-              unsigned extra = 0;
+              unsigned extra = 0, ok = 0;
 
               (void)argc;
               (void)argv; /* ignore argv: do not open, stat, map, or exec {0} */
@@ -5337,7 +5339,7 @@ jobs:
               }
 
               if (control_query("STATUS\n", status, sizeof status) == 0) {
-                  if (parse_status(status, &end, &pair, &writers, &already, &extra) < 0) {
+                  if (parse_status(status, &end, &pair, &writers, &already, &extra, &ok) < 0) {
                       writers = 1;
                   }
               } else {
@@ -5345,6 +5347,7 @@ jobs:
                   pair = access(CSL_PAIR_PATH, F_OK) == 0;
                   already = access(CSL_ALREADY_PATH, F_OK) == 0;
                   extra = 0;
+                  ok = 0;
           #ifdef CSL_PREFIX
                   writers = 0; /* file-based unit tests have no daemon */
           #else
@@ -5364,7 +5367,7 @@ jobs:
                   nanosleep(&sl, NULL);
                   waited += 50;
                   if (control_query("STATUS\n", status, sizeof status) == 0) {
-                      if (parse_status(status, &end, &pair, &writers, &already, &extra) < 0) {
+                      if (parse_status(status, &end, &pair, &writers, &already, &extra, &ok) < 0) {
                           writers = 1;
                       }
                   } else {
@@ -5386,7 +5389,7 @@ jobs:
                   nanosleep(&sl, NULL);
                   waited += 50;
                   if (control_query("STATUS\n", status, sizeof status) == 0) {
-                      if (parse_status(status, &end, &pair, &writers, &already, &extra) < 0) {
+                      if (parse_status(status, &end, &pair, &writers, &already, &extra, &ok) < 0) {
                           writers = 1;
                       }
                   } else {
@@ -5426,11 +5429,9 @@ jobs:
               }
               if (csl_read_file(CSL_E3_RECORD_PATH, e3, sizeof e3, &e3n) == 0 && e3n &&
                   csl_e3_record_ok(e3, e3n)) {
-                  unsigned handoffs = extra + (pair ? 1u : 0u);
-                  /* Bootstrap wrote handoff_count=0 / handoff_conflict=false before
-                   * the model ran. Overwrite from the daemon's final STATUS extra=
-                   * (and pair_closed) before emit. */
-                  if (csl_e3_set_handoff(e3, sizeof e3, &e3n, handoffs, extra > 0) == 0) {
+                  /* Bootstrap placeholders stay 0/false unless STATUS reported ok=
+                   * and extra=. Do not invent a count from pair_closed. */
+                  if (csl_e3_set_handoff(e3, sizeof e3, &e3n, ok, extra > 0) == 0) {
                       strncat(body, e3, sizeof body - strlen(body) - 1);
                       if (body[strlen(body) - 1] != '\n') {
                           strncat(body, "\n", sizeof body - strlen(body) - 1);
@@ -5475,8 +5476,8 @@ jobs:
           ce7d40fb65fb34f5adb4e6089d7f26423ffc299f52b77acf32d446f6d09753fe  sandbox_argv.h
           53d9e830a9a3e54da837bda920af5d8ca392faf46600cfcc47ffb2d6fcf0da7f  sandbox_argv.c
           e5aa27f1b63924ee9b1aa653a65674ea35aebe0279bd7e1bce0239e15c514217  sandbox_launch.c
-          1ba66e9436768c8d5c0fa67fd742bb9bf19120a00aa6c2a554ab6298e069a262  sandbox_capture.c
-          a8b4887d4e87b305d95d7dc0cfccfca8f14bd494f2fb4f04379e7a1734f34834  sandbox_relay.c
+          8e3404507fa9e8f1ed6e8882e148205b098c4b83078e113dcf41a9a555bb490e  sandbox_capture.c
+          1ddc020a8929b5b9d4184bfc07a36c49b37c6f37eaf073a72d6db6bcb9f9c5fe  sandbox_relay.c
           CSL_C_PIN
           cat > /opt/csl-claude/lib/sandbox_e3_cli_pin.sh <<'CSL_E3_CLI_PIN'
           set -euo pipefail
@@ -9870,16 +9871,6 @@ jobs:
               return "\n".join(f"{name}={parsed[name]}" for name in FIELD_ORDER)
 
 
-          def apply_observed_handoff(text: str, count: int, conflict: bool) -> str:
-              """Replace bootstrap placeholders with daemon-observed handoff evidence."""
-              if count < 0:
-                  raise E3RecordError("handoff_count")
-              fields = parse_e3_text(text)
-              fields["handoff_count"] = str(int(count))
-              fields["handoff_conflict"] = "true" if conflict else "false"
-              return reconstruct_e3_record(fields)
-
-
           def parse_e3_text(text: str) -> Dict[str, str]:
               """Parse a daemon-written E3 record. No capture bytes; ``k=v`` lines only."""
               if not text or text.endswith("\n\n"):
@@ -9955,8 +9946,8 @@ jobs:
                   "socat_sha256": _sha256_file("/usr/bin/socat"),
                   "bash_sha256": _sha256_file("/bin/bash"),
                   "match": match,
-                  # Placeholders only. The relay overwrites these from daemon STATUS
-                  # extra= / pair_closed before it emits (Codex P2; Samir #264 APPROVE).
+                  # Placeholders only. The C relay overwrites these from daemon STATUS
+                  # ok= / extra= before it emits. This helper does not rewrite them.
                   "handoff_count": "0",
                   "handoff_conflict": "false",
               }
@@ -12290,7 +12281,8 @@ jobs:
           static int fifo_hup;
           static unsigned char capture_buf[CSL_CAP_BYTES];
           static size_t captured;
-          static unsigned extra_handoffs;
+          static unsigned extra_handoffs; /* attempts after a recorded success */
+          static unsigned ok_handoffs;    /* successful handoffs; 0 or 1 */
           static pid_t worker_pid;
           static pid_t f1_bun_pid;
 
@@ -12792,7 +12784,13 @@ jobs:
               if (cfd < 0) {
                   return;
               }
-              extra_handoffs++;
+              /* First success owns pair_fd. Later accepts (including a backlog
+               * connect after unlink) are extras, not a second pair. */
+              if (pair_fd >= 0 || ok_handoffs > 0) {
+                  extra_handoffs++;
+                  close(cfd);
+                  return;
+              }
               /* Blocking accept + SO_RCVTIMEO: connect-before-sendmsg must not EAGAIN. */
               if (setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &rcv, sizeof rcv) < 0) {
                   close(cfd);
@@ -12951,7 +12949,7 @@ jobs:
                   }
               }
               pair_fd = got_pair;
-              extra_handoffs--; /* first successful peer is the launcher */
+              ok_handoffs = 1;
               close(cfd);
           }
 
@@ -12991,10 +12989,11 @@ jobs:
               }
               req[n] = 0;
               if (strncmp(req, "STATUS", 6) == 0) {
-                  snprintf(resp, sizeof resp, "end=%d pair=%d writers=%d already=%d worker=%d extra=%u\n",
+                  snprintf(resp, sizeof resp,
+                           "end=%d pair=%d writers=%d already=%d worker=%d extra=%u ok=%u\n",
                            got_end ? 1 : 0, pair_closed ? 1 : 0, fifo_writers(),
                            access(CSL_ALREADY_PATH, F_OK) == 0 ? 1 : 0, (int)worker_pid,
-                           extra_handoffs);
+                           extra_handoffs, ok_handoffs);
                   (void)csl_write_all(cfd, resp, strlen(resp));
               } else if (strncmp(req, "RAN", 3) == 0) {
                   (void)csl_write_file(CSL_ALREADY_PATH, "1\n", 2, 0600);
@@ -13279,17 +13278,21 @@ jobs:
           }
 
           static int parse_status(const char *status, int *end, int *pair, int *writers,
-                                  int *already, unsigned *extra)
+                                  int *already, unsigned *extra, unsigned *ok)
           {
               int worker = 0;
-              unsigned ex = 0;
-              int n = sscanf(status, "end=%d pair=%d writers=%d already=%d worker=%d extra=%u",
-                             end, pair, writers, already, &worker, &ex);
+              unsigned ex = 0, okv = 0;
+              int n = sscanf(status,
+                             "end=%d pair=%d writers=%d already=%d worker=%d extra=%u ok=%u",
+                             end, pair, writers, already, &worker, &ex, &okv);
               if (n < 4) {
                   return -1;
               }
               if (extra) {
                   *extra = (n >= 6) ? ex : 0u;
+              }
+              if (ok) {
+                  *ok = (n >= 7) ? okv : 0u;
               }
               return 0;
           }
@@ -13418,7 +13421,7 @@ jobs:
               size_t e3n = 0;
               int already = 0, end = 0, pair = 0, writers = 1;
               int waited = 0;
-              unsigned extra = 0;
+              unsigned extra = 0, ok = 0;
 
               (void)argc;
               (void)argv; /* ignore argv: do not open, stat, map, or exec {0} */
@@ -13438,7 +13441,7 @@ jobs:
               }
 
               if (control_query("STATUS\n", status, sizeof status) == 0) {
-                  if (parse_status(status, &end, &pair, &writers, &already, &extra) < 0) {
+                  if (parse_status(status, &end, &pair, &writers, &already, &extra, &ok) < 0) {
                       writers = 1;
                   }
               } else {
@@ -13446,6 +13449,7 @@ jobs:
                   pair = access(CSL_PAIR_PATH, F_OK) == 0;
                   already = access(CSL_ALREADY_PATH, F_OK) == 0;
                   extra = 0;
+                  ok = 0;
           #ifdef CSL_PREFIX
                   writers = 0; /* file-based unit tests have no daemon */
           #else
@@ -13465,7 +13469,7 @@ jobs:
                   nanosleep(&sl, NULL);
                   waited += 50;
                   if (control_query("STATUS\n", status, sizeof status) == 0) {
-                      if (parse_status(status, &end, &pair, &writers, &already, &extra) < 0) {
+                      if (parse_status(status, &end, &pair, &writers, &already, &extra, &ok) < 0) {
                           writers = 1;
                       }
                   } else {
@@ -13487,7 +13491,7 @@ jobs:
                   nanosleep(&sl, NULL);
                   waited += 50;
                   if (control_query("STATUS\n", status, sizeof status) == 0) {
-                      if (parse_status(status, &end, &pair, &writers, &already, &extra) < 0) {
+                      if (parse_status(status, &end, &pair, &writers, &already, &extra, &ok) < 0) {
                           writers = 1;
                       }
                   } else {
@@ -13527,11 +13531,9 @@ jobs:
               }
               if (csl_read_file(CSL_E3_RECORD_PATH, e3, sizeof e3, &e3n) == 0 && e3n &&
                   csl_e3_record_ok(e3, e3n)) {
-                  unsigned handoffs = extra + (pair ? 1u : 0u);
-                  /* Bootstrap wrote handoff_count=0 / handoff_conflict=false before
-                   * the model ran. Overwrite from the daemon's final STATUS extra=
-                   * (and pair_closed) before emit. */
-                  if (csl_e3_set_handoff(e3, sizeof e3, &e3n, handoffs, extra > 0) == 0) {
+                  /* Bootstrap placeholders stay 0/false unless STATUS reported ok=
+                   * and extra=. Do not invent a count from pair_closed. */
+                  if (csl_e3_set_handoff(e3, sizeof e3, &e3n, ok, extra > 0) == 0) {
                       strncat(body, e3, sizeof body - strlen(body) - 1);
                       if (body[strlen(body) - 1] != '\n') {
                           strncat(body, "\n", sizeof body - strlen(body) - 1);
@@ -13576,8 +13578,8 @@ jobs:
           ce7d40fb65fb34f5adb4e6089d7f26423ffc299f52b77acf32d446f6d09753fe  sandbox_argv.h
           53d9e830a9a3e54da837bda920af5d8ca392faf46600cfcc47ffb2d6fcf0da7f  sandbox_argv.c
           e5aa27f1b63924ee9b1aa653a65674ea35aebe0279bd7e1bce0239e15c514217  sandbox_launch.c
-          1ba66e9436768c8d5c0fa67fd742bb9bf19120a00aa6c2a554ab6298e069a262  sandbox_capture.c
-          a8b4887d4e87b305d95d7dc0cfccfca8f14bd494f2fb4f04379e7a1734f34834  sandbox_relay.c
+          8e3404507fa9e8f1ed6e8882e148205b098c4b83078e113dcf41a9a555bb490e  sandbox_capture.c
+          1ddc020a8929b5b9d4184bfc07a36c49b37c6f37eaf073a72d6db6bcb9f9c5fe  sandbox_relay.c
           CSL_C_PIN
           cat > /opt/csl-claude/lib/sandbox_e3_cli_pin.sh <<'CSL_E3_CLI_PIN'
           set -euo pipefail

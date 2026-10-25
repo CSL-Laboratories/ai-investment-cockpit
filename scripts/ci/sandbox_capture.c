@@ -21,7 +21,8 @@ static int f1_armed;
 static int fifo_hup;
 static unsigned char capture_buf[CSL_CAP_BYTES];
 static size_t captured;
-static unsigned extra_handoffs;
+static unsigned extra_handoffs; /* attempts after a recorded success */
+static unsigned ok_handoffs;    /* successful handoffs; 0 or 1 */
 static pid_t worker_pid;
 static pid_t f1_bun_pid;
 
@@ -523,7 +524,13 @@ static void accept_handoff(void)
     if (cfd < 0) {
         return;
     }
-    extra_handoffs++;
+    /* First success owns pair_fd. Later accepts (including a backlog
+     * connect after unlink) are extras, not a second pair. */
+    if (pair_fd >= 0 || ok_handoffs > 0) {
+        extra_handoffs++;
+        close(cfd);
+        return;
+    }
     /* Blocking accept + SO_RCVTIMEO: connect-before-sendmsg must not EAGAIN. */
     if (setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &rcv, sizeof rcv) < 0) {
         close(cfd);
@@ -682,7 +689,7 @@ static void accept_handoff(void)
         }
     }
     pair_fd = got_pair;
-    extra_handoffs--; /* first successful peer is the launcher */
+    ok_handoffs = 1;
     close(cfd);
 }
 
@@ -722,10 +729,11 @@ static void handle_control(void)
     }
     req[n] = 0;
     if (strncmp(req, "STATUS", 6) == 0) {
-        snprintf(resp, sizeof resp, "end=%d pair=%d writers=%d already=%d worker=%d extra=%u\n",
+        snprintf(resp, sizeof resp,
+                 "end=%d pair=%d writers=%d already=%d worker=%d extra=%u ok=%u\n",
                  got_end ? 1 : 0, pair_closed ? 1 : 0, fifo_writers(),
                  access(CSL_ALREADY_PATH, F_OK) == 0 ? 1 : 0, (int)worker_pid,
-                 extra_handoffs);
+                 extra_handoffs, ok_handoffs);
         (void)csl_write_all(cfd, resp, strlen(resp));
     } else if (strncmp(req, "RAN", 3) == 0) {
         (void)csl_write_file(CSL_ALREADY_PATH, "1\n", 2, 0600);

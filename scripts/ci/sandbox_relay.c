@@ -60,17 +60,21 @@ static void not_relayed(const char *reason)
 }
 
 static int parse_status(const char *status, int *end, int *pair, int *writers,
-                        int *already, unsigned *extra)
+                        int *already, unsigned *extra, unsigned *ok)
 {
     int worker = 0;
-    unsigned ex = 0;
-    int n = sscanf(status, "end=%d pair=%d writers=%d already=%d worker=%d extra=%u",
-                   end, pair, writers, already, &worker, &ex);
+    unsigned ex = 0, okv = 0;
+    int n = sscanf(status,
+                   "end=%d pair=%d writers=%d already=%d worker=%d extra=%u ok=%u",
+                   end, pair, writers, already, &worker, &ex, &okv);
     if (n < 4) {
         return -1;
     }
     if (extra) {
         *extra = (n >= 6) ? ex : 0u;
+    }
+    if (ok) {
+        *ok = (n >= 7) ? okv : 0u;
     }
     return 0;
 }
@@ -199,7 +203,7 @@ int main(int argc, char **argv)
     size_t e3n = 0;
     int already = 0, end = 0, pair = 0, writers = 1;
     int waited = 0;
-    unsigned extra = 0;
+    unsigned extra = 0, ok = 0;
 
     (void)argc;
     (void)argv; /* ignore argv: do not open, stat, map, or exec {0} */
@@ -219,7 +223,7 @@ int main(int argc, char **argv)
     }
 
     if (control_query("STATUS\n", status, sizeof status) == 0) {
-        if (parse_status(status, &end, &pair, &writers, &already, &extra) < 0) {
+        if (parse_status(status, &end, &pair, &writers, &already, &extra, &ok) < 0) {
             writers = 1;
         }
     } else {
@@ -227,6 +231,7 @@ int main(int argc, char **argv)
         pair = access(CSL_PAIR_PATH, F_OK) == 0;
         already = access(CSL_ALREADY_PATH, F_OK) == 0;
         extra = 0;
+        ok = 0;
 #ifdef CSL_PREFIX
         writers = 0; /* file-based unit tests have no daemon */
 #else
@@ -246,7 +251,7 @@ int main(int argc, char **argv)
         nanosleep(&sl, NULL);
         waited += 50;
         if (control_query("STATUS\n", status, sizeof status) == 0) {
-            if (parse_status(status, &end, &pair, &writers, &already, &extra) < 0) {
+            if (parse_status(status, &end, &pair, &writers, &already, &extra, &ok) < 0) {
                 writers = 1;
             }
         } else {
@@ -268,7 +273,7 @@ int main(int argc, char **argv)
         nanosleep(&sl, NULL);
         waited += 50;
         if (control_query("STATUS\n", status, sizeof status) == 0) {
-            if (parse_status(status, &end, &pair, &writers, &already, &extra) < 0) {
+            if (parse_status(status, &end, &pair, &writers, &already, &extra, &ok) < 0) {
                 writers = 1;
             }
         } else {
@@ -308,11 +313,9 @@ int main(int argc, char **argv)
     }
     if (csl_read_file(CSL_E3_RECORD_PATH, e3, sizeof e3, &e3n) == 0 && e3n &&
         csl_e3_record_ok(e3, e3n)) {
-        unsigned handoffs = extra + (pair ? 1u : 0u);
-        /* Bootstrap wrote handoff_count=0 / handoff_conflict=false before
-         * the model ran. Overwrite from the daemon's final STATUS extra=
-         * (and pair_closed) before emit. */
-        if (csl_e3_set_handoff(e3, sizeof e3, &e3n, handoffs, extra > 0) == 0) {
+        /* Bootstrap placeholders stay 0/false unless STATUS reported ok=
+         * and extra=. Do not invent a count from pair_closed. */
+        if (csl_e3_set_handoff(e3, sizeof e3, &e3n, ok, extra > 0) == 0) {
             strncat(body, e3, sizeof body - strlen(body) - 1);
             if (body[strlen(body) - 1] != '\n') {
                 strncat(body, "\n", sizeof body - strlen(body) - 1);
