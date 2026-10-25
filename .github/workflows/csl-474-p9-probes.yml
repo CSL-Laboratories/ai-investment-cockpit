@@ -205,7 +205,7 @@ jobs:
           else
             printf 'CSL_P9_PROBE2_USERNS_SYSCTL_FLIP=missing\n'
           fi
-          if bwrap --unshare-user -- /bin/true >/tmp/csl-p9-bwrap-smoke.err 2>&1; then
+          if bwrap --unshare-user --ro-bind / / -- /bin/true >/tmp/csl-p9-bwrap-smoke.err 2>&1; then
             printf 'CSL_P9_PROBE2_BWRAP_UNSHARE=ok\n'
           else
             printf 'CSL_P9_PROBE2_BWRAP_UNSHARE=fail\n'

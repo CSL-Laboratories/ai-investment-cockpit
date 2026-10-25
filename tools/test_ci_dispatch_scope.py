@@ -1033,7 +1033,7 @@ class P9ProbeWorkflowTests(unittest.TestCase):
         self.assertIn('CLAUDE_CODE_SUBPROCESS_ENV_SCRUB', p2)
         self.assertIn('bubblewrap', p2)
         self.assertIn('kernel.apparmor_restrict_unprivileged_userns=0', p2)
-        self.assertIn('bwrap --unshare-user', p2)
+        self.assertIn('bwrap --unshare-user --ro-bind / / -- /bin/true', p2)
         self.assertNotIn('always() && inputs.enable_probe2_oauth', self.text)
         self.assertIn('success() && inputs.enable_probe2_oauth', self.text)
         self.assertIn('https://code.claude.com/docs/en/memory', p2)
