@@ -634,11 +634,11 @@ class WorkflowStructureTests(unittest.TestCase):
     def test_write_token_pip_uses_inline_hashed_lock(self) -> None:
         # CSL-471 J6 (4): pip while passwordless sudo is on must install from a
         # workflow-YAML heredoc with --require-hashes, never a checkout file.
+        # E3 mention/fixer no longer pip-install (Preferred I5); the remaining
+        # write-token pip is conflict-writer.
         marker = "CSL_PIP_HASH_LOCK"
         writer = WRITER_WORKFLOW_PATH.read_text(encoding="utf-8")
         jobs = (
-            ("claude.yml", "claude-mention", self._job("claude-mention")),
-            ("claude.yml", "devin-review-fix", self._job("devin-review-fix")),
             ("claude-conflict-writer.yml", "model", self._job_text(writer, "model")),
         )
         locks: list[str] = []
@@ -692,14 +692,13 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertEqual(len(set(locks)), 1)
 
     def test_hashed_lock_heredocs_are_byte_identical(self) -> None:
-        # CSL-471 Observability I4: the three YAML heredoc bodies must match
-        # as source bytes, including indent and interior newlines.
+        # CSL-471 Observability I4: remaining YAML heredoc bodies must match
+        # as source bytes, including indent and interior newlines. E3 dropped
+        # mention/fixer pip, so the remaining lock is conflict-writer.
         marker = "CSL_PIP_HASH_LOCK"
         writer = WRITER_WORKFLOW_PATH.read_text(encoding="utf-8")
         bodies = []
         for filename, job_name, job in (
-            ("claude.yml", "claude-mention", self._job("claude-mention")),
-            ("claude.yml", "devin-review-fix", self._job("devin-review-fix")),
             ("claude-conflict-writer.yml", "model", self._job_text(writer, "model")),
         ):
             step = self._named_step(job, "Install acceptance-gate deps")
