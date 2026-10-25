@@ -82,6 +82,14 @@ class E3RecordTests(unittest.TestCase):
         with self.assertRaises(e3.E3RecordError):
             e3.parse_e3_text("claude_sha256=" + e3.CLAUDE_SHA256 + "\nextra=1\n")
 
+    def test_bootstrap_handoff_fields_are_placeholders(self) -> None:
+        self.assertFalse(hasattr(e3, "apply_observed_handoff"))
+        bootstrap = e3.reconstruct_e3_record(self._fields(handoff_count="0"))
+        self.assertIn("handoff_count=0", bootstrap)
+        self.assertIn("handoff_conflict=false", bootstrap)
+        src = (SCRIPTS / "sandbox_e3_record.py").read_text(encoding="utf-8")
+        self.assertIn("ok= / extra=", src)
+
 
 class EnvironK2Tests(unittest.TestCase):
     def test_k1_path_newest_first_keeps_worker_suffix(self) -> None:
