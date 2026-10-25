@@ -185,13 +185,10 @@ test -f "$LIB/sandbox_e3_cli_pin.sh" || { echo "e3-0b: cli_pin missing" >&2; exi
 if [ -f "$AP/package.json" ]; then
   (cd "$AP" && "$BUN_DST" install --frozen-lockfile --production --ignore-scripts)
 fi
-# Pre-create the action's pin-bun destination before the ro remount so
-# mkdir -p "$AP/bin" is a no-op. Live proof that the action's later
-# bun install --production is a no-op on this tree is still P9.
-mkdir -p "$AP/bin"
-install -D -m0755 -o root -g root "$BUN_DST" "$AP/bin/bun"
 
 # 0b step 9: git-tree hash, extra-file check, node_modules digest, then bind.
+# hash-git-tree before $AP/bin/bun: check_git_tree does not exclude bin/, so
+# pre-seeding bun first would fail the extra-file check or punch a hole in it.
 command -v git >/dev/null 2>&1 || { echo "e3-0b: git missing" >&2; exit 1; }
 REF="$STATE/cca.git"
 git init --bare "$REF"
@@ -206,6 +203,11 @@ git -C "$BUNREF" fetch --depth 1 https://github.com/oven-sh/setup-bun.git \
 git -C "$BUNREF" ls-tree -r FETCH_HEAD > "$STATE/setup-bun.ls-tree"
 "$PYTHON" -I "$LIB/sandbox_e3_bind.py" verify-pins
 "$PYTHON" -I "$LIB/sandbox_e3_bind.py" hash-node-modules
+# Pre-create the action's pin-bun destination after the extra-file check and
+# before the ro remount so mkdir -p "$AP/bin" is a no-op. Live proof that the
+# action's later bun install --production is a no-op on this tree is still P9.
+mkdir -p "$AP/bin"
+install -D -m0755 -o root -g root "$BUN_DST" "$AP/bin/bun"
 chown -R root:root "$AP"
 chmod -R go-w "$AP"
 
@@ -235,8 +237,11 @@ if [ -d /home/runner/.docker ] && [ -z "$(ls -A /home/runner/.docker 2>/dev/null
 fi
 
 # 0b step 11: exact sudoers, rename-atomic, visudo -cf (F10). No NOPASSWD:ALL.
-printf '%s' "$SUDOERS_TEXT" > /etc/sudoers.new
-install -m0440 -o root -g root /etc/sudoers.new /etc/sudoers.new
+# GNU install exits 1 when src and dst are the same file; stage via mktemp.
+SUDOERS_SRC="$(mktemp)"
+printf '%s' "$SUDOERS_TEXT" > "$SUDOERS_SRC"
+install -m0440 -o root -g root "$SUDOERS_SRC" /etc/sudoers.new
+rm -f "$SUDOERS_SRC"
 visudo -cf /etc/sudoers.new
 # fsync via python (already root).
 "$PYTHON" -I -c 'import os; fd=os.open("/etc/sudoers.new", os.O_RDONLY); os.fsync(fd); os.close(fd)'

@@ -551,6 +551,33 @@ class R3ContractTests(unittest.TestCase):
     def test_fifo_hup_stops_polling_fifo_r(self) -> None:
         capture = (SRC / "sandbox_capture.c").read_text(encoding="utf-8")
         self.assertIn("fifo_hup", capture)
+        self.assertNotIn("drain_fifo(got_end || captured >= CSL_CAP_BYTES)", capture)
+        self.assertIn("drain_fifo(captured >= CSL_CAP_BYTES)", capture)
+
+    def test_fifo_drain_keeps_queued_bytes_after_end(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = Path(tmp)
+            probe = prefix / "fifo-drain"
+            subprocess.run(
+                [
+                    "gcc",
+                    "-DCSL_FIFO_DRAIN_TEST",
+                    f'-DCSL_PREFIX="{prefix}"',
+                    "-o", str(probe),
+                    str(SRC / "sandbox_capture.c"),
+                    str(SRC / "sandbox_common.c"),
+                    f"-I{SRC}",
+                    "-static", "-O2", "-Wall", "-Werror",
+                    "-Wno-unused-function",
+                ],
+                check=True,
+                cwd=SRC,
+            )
+            proc = subprocess.run([str(probe)], capture_output=True, timeout=8)
+            self.assertEqual(
+                proc.returncode, 0,
+                f"rc={proc.returncode} stderr={proc.stderr!r} stdout={proc.stdout!r}",
+            )
 
     def test_n14_subreaper_waits_descendants(self) -> None:
         launch = (SRC / "sandbox_launch.c").read_text(encoding="utf-8")
