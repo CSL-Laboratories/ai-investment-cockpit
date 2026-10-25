@@ -1704,14 +1704,25 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("a digest on the Linear issue", self.agents)
         self.assertIn("submissions/<record_id>/", self.agents)
         self.assertIn("tools/check_submission.py", self.agents)
-        self.assertIn("legacy and frozen", self.agents)
+        self.assertIn("Every new non-public doc", self.agents)
+        self.assertIn("CSL-536", self.agents)
+        self.assertIn("docs/research/**` is legacy", self.agents)
         self.assertIn("no separate admission is needed", self.agents)
         self.assertIn(
             "If csl-research is not accessible, stop and post a blocker",
             self.agents,
         )
-        self.assertIn("docs/evidence/**", self.agents)
-        self.assertIn("docs/replacement/outcomes/**", self.agents)
+        self.assertNotIn(
+            "docs/evidence/**` are legacy and frozen", self.agents
+        )
+        self.assertNotIn(
+            "This repository takes contracts, specs, fixtures and runbooks only",
+            self.agents,
+        )
+        runbook = (ROOT / "docs" / "runbooks" / "w25-worm-audit-witness.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("docs/evidence/", runbook)
         self.assertIn(
             "this cockpit's research/dev swarm dispatch", self.agents
         )
@@ -1749,7 +1760,12 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("AGENTS.md", claude)
         self.assertIn("Grok Bot, preparing research for <owner>", claude)
         self.assertIn("submissions/<record_id>/", claude)
-        self.assertIn("legacy and frozen", claude)
+        self.assertIn("Every new", claude)
+        self.assertIn("non-public doc", claude)
+        self.assertIn("CSL-536", claude)
+        self.assertNotIn(
+            "docs/evidence/**` are legacy and frozen", claude
+        )
         self.assertIn("three-founder", claude)
         self.assertIn("CSL-511", claude)
         self.assertIn("this cockpit's", claude)
@@ -1767,7 +1783,11 @@ class WorkflowStructureTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("Grok Bot, preparing research for <owner>", skill)
         self.assertIn("submissions/<record_id>/", skill)
-        self.assertIn("legacy and frozen", skill)
+        self.assertIn("Every new non-public doc", skill)
+        self.assertIn("CSL-536", skill)
+        self.assertNotIn(
+            "docs/evidence/**` are legacy and frozen", skill
+        )
         self.assertIn(
             "If csl-research is not accessible, stop and post a blocker", skill
         )

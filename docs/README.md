@@ -31,9 +31,10 @@ as `submissions/<record_id>/`, through a PR in that repo, with a digest on the
 Linear issue. Never commit research content to this repo; specs, amendments and
 code only link to the vault record (repo, 40-hex commit, path, claim,
 limitations). If csl-research is not accessible, stop and post a blocker on the
-Linear issue; do not fall back to this repo. Existing `docs/research/**` and
-`docs/evidence/**` are **legacy and frozen** (no new files), except contract
-fixtures under `docs/replacement/outcomes/**`. Navigation:
+Linear issue; do not fall back to this repo. Every new non-public doc goes to
+csl-research through a PR there; this repo only links to it. Existing files
+stay until [CSL-536](https://linear.app/csl-laboratories/issue/CSL-536).
+`docs/research/**` is **legacy** (no new files). Navigation:
 [CSL research index](https://github.com/CSL-Laboratories/csl-research/blob/main/INDEX.md),
 [Cockpit context](https://github.com/CSL-Laboratories/csl-research/blob/main/knowledge/cockpit/README.md)
 and [research-to-delivery guide](https://github.com/CSL-Laboratories/csl-research/blob/main/README.md#connecting-research-and-delivery).
@@ -349,11 +350,12 @@ defects got fixed twice on two branches.
 
 ## Reference — cited, not planned from
 
-Existing `docs/research/**` and `docs/evidence/**` paths below are **legacy and
-frozen** (no new files). Link new research to
+Existing `docs/research/**` paths below are **legacy** (no new files). Link new
+research to
 [CSL-Laboratories/csl-research](https://github.com/CSL-Laboratories/csl-research)
-`submissions/<record_id>/`. Contract fixtures under `docs/replacement/outcomes/**`
-stay.
+`submissions/<record_id>/`. Existing `docs/evidence/**` files stay until
+[CSL-536](https://linear.app/csl-laboratories/issue/CSL-536). Contract fixtures
+under `docs/replacement/outcomes/**` stay.
 
 | Doc | Why it is still load-bearing |
 |---|---|

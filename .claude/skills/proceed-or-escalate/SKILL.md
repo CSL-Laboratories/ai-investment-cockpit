@@ -142,9 +142,9 @@ research registers or indexes) goes to CSL-Laboratories/csl-research as
 Linear issue. Never commit research content
 to this repo; specs, amendments and code only link to the vault record.
 If csl-research is not accessible, stop and post a blocker on the Linear
-issue; do not fall back to this repo. Existing `docs/research/**` and
-`docs/evidence/**` are legacy and frozen, except contract fixtures under
-`docs/replacement/outcomes/**`.
+issue; do not fall back to this repo. Every new non-public doc goes to
+csl-research through a PR there; this repo only links to it. Existing
+files stay until CSL-536. `docs/research/**` is legacy (no new files).
 
 Then stop that line of work, release your claim, if you hold one, with a release record (AGENTS.md)
 "Bounded issue execution and shared evidence"), and take only other admitted work
