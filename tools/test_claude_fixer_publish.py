@@ -2156,10 +2156,11 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertEqual(names[0], "E3-0-early setup-bun")
         self.assertEqual(names[1], "E3-0-early record bun-path")
         self.assertEqual(names[2], "E3-0-early write helper")
+        self.assertEqual(names[3], "E3-0-early helper context")
         self.assertIn("E3-0-early write python helpers", names)
         self.assertIn("E3-0-early write C sources A", names)
         self.assertIn("E3-0-early write C sources B", names)
-        self.assertEqual(names[6], "E3-0-early root bootstrap")
+        self.assertEqual(names[7], "E3-0-early root bootstrap")
         sandbox = step(model, "Install the subprocess sandbox for Claude's commands")
         self.assertEqual(names.index("claude") - 1, names.index(sandbox["name"]))
         action = [s for s in model["steps"] if s.get("id") == "claude"][0]
@@ -2190,6 +2191,20 @@ class WorkflowWiringTests(unittest.TestCase):
             bootstrap["shell"],
             "/usr/bin/sudo -n /bin/bash --noprofile --norc -e -o pipefail {0}",
         )
+        write_helper = step(model, "E3-0-early write helper")
+        self.assertIn(
+            "chown -R runner:runner /home/runner/work/_temp/claude-fixer-guard",
+            write_helper["run"],
+        )
+        helper_ctx = step(model, "E3-0-early helper context")
+        self.assertNotIn("sudo", str(helper_ctx.get("shell") or ""))
+        self.assertEqual(helper_ctx["env"]["REPO"], "${{ github.repository }}")
+        self.assertIn(
+            "/usr/bin/python3 -I /home/runner/work/_temp/claude-fixer-guard/model-api install",
+            helper_ctx["run"],
+        )
+        self.assertNotIn('"$PYTHON" -I "$GUARD/model-api" install', bootstrap["run"])
+        self.assertIn('test -f "$GUARD/context.json"', bootstrap["run"])
         checkout = [s for s in model["steps"] if str(s.get("uses", "")).startswith("actions/checkout@")]
         self.assertEqual(
             checkout[0]["uses"],

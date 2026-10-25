@@ -497,6 +497,144 @@ class NativeSocketTests(unittest.TestCase):
                     daemon.kill()
                     daemon.wait(timeout=2)
 
+    def test_delayed_sendmsg_completes_handoff(self) -> None:
+        delayed = r'''
+#define _GNU_SOURCE
+#include "sandbox_common.h"
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <time.h>
+
+int main(void)
+{
+    int fd, pair[2], pass = 1;
+    struct sockaddr_un addr;
+    struct msghdr msg;
+    struct iovec iov;
+    char cmsgbuf[CMSG_SPACE(sizeof(int)) + CMSG_SPACE(sizeof(struct ucred))];
+    struct cmsghdr *cmsg;
+    struct ucred cred;
+    char dummy = 1;
+    char reply = 0;
+    struct timespec sl = {0, 200 * 1000 * 1000};
+
+    fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) {
+        return 1;
+    }
+    memset(&addr, 0, sizeof addr);
+    addr.sun_family = AF_UNIX;
+    snprintf(addr.sun_path, sizeof addr.sun_path, "%s", CSL_HANDOFF_SOCK);
+    if (connect(fd, (struct sockaddr *)&addr, sizeof addr) < 0) {
+        return 2;
+    }
+    (void)nanosleep(&sl, NULL);
+    if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) < 0) {
+        return 3;
+    }
+    (void)setsockopt(fd, SOL_SOCKET, SO_PASSCRED, &pass, sizeof pass);
+    memset(&msg, 0, sizeof msg);
+    iov.iov_base = &dummy;
+    iov.iov_len = 1;
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = cmsgbuf;
+    msg.msg_controllen = sizeof cmsgbuf;
+    cmsg = CMSG_FIRSTHDR(&msg);
+    if (!cmsg) {
+        return 4;
+    }
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
+    cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+    memcpy(CMSG_DATA(cmsg), &pair[1], sizeof(int));
+    cred.pid = getpid();
+    cred.uid = getuid();
+    cred.gid = getgid();
+    cmsg = CMSG_NXTHDR(&msg, cmsg);
+    if (cmsg) {
+        cmsg->cmsg_level = SOL_SOCKET;
+        cmsg->cmsg_type = SCM_CREDENTIALS;
+        cmsg->cmsg_len = CMSG_LEN(sizeof cred);
+        memcpy(CMSG_DATA(cmsg), &cred, sizeof cred);
+    }
+    if (sendmsg(fd, &msg, 0) < 0) {
+        return 5;
+    }
+    close(pair[1]);
+    close(fd);
+    memset(&msg, 0, sizeof msg);
+    iov.iov_base = &reply;
+    iov.iov_len = 1;
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = cmsgbuf;
+    msg.msg_controllen = sizeof cmsgbuf;
+    (void)recvmsg(pair[0], &msg, 0);
+    close(pair[0]);
+    return 0;
+}
+'''
+        capture_src = (SRC / "sandbox_capture.c").read_text(encoding="utf-8")
+        self.assertIn("SO_RCVTIMEO", capture_src)
+        self.assertNotIn("SOCK_CLOEXEC | SOCK_NONBLOCK", capture_src)
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = Path(tmp)
+            bins = compile_prefix(prefix)
+            state = prefix / "state"
+            state.mkdir(parents=True, exist_ok=True)
+            (state / "worker.pid").write_text(f"{os.getpid()}\n", encoding="ascii")
+            (state / "worker.pid").chmod(0o600)
+            stub = prefix / "delayed_handoff.c"
+            stub.write_text(delayed, encoding="utf-8")
+            subprocess.run(
+                [
+                    "gcc",
+                    f'-DCSL_PREFIX="{prefix}"',
+                    "-o", str(bins["launch"]),
+                    str(stub),
+                    f"-I{SRC}",
+                    "-O2", "-Wall", "-Werror",
+                ],
+                check=True,
+                cwd=SRC,
+            )
+            digest = hashlib.sha256(bins["launch"].read_bytes()).hexdigest()
+            (state / "launch.sha256").write_text(digest + "\n", encoding="ascii")
+            daemon = subprocess.Popen(
+                [str(bins["capture"])],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            try:
+                sock_path = state / "handoff.sock"
+                for _ in range(50):
+                    if sock_path.exists() and (state / "control.sock").exists():
+                        break
+                    time.sleep(0.05)
+                self.assertTrue(sock_path.exists(), "handoff.sock")
+                client = subprocess.run([str(bins["launch"])], capture_output=True, timeout=5)
+                self.assertEqual(
+                    client.returncode, 0,
+                    f"rc={client.returncode} stderr={client.stderr!r}",
+                )
+                control = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                try:
+                    control.settimeout(3)
+                    control.connect(str(state / "control.sock"))
+                    control.sendall(b"STATUS\n")
+                    reply = control.recv(256)
+                finally:
+                    control.close()
+                self.assertIn(b"extra=0", reply, reply)
+            finally:
+                daemon.send_signal(15)
+                try:
+                    daemon.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    daemon.kill()
+                    daemon.wait(timeout=2)
+
 
 class EmbedPinTests(unittest.TestCase):
     def test_each_embedded_c_file_hashes_to_its_pin(self) -> None:

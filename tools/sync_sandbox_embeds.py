@@ -116,6 +116,16 @@ def make_step(name: str, env_block: str, body: str) -> str:
     )
 
 
+def make_runner_step(name: str, env_block: str, body: str) -> str:
+    return (
+        f"      - name: {name}\n"
+        f"{env_block}"
+        f"        run: |\n"
+        f"          set -euo pipefail\n"
+        f"{body}"
+    )
+
+
 def _generated_0b_steps(env: str) -> str:
     helper = (
         "          mkdir -p /opt/csl-claude/lib /opt/csl-claude/src "
@@ -126,6 +136,19 @@ def _generated_0b_steps(env: str) -> str:
         "<<'CLAUDE_FIXER_OUTBOX'\n"
         f"{indent_body(OUTBOX.read_text(encoding='utf-8'))}\n"
         "          CLAUDE_FIXER_OUTBOX\n"
+        "          # Runner-uid install needs to write context.json; sudo "
+        "env_reset drops REPO.\n"
+        "          chown -R runner:runner /home/runner/work/_temp/claude-fixer-guard\n"
+        "          chmod 0755 /home/runner/work/_temp/claude-fixer-guard "
+        "/home/runner/work/_temp/claude-fixer-guard/model-api\n"
+    )
+    context = (
+        "          # Runner-uid: workflow env reaches python. Root bootstrap "
+        "only chowns.\n"
+        "          test -x /home/runner/work/_temp/claude-fixer-guard/model-api\n"
+        "          /usr/bin/python3 -I "
+        "/home/runner/work/_temp/claude-fixer-guard/model-api install\n"
+        "          test -f /home/runner/work/_temp/claude-fixer-guard/context.json\n"
     )
     py = "          mkdir -p /opt/csl-claude/lib\n" + cat_group(PY_ORDER)
     ca = "          mkdir -p /opt/csl-claude/src\n" + cat_group(C_A)
@@ -144,6 +167,7 @@ def _generated_0b_steps(env: str) -> str:
     )
     return "\n".join([
         make_step("E3-0-early write helper", env, helper),
+        make_runner_step("E3-0-early helper context", env, context),
         make_step("E3-0-early write python helpers", env, py),
         make_step("E3-0-early write C sources A", env, ca),
         make_step("E3-0-early write C sources B", env, cb),
@@ -152,10 +176,11 @@ def _generated_0b_steps(env: str) -> str:
 
 
 def split_0b_into_steps(text: str) -> str:
-    """Keep each run: under actionlint's 60 KiB pipe limit."""
+    """Keep each run: under actionlint's 60 KiB pipe limit. Regenerates 0b."""
     if "E3-0-early write helper" in text:
-        return text
-    marker = "      - name: E3-0-early root bootstrap\n"
+        marker = "      - name: E3-0-early write helper\n"
+    else:
+        marker = "      - name: E3-0-early root bootstrap\n"
     checkout = "      - uses: actions/checkout@"
     n = 0
     out = []

@@ -758,6 +758,7 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("no-cache: true", mention)
         self.assertIn("id: setup-bun", mention)
         self.assertIn("E3-0-early record bun-path", mention)
+        self.assertIn("E3-0-early helper context", mention)
         self.assertIn("steps.setup-bun.outputs.bun-path", mention)
         self.assertIn("/home/runner/work/_temp/csl-e3-bun-path", mention)
         self.assertIn("E3-0-early root bootstrap", mention)
