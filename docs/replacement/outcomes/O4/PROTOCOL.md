@@ -114,7 +114,8 @@ The matched baseline is cash on the same population and the same clock. Cash
 flows are retained and matched to that baseline. Their values are unmeasured.
 The cash benchmark definition is declared and unmeasured: `instrument`,
 `rate_source`, `as_of`, `compounding`, `horizon`, and `capital_flow_schedule`
-are required, and each value in this packet is `null`. A later measurement
+are required, and each value in this packet is `null`. Each of those fields
+must be non-null before a pre-result receipt. A later measurement
 must set `as_of` to a `YYYY-MM-DD` date and `compounding` to one of `simple`,
 `daily`, `monthly`, `quarterly`, `annual`, or `continuous`. This packet does
 not choose those values.
@@ -128,9 +129,11 @@ experiment is `not_run`, a `retained_measured` cost is asserted measurement
 evidence the checker rejects. This packet has no such measurement.
 
 Hypothesis under test, once a later authorized measurement exists: the family
-beats matched cash after those retained costs, measured on net yield against
-the matched-cash baseline and capital use together with the statistical
-registry below, with the recorded empty outcome still visible. The null is
+beats matched cash after all eight retained costs (transaction, latency, data,
+model, venue fees, spread/slippage, funding/collateral, and tax/accounting),
+measured on net yield against the matched-cash baseline and capital use
+together with the statistical registry below, with the recorded empty outcome
+still visible. The null is
 that it does not beat matched cash. A net result that does not beat matched
 cash retains the null and rejects the strategy hypothesis; only a net result
 that beats matched cash rejects the null. This packet does not compute that

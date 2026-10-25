@@ -8,6 +8,7 @@ failures so the CI log shows them.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import runpy
 import subprocess
@@ -54,6 +55,27 @@ CHECKED = (
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _load_o4_validate():
+    spec = importlib.util.spec_from_file_location("o4_validate", O4 / "validate.py")
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+# Phrases the hypothesis must contain, one per COST_KEYS entry, in that order.
+HYPOTHESIS_COST_PHRASES = {
+    "transaction": "transaction",
+    "latency": "latency",
+    "data": "data",
+    "model": "model",
+    "venue_fees": "venue fees",
+    "spread_slippage": "spread/slippage",
+    "funding_collateral": "funding/collateral",
+    "tax_accounting": "tax/accounting",
+}
 
 
 def test_o4_negative_controls_fail_as_designed(capsys) -> None:
@@ -186,6 +208,21 @@ def test_o4_requires_declared_costs_and_cash_benchmark() -> None:
     missing_rate = deepcopy(experiment)
     del missing_rate["matched_baseline"]["rate_source"]
     assert not validator.is_valid(missing_rate)
+
+
+def test_o4_hypothesis_names_every_retained_cost() -> None:
+    validate = _load_o4_validate()
+    packet = json.loads((O4 / "fixtures/candidate-packet.json").read_text(encoding="utf-8"))
+    assert [item.code for item in validate.assess(packet)] == []
+    for section in ("experiment", "strategy_contract"):
+        text = packet[section]["hypothesis"]
+        for key, phrase in HYPOTHESIS_COST_PHRASES.items():
+            assert phrase in text
+            broken = deepcopy(packet)
+            broken[section]["hypothesis"] = text.replace(phrase, "omitted", 1)
+            found = validate.assess(broken)
+            assert [item.code for item in found] == ["hypothesis_costs"]
+            assert f"{section}.{key}" in found[0].message
 
 
 def test_o4_leaves_accepted_csl212_digests_unchanged() -> None:

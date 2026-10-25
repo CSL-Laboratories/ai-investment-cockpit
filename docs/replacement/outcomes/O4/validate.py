@@ -288,6 +288,7 @@ def _semantic_failures(packet: dict[str, Any], repo: Path) -> list[Failure]:
     _populations(packet, failures)
     _leakage(packet, failures)
     _costs(packet, failures)
+    _hypotheses(packet, failures)
     _variants(packet, failures)
     _empty_outcome(packet, repo, failures)
     _metrics(packet, failures)
@@ -388,6 +389,31 @@ def _costs(packet: dict[str, Any], failures: list[Failure]) -> None:
         packet["experiment"].get("status") == "not_run" and bool(measured),
         "measured_costs_on_unrun_experiment",
         "an unrun experiment cannot carry measured costs: " + ", ".join(measured),
+    )
+
+
+def _hypothesis_names_cost(text: str, key: str) -> bool:
+    folded = " ".join("".join(ch if ch.isalnum() else " " for ch in text.casefold()).split())
+    return f" {key.replace('_', ' ')} " in f" {folded} "
+
+
+def _hypotheses(packet: dict[str, Any], failures: list[Failure]) -> None:
+    sections = (
+        ("experiment", packet.get("experiment")),
+        ("strategy_contract", packet.get("strategy_contract")),
+    )
+    missing: list[str] = []
+    for name, section in sections:
+        text = section.get("hypothesis") if isinstance(section, dict) else None
+        if not isinstance(text, str):
+            missing.extend(f"{name}.{key}" for key in COST_KEYS)
+            continue
+        missing.extend(f"{name}.{key}" for key in COST_KEYS if not _hypothesis_names_cost(text, key))
+    _fail_if(
+        failures,
+        bool(missing),
+        "hypothesis_costs",
+        "hypothesis omits a retained cost: " + ", ".join(missing),
     )
 
 

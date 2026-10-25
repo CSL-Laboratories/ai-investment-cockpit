@@ -155,7 +155,7 @@
       "Held-out observations are used to choose parameters.",
       "The result collapses under an owner-declared uncertainty or liquidity limit."
     ],
-    "hypothesis": "One family, evaluated later on a sealed US cash-equity population and a sealed Kalshi-demo event population with one purged and embargoed tuning/evaluation split, beats matched cash after retained transaction, latency, data, and model costs, measured on net yield against the matched-cash baseline, capital use, deflated Sharpe, probability of backtest overfitting, drawdown, and uncertainty. This packet does not run that comparison.",
+    "hypothesis": "One family, evaluated later on a sealed US cash-equity population and a sealed Kalshi-demo event population with one purged and embargoed tuning/evaluation split, beats matched cash after all eight retained costs (transaction, latency, data, model, venue fees, spread/slippage, funding/collateral, and tax/accounting), measured on net yield against the matched-cash baseline, capital use, deflated Sharpe, probability of backtest overfitting, drawdown, and uncertainty. This packet does not run that comparison.",
     "leakage_controls": {
       "embargo": {
         "evidence": null,
@@ -529,7 +529,7 @@
       "The result collapses under an owner-declared uncertainty or liquidity limit."
     ],
     "family_id": "xm_us_equity_kalshi_demo",
-    "hypothesis": "One family, evaluated later on a sealed US cash-equity population and a sealed Kalshi-demo event population with one purged and embargoed tuning/evaluation split, beats matched cash after retained transaction, latency, data, and model costs, measured on net yield against the matched-cash baseline, capital use, deflated Sharpe, probability of backtest overfitting, drawdown, and uncertainty. This packet does not run that comparison.",
+    "hypothesis": "One family, evaluated later on a sealed US cash-equity population and a sealed Kalshi-demo event population with one purged and embargoed tuning/evaluation split, beats matched cash after all eight retained costs (transaction, latency, data, model, venue fees, spread/slippage, funding/collateral, and tax/accounting), measured on net yield against the matched-cash baseline, capital use, deflated Sharpe, probability of backtest overfitting, drawdown, and uncertainty. This packet does not run that comparison.",
     "maturity": "researched",
     "multiple_testing_trial_count": 3,
     "parameter_variants": [
