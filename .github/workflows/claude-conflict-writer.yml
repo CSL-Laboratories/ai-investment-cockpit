@@ -182,6 +182,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install acceptance-gate deps
+        # CSL-467: -P plus runner.temp so PR sitecustomize/pip.conf cannot run.
         working-directory: ${{ runner.temp }}
         run: |
           set -euo pipefail
