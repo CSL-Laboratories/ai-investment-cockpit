@@ -926,6 +926,13 @@ class P9ProbeWorkflowTests(unittest.TestCase):
     def test_dispatch_only_least_privilege(self):
         header = self.text.split('\njobs:', 1)[0]
         self.assertIn('workflow_dispatch:', header)
+        self.assertIn(
+            'With enable_probe2_oauth=false (the intended dispatch), Probe 2 is',
+            header,
+        )
+        self.assertIn('INCONCLUSIVE/non-green', header)
+        self.assertIn('That is not a CLI isolation finding', header)
+        self.assertIn('P9 in this form rests on Probe 0', header)
         self.assertNotIn('\npull_request:', header)
         self.assertNotIn('\npush:', header)
         self.assertNotIn('\nschedule:', header)
@@ -1024,3 +1031,4 @@ class P9ProbeWorkflowTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
