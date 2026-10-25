@@ -691,7 +691,7 @@ WRITER_CALL = re.compile(
 _SECRET_EXPR = re.compile(
     r'''secrets(?:\.[A-Za-z0-9_]+|\[\s*['"][A-Za-z0-9_]+['"]\s*\])'''
 )
-_QUOTED = re.compile(r'''(?:'[^']*'|"[^"]*")''')
+_QUOTED_SECRETS_WORD = re.compile(r'''['"]secrets['"]''', re.IGNORECASE)
 _SECRETS_CONTEXT = re.compile(r'(?<![\w.])secrets\b')
 _GH_EXPR = re.compile(r'\$\{\{(.*?)\}\}', re.DOTALL)
 _OAUTH_ACTION_INPUT = re.compile(
@@ -740,7 +740,7 @@ class _ModelSecrets:
     @staticmethod
     def _in_exprs(text):
         for body in _GH_EXPR.findall(text):
-            hit = _SECRETS_CONTEXT.search(_QUOTED.sub('', body))
+            hit = _SECRETS_CONTEXT.search(_QUOTED_SECRETS_WORD.sub('', body))
             if hit:
                 return hit
         return None
@@ -1288,6 +1288,9 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         inputs = copy.deepcopy(live)
         inputs['steps'][0]['if'] = '${{ github.event.inputs.secrets }}'
         self.assertIsNone(MODEL_SECRETS.search(inputs))
+        concealed = copy.deepcopy(live)
+        concealed['steps'][0]['run'] = '''echo ${{ 'x" && secrets.MY_PAT && "y' }}'''
+        self.assertIsNotNone(MODEL_SECRETS.search(concealed))
         self.assertTrue(model_github_token_ok(live))
         self.assertFalse(model_github_token_ok(job))
         pat_input = copy.deepcopy(live)
