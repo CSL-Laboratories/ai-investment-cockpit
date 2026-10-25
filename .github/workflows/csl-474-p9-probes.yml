@@ -10,9 +10,10 @@
 # empty-MCP immutability. Same pin as scripts/ci/claude-code-2.1.306-linux-x64.pin
 # (sha256 520bc6c1…, action pin a5a423f75c251dcbff8a74e99f83b2cb03c72bfa).
 # Verdicts are PASS, FAIL, or INCONCLUSIVE. Hook-marker absent is not a pass.
-# The OAuth invoke is behind enable_probe2_oauth (default false). No loaded
-# hook may read the token before isolation is verified: bootstrap is a
-# hook-free cwd; hooked trials never receive the secret in env.
+# Isolation PASS requires a completed P9PROBE2OK response; MCPRO is in the
+# green verdict. The OAuth invoke is behind enable_probe2_oauth (default
+# false). No loaded hook may read the token before isolation is verified:
+# bootstrap is a hook-free cwd; hooked trials never receive the secret in env.
 name: CSL-474 P9 probes
 
 on:
@@ -322,21 +323,21 @@ jobs:
           PROMPT='Call the Bash tool exactly once with the command true. After that tool result, reply with exactly P9PROBE2OK and nothing else.'
           rec ORACLE tool-call-plus-positive-control
           rec NOTE "Verdicts are PASS/FAIL/INCONCLUSIVE. Hook-marker absent is not a pass."
+          rec NOTE "Isolation PASS requires a completed P9PROBE2OK response; MCPRO is in the green verdict."
 
           hook_state() { test -f "$1" && echo present || echo absent; }
 
-          session_ok() {
-            local rc="$1" combined="$2" hooks_dir="$3"
+          # completed: CLI finished a turn with a recognizable response.
+          # Hook-marker alone or timeout is not a completed session.
+          completed() {
+            local rc="$1" combined="$2"
             case "$combined" in
               *[Ll]ogin*|*[Aa]uthenticat*|*[Aa]pi\ [Kk]ey*|*[Oo]auth*|*[Nn]ot\ logged*)
                 return 1
                 ;;
             esac
-            if [ "$rc" -eq 0 ]; then
-              return 0
-            fi
-            if [ -f "$hooks_dir/project" ] || [ -f "$hooks_dir/local" ] || [ -f "$hooks_dir/user" ]; then
-              return 0
+            if [ "$rc" -ne 0 ]; then
+              return 1
             fi
             case "$combined" in
               *P9PROBE2OK*|*CSL474_AGENTS_LOADED*) return 0 ;;
@@ -392,11 +393,13 @@ jobs:
               *CSL474_AGENTS_LOADED*) rec "${tag}_AGENTS_CANARY" present ;;
               *) rec "${tag}_AGENTS_CANARY" absent ;;
             esac
-            if session_ok "$rc" "$combined" "$hooks"; then
+            if completed "$rc" "$combined"; then
               rec "${tag}_SESSION" started
+              rec "${tag}_COMPLETED" 1
               rec "${tag}_NEEDS_OAUTH" 0
             else
               rec "${tag}_SESSION" none
+              rec "${tag}_COMPLETED" 0
               rec "${tag}_NEEDS_OAUTH" 1
             fi
           }
@@ -414,15 +417,18 @@ jobs:
           MCPRO_RC="$(cat "${RUNNER_TEMP}/csl-p9-MCPRO.rc")"
           control_combined="$(cat "${RUNNER_TEMP}/csl-p9-CONTROL-out.txt" "${RUNNER_TEMP}/csl-p9-CONTROL-err.txt")"
           isolation_combined="$(cat "${RUNNER_TEMP}/csl-p9-ISOLATION-out.txt" "${RUNNER_TEMP}/csl-p9-ISOLATION-err.txt")"
+          mcpro_combined="$(cat "${RUNNER_TEMP}/csl-p9-MCPRO-out.txt" "${RUNNER_TEMP}/csl-p9-MCPRO-err.txt")"
           control_hooks="${RUNNER_TEMP}/csl-p9-CONTROL-hooks"
           isolation_hooks="${RUNNER_TEMP}/csl-p9-ISOLATION-hooks"
+          mcpro_hooks="${RUNNER_TEMP}/csl-p9-MCPRO-hooks"
 
           HOOK_CONTROL=INCONCLUSIVE
           HOOK_ISOLATION=INCONCLUSIVE
           CANARY_CONTROL=INCONCLUSIVE
           CANARY_ISOLATION=INCONCLUSIVE
+          MCPRO=INCONCLUSIVE
 
-          if ! session_ok "$CONTROL_RC" "$control_combined" "$control_hooks"; then
+          if ! completed "$CONTROL_RC" "$control_combined"; then
             HOOK_CONTROL=INCONCLUSIVE
             CANARY_CONTROL=INCONCLUSIVE
             HOOK_ISOLATION=INCONCLUSIVE
@@ -437,17 +443,20 @@ jobs:
               *CSL474_AGENTS_LOADED*) CANARY_CONTROL=PASS ;;
               *) CANARY_CONTROL=FAIL ;;
             esac
-            if ! session_ok "$ISOLATION_RC" "$isolation_combined" "$isolation_hooks"; then
+            if ! completed "$ISOLATION_RC" "$isolation_combined"; then
               HOOK_ISOLATION=INCONCLUSIVE
               CANARY_ISOLATION=INCONCLUSIVE
             else
-              if [ "$HOOK_CONTROL" = PASS ] && [ ! -f "$isolation_hooks/project" ] && [ ! -f "$isolation_hooks/local" ] && [ -f "$isolation_hooks/user" ]; then
+              if [ -f "$isolation_hooks/project" ] || [ -f "$isolation_hooks/local" ]; then
+                HOOK_ISOLATION=FAIL
+              elif [ "$HOOK_CONTROL" = PASS ] && [ -f "$isolation_hooks/user" ]; then
                 HOOK_ISOLATION=PASS
-              elif [ -f "$isolation_hooks/project" ] || [ -f "$isolation_hooks/local" ]; then
+              elif [ "$HOOK_CONTROL" = PASS ] && [ ! -f "$isolation_hooks/user" ]; then
                 HOOK_ISOLATION=FAIL
               else
                 HOOK_ISOLATION=INCONCLUSIVE
               fi
+              # CANARY_ISOLATION PASS requires completed P9PROBE2OK, not canary absence after timeout
               case "$isolation_combined" in
                 *CSL474_AGENTS_LOADED*)
                   if [ "$CANARY_CONTROL" = PASS ]; then
@@ -456,21 +465,35 @@ jobs:
                     CANARY_ISOLATION=INCONCLUSIVE
                   fi
                   ;;
-                *)
+                *P9PROBE2OK*)
                   if [ "$CANARY_CONTROL" = PASS ]; then
                     CANARY_ISOLATION=PASS
                   else
                     CANARY_ISOLATION=INCONCLUSIVE
                   fi
                   ;;
+                *)
+                  CANARY_ISOLATION=INCONCLUSIVE
+                  ;;
               esac
             fi
+          fi
+          if ! completed "$MCPRO_RC" "$mcpro_combined"; then
+            MCPRO=INCONCLUSIVE
+          elif [ -f "$mcpro_hooks/project" ] || [ -f "$mcpro_hooks/local" ]; then
+            MCPRO=FAIL
+          else
+            case "$mcpro_combined" in
+              *P9PROBE2OK*) MCPRO=PASS ;;
+              *) MCPRO=INCONCLUSIVE ;;
+            esac
           fi
 
           rec HOOK_CONTROL "$HOOK_CONTROL"
           rec HOOK_ISOLATION "$HOOK_ISOLATION"
           rec CANARY_CONTROL "$CANARY_CONTROL"
           rec CANARY_ISOLATION "$CANARY_ISOLATION"
+          rec MCPRO "$MCPRO"
           rec CONTROL_RC "$CONTROL_RC"
           rec ISOLATION_RC "$ISOLATION_RC"
           rec MCPRO_USED 1
@@ -479,6 +502,7 @@ jobs:
           verdict HOOK_ISOLATION "$HOOK_ISOLATION"
           verdict CANARY_CONTROL "$CANARY_CONTROL"
           verdict CANARY_ISOLATION "$CANARY_ISOLATION"
+          verdict MCPRO "$MCPRO"
 
           HASH_AFTER="$(sha256sum "$MCP_RW" | awk '{print $1}')"
           if [ "$HASH_BEFORE" = "$HASH_AFTER" ]; then
@@ -491,12 +515,12 @@ jobs:
           if [ "${ENABLE_OAUTH}" != "true" ]; then
             rec OAUTH_STEP skipped
           fi
-          if [ "$HOOK_CONTROL" = PASS ] && [ "$HOOK_ISOLATION" = PASS ] && [ "$CANARY_CONTROL" = PASS ] && [ "$CANARY_ISOLATION" = PASS ]; then
+          if [ "$HOOK_CONTROL" = PASS ] && [ "$HOOK_ISOLATION" = PASS ] && [ "$CANARY_CONTROL" = PASS ] && [ "$CANARY_ISOLATION" = PASS ] && [ "$MCPRO" = PASS ]; then
             rec EVIDENCE_EXIT green
             exit 0
           fi
           rec EVIDENCE_EXIT non-green
-          echo "probe 2 no-OAuth evidence is $HOOK_CONTROL/$HOOK_ISOLATION/$CANARY_CONTROL/$CANARY_ISOLATION (not pass)" >&2
+          echo "probe 2 no-OAuth evidence is $HOOK_CONTROL/$HOOK_ISOLATION/$CANARY_CONTROL/$CANARY_ISOLATION/$MCPRO (not pass)" >&2
           exit 1
 
       - name: Probe 2 OAuth bootstrap in clean cwd
@@ -550,9 +574,19 @@ jobs:
           combined="$(cat "${RUNNER_TEMP}/csl-p9-oauth-boot-out.txt" "${RUNNER_TEMP}/csl-p9-oauth-boot-err.txt")"
           rec CWD clean
           rec TOKEN_IN_HOOKED_CWD 0
-          if [ "$rc" -eq 0 ] || case "$combined" in *P9PROBE2OK*) true ;; *) false ;; esac; then
-            rec AUTH_BOOTSTRAP PASS
-            printf 'PASS\n' >"${RUNNER_TEMP}/csl-p9-oauth-boot.verdict"
+          if [ "$rc" -eq 0 ]; then
+            case "$combined" in
+              *P9PROBE2OK*)
+                rec AUTH_BOOTSTRAP PASS
+                printf 'PASS\n' >"${RUNNER_TEMP}/csl-p9-oauth-boot.verdict"
+                ;;
+              *)
+                rec AUTH_BOOTSTRAP FAIL
+                printf 'FAIL\n' >"${RUNNER_TEMP}/csl-p9-oauth-boot.verdict"
+                echo "OAuth bootstrap failed rc=$rc; not recording DONE" >&2
+                exit 1
+                ;;
+            esac
           else
             rec AUTH_BOOTSTRAP FAIL
             printf 'FAIL\n' >"${RUNNER_TEMP}/csl-p9-oauth-boot.verdict"
@@ -596,18 +630,17 @@ jobs:
           fi
           PROMPT='Call the Bash tool exactly once with the command true. After that tool result, reply with exactly P9PROBE2OK and nothing else.'
           hook_state() { test -f "$1" && echo present || echo absent; }
-          session_ok() {
-            local rc="$1" combined="$2" hooks_dir="$3"
+          # completed: CLI finished a turn with a recognizable response.
+          # Hook-marker alone or timeout is not a completed session.
+          completed() {
+            local rc="$1" combined="$2"
             case "$combined" in
               *[Ll]ogin*|*[Aa]uthenticat*|*[Aa]pi\ [Kk]ey*|*[Oo]auth*|*[Nn]ot\ logged*)
                 return 1
                 ;;
             esac
-            if [ "$rc" -eq 0 ]; then
-              return 0
-            fi
-            if [ -f "$hooks_dir/project" ] || [ -f "$hooks_dir/local" ] || [ -f "$hooks_dir/user" ]; then
-              return 0
+            if [ "$rc" -ne 0 ]; then
+              return 1
             fi
             case "$combined" in
               *P9PROBE2OK*|*CSL474_AGENTS_LOADED*) return 0 ;;
@@ -682,19 +715,24 @@ jobs:
           run_probe_invoke MCPRO user "$MCP_RO" 90
           CONTROL_RC="$(cat "${RUNNER_TEMP}/csl-p9-oauth-CONTROL.rc")"
           ISOLATION_RC="$(cat "${RUNNER_TEMP}/csl-p9-oauth-ISOLATION.rc")"
+          MCPRO_RC="$(cat "${RUNNER_TEMP}/csl-p9-oauth-MCPRO.rc")"
           control_combined="$(cat "${RUNNER_TEMP}/csl-p9-oauth-CONTROL-out.txt" "${RUNNER_TEMP}/csl-p9-oauth-CONTROL-err.txt")"
           isolation_combined="$(cat "${RUNNER_TEMP}/csl-p9-oauth-ISOLATION-out.txt" "${RUNNER_TEMP}/csl-p9-oauth-ISOLATION-err.txt")"
+          mcpro_combined="$(cat "${RUNNER_TEMP}/csl-p9-oauth-MCPRO-out.txt" "${RUNNER_TEMP}/csl-p9-oauth-MCPRO-err.txt")"
           control_hooks="${RUNNER_TEMP}/csl-p9-oauth-CONTROL-hooks"
           isolation_hooks="${RUNNER_TEMP}/csl-p9-oauth-ISOLATION-hooks"
+          mcpro_hooks="${RUNNER_TEMP}/csl-p9-oauth-MCPRO-hooks"
           HOOK_CONTROL=INCONCLUSIVE
           HOOK_ISOLATION=INCONCLUSIVE
           CANARY_CONTROL=INCONCLUSIVE
           CANARY_ISOLATION=INCONCLUSIVE
-          if ! session_ok "$CONTROL_RC" "$control_combined" "$control_hooks"; then
+          MCPRO=INCONCLUSIVE
+          if ! completed "$CONTROL_RC" "$control_combined"; then
             rec HOOK_CONTROL INCONCLUSIVE
             rec CANARY_CONTROL INCONCLUSIVE
             rec HOOK_ISOLATION INCONCLUSIVE
             rec CANARY_ISOLATION INCONCLUSIVE
+            rec MCPRO INCONCLUSIVE
             rec DONE 0
             echo "OAuth hooked trials could not start a session without token env" >&2
             exit 1
@@ -708,38 +746,55 @@ jobs:
             *CSL474_AGENTS_LOADED*) CANARY_CONTROL=PASS ;;
             *) CANARY_CONTROL=FAIL ;;
           esac
-          if ! session_ok "$ISOLATION_RC" "$isolation_combined" "$isolation_hooks"; then
+          if ! completed "$ISOLATION_RC" "$isolation_combined"; then
             HOOK_ISOLATION=INCONCLUSIVE
             CANARY_ISOLATION=INCONCLUSIVE
           else
-            if [ "$HOOK_CONTROL" = PASS ] && [ ! -f "$isolation_hooks/project" ] && [ ! -f "$isolation_hooks/local" ] && [ -f "$isolation_hooks/user" ]; then
+            if [ -f "$isolation_hooks/project" ] || [ -f "$isolation_hooks/local" ]; then
+              HOOK_ISOLATION=FAIL
+            elif [ "$HOOK_CONTROL" = PASS ] && [ -f "$isolation_hooks/user" ]; then
               HOOK_ISOLATION=PASS
-            elif [ -f "$isolation_hooks/project" ] || [ -f "$isolation_hooks/local" ]; then
+            elif [ "$HOOK_CONTROL" = PASS ] && [ ! -f "$isolation_hooks/user" ]; then
               HOOK_ISOLATION=FAIL
             else
               HOOK_ISOLATION=INCONCLUSIVE
             fi
+            # CANARY_ISOLATION PASS requires completed P9PROBE2OK, not canary absence after timeout
             case "$isolation_combined" in
               *CSL474_AGENTS_LOADED*)
                 if [ "$CANARY_CONTROL" = PASS ]; then CANARY_ISOLATION=FAIL; else CANARY_ISOLATION=INCONCLUSIVE; fi
                 ;;
-              *)
+              *P9PROBE2OK*)
                 if [ "$CANARY_CONTROL" = PASS ]; then CANARY_ISOLATION=PASS; else CANARY_ISOLATION=INCONCLUSIVE; fi
                 ;;
+              *)
+                CANARY_ISOLATION=INCONCLUSIVE
+                ;;
+            esac
+          fi
+          if ! completed "$MCPRO_RC" "$mcpro_combined"; then
+            MCPRO=INCONCLUSIVE
+          elif [ -f "$mcpro_hooks/project" ] || [ -f "$mcpro_hooks/local" ]; then
+            MCPRO=FAIL
+          else
+            case "$mcpro_combined" in
+              *P9PROBE2OK*) MCPRO=PASS ;;
+              *) MCPRO=INCONCLUSIVE ;;
             esac
           fi
           rec HOOK_CONTROL "$HOOK_CONTROL"
           rec HOOK_ISOLATION "$HOOK_ISOLATION"
           rec CANARY_CONTROL "$CANARY_CONTROL"
           rec CANARY_ISOLATION "$CANARY_ISOLATION"
+          rec MCPRO "$MCPRO"
           rec MCPRO_USED 1
-          rec MCPRO_RC "$(cat "${RUNNER_TEMP}/csl-p9-oauth-MCPRO.rc")"
-          if [ "$HOOK_CONTROL" = PASS ] && [ "$HOOK_ISOLATION" = PASS ] && [ "$CANARY_CONTROL" = PASS ] && [ "$CANARY_ISOLATION" = PASS ]; then
+          rec MCPRO_RC "$MCPRO_RC"
+          if [ "$HOOK_CONTROL" = PASS ] && [ "$HOOK_ISOLATION" = PASS ] && [ "$CANARY_CONTROL" = PASS ] && [ "$CANARY_ISOLATION" = PASS ] && [ "$MCPRO" = PASS ]; then
             rec AUTH_OK 1
             rec DONE 1
             exit 0
           fi
           rec AUTH_OK 0
           rec DONE 0
-          echo "OAuth hooked evidence is $HOOK_CONTROL/$HOOK_ISOLATION/$CANARY_CONTROL/$CANARY_ISOLATION (not pass)" >&2
+          echo "OAuth hooked evidence is $HOOK_CONTROL/$HOOK_ISOLATION/$CANARY_CONTROL/$CANARY_ISOLATION/$MCPRO (not pass)" >&2
           exit 1
