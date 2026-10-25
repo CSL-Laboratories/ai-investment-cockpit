@@ -47,8 +47,10 @@ def parse_table(text: str) -> list[tuple[str, str, str, str]]:
     if header != HEADER:
         raise RegisterError(f"register columns must be {HEADER}, got {header}")
     divider = _cells(lines[1])
-    if any(set(cell) - {"-", " "} for cell in divider):
-        raise RegisterError("second table row must be a markdown divider")
+    if len(divider) != len(HEADER) or any(
+        not re.fullmatch(r"-{3,}", cell) for cell in divider
+    ):
+        raise RegisterError("second table row must be a four-column markdown divider")
     rows: list[tuple[str, str, str, str]] = []
     for line in lines[2:]:
         cells = _cells(line)
