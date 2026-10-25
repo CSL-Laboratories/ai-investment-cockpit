@@ -54,6 +54,8 @@
       "Bash(python3 -X utf8 -B tools/test_review_gate.py)",
       "Bash(python -X utf8 -B tools/test_run_gates_action.py)",
       "Bash(python3 -X utf8 -B tools/test_run_gates_action.py)",
+      "Bash(python -X utf8 -B tools/test_sandbox_e2.py)",
+      "Bash(python3 -X utf8 -B tools/test_sandbox_e2.py)",
       "Bash(python -X utf8 -B tools/test_sandbox_e3.py)",
       "Bash(python3 -X utf8 -B tools/test_sandbox_e3.py)",
       "Bash(python -X utf8 -B tools/test_sandbox_native.py)",
