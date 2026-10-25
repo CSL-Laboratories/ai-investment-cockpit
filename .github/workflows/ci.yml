@@ -947,6 +947,10 @@ jobs:
           PR_NUMBER: ${{ inputs.pr_number }}
           PR_HEAD_SHA: ${{ inputs.pr_head_sha }}
           MERGE_SHA: ${{ inputs.merge_sha }}
+          # Job permissions do not export a token. Label dispatch is
+          # workflow_dispatch and looks the PR up with gh; without this,
+          # gh exits 4 and admission fail-closes before the paid cells.
+          GH_TOKEN: ${{ github.token }}
         run: |
           python3 - <<'PY'
           import json, os, re, subprocess, sys

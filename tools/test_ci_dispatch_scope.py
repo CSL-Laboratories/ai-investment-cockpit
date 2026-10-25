@@ -756,6 +756,10 @@ class DispatchScopeTests(unittest.TestCase):
         step = self.ci['jobs']['qualification-admission']['steps'][0]
         self.assertEqual(step['name'], 'Verify attested qualification source')
         self.assertNotIn('uses', step)
+        # Permissions do not export a token. The previous test hardcoded
+        # GH_TOKEN in the subprocess, so it passed while label dispatch
+        # (workflow_dispatch + gh api) failed with exit 4 on a fresh runner.
+        self.assertEqual(step['env'].get('GH_TOKEN'), '${{ github.token }}')
         script = step['run']
         self.assertIn('actor == "dependabot[bot]"', script)
         self.assertIn('head_repo != repository', script)
@@ -772,7 +776,7 @@ class DispatchScopeTests(unittest.TestCase):
             'user': {'login': 'contributor'},
         }
 
-        def run_case(env, body=None, api_fails=False):
+        def run_case(env, body=None, api_fails=False, token=None):
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 output = root / 'output'
@@ -782,23 +786,37 @@ class DispatchScopeTests(unittest.TestCase):
                 bindir = root / 'bin'
                 bindir.mkdir()
                 gh = bindir / 'gh'
+                # Match gh: no CLI token is exit 4 before any API call, and the
+                # token stays in the environment, never on argv.
                 gh.write_text(
                     "#!/bin/sh\n"
+                    'if [ -z "$GH_TOKEN" ] && [ -z "$GITHUB_TOKEN" ]; then\n'
+                    '  echo "set the GH_TOKEN environment variable" >&2\n'
+                    '  exit 4\n'
+                    'fi\n'
                     f"printf '%s\\n' \"$*\" >> '{log}'\n"
                     + ("exit 1\n" if api_fails else f"cat '{fixture}'\n")
                 )
                 gh.chmod(0o755)
                 kept = {k: v for k, v in os.environ.items() if k not in ('GH_TOKEN', 'GITHUB_TOKEN')}
+                # Supply a token only when the workflow step itself exports
+                # github.token. Omitting that env makes the success path fail.
+                if token is None:
+                    supplied = 'test-token' if step['env'].get('GH_TOKEN') == '${{ github.token }}' else ''
+                else:
+                    supplied = token
+                child_env = {
+                    **kept,
+                    'PATH': f'{bindir}{os.pathsep}{os.environ.get("PATH", "")}',
+                    'GITHUB_OUTPUT': str(output),
+                    **env,
+                }
+                if supplied:
+                    child_env['GH_TOKEN'] = supplied
                 result = subprocess.run(
                     ['bash', '-c', script],
                     capture_output=True, text=True,
-                    env={
-                        **kept,
-                        'PATH': f'{bindir}{os.pathsep}{os.environ.get("PATH", "")}',
-                        'GITHUB_OUTPUT': str(output),
-                        'GH_TOKEN': 'test-token',
-                        **env,
-                    },
+                    env=child_env,
                 )
                 calls = log.read_text() if log.exists() else ''
                 eligible = ''
@@ -863,6 +881,13 @@ class DispatchScopeTests(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertEqual(eligible, 'true')
         self.assertIn('repos/owner/repo/pulls/149', calls)
+        self.assertNotIn('test-token', calls)
+
+        code, eligible, calls, err = run_case(dispatch, token='')
+        self.assertEqual(code, 1, err)
+        self.assertEqual(eligible, 'false')
+        self.assertEqual(calls, '')
+        self.assertIn('PR lookup failed', err)
 
         for name, body, reason in (
             ('dependabot-author', {**pr, 'user': {'login': 'dependabot[bot]'}},
