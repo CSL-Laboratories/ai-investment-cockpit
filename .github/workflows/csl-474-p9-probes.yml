@@ -14,8 +14,9 @@
 # green verdict. The OAuth invoke is behind enable_probe2_oauth (default
 # false). Bootstrap is a hook-free cwd. Hooked trials authenticate with the
 # existing fixer OAuth secret in the CLI process env (GitHub-masked; never
-# printed). CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 (needs bubblewrap) strips
-# that token from Bash/hooks/MCP children, same as the fixer. The workflow
+# printed). CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 (needs bubblewrap plus the
+# Ubuntu 24.04 unprivileged-userns sysctl flip, same as the fixer; Probe 0
+# is a different VM) strips that token from Bash/hooks/MCP children. The workflow
 # also writes every hook; none of them read or print the token. CONTROL and
 # IFISO share --setting-sources (all) and differ only in user
 # instructionFiles (claude-md-or-agents-md vs claude-md; agents-md@builtin
@@ -190,11 +191,28 @@ jobs:
           printf 'CSL_P9_PROBE2_ACTION_PIN=%s\n' "$ACTION_PIN"
           printf 'CSL_P9_PROBE2_CLI_VERSION=%s\n' "$CLAUDE_VERSION"
           # SUBPROCESS_ENV_SCRUB needs bubblewrap on Linux or the CLI refuses to start.
+          # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor;
+          # Probe 0's sysctl flip is a different VM, so Probe 2 must flip it here
+          # (same as the fixer).
           sudo -n apt-get update -qq
           sudo -n apt-get install -y --no-install-recommends bubblewrap
           command -v bwrap
           rec_bwrap() { printf 'CSL_P9_PROBE2_BWRAP=%s\n' "$(command -v bwrap)"; }
           rec_bwrap
+          if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo -n sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+            printf 'CSL_P9_PROBE2_USERNS_SYSCTL_FLIP=ok\n'
+          else
+            printf 'CSL_P9_PROBE2_USERNS_SYSCTL_FLIP=missing\n'
+          fi
+          if bwrap --unshare-user -- /bin/true >/tmp/csl-p9-bwrap-smoke.err 2>&1; then
+            printf 'CSL_P9_PROBE2_BWRAP_UNSHARE=ok\n'
+          else
+            printf 'CSL_P9_PROBE2_BWRAP_UNSHARE=fail\n'
+            printf 'CSL_P9_PROBE2_BWRAP_UNSHARE_ERR=%s\n' "$(tr '\n' ' ' < /tmp/csl-p9-bwrap-smoke.err)"
+            echo "bubblewrap unprivileged userns smoke failed" >&2
+            exit 1
+          fi
           STAGING="${RUNNER_TEMP}/csl-p9-cli-staging"
           DEST_DIR="${RUNNER_TEMP}/csl-p9-cli"
           rm -rf "$STAGING" "$DEST_DIR"
