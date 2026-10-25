@@ -39,9 +39,14 @@ of this amendment's exact-digest product text and is **not** copied into
 
 Update rule (`docs/replacement/amendments/README.md`): when a csl-research
 record for a parent is published at `submissions/<record_id>/`, update the
-register row in a docs-only PR. Accepted product-text changes only via a
-versioned amendment that Lucas accepts by exact-digest receipt; a reviewed
-promotion then moves the pins. Check:
+register row in a docs-only PR. Samir and Dan (or their agents, attributed)
+may change the product spec as research is synthesized. A spec change they
+author is accepted when a founder other than the author (Lucas, Samir
+`samir-shah-ahmed`, or Dan/Chaandan `CDanTheMan`) approves that versioned
+amendment PR; that approval counts as acceptance. (Relayed by Grok Bot
+Liaison from Lucas's 2026-10-24 chat answers, 11:58 PM PT.) A reviewed
+promotion then moves the pins. This proposed path is not yet wired into
+`program.json`, `tools/check_replacement_program.py`, or `AGENTS.md`. Check:
 `python3 -X utf8 -B tools/check_cockpit_research_register.py`.
 
 ## Product outcome
