@@ -2081,6 +2081,62 @@ def test_shrunk_landed_order_keeps_the_signed_exposure_floor(st, monkeypatch):
     assert broker.calls == 1
 
 
+def test_unreadable_signed_floor_still_writes_the_landed_block(st, monkeypatch):
+    """An audit read that fails while sizing the landed marker still writes it.
+
+    The row stays proposed. Skipping the marker because ``_rows`` raised would
+    leave the next buy uncounted. The marker fails closed at Infinity.
+    """
+    from tests.brokers.test_pending_exposure_chain import _fresh_submittable
+
+    scenario, broker = _capped_paper(st)
+    real_record = scenario.st.audit.record_state_change
+    real_rows = scenario.st.audit._rows
+    fail = {"v": True}
+    raised = {"n": 0}
+
+    def record(obj, event_type, *args, **kwargs):
+        if fail["v"] and broker.calls >= 1:
+            raise OSError("local write failed")
+        return real_record(obj, event_type, *args, **kwargs)
+
+    def rows():
+        if fail["v"] and broker.calls >= 1 and raised["n"] == 0:
+            raised["n"] += 1
+            raise OSError("audit unreadable")
+        return real_rows()
+
+    monkeypatch.setattr(scenario.st.audit, "record_state_change", record)
+    monkeypatch.setattr(scenario.st.audit, "_rows", rows)
+    outcome = scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+    fail["v"] = False
+    assert raised["n"] == 1
+    assert broker.calls == 1
+    assert outcome.ok is False
+    assert outcome.stage == "broker_error"
+    with scenario.st.session_factory() as session:
+        marked = session.execute(
+            select(AuditEntry)
+            .where(AuditEntry.event_type == "unreconciled_landed_exposure")
+            .order_by(AuditEntry.seq)
+        ).scalars().all()
+    assert marked
+    assert marked[-1].payload.get("kind") == "block"
+    assert marked[-1].payload.get("notional") == "Infinity"
+    second, approval, risk = _fresh_submittable(
+        st, scenario, proposal="p-next", nonce="n-next",
+    )
+    nxt = scenario.gateway.submit(
+        second,
+        **scenario.submit_kwargs(
+            approval=approval, risk_decision=risk, token_nonce="n-next",
+        ),
+    )
+    assert nxt.ok is False
+    assert nxt.stage == "pending_exposure"
+    assert broker.calls == 1
+
+
 def test_quote_that_expires_during_the_send_hold_exposure_scan_does_not_submit(
     st, monkeypatch,
 ):

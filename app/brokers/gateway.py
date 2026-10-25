@@ -534,9 +534,11 @@ class OrderGateway:
         """max(chain notional, signed exposure, qty x limit, frozen market exposure).
 
         A limit order uses qty x limit, which can only raise the size. The signed
-        exposure is a floor a shrunk qty or limit cannot undercut. A market order
-        uses a signed frozen exposure when one exists. A non-positive limit fails
-        closed. ``frozen_known`` means ``frozen`` already came from one scan.
+        exposure is a floor a shrunk qty or limit cannot undercut. A signed frozen
+        market exposure stays in the maximum even when a mutable ``limit_price``
+        appears later; that column must not switch the order off the freeze.
+        A non-positive limit fails closed. ``frozen_known`` means ``frozen``
+        already came from one scan.
         """
         sizes: list[Decimal] = []
         for amount in (chain_notional, signed_exposure):
@@ -549,11 +551,10 @@ class OrderGateway:
             if not product.is_finite() or product <= 0:
                 return Decimal("Infinity")
             sizes.append(product)
-        else:
-            if not frozen_known:
-                frozen = self._frozen_market_exposure(st, order)
-            if frozen is not None and frozen.is_finite() and frozen > 0:
-                sizes.append(frozen)
+        if not frozen_known:
+            frozen = self._frozen_market_exposure(st, order)
+        if frozen is not None and frozen.is_finite() and frozen > 0:
+            sizes.append(frozen)
         if not sizes:
             return Decimal("0")
         return max(sizes)
@@ -641,7 +642,11 @@ class OrderGateway:
             return Decimal("Infinity")
         floor = Decimal("0")
         saw = False
-        for row in audit._rows():
+        try:
+            rows = audit._rows()
+        except Exception:  # noqa: BLE001 - an unreadable chain fails closed
+            return Decimal("Infinity")
+        for row in rows:
             refs = getattr(row, "refs", None) or {}
             if str(refs.get("row_id") or "") != order_id:
                 continue
@@ -690,7 +695,10 @@ class OrderGateway:
         # only count. Use the signed historical floor when the in-memory
         # notional was shrunk after that signature. An unreadable chain is
         # Infinity and fails closed.
-        signed = self._signed_exposure_floor(st, order)
+        try:
+            signed = self._signed_exposure_floor(st, order)
+        except Exception:  # noqa: BLE001 - an unreadable chain fails closed
+            signed = Decimal("Infinity")
         if not signed.is_finite() or signed > amount:
             amount = signed
         text = str(amount) if amount.is_finite() and amount > 0 else "Infinity"

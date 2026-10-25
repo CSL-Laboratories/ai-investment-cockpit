@@ -711,6 +711,42 @@ def test_shrunk_qty_limit_cannot_undercut_signed_exposure(st):
     assert out_cap == cap
 
 
+def test_mutable_limit_price_cannot_drop_frozen_market_exposure(st):
+    """A keyless limit price on an open market order cannot drop its frozen floor.
+
+    Birth notional and signed exposure are $1. The freeze is $2,500. Writing
+    limit_price $0.10 and qty 10 would price that sibling at $1 if the limit
+    branch ignored the freeze, and a $100 follow-on would pass a $2,000 cap.
+    """
+    broker = RecordingBroker()
+    cap = Decimal("2000")
+    sc = build_scenario(
+        st, gateway=OrderGateway(broker, pending_exposure_cap=cap), broker=broker,
+    )
+    sibling = _approved_sibling(
+        st, qty="10", order_type="market", limit_price=None, notional="1",
+    )
+    st.audit.append(
+        "paper_submission",
+        actor="paper",
+        refs={"order_id": sibling.id},
+        payload={"exposure": "2500"},
+    )
+    with st.session_factory() as s, s.begin():
+        s.execute(
+            update(Order).where(Order.id == sibling.id).values(
+                qty=Decimal("10"), limit_price=Decimal("0.10"),
+            )
+        )
+    current, _appr, _rd = _fresh_submittable(
+        st, sc, qty="1", limit_price="100", notional="100",
+    )
+    ok, total, out_cap = sc.gateway._pending_ok(st, current)
+    assert ok is False
+    assert total == Decimal("2600")
+    assert out_cap == cap
+
+
 def test_pending_scan_indexes_frozen_exposure_once(st, monkeypatch):
     """One pending scan reads the frozen-exposure ledger a single time."""
     broker = RecordingBroker()
