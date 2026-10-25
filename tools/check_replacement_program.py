@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -50,10 +51,21 @@ EXPECTED_AUTHORITY_KEYS = {
     "current_runtime_invariants_preserved",
     "live_authority_granted",
     "contract_acceptance",
+    "founder_github_allowlist",
     "acceptance_receipt",
     "superseded_acceptance_receipt",
 }
+# Exact GitHub logins. Membership is not "any non-author approver".
+FOUNDER_GITHUB_ALLOWLIST = (
+    "CDanTheMan",
+    "NotSkittlz",
+    "samir-shah-ahmed",
+)
+RECEIPT_KIND_LINEAR_DIGEST = "linear_digest"
+RECEIPT_KIND_GITHUB_FOUNDER_PR_APPROVAL = "github_founder_pr_approval"
+GITHUB_REPOSITORY = "CSL-Laboratories/ai-investment-cockpit"
 EXPECTED_ACCEPTED_RECEIPT_KEYS = {
+    "kind",
     "linear_issue",
     "human_linear_comment_id",
     "mirror_comment_id",
@@ -66,6 +78,7 @@ EXPECTED_ACCEPTED_RECEIPT_KEYS = {
     "not_granted",
 }
 EXPECTED_SUPERSEDED_RECEIPT_KEYS = {
+    "kind",
     "linear_issue",
     "human_linear_comment_id",
     "mirror_comment_id",
@@ -77,6 +90,30 @@ EXPECTED_SUPERSEDED_RECEIPT_KEYS = {
     "authority_research_sha256",
     "superseded_reason",
     "not_granted",
+}
+EXPECTED_GITHUB_RECEIPT_KEYS = {
+    "kind",
+    "linear_issue",
+    "github_pr",
+    "github_repository",
+    "pr_author_login",
+    "approving_founder_login",
+    "approved_head_sha",
+    "accepted_at",
+    "accepted_contracts",
+    "authority_research_sha256",
+    "not_granted",
+}
+REQUIRED_NOT_GRANTED = {
+    "implementation_completion",
+    "empirical_pass",
+    "legal_account_or_venue_eligibility",
+    "provider_permission",
+    "release_qualification",
+    "live_authority",
+    "credentials",
+    "capital_movement",
+    "merge_permission",
 }
 EXPECTED_ACCEPTED_CONTRACTS = {
     "docs/replacement/SUCCESSOR-PRODUCT.md": "6e5f0d0cad102077fd058aac4970ac0eb31fd6f6e952f948c43edaa9fe0c919e",
@@ -205,6 +242,124 @@ def _digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _git_head(root: Path) -> str:
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        raise ContractError(f"github receipt head unavailable: {exc}") from exc
+    sha = completed.stdout.strip().lower()
+    _require(
+        completed.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", sha) is not None,
+        "github receipt head unavailable",
+    )
+    return sha
+
+
+def _require_digest_map(value: Any, message: str) -> dict[str, str]:
+    _require(isinstance(value, dict), message)
+    _require(set(value) == EXPECTED_CONTRACTS, message)
+    for path, digest in value.items():
+        _require(
+            isinstance(path, str)
+            and _nonempty(path)
+            and isinstance(digest, str)
+            and _nonempty(digest)
+            and re.fullmatch(r"[0-9a-f]{64}", digest) is not None,
+            message,
+        )
+    return value
+
+
+def _require_not_granted(value: Any, message: str) -> None:
+    _require(_nonempty_list(value) and set(value) == REQUIRED_NOT_GRANTED, message)
+
+
+def _validate_linear_digest_receipt(receipt: dict[str, Any]) -> None:
+    _require(receipt.get("kind") == RECEIPT_KIND_LINEAR_DIGEST, "accepted receipt kind mismatch")
+    _require(receipt.get("linear_issue") == "CSL-212", "accepted receipt issue mismatch")
+    _require(
+        receipt.get("human_linear_comment_id") == "25c50b43-6de4-4f6d-9652-47a649ccc5ae",
+        "accepted human comment mismatch",
+    )
+    _require(
+        receipt.get("mirror_comment_id") == "6aafae80-2f96-449c-947c-90bcaf8380b6",
+        "accepted mirror mismatch",
+    )
+    _require(receipt.get("accepted_by") == "Lucas Guerra", "accepted owner mismatch")
+    _require(
+        receipt.get("accepted_by_linear_user_id") == "8709c8bb-e7d2-429e-89f9-89a48b7187fa",
+        "accepted owner identity mismatch",
+    )
+    _require(receipt.get("accepted_at") == "2026-10-16T05:45:25.133Z", "accepted timestamp mismatch")
+    _require(
+        receipt.get("reviewed_head") == "51aec39760202d07027af086087784b1bafca2e1",
+        "accepted reviewed head mismatch",
+    )
+    _require(
+        receipt.get("accepted_contracts") == EXPECTED_ACCEPTED_CONTRACTS,
+        "accepted contract digests changed",
+    )
+    _require(
+        receipt.get("authority_research_sha256")
+        == "b023b4d7f12e6b764dd466ac61fb0de61e7ec2962670201ab98bd33fd45008d6",
+        "accepted research digest changed",
+    )
+    _require_not_granted(receipt.get("not_granted"), "accepted receipt exclusions changed")
+
+
+def _validate_github_founder_pr_approval(
+    receipt: dict[str, Any],
+    *,
+    current_head_sha: str | None,
+    root: Path,
+) -> None:
+    _require(
+        isinstance(receipt, dict) and set(receipt) == EXPECTED_GITHUB_RECEIPT_KEYS,
+        "accepted github receipt fields changed",
+    )
+    _require(
+        receipt.get("kind") == RECEIPT_KIND_GITHUB_FOUNDER_PR_APPROVAL,
+        "accepted receipt kind mismatch",
+    )
+    _require(
+        _nonempty(receipt.get("linear_issue"))
+        and re.fullmatch(r"CSL-[0-9]+", receipt["linear_issue"]) is not None,
+        "github receipt issue mismatch",
+    )
+    _require(
+        type(receipt.get("github_pr")) is int and receipt["github_pr"] > 0,
+        "github PR number invalid",
+    )
+    _require(receipt.get("github_repository") == GITHUB_REPOSITORY, "github repository mismatch")
+    author = receipt.get("pr_author_login")
+    approver = receipt.get("approving_founder_login")
+    _require(_nonempty(author), "github PR author missing")
+    _require(approver in FOUNDER_GITHUB_ALLOWLIST, "approving founder not on allowlist")
+    _require(author.casefold() != approver.casefold(), "author self-approval rejected")
+    approved = receipt.get("approved_head_sha")
+    _require(
+        _nonempty(approved) and re.fullmatch(r"[0-9a-f]{40}", approved) is not None,
+        "approved head sha invalid",
+    )
+    head = current_head_sha
+    if not _nonempty(head):
+        head = _git_head(root)
+    _require(head.lower() == approved, "stale github approval head")
+    _require(_nonempty(receipt.get("accepted_at")), "github receipt timestamp missing")
+    _require_digest_map(receipt.get("accepted_contracts"), "github receipt digest map invalid")
+    _require(
+        _nonempty(receipt.get("authority_research_sha256"))
+        and re.fullmatch(r"[0-9a-f]{64}", receipt["authority_research_sha256"]) is not None,
+        "github receipt research digest invalid",
+    )
+    _require_not_granted(receipt.get("not_granted"), "accepted receipt exclusions changed")
+
+
 def _has_exact_outcome_heading(document: str, key: str) -> bool:
     return re.search(
         rf"^### {re.escape(key)}(?:[ \t]+#+)?[ \t]*\r?$", document, re.MULTILINE
@@ -251,7 +406,11 @@ def _month_projection(document: str) -> dict[str, tuple[str, list[str]]]:
     return projection
 
 
-def validate(program: dict[str, Any], root: Path = ROOT) -> None:
+def validate(
+    program: dict[str, Any],
+    root: Path = ROOT,
+    current_head_sha: str | None = None,
+) -> None:
     _require(
         isinstance(program, dict) and set(program) == EXPECTED_PROGRAM_KEYS,
         "program fields changed",
@@ -273,69 +432,35 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
     _require(authority.get("current_runtime_invariants_preserved") is True, "runtime invariants not preserved")
     _require(authority.get("live_authority_granted") is False, "program grants live authority")
     _require(authority.get("contract_acceptance") == "accepted_human_digest_receipt", "contract acceptance changed")
+    _require(
+        isinstance(authority.get("founder_github_allowlist"), list)
+        and authority["founder_github_allowlist"] == list(FOUNDER_GITHUB_ALLOWLIST),
+        "founder GitHub allowlist changed",
+    )
     accepted_receipt = authority.get("acceptance_receipt", {})
-    _require(
-        isinstance(accepted_receipt, dict)
-        and set(accepted_receipt) == EXPECTED_ACCEPTED_RECEIPT_KEYS,
-        "accepted receipt fields changed",
-    )
-    _require(accepted_receipt.get("linear_issue") == "CSL-212", "accepted receipt issue mismatch")
-    _require(
-        accepted_receipt.get("human_linear_comment_id")
-        == "25c50b43-6de4-4f6d-9652-47a649ccc5ae",
-        "accepted human comment mismatch",
-    )
-    _require(
-        accepted_receipt.get("mirror_comment_id")
-        == "6aafae80-2f96-449c-947c-90bcaf8380b6",
-        "accepted mirror mismatch",
-    )
-    _require(accepted_receipt.get("accepted_by") == "Lucas Guerra", "accepted owner mismatch")
-    _require(
-        accepted_receipt.get("accepted_by_linear_user_id")
-        == "8709c8bb-e7d2-429e-89f9-89a48b7187fa",
-        "accepted owner identity mismatch",
-    )
-    _require(
-        accepted_receipt.get("accepted_at") == "2026-10-16T05:45:25.133Z",
-        "accepted timestamp mismatch",
-    )
-    _require(
-        accepted_receipt.get("reviewed_head")
-        == "51aec39760202d07027af086087784b1bafca2e1",
-        "accepted reviewed head mismatch",
-    )
-    _require(
-        accepted_receipt.get("accepted_contracts") == EXPECTED_ACCEPTED_CONTRACTS,
-        "accepted contract digests changed",
-    )
-    _require(
-        accepted_receipt.get("authority_research_sha256")
-        == "b023b4d7f12e6b764dd466ac61fb0de61e7ec2962670201ab98bd33fd45008d6",
-        "accepted research digest changed",
-    )
-    _require(
-        _nonempty_list(accepted_receipt["not_granted"])
-        and set(accepted_receipt["not_granted"])
-        == {
-            "implementation_completion",
-            "empirical_pass",
-            "legal_account_or_venue_eligibility",
-            "provider_permission",
-            "release_qualification",
-            "live_authority",
-            "credentials",
-            "capital_movement",
-            "merge_permission",
-        },
-        "accepted receipt exclusions changed",
-    )
+    _require(isinstance(accepted_receipt, dict), "accepted receipt fields changed")
+    kind = accepted_receipt.get("kind")
+    if kind == RECEIPT_KIND_LINEAR_DIGEST:
+        _require(
+            set(accepted_receipt) == EXPECTED_ACCEPTED_RECEIPT_KEYS,
+            "accepted receipt fields changed",
+        )
+        _validate_linear_digest_receipt(accepted_receipt)
+    elif kind == RECEIPT_KIND_GITHUB_FOUNDER_PR_APPROVAL:
+        _validate_github_founder_pr_approval(
+            accepted_receipt,
+            current_head_sha=current_head_sha,
+            root=root,
+        )
+    else:
+        raise ContractError("unsupported receipt kind")
 
     receipt = authority.get("superseded_acceptance_receipt", {})
     _require(
         isinstance(receipt, dict) and set(receipt) == EXPECTED_SUPERSEDED_RECEIPT_KEYS,
         "superseded receipt fields changed",
     )
+    _require(receipt.get("kind") == RECEIPT_KIND_LINEAR_DIGEST, "superseded receipt kind mismatch")
     _require(receipt.get("linear_issue") == "CSL-212", "superseded receipt issue mismatch")
     _require(receipt.get("human_linear_comment_id") == "736a6b55-2b20-463c-86e1-9553a5692996", "superseded human comment mismatch")
     _require(receipt.get("mirror_comment_id") == "15c6f540-3686-49eb-a9e7-d93083313e85", "superseded mirror mismatch")
@@ -348,22 +473,7 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
         == "Human review required changes to accepted governing documents; a new exact digest receipt is required.",
         "superseded receipt reason changed",
     )
-    _require(
-        _nonempty_list(receipt["not_granted"])
-        and set(receipt["not_granted"])
-        == {
-            "implementation_completion",
-            "empirical_pass",
-            "legal_account_or_venue_eligibility",
-            "provider_permission",
-            "release_qualification",
-            "live_authority",
-            "credentials",
-            "capital_movement",
-            "merge_permission",
-        },
-        "acceptance exclusions changed",
-    )
+    _require_not_granted(receipt.get("not_granted"), "acceptance exclusions changed")
 
     research_evidence = program["research_evidence"]
     _require(
@@ -539,9 +649,10 @@ def load(path: Path) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--program", type=Path, default=DEFAULT_PROGRAM)
+    parser.add_argument("--root", type=Path, default=ROOT)
     args = parser.parse_args(argv)
     try:
-        validate(load(args.program))
+        validate(load(args.program), root=args.root)
     except (OSError, json.JSONDecodeError, ContractError) as exc:
         print(f"replacement-program: FAIL: {exc}", file=sys.stderr)
         return 1

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import shutil
 import subprocess
 import sys
 import json
@@ -12,26 +14,66 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_replacement_program_registry() -> None:
-    commands = (
-        (sys.executable, "tools/check_replacement_program.py"),
-        (sys.executable, "-m", "unittest", "-q", "tools.test_replacement_program"),
+@pytest.fixture
+def accepted_root(tmp_path: Path) -> Path:
+    root = tmp_path / "accepted-root"
+    shutil.copytree(ROOT / "docs" / "replacement", root / "docs" / "replacement")
+    program = json.loads((root / "docs/replacement/program.json").read_text(encoding="utf-8"))
+    pins = program["authority"]["acceptance_receipt"]["accepted_contracts"]
+    for rel, expected in pins.items():
+        path = root / rel
+        if hashlib.sha256(path.read_bytes()).hexdigest() == expected:
+            continue
+        original = subprocess.check_output(["git", "-C", str(ROOT), "show", f"origin/main:{rel}"])
+        if hashlib.sha256(original).hexdigest() != expected:
+            raise AssertionError(f"origin/main {rel} does not match pin {expected}")
+        path.write_bytes(original)
+    return root
+
+
+def _run_checker(*extra: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        (sys.executable, "tools/check_replacement_program.py", *extra),
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        env=env,
     )
-    for command in commands:
-        subprocess.run(command, cwd=ROOT, check=True)
 
 
-def test_registry_cli_rejects_changed_outcome_with_unchanged_receipt(tmp_path: Path) -> None:
+def test_replacement_program_registry() -> None:
+    subprocess.run(
+        (sys.executable, "-m", "unittest", "-q", "tools.test_replacement_program"),
+        cwd=ROOT,
+        check=True,
+    )
+
+
+def test_live_tree_issue_contract_digest_gate() -> None:
+    issue = ROOT / "docs/replacement/ISSUE-CONTRACT.md"
+    actual = hashlib.sha256(issue.read_bytes()).hexdigest()
+    program = json.loads((ROOT / "docs/replacement/program.json").read_text(encoding="utf-8"))
+    pinned = program["authority"]["acceptance_receipt"]["accepted_contracts"][
+        "docs/replacement/ISSUE-CONTRACT.md"
+    ]
+    result = _run_checker()
+    if actual == pinned:
+        assert result.returncode == 0
+        assert "replacement-program: PASS" in result.stdout
+        return
+    assert result.returncode == 1
+    assert "contract digest mismatch: docs/replacement/ISSUE-CONTRACT.md" in result.stderr
+    assert "replacement-program: PASS" not in result.stdout
+
+
+def test_registry_cli_rejects_changed_outcome_with_unchanged_receipt(
+    tmp_path: Path, accepted_root: Path
+) -> None:
     program = json.loads((ROOT / "docs/replacement/program.json").read_text(encoding="utf-8"))
     program["outcomes"][0]["intended_outcome"] = "Approve live execution immediately."
     candidate = tmp_path / "program.json"
     candidate.write_text(json.dumps(program), encoding="utf-8")
-    result = subprocess.run(
-        (sys.executable, "tools/check_replacement_program.py", "--program", str(candidate)),
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-    )
+    result = _run_checker("--program", str(candidate), "--root", str(accepted_root))
     assert result.returncode == 1
     assert "outcome integrity baseline changed" in result.stderr
 
@@ -108,7 +150,9 @@ def test_registry_cli_rejects_malformed_authority_objects(tmp_path: Path, field:
     ("manifest_gate",),
 ])
 @pytest.mark.parametrize("value", [None, True, 1.0, "bad", [], {}, [{}]])
-def test_registry_cli_normalizes_malformed_boundaries(tmp_path: Path, path: tuple, value: object) -> None:
+def test_registry_cli_normalizes_malformed_boundaries(
+    tmp_path: Path, accepted_root: Path, path: tuple, value: object
+) -> None:
     program = json.loads((ROOT / "docs/replacement/program.json").read_text(encoding="utf-8"))
     target = program
     for part in path[:-1]:
@@ -116,10 +160,7 @@ def test_registry_cli_normalizes_malformed_boundaries(tmp_path: Path, path: tupl
     target[path[-1]] = value
     candidate = tmp_path / "program.json"
     candidate.write_text(json.dumps(program), encoding="utf-8")
-    result = subprocess.run(
-        (sys.executable, "tools/check_replacement_program.py", "--program", str(candidate)),
-        cwd=ROOT, capture_output=True, text=True,
-    )
+    result = _run_checker("--program", str(candidate), "--root", str(accepted_root))
     assert result.returncode == 1
     assert "replacement-program: FAIL:" in result.stderr
     assert "Traceback" not in result.stderr

@@ -31,6 +31,18 @@ These pins do not constitute a new human receipt or settle the discretion-label
 reconciliation and other deferred questions in CSL-223. An annotation correction
 needs scoped review; a change to governing direction needs a fresh human receipt.
 
+Acceptance receipts are dual-path and fail closed. The live CSL-212 record is a
+Lucas Linear digest receipt (`kind: linear_digest`). Spec changes may also be
+accepted by a founder GitHub PR approval recorded in `program.json`
+(`kind: github_founder_pr_approval`): allowlisted founder login (`CDanTheMan`,
+`NotSkittlz`, `samir-shah-ahmed`), approver other than the PR author, approved
+head SHA, and the exact file digest map. The offline checker does not call
+GitHub; the recorded fields are the receipt. Founder identity is that allowlist,
+not any non-author approver. Merge, labels, status, generic PR approval, and
+agent comments are not receipts. Changing `ISSUE-CONTRACT.md` or other governing
+bytes still requires the receipt digest map to match those bytes; the accepted
+pins in `program.json` do not move until that receipt exists.
+
 The current rules in `AGENTS.md`, `CLAUDE.md`, the nine implementation
 invariants, the order path, and all pre-live controls remain authoritative until
 separately scoped, reviewed implementation amendments qualify replacements.

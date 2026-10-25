@@ -57,11 +57,27 @@ compatibility commitments, release scope, destructive external state, live opera
 and architecture costly to reverse. Pending decisions block only affected claims and
 dependants.
 
-A valid decision receipt is a human-authored comment on the matching Linear issue
-that binds human identity and authority, exact proposal or contract digest, selected
-and rejected options, evidence-based rationale, conditions, scope, date and revisit
-trigger. Labels, status, reactions, silence, agent comments, model consensus, tests,
-PR approval and merge are not receipts.
+A valid decision receipt is one of:
+
+1. **Linear digest receipt.** A human-authored comment on the matching Linear issue
+   that binds human identity and authority, exact proposal or contract digest,
+   selected and rejected options, evidence-based rationale, conditions, scope, date
+   and revisit trigger. For replacement-program governing files, the live Linear
+   path remains the authenticated Lucas Guerra receipt recorded in `program.json`
+   (Linear user `8709c8bb-e7d2-429e-89f9-89a48b7187fa`).
+2. **Founder GitHub PR approval.** Spec changes authored by Samir
+   (`samir-shah-ahmed`) or Dan/Chaandan (`CDanTheMan`), or their attributed agents,
+   and Lucas's own changes, are accepted when a founder other than the GitHub PR
+   author approves that PR and the approval is recorded in `program.json` with:
+   GitHub PR number, repository `CSL-Laboratories/ai-investment-cockpit`, PR author
+   login, approving founder login, approved head SHA, and the exact file digest
+   map. Approver identity is bound to the founder GitHub allowlist `CDanTheMan`,
+   `NotSkittlz`, `samir-shah-ahmed`. A non-founder approval, an author
+   self-approval, a digest mismatch, or an approval of a stale head is not a
+   receipt.
+
+Labels, status, reactions, silence, agent comments, model consensus, tests,
+generic PR approval and merge are not receipts.
 
 ## Evidence classes and promotion
 

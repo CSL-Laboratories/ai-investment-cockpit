@@ -5,6 +5,7 @@ import copy
 import hashlib
 import importlib.util
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,6 +17,44 @@ CHECKER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CHECKER)
 
 MALFORMED_VALUES = (None, True, False, 0, 1, 1.0, 1.5, "", "bad", [], {}, [None], [[]], [{}], {"x": []})
+APPROVED_HEAD = "0123456789abcdef0123456789abcdef01234567"
+STALE_HEAD = "fedcba9876543210fedcba9876543210fedcba98"
+
+
+def accepted_replacement_root(tmp) -> Path:
+    """Copy governing files and restore accepted product-byte pins if the tree drifted."""
+    root = Path(tmp) / "repo"
+    shutil.copytree(ROOT / "docs" / "replacement", root / "docs" / "replacement")
+    for rel, expected in CHECKER.EXPECTED_ACCEPTED_CONTRACTS.items():
+        path = root / rel
+        if hashlib.sha256(path.read_bytes()).hexdigest() == expected:
+            continue
+        original = subprocess.check_output(["git", "-C", str(ROOT), "show", f"origin/main:{rel}"])
+        if hashlib.sha256(original).hexdigest() != expected:
+            raise AssertionError(f"origin/main {rel} does not match pin {expected}")
+        path.write_bytes(original)
+    return root
+
+
+def github_acceptance_program(program, **overrides):
+    candidate = copy.deepcopy(program)
+    linear = program["authority"]["acceptance_receipt"]
+    receipt = {
+        "kind": CHECKER.RECEIPT_KIND_GITHUB_FOUNDER_PR_APPROVAL,
+        "linear_issue": "CSL-523",
+        "github_pr": 275,
+        "github_repository": CHECKER.GITHUB_REPOSITORY,
+        "pr_author_login": "CDanTheMan",
+        "approving_founder_login": "samir-shah-ahmed",
+        "approved_head_sha": APPROVED_HEAD,
+        "accepted_at": "2026-10-25T07:00:00.000Z",
+        "accepted_contracts": dict(CHECKER.EXPECTED_ACCEPTED_CONTRACTS),
+        "authority_research_sha256": linear["authority_research_sha256"],
+        "not_granted": list(linear["not_granted"]),
+    }
+    receipt.update(overrides)
+    candidate["authority"]["acceptance_receipt"] = receipt
+    return candidate
 
 
 def registry_nodes(value, path=()):
@@ -44,7 +83,8 @@ class ReplacementProgramTests(unittest.TestCase):
         self.program = CHECKER.load(ROOT / "docs" / "replacement" / "program.json")
 
     def test_checked_in_registry_passes(self) -> None:
-        CHECKER.validate(self.program)
+        with tempfile.TemporaryDirectory() as tmp:
+            CHECKER.validate(self.program, accepted_replacement_root(tmp))
 
     def test_registry_type_mutation_sweep_rejects_cleanly(self) -> None:
         for path, original in registry_nodes(self.program):
@@ -302,7 +342,8 @@ class ReplacementProgramTests(unittest.TestCase):
     def test_integrity_baseline_ignores_json_object_order(self) -> None:
         candidate = copy.deepcopy(self.program)
         candidate["outcomes"] = [dict(reversed(list(item.items()))) for item in candidate["outcomes"]]
-        CHECKER.validate(candidate)
+        with tempfile.TemporaryDirectory() as tmp:
+            CHECKER.validate(candidate, accepted_replacement_root(tmp))
 
     def test_month_projection_preserves_ranges_and_all_prior_outcomes(self) -> None:
         month = (ROOT / "docs" / "replacement" / "MONTH-PROGRAM.md").read_text(encoding="utf-8")
@@ -319,8 +360,7 @@ class ReplacementProgramTests(unittest.TestCase):
 
     def test_contract_file_and_registry_hash_cannot_bypass_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp) / "repo"
-            shutil.copytree(ROOT / "docs" / "replacement", root / "docs" / "replacement")
+            root = accepted_replacement_root(tmp)
             program = CHECKER.load(root / "docs" / "replacement" / "program.json")
             contract = root / "docs" / "replacement" / "SUCCESSOR-PRODUCT.md"
             contract.write_text(
@@ -334,8 +374,7 @@ class ReplacementProgramTests(unittest.TestCase):
 
     def test_research_file_and_registry_hash_cannot_bypass_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp) / "repo"
-            shutil.copytree(ROOT / "docs" / "replacement", root / "docs" / "replacement")
+            root = accepted_replacement_root(tmp)
             program = CHECKER.load(root / "docs" / "replacement" / "program.json")
             research = root / "docs" / "replacement" / "AUTHORITY-COMPLIANCE-RESEARCH.md"
             research.write_text(
@@ -398,6 +437,149 @@ class ReplacementProgramTests(unittest.TestCase):
             mutation(candidate)
             with self.subTest(mutation=mutation), self.assertRaises(CHECKER.ContractError):
                 CHECKER.validate(candidate)
+
+
+class FounderPrApprovalReceiptTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.program = CHECKER.load(ROOT / "docs" / "replacement" / "program.json")
+
+    def test_lucas_linear_receipt_still_valid_on_accepted_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            CHECKER.validate(self.program, accepted_replacement_root(tmp))
+        receipt = self.program["authority"]["acceptance_receipt"]
+        self.assertEqual(receipt["kind"], CHECKER.RECEIPT_KIND_LINEAR_DIGEST)
+        self.assertEqual(receipt["accepted_by_linear_user_id"], "8709c8bb-e7d2-429e-89f9-89a48b7187fa")
+        self.assertEqual(receipt["accepted_contracts"], CHECKER.EXPECTED_ACCEPTED_CONTRACTS)
+        self.assertEqual(
+            self.program["authority"]["founder_github_allowlist"],
+            list(CHECKER.FOUNDER_GITHUB_ALLOWLIST),
+        )
+
+    def test_founder_pr_approval_accepts_allowlisted_non_author(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = accepted_replacement_root(tmp)
+            CHECKER.validate(
+                github_acceptance_program(self.program),
+                root,
+                current_head_sha=APPROVED_HEAD,
+            )
+
+    def test_author_self_approval_rejected(self) -> None:
+        candidate = github_acceptance_program(
+            self.program,
+            pr_author_login="samir-shah-ahmed",
+            approving_founder_login="samir-shah-ahmed",
+        )
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaisesRegex(
+            CHECKER.ContractError, "author self-approval rejected"
+        ):
+            CHECKER.validate(
+                candidate,
+                accepted_replacement_root(tmp),
+                current_head_sha=APPROVED_HEAD,
+            )
+
+    def test_author_self_approval_rejected_casefold(self) -> None:
+        candidate = github_acceptance_program(
+            self.program,
+            pr_author_login="cdantheman",
+            approving_founder_login="CDanTheMan",
+        )
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaisesRegex(
+            CHECKER.ContractError, "author self-approval rejected"
+        ):
+            CHECKER.validate(
+                candidate,
+                accepted_replacement_root(tmp),
+                current_head_sha=APPROVED_HEAD,
+            )
+
+    def test_non_founder_approval_rejected(self) -> None:
+        candidate = github_acceptance_program(
+            self.program,
+            pr_author_login="CDanTheMan",
+            approving_founder_login="octocat",
+        )
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaisesRegex(
+            CHECKER.ContractError, "approving founder not on allowlist"
+        ):
+            CHECKER.validate(
+                candidate,
+                accepted_replacement_root(tmp),
+                current_head_sha=APPROVED_HEAD,
+            )
+
+    def test_any_non_author_approver_is_not_enough(self) -> None:
+        candidate = github_acceptance_program(
+            self.program,
+            pr_author_login="CDanTheMan",
+            approving_founder_login="dependabot[bot]",
+        )
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaisesRegex(
+            CHECKER.ContractError, "approving founder not on allowlist"
+        ):
+            CHECKER.validate(
+                candidate,
+                accepted_replacement_root(tmp),
+                current_head_sha=APPROVED_HEAD,
+            )
+
+    def test_digest_mismatch_rejected(self) -> None:
+        contracts = dict(CHECKER.EXPECTED_ACCEPTED_CONTRACTS)
+        contracts["docs/replacement/SUCCESSOR-PRODUCT.md"] = "f" * 64
+        candidate = github_acceptance_program(self.program, accepted_contracts=contracts)
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaisesRegex(
+            CHECKER.ContractError, "governing files differ from accepted receipt"
+        ):
+            CHECKER.validate(
+                candidate,
+                accepted_replacement_root(tmp),
+                current_head_sha=APPROVED_HEAD,
+            )
+
+    def test_stale_head_approval_rejected(self) -> None:
+        candidate = github_acceptance_program(self.program)
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaisesRegex(
+            CHECKER.ContractError, "stale github approval head"
+        ):
+            CHECKER.validate(
+                candidate,
+                accepted_replacement_root(tmp),
+                current_head_sha=STALE_HEAD,
+            )
+
+    def test_allowlist_cannot_be_widened_in_program_json(self) -> None:
+        candidate = copy.deepcopy(self.program)
+        candidate["authority"]["founder_github_allowlist"] = [
+            *CHECKER.FOUNDER_GITHUB_ALLOWLIST,
+            "octocat",
+        ]
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaisesRegex(
+            CHECKER.ContractError, "founder GitHub allowlist changed"
+        ):
+            CHECKER.validate(candidate, accepted_replacement_root(tmp))
+
+    def test_unknown_receipt_kind_rejected(self) -> None:
+        candidate = copy.deepcopy(self.program)
+        candidate["authority"]["acceptance_receipt"]["kind"] = "merge"
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaisesRegex(
+            CHECKER.ContractError, "unsupported receipt kind"
+        ):
+            CHECKER.validate(candidate, accepted_replacement_root(tmp))
+
+    def test_lucas_github_path_requires_another_founder(self) -> None:
+        candidate = github_acceptance_program(
+            self.program,
+            pr_author_login="NotSkittlz",
+            approving_founder_login="CDanTheMan",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            CHECKER.validate(
+                candidate,
+                accepted_replacement_root(tmp),
+                current_head_sha=APPROVED_HEAD,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
