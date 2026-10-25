@@ -694,7 +694,6 @@ _SECRET_EXPR = re.compile(
     r'''secrets(?:\.[A-Za-z0-9_]+|\[\s*['"][A-Za-z0-9_]+['"]\s*\])'''
 )
 _SECRETS_CONTEXT = re.compile(r'(?<![\w.])secrets\b')
-_GH_EXPR = re.compile(r'\$\{\{(.*?)\}\}', re.DOTALL)
 _OAUTH_ACTION_INPUT = re.compile(
     r'''['"]?claude_code_oauth_token['"]?\s*:\s*['"]?\$\{\{\s*secrets\.CLAUDE_CODE_OAUTH_TOKEN\s*\}\}['"]?'''
 )
@@ -740,11 +739,44 @@ class _ModelSecrets:
 
     @staticmethod
     def _in_exprs(text):
-        for body in _GH_EXPR.findall(text):
+        for body in _ModelSecrets._expr_bodies(text):
             hit = _ModelSecrets._unquoted_secrets(body)
             if hit:
                 return hit
         return None
+
+    @staticmethod
+    def _expr_bodies(text):
+        """Yield `${{ }}` bodies. Quoted `}}` is not a closer. Unclosed expressions fail closed."""
+        i, n = 0, len(text)
+        while i < n:
+            start = text.find('${{', i)
+            if start < 0:
+                return
+            i = start + 3
+            quote = None
+            while i < n:
+                ch = text[i]
+                if quote is not None:
+                    if ch == quote:
+                        if i + 1 < n and text[i + 1] == quote:
+                            i += 2
+                            continue
+                        quote = None
+                    i += 1
+                    continue
+                if ch in "'\"":
+                    quote = ch
+                    i += 1
+                    continue
+                if ch == '}' and i + 1 < n and text[i + 1] == '}':
+                    yield text[start + 3:i]
+                    i += 2
+                    break
+                i += 1
+            else:
+                yield text[start + 3:]
+                return
 
     @staticmethod
     def _unquoted_secrets(body):
@@ -1340,6 +1372,12 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         after_doubled['steps'][0]['run'] = (
             "echo ${{ contains(foo, 'it''s x') && secrets.MY_PAT }}")
         self.assertIsNotNone(MODEL_SECRETS.search(after_doubled))
+        quoted_closer = copy.deepcopy(live)
+        quoted_closer.setdefault('env', {})['GH_TOKEN'] = "${{ '}}' && secrets.MY_PAT }}"
+        self.assertIsNotNone(MODEL_SECRETS.search(quoted_closer))
+        quoted_closer_only = copy.deepcopy(live)
+        quoted_closer_only['steps'][0]['if'] = "${{ '}}' }}"
+        self.assertIsNone(MODEL_SECRETS.search(quoted_closer_only))
         self.assertTrue(model_github_token_ok(live))
         self.assertFalse(model_github_token_ok(job))
         pat_input = copy.deepcopy(live)
