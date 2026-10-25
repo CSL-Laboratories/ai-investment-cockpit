@@ -2363,7 +2363,8 @@ class P9ProbeWorkflowTests(unittest.TestCase):
         self.assertIn("runs-on: ubuntu-24.04", text)
         self.assertNotIn("runs-on: ubuntu-latest", text)
         self.assertNotIn("anthropics/claude-code-action", text)
-        self.assertIn("if: ${{ always() && inputs.enable_probe2_oauth }}", text)
+        self.assertIn("if: ${{ success() && inputs.enable_probe2_oauth }}", text)
+        self.assertNotIn("if: ${{ always() && inputs.enable_probe2_oauth }}", text)
 
 
 if __name__ == "__main__":
