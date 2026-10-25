@@ -793,12 +793,22 @@ def uses_allowed(job, role):
 
 
 def model_github_token_ok(job):
-    """Allow only `github_token: ${{ github.token }}` when every permission is read."""
+    """Allow only `github_token: ${{ github.token }}` when every permission is read.
+
+    Checked on each step `with:` input, so a decoy `github.token` mention cannot
+    hide a PAT or `vars.*` mapping on the Claude action.
+    """
     perms = job.get('permissions') or {}
     if not perms or any(value != 'read' for value in perms.values()):
         return False
-    text = str(job)
-    return bool(MODEL_GITHUB_TOKEN_EXCEPTION.search(text)) and not _SECRET_GITHUB_TOKEN.search(text)
+    tokens = []
+    for step in job.get('steps') or []:
+        token = (step.get('with') or {}).get('github_token')
+        if token is not None:
+            tokens.append(str(token).strip())
+    return bool(tokens) and all(
+        MODEL_GITHUB_TOKEN_EXCEPTION.search(f'github_token: {token}') for token in tokens
+    )
 
 
 def writer_callers(directory):
@@ -1220,6 +1230,15 @@ class CrossLaneAdmissionTests(unittest.TestCase):
                 break
         self.assertIsNotNone(_SECRET_GITHUB_TOKEN.search(str(gh_token_input)))
         self.assertFalse(model_github_token_ok(gh_token_input))
+        vars_pat = copy.deepcopy(live)
+        for step in vars_pat['steps']:
+            if str(step.get('uses') or '').startswith('anthropics/claude-code-action'):
+                step.setdefault('with', {})['github_token'] = '${{ vars.MY_PAT }}'
+                break
+        vars_pat.setdefault('steps', []).append(
+            {'name': 'decoy', 'run': 'echo github_token: ${{ github.token }}'})
+        self.assertIsNotNone(MODEL_GITHUB_TOKEN_EXCEPTION.search(str(vars_pat)))
+        self.assertFalse(model_github_token_ok(vars_pat))
 
     def test_quoted_job_key_mutation_is_inventoried(self):
         text = (WORKFLOWS / 'claude.yml').read_text()
