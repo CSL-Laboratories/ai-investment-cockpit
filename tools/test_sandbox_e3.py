@@ -58,10 +58,15 @@ class Set2PinTests(unittest.TestCase):
             environ.BUN_EXE,
         )
         worker = {"PATH": "/usr/bin", "FOO": "1"}
-        path = environ.expected_job_path("/usr/bin")
-        b_env = {"PATH": path, "FOO": "1"}
+        # Action GITHUB_PATH prepends dirname(path_to_bun_executable).
+        action_path = (
+            "/bin:/usr/bin:/opt/csl-bun-action:/home/runner/.bun/bin:/usr/bin"
+        )
+        self.assertEqual(environ.expected_job_path("/usr/bin"), action_path)
+        stale_path = "/bin:/usr/bin:/opt/csl-bun:/home/runner/.bun/bin:/usr/bin"
+        b_env = {"PATH": action_path, "FOO": "1"}
         x_ok = {
-            "PATH": path,
+            "PATH": action_path,
             "FOO": "1",
             "PWD": "/workspace",
             "SHLVL": "1",
@@ -90,6 +95,18 @@ class Set2PinTests(unittest.TestCase):
                 worker_path="/usr/bin",
             ).ok
         )
+        x_stale = dict(x_ok)
+        x_stale["PATH"] = stale_path
+        stale = environ.check_environ(
+            proc_env=x_stale,
+            worker_env=worker,
+            b_env=b_env,
+            on_x=True,
+            workspace="/workspace",
+            worker_path="/usr/bin",
+        )
+        self.assertFalse(stale.ok)
+        self.assertEqual(stale.reason, "path")
 
 
 class E3RecordTests(unittest.TestCase):
@@ -141,7 +158,10 @@ class EnvironK2Tests(unittest.TestCase):
     def test_k1_path_newest_first_keeps_worker_suffix(self) -> None:
         worker = "/usr/bin:/bin:/snap/bin"
         got = environ.expected_job_path(worker)
-        self.assertTrue(got.startswith("/bin:/usr/bin:/opt/csl-bun:/home/runner/.bun/bin:"))
+        self.assertTrue(
+            got.startswith("/bin:/usr/bin:/opt/csl-bun-action:/home/runner/.bun/bin:")
+        )
+        self.assertNotIn(":/opt/csl-bun:", f":{got}:")
         self.assertTrue(got.endswith(worker))
         self.assertEqual(got.count("/usr/bin"), 2)
 

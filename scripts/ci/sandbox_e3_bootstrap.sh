@@ -220,9 +220,13 @@ if [ /opt/csl-bun-action/bun -ef "$BUN_DST" ]; then
   echo "e3-0b: action bun wrapper collides with ELF" >&2
   exit 1
 fi
-# Pre-create the action's pin-bun destination after the extra-file check and
-# before the ro remount so mkdir -p "$AP/bin" is a no-op. Touch/mkdir after
-# the remount fail closed if $AP is still writable.
+# Seed $AP/bin/bun with the ELF after the extra-file check and before the
+# remount. The action's "Pin bun binary for post-steps" (triggered when
+# allowed_non_write_users is set) later `cp`s path_to_bun_executable onto
+# this path; that fails on remount,ro and is continue-on-error, so this
+# ELF remains. Do not install the wrapper here: capture tofu hashes
+# CSL_BUN_PATH. Touch/mkdir after the remount fail closed if $AP is still
+# writable.
 mkdir -p "$AP/bin"
 install -D -m0755 -o root -g root "$BUN_DST" "$AP/bin/bun"
 chown -R root:root "$AP"
