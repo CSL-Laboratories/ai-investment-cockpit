@@ -56,8 +56,14 @@ adds `ci:full` / `enhancement` (AGENTS.md:143-144, 155-159). Escalate on the Lin
    approval setting (contract G14); a writer reviews the fork diff, then approves. A `pull_request`
    opened, synchronized or reopened by a `GITHUB_TOKEN` automation also waits for approval (GitHub
    docs, triggering a workflow); the Claude writers push with an App token instead (contract §7).
-   Any other event a `GITHUB_TOKEN` triggers, such as a label or `ready_for_review`, creates no run
-   at all, so recovery is a human action or an App or PAT identity.
+   `workflow_dispatch` and `repository_dispatch` are the documented exception: a `GITHUB_TOKEN`
+   identity still creates those runs. That includes `forward-conflict-scan` dispatching
+   `conflict-scan.yml`. Any other event a `GITHUB_TOKEN` triggers, such as a label or
+   `ready_for_review`, creates no run at all, so recovery is a human action or an App or PAT identity.
+   Model jobs may receive only the job-scoped read-only `github.token`
+   (`github_token: ${{ github.token }}`), and only when every permission on that job is `read`.
+   `secrets.GITHUB_TOKEN`, a PAT, or the same mapping on a write permission fails the
+   CrossLaneAdmissionTests (CSL-428).
 3. A run is queued for minutes: check the org runner capacity (Team plan: 60 concurrent jobs, 5
    macOS, shared with recursion and every bot workflow; GitHub docs, Actions limits). macOS
    saturates first.
@@ -136,7 +142,9 @@ their own tests (`tools/test_codex_gate.py`, `app/tests/test_stuck_thread_watch.
   re-pinned `file:line` citations when lines move, or says "no contract row changes" and why.
 - Writer workflows (`claude.yml`, `conflict-scan.yml`, `claude-conflict-writer.yml`) must keep the
   admission surface that `CrossLaneAdmissionTests` checks statically: no CI dispatch, re-run,
-  ready-for-review or CI-label add (the only CI-label write is revoking a gate-owned `ci:full`);
+  ready-for-review or CI-label add (the only CI-label write is revoking a gate-owned `ci:full`).
+  The label check reads workflow and extracted-script text; a `gh api --method PATCH` whose
+  label names live only in `--input body.json` is not visible. Also required:
   pushes only from the model-free publish jobs as one ordinary fast-forward (no prep or publish job
   holds `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` or the Claude action); one shared
   `claude-<PR>` lock without cancellation; the eight-commit guard on both claude.yml writers, the
