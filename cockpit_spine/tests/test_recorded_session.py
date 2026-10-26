@@ -226,6 +226,51 @@ class StepsAreBoundToTheChainTests(unittest.TestCase):
 
         self.assertEqual([], self.damaged(pad))
 
+    def test_a_repeated_flag_is_read_the_way_the_cli_reads_it(self) -> None:
+        """argparse keeps the last copy of a flag; the checker must too (Codex 4383053753)."""
+
+        def appended(r: dict) -> None:
+            self.step(r, "approve", "approved")["argv"] += [
+                "--confirm-digest", "sha256:" + "0" * 64]
+
+        found = self.damaged(appended)
+        self.assertTrue(any("confirm digest differs" in item for item in found), found)
+
+    def test_argv_the_cli_would_refuse_is_reported(self) -> None:
+        def unknown(r: dict) -> None:
+            self.step(r, "stop", "stopped")["argv"] += ["--live"]
+
+        def missing(r: dict) -> None:
+            argv = self.step(r, "veto", "vetoed")["argv"]
+            del argv[argv.index("--reason"):argv.index("--reason") + 2]
+
+        for mutate in (unknown, missing):
+            found = self.damaged(mutate)
+            self.assertTrue(any("not a command the CLI accepts" in item for item in found),
+                            found)
+
+    def test_a_changed_driver_or_contract_identity_is_reported(self) -> None:
+        def top(r: dict) -> None:
+            r["adapter_kind"] = "live"
+
+        def opened(r: dict) -> None:
+            r["chain"][0]["data"]["adapter_kind"] = "live"
+
+        def head(r: dict) -> None:
+            r["contract"]["head_sha"] = "f" * 40
+
+        def schema(r: dict) -> None:
+            r["contract"]["schema_sha256"] = "0" * 64
+
+        def extra(r: dict) -> None:
+            r["contract"]["live"] = True
+
+        for mutate, words in ((top, "adapter kind"), (opened, "adapter kind"),
+                              (head, "contract identity"), (schema, "contract identity"),
+                              (extra, "contract identity")):
+            found = self.damaged(mutate)
+            self.assertTrue(any(words in item for item in found), (mutate.__name__, found))
+
     def test_a_boolean_exit_code_is_reported(self) -> None:
         self.assertTrue(self.damaged(lambda r: r["steps"][0].update(exit_code=False)))
 

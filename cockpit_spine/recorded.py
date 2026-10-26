@@ -16,20 +16,24 @@ happened. Malformed input is reported as a problem, never raised.
 
 from __future__ import annotations
 
+import contextlib
+import io
 from typing import Any
 
-from cockpit_spine import views
+from cockpit_spine import cli, views
 from cockpit_spine.audit import AuditError, verify_chain
 from cockpit_spine.projections import Registry
 from cockpit_spine.service import OperatorService
 from cockpit_spine.session import CommandResult, OperatorSession, _clean
 from cockpit_spine.sources import ProposalSource
+from successor.route_consumer import pin
 from successor.route_consumer.records import prompt_digest
 
 REQUIRED_CODES = ("approved", "vetoed", "stopped")
 EXPECTED_KIND = "operator session transcript; not a model comparison; no CP7 result; no verdict"
 EXPECTED_LABEL = "live route integration deferred; recorded on the fake driver; no verdict"
 EXIT_OK, EXIT_REFUSED = 0, 2
+ADAPTER_KIND = "recursion-fake-driver"
 
 
 class _NoSource:
@@ -39,11 +43,24 @@ class _NoSource:
         raise AssertionError("a replay never contacts a source")
 
 
+def _parsed(argv: list[str]) -> Any:
+    """The arguments the CLI would receive for ``argv``, or ``None`` if it would not run.
+
+    Parsing goes through the CLI's own parser, so a repeated flag means what it
+    means to argparse (the last one wins) and an unknown flag is refused.
+    """
+
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            return cli.build_parser().parse_args(["--log", "-", *argv])
+    except SystemExit:
+        return None
+
+
 def _flag(argv: list[str], name: str) -> str | None:
-    for position, item in enumerate(argv[:-1]):
-        if item == name:
-            return argv[position + 1]
-    return None
+    namespace = _parsed(argv)
+    return None if namespace is None else getattr(namespace, name[2:].replace("-", "_"), None)
 
 
 def _expected_code(reason: object) -> str:
@@ -251,6 +268,10 @@ def _check_steps(
                 or not all(isinstance(a, str) for a in argv)):
             found.append(f"{where}: argv or response is missing or malformed")
             continue
+        namespace = _parsed(argv)
+        if namespace is None or namespace.command != argv[0]:
+            found.append(f"{where}: argv is not a command the CLI accepts")
+            continue
         ok, step_head = response.get("ok"), response.get("head")
         if not isinstance(ok, bool):
             found.append(f"{where}: ok is not a boolean")
@@ -303,6 +324,27 @@ def _check_steps(
     return found
 
 
+def _provenance_problems(record: dict[str, Any]) -> list[str]:
+    """The driver and contract the record names must be the fake driver and the committed pin."""
+
+    found: list[str] = []
+    chain = record.get("chain")
+    first = chain[0] if isinstance(chain, list) and chain and isinstance(chain[0], dict) else {}
+    opened = first.get("data") if isinstance(first.get("data"), dict) else {}
+    if record.get("adapter_kind") != ADAPTER_KIND or opened.get("adapter_kind") != ADAPTER_KIND:
+        found.append(f"adapter kind is not {ADAPTER_KIND!r} in the record and its opening event")
+    pinned = pin.load_pin()
+    expected = {
+        "repository": pinned["source"]["repository"],
+        "pull_request": pinned["source"]["pull_request"],
+        "head_sha": pinned["source"]["head_sha"],
+        "schema_sha256": pinned["vendored"][pin.SCHEMA_KEY]["sha256"],
+    }
+    if record.get("contract") != expected:
+        found.append("contract identity differs from the committed route contract pin")
+    return found
+
+
 def problems(record: dict[str, Any], registry: Registry) -> list[str]:
     if not isinstance(record, dict):
         return ["record is not an object"]
@@ -315,6 +357,7 @@ def problems(record: dict[str, Any], registry: Registry) -> list[str]:
         found.append("record kind is not the expected no-verdict kind")
     if record.get("label") != EXPECTED_LABEL:
         found.append("record does not carry the expected deferral label")
+    found += _provenance_problems(record)
     if record.get("projection_registry_digest") != registry.digest:
         found.append("projection registry digest differs from the committed registry")
     chain = record.get("chain")
