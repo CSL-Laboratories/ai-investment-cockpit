@@ -3,6 +3,7 @@
 Run: python -m unittest discover -s tools -p test_ci_dispatch_scope.py -v
 Requires PyYAML (already part of the repository validation dependencies).
 """
+import copy
 import json
 import os
 import re
@@ -637,12 +638,13 @@ SCAN_JOBS = {'conflict-scan': 'scan', 'conflict-resolve': 'caller'}
 MODEL_ACCESS = re.compile(r'ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN|anthropics/claude-code-action', re.IGNORECASE)
 HOSTED = {'ubuntu-latest', 'ubuntu-24.04', 'ubuntu-22.04', 'windows-2025', 'windows-latest', 'macos-latest'}
 MODEL_BASH = 'Bash(python3 ${{ runner.temp }}/claude-fixer-guard/model-api --:*)'
-# A push, in shell or argv form. Shell: `git`, then global options (`-C dir`, `-c k=v`, `--no-pager`),
-# then `push`, across backslash continuations. Argv: a quoted `"push"` element that opens a list or
-# tuple (`["push"`, `prefix + ["push"`) or follows only option tokens and bare expressions after the
-# opening bracket or a quoted `"git"` (`[*prefix, "push"`, `run_git(["-C", repo, "push"`,
-# `["git", "-C", repo, "push"`). Quotes may be backslash-escaped. A quoted non-option word before
-# `"push"` (a prompt word list such as `"git", "log", "origin", "pr", "push"`) is not a push.
+# A push, in shell or argv form. Shell: `git`, then global options (`-C dir`, `-c k=v`,
+# `--git-dir path`, `--no-pager`), then `push`, across backslash continuations. Argv: any
+# `[`/`(` list or a quoted `"git"` list, then `"push"` — helpers named `run_git`, `GIT`,
+# `_git`, `run`, or `cmd` all count. Quotes may be backslash-escaped. False positives are
+# excluded narrowly: a bare `"push"` passed to print/logging, or the confirmed
+# display list `allowed_commands` / `ALLOWED_COMMANDS`. Value-taking git options
+# (`--git-dir`, `--work-tree`, `--namespace`, `-C`, `-c`) consume their following token.
 _Q = r'\\?["\']'
 _STR = r'[rbfuRBFU]{0,2}' + _Q + r'[^"\'\n]*' + _Q
 _OPT = r'[rbfuRBFU]{0,2}' + _Q + r'-[^"\'\n]*' + _Q
@@ -650,8 +652,188 @@ _EXPR = r'\*?[A-Za-z_][\w.]*(?:\([^()\n]*\)|\[[^\[\]\n]*\])*'
 _SEP = r'\s*,\s*'
 _TOKEN = rf'(?:{_OPT}(?:{_SEP}(?:{_STR}|{_EXPR}))?|{_EXPR})'
 _GAP = r'(?:\s|\\\n)+'
-PUSH = re.compile(rf'(?:[\[(]\s*|{_Q}git{_Q}{_SEP})(?:{_TOKEN}{_SEP}){{0,12}}{_Q}push{_Q}'
-                  rf'|\bgit(?:{_GAP}(?:-[Cc]{_GAP}\S+|--?[A-Za-z][\w-]*(?:=\S+)?))*{_GAP}push\b|/git/refs/')
+_GIT_VAL = (r'(?:--(?:git-dir|work-tree|namespace|config-env|super-prefix|attr-source))'
+            rf'(?:={_GAP}?\S+|{_GAP}\S+)')
+_GIT_OPT = rf'(?:-[Cc]{_GAP}\S+|{_GIT_VAL}|--?[A-Za-z][\w-]*(?:=\S+)?)'
+_PUSH_RAW = re.compile(
+    rf'(?:[\[(]\s*|{_Q}git{_Q}{_SEP})(?:{_TOKEN}{_SEP}){{0,12}}{_Q}push{_Q}'
+    rf'|\bgit(?:{_GAP}{_GIT_OPT})*{_GAP}push\b|/git/refs/'
+)
+_BENIGN_CALL = re.compile(
+    r'(?i:(?:print|pprint|logging(?:\.\w+)+|logger(?:\.\w+)*|\blog)\s*\(?\s*$)'
+    r'|\b(?:allowed_commands|ALLOWED_COMMANDS)\s*[:=]\s*$'
+)
+
+
+class _PushMatcher:
+    """Broad argv/shell push detector with narrow exclusions for prompt/log word lists."""
+
+    def finditer(self, text):
+        for match in _PUSH_RAW.finditer(text):
+            if not self._benign(text, match):
+                yield match
+
+    def search(self, text):
+        return next(self.finditer(text), None)
+
+    @staticmethod
+    def _benign(text, match):
+        snippet = match.group(0)
+        if snippet.startswith(('git', '/git/refs/')):
+            return False
+        # Only confirmed display/log lists are excluded. `args = ["push", "pull"]`
+        # then `run_git(args)` is a push to a remote named `pull`.
+        return bool(_BENIGN_CALL.search(text[max(0, match.start() - 80):match.start()]))
+
+
+PUSH = _PushMatcher()
+CI_LABELS = frozenset({'ci:full', 'enhancement'})
+HANDOFF_CONST = re.compile(
+    r"(?m)^\s*(?:HANDOFF_LABEL|MODEL_API_LABEL)\s*[=:]\s*(?:['\"]([^'\"]+)['\"]|(\S+))"
+)
+LABEL_ARRAY = re.compile(
+    r'''(?:["']labels["']\s*:|labels\s*=)\s*\[([^\]]*)\]''', re.IGNORECASE | re.DOTALL
+)
+ISSUE_RESOURCE = re.compile(r'/issues/(?:\{[^}]+\}|\$[\w.]+|\d+)(?!/)')
+_SECRET_EXPR = re.compile(
+    r'''secrets(?:\.[A-Za-z0-9_]+|\[\s*['"][A-Za-z0-9_]+['"]\s*\])'''
+)
+_SECRETS_CONTEXT = re.compile(r'(?<![\w.])secrets\b', re.IGNORECASE)
+_OAUTH_ACTION_INPUT = re.compile(
+    r'''['"]?claude_code_oauth_token['"]?\s*:\s*['"]?\$\{\{\s*secrets\.CLAUDE_CODE_OAUTH_TOKEN\s*\}\}['"]?'''
+)
+_OAUTH_VALUE = re.compile(r'^\$\{\{\s*secrets\.CLAUDE_CODE_OAUTH_TOKEN\s*\}\}$')
+
+
+class _ModelSecrets:
+    """secrets.* in a model job or inherited workflow env. OAuth only as the Claude action `with` input."""
+
+    def search(self, job, inherited=None):
+        if not isinstance(job, dict):
+            hit = self._in_exprs(str(job))
+        else:
+            scanned = copy.deepcopy(job)
+            for step in scanned.get('steps') or []:
+                with_block = step.get('with') or {}
+                token = with_block.get('claude_code_oauth_token')
+                if (str(step.get('uses') or '').startswith('anthropics/claude-code-action')
+                        and token is not None
+                        and _OAUTH_VALUE.fullmatch(str(token).strip())):
+                    with_block.pop('claude_code_oauth_token')
+            hit = self._walk(scanned)
+        if hit:
+            return hit
+        return None if inherited is None else self._walk(inherited)
+
+    def _walk(self, value):
+        if isinstance(value, str):
+            return self._in_exprs(value)
+        if isinstance(value, dict):
+            for item in value.values():
+                hit = self._walk(item)
+                if hit:
+                    return hit
+            return None
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                hit = self._walk(item)
+                if hit:
+                    return hit
+            return None
+        return None
+
+    @staticmethod
+    def _in_exprs(text):
+        for body in _ModelSecrets._expr_bodies(text):
+            hit = _ModelSecrets._unquoted_secrets(body)
+            if hit:
+                return hit
+        return None
+
+    @staticmethod
+    def _expr_bodies(text):
+        """Yield `${{ }}` bodies. Quoted `}}` is not a closer. Unclosed expressions fail closed."""
+        i, n = 0, len(text)
+        while i < n:
+            start = text.find('${{', i)
+            if start < 0:
+                return
+            i = start + 3
+            quote = None
+            while i < n:
+                ch = text[i]
+                if quote is not None:
+                    if ch == quote:
+                        if i + 1 < n and text[i + 1] == quote:
+                            i += 2
+                            continue
+                        quote = None
+                    i += 1
+                    continue
+                if ch in "'\"":
+                    quote = ch
+                    i += 1
+                    continue
+                if ch == '}' and i + 1 < n and text[i + 1] == '}':
+                    yield text[start + 3:i]
+                    i += 2
+                    break
+                i += 1
+            else:
+                yield text[start + 3:]
+                return
+
+    @staticmethod
+    def _unquoted_secrets(body):
+        """secrets context in unquoted GitHub expression text. Doubled quotes are literals."""
+        i, n = 0, len(body)
+        while i < n:
+            if body[i] in "'\"":
+                quote = body[i]
+                i += 1
+                start = i
+                while i < n:
+                    if body[i] == quote:
+                        if i + 1 < n and body[i + 1] == quote:
+                            i += 2
+                            continue
+                        i += 1
+                        break
+                    i += 1
+                else:
+                    return _SECRETS_CONTEXT.search(body[start:])
+            else:
+                start = i
+                while i < n and body[i] not in "'\"":
+                    i += 1
+                hit = _SECRETS_CONTEXT.search(body[start:i])
+                if hit:
+                    return hit
+        return None
+
+
+MODEL_SECRETS = _ModelSecrets()
+# Named allow-list: the Claude action may receive the job-scoped token, and
+# only that mapping, when every permission on the model job is `read`.
+MODEL_GITHUB_TOKEN_EXCEPTION = re.compile(
+    r'''['"]?github_token['"]?\s*:\s*['"]?\$\{\{\s*github\.token\s*\}\}['"]?'''
+)
+_GITHUB_TOKEN_VALUE = re.compile(r'^\$\{\{\s*github\.token\s*\}\}$')
+_SECRET_GITHUB_TOKEN = re.compile(
+    r'''['"]?github_token['"]?\s*:\s*['"]?\$\{\{\s*secrets\.'''
+)
+EXPECTED_LOCK = {
+    'claude.yml': 'claude-${{ needs.resolve-pr.outputs.pr_number }}',
+    'claude-conflict-writer.yml': 'claude-${{ inputs.pr_number }}',
+}
+ROLE_USES = {
+    'prep': ('actions/checkout@',),
+    'model': ('actions/checkout@', 'actions/setup-python@', 'oven-sh/setup-bun@',
+              'anthropics/claude-code-action@', 'actions/upload-artifact@'),
+    'publish': ('actions/checkout@', 'actions/download-artifact@'),
+    'verify': (),
+}
+MODEL_PERMS = {'contents': 'read', 'pull-requests': 'read', 'issues': 'read'}
 # Inside a whole push command: force, lease, mirror or delete options (also in short-option clusters
 # such as `-fq`), and a refspec that starts with `+` (forced) or `:` (delete).
 FORCED_PUSH = re.compile(r'--force|--mirror|--delete|(?<![\w-])-[A-Za-z]*[fd][A-Za-z]*(?![\w-])'
@@ -661,6 +843,155 @@ FORCED_PUSH = re.compile(r'--force|--mirror|--delete|(?<![\w-])-[A-Za-z]*[fd][A-
 LABEL_WRITE = re.compile(r'\b(?:POST|PUT|PATCH)\b|(?<![\w-])(?:-f|-F|--field|--raw-field|--input|-d|--data[\w-]*'
                          r'|--json)(?![\w-])')
 SPAN_LINES = 40
+
+
+def job_keys(text):
+    """Job ids at the `jobs:` indent, including quoted keys such as `"extra-job":`."""
+    match = re.search(r'(?m)^jobs:\s*(?:#.*)?$', text)
+    if not match:
+        return set()
+    rest = text[match.end():]
+    stop = re.search(r'(?m)^[^\s#]', rest)
+    block = rest[:stop.start()] if stop else rest
+    keys = []
+    for item in re.finditer(r'(?m)^  (?:["\']([^"\']+)["\']|([A-Za-z_][\w-]*)):', block):
+        keys.append(item.group(1) or item.group(2))
+    return set(keys)
+
+
+def job_uses(job):
+    return [str(step.get('uses')) for step in job.get('steps') or [] if step.get('uses')]
+
+
+_THIRD_PARTY_SHA = re.compile(r'^[^@\s]+@[0-9a-f]{40}$')
+
+
+def uses_sha_pinned(uses):
+    """GitHub-owned actions/* may use a tag. Everything else needs a 40-hex SHA."""
+    return uses.startswith('actions/') or bool(_THIRD_PARTY_SHA.fullmatch(uses))
+
+
+def uses_allowed(job, role):
+    allowed = ROLE_USES[role]
+    return all(
+        any(uses.startswith(prefix) for prefix in allowed) and uses_sha_pinned(uses)
+        for uses in job_uses(job)
+    )
+
+
+def model_github_token_ok(job):
+    """Allow only `github_token: ${{ github.token }}` when every permission is read.
+
+    Checked on each step `with:` input, so a decoy `github.token` mention cannot
+    hide a PAT or `vars.*` mapping on the Claude action.
+    """
+    perms = job.get('permissions') or {}
+    if (not isinstance(perms, dict) or not perms
+            or any(value != 'read' for value in perms.values())):
+        return False
+    tokens = []
+    for step in job.get('steps') or []:
+        token = (step.get('with') or {}).get('github_token')
+        if token is not None:
+            tokens.append(str(token).strip())
+    return bool(tokens) and all(_GITHUB_TOKEN_VALUE.fullmatch(token) for token in tokens)
+
+
+CONFLICT_WRITER_FILES = (
+    '.github/workflows/claude-conflict-writer.yml',
+    '.github/workflows/claude-conflict-writer.yaml',
+)
+CONFLICT_WRITER_REPO = 'CSL-Laboratories/ai-investment-cockpit/'
+
+
+def conflict_writer_uses(uses):
+    """Job-level reusable-workflow call of this repo's claude-conflict-writer.yml/.yaml.
+
+    Accepts a local path (`./.github/workflows/...`) or this repository at a ref.
+    Owner/repo on a remote call is matched case-insensitively (GitHub names are
+    case-insensitive). A same-named workflow in another owner/repo is not a caller.
+    """
+    if not isinstance(uses, str):
+        return False
+    path = uses.split('@', 1)[0].replace('\\', '/').removeprefix('./')
+    if path in CONFLICT_WRITER_FILES:
+        return True
+    owner, _, rest = path.partition('/')
+    repo, _, workflow = rest.partition('/')
+    if not (owner and repo and workflow):
+        return False
+    owner_repo = f'{owner}/{repo}/'
+    return (owner_repo.casefold() == CONFLICT_WRITER_REPO.casefold()
+            and workflow in CONFLICT_WRITER_FILES)
+
+
+def calls_conflict_writer(doc):
+    jobs = (doc or {}).get('jobs') if isinstance(doc, dict) else None
+    if not isinstance(jobs, dict):
+        return False
+    return any(isinstance(job, dict) and conflict_writer_uses(job.get('uses'))
+               for job in jobs.values())
+
+
+def writer_callers(directory):
+    found = set()
+    for path in Path(directory).glob('*.y*ml'):
+        doc = yaml.load(path.read_text(encoding='utf-8'), Loader=yaml.BaseLoader)
+        if calls_conflict_writer(doc):
+            found.add(path.name)
+    return found
+
+
+def handoff_constants(text):
+    return [match.group(1) or match.group(2) for match in HANDOFF_CONST.finditer(text)]
+
+
+def labels_in_span(span):
+    names = []
+    for match in LABEL_ARRAY.finditer(span):
+        for token in re.finditer(r'HANDOFF_LABEL|[rbfuRBFU]{0,2}["\']([^"\']+)["\']', match.group(1)):
+            names.append('needs-decision' if token.group(0) == 'HANDOFF_LABEL' else token.group(1))
+    if re.search(r'addLabelsToLabelable', span, re.IGNORECASE):
+        if 'HANDOFF_LABEL' in span:
+            names.append('needs-decision')
+        names.extend(token.group(1) for token in re.finditer(r'["\']([^"\']+)["\']', span)
+                     if token.group(1) in CI_LABELS | {'needs-decision'})
+    return names
+
+
+def ci_label_add_violations(text):
+    """CI-label adds the writers must not perform, including issue PATCH and GraphQL."""
+    hits, seen = [], set()
+
+    def consider(pos, kind):
+        span = command_span(text, pos)
+        key = (kind, span)
+        if key in seen:
+            return
+        seen.add(key)
+        names = labels_in_span(span)
+        if kind == 'graphql':
+            if set(names) & CI_LABELS or (
+                    'HANDOFF_LABEL' not in span and 'needs-decision' not in names):
+                hits.append(span)
+            return
+        if not LABEL_WRITE.search(span):
+            return
+        if kind == 'issue-patch' and not names and not re.search(r'\blabels\b', span):
+            return
+        if set(names) & CI_LABELS:
+            hits.append(span)
+            return
+        if kind == 'labels-path' and 'HANDOFF_LABEL' not in span and 'needs-decision' not in names:
+            hits.append(span)
+
+    for match in re.finditer(r'/labels\b', text):
+        consider(match.start(), 'labels-path')
+    for match in ISSUE_RESOURCE.finditer(text):
+        consider(match.start(), 'issue-patch')
+    for match in re.finditer(r'addLabelsToLabelable', text, re.IGNORECASE):
+        consider(match.start(), 'graphql')
+    return hits
 
 
 def job_text(job):
@@ -679,6 +1010,23 @@ def claude_trusted_sources(role):
         'publish': ('claude_fixer_publish.py', 'claude_fixer_receipts.py'),
     }.get(role, ())
     return '\n'.join((ROOT / 'scripts' / 'ci' / name).read_text(encoding='utf-8') for name in names)
+
+
+# After CSL-474, claude.yml no longer inlines HANDOFF_LABEL; the extracted
+# model helper and publisher hold the constant.
+CLAUDE_HANDOFF_SOURCES = ('claude_fixer_outbox.py', 'claude_fixer_publish.py')
+
+
+def writer_handoff_text(name):
+    """Workflow YAML plus, for claude.yml, the extracted HANDOFF_LABEL scripts."""
+    text = (WORKFLOWS / name).read_text(encoding='utf-8')
+    if name == 'claude.yml':
+        extra = '\n'.join(
+            (ROOT / 'scripts' / 'ci' / src).read_text(encoding='utf-8')
+            for src in CLAUDE_HANDOFF_SOURCES
+        )
+        text = text + '\n' + extra
+    return text
 
 
 def writer_contract_text(name, job, role):
@@ -741,8 +1089,13 @@ class CrossLaneAdmissionTests(unittest.TestCase):
                  if re.search(r'anthropics/claude-code|ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN', p.read_text())}
         self.assertEqual(found, set(WRITER_FILES) | {P9_PROBE_FILE})
         for name, jobs in WRITER_JOBS.items():
-            self.assertEqual(set(workflow(name)['jobs']), set(jobs) | NON_WRITER_JOBS[name])
-        self.assertEqual(set(workflow('conflict-scan.yml')['jobs']), set(SCAN_JOBS))
+            parsed = set(workflow(name)['jobs'])
+            self.assertEqual(parsed, set(jobs) | NON_WRITER_JOBS[name])
+            self.assertEqual(job_keys((WORKFLOWS / name).read_text()), parsed)
+        scan_jobs = set(workflow('conflict-scan.yml')['jobs'])
+        self.assertEqual(scan_jobs, set(SCAN_JOBS))
+        self.assertEqual(job_keys((WORKFLOWS / 'conflict-scan.yml').read_text()), scan_jobs)
+        self.assertEqual(writer_callers(WORKFLOWS), {'conflict-scan.yml'})
 
     def test_writers_never_dispatch_rerun_or_ready_ci(self):
         for name in WRITER_FILES:
@@ -761,18 +1114,19 @@ class CrossLaneAdmissionTests(unittest.TestCase):
 
     def test_writers_never_add_ci_labels(self):
         for name in WRITER_FILES:
-            text = (WORKFLOWS / name).read_text()
+            text = writer_handoff_text(name)
             with self.subTest(workflow=name):
                 self.assertNotRegex(text, r'--add-label|gh pr edit|labels\[\]=')
                 self.assertNotRegex(text, r'"labels":\s*\[\s*"(ci:full|enhancement)"')
                 # Every label write is the handoff label; ci:full is only ever removed (DELETE of a
-                # gate-owned label event). Each check reads the whole call or continued shell command
-                # around `/labels`, so a method or body written on another line still counts.
-                for match in re.finditer(r'/labels\b', text):
-                    span = command_span(text, match.start())
-                    if LABEL_WRITE.search(span):
-                        self.assertIn('HANDOFF_LABEL', span)
-                self.assertEqual(set(re.findall(r'HANDOFF_LABEL = "([^"]+)"', text)) - {'needs-decision'}, set())
+                # gate-owned label event). The span covers `/labels`, PATCH of the issue resource,
+                # and GraphQL addLabelsToLabelable, and the complete label set — not the first name.
+                self.assertEqual(ci_label_add_violations(text), [])
+                constants = handoff_constants(text)
+                self.assertTrue(set(constants) <= {'needs-decision'}, constants)
+                if name != 'conflict-scan.yml':
+                    self.assertTrue(constants)
+                    self.assertEqual(set(constants), {'needs-decision'})
 
     def test_conflict_resolve_caller_permissions_are_exact(self):
         # The reusable-workflow caller grants its inner jobs their ceiling; it holds no lock itself.
@@ -822,13 +1176,32 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         for push in ('subprocess.run(["git", "-C", repo, "push", ...])', 'run_git(["-C", repo, "push"])',
                      'subprocess.run(prefix + ["push", "origin", "HEAD"])', 'run([*prefix, "push", "origin"])',
                      'python3 -c "run([\\"git\\", \\"-C\\", \\"$R\\", \\"push\\"])"', 'git -C "$dir" \\\n  push origin',
-                     'repo.run_git(["push", "-q", "--no-verify", url, ref], token=token)'):
+                     'repo.run_git(["push", "-q", "--no-verify", url, ref], token=token)',
+                     'subprocess.run([GIT, "push", url])', 'git("push", url)', 'self.git("push")',
+                     '_git(["push", url])', 'run(["push", url])', 'cmd(["push", "--force", url])',
+                     'git_cmd = ["push", url]',
+                     'subprocess.run(["git", "push", "pull", "HEAD"])',
+                     'run_git(["push", "pull", "HEAD"])', 'run_git(["push", "pull"])',
+                     'args = ["push", "pull"]\nrepo.run_git(args)',
+                     'git_cmd = ["push", "pull"]',
+                     'allowed_args = ["push", "origin", "HEAD"]\n_git(*allowed_args)',
+                     'push_display = ["push","origin"]\nsubprocess.run(["git", *push_display])',
+                     'disallowed = ["push", "origin"]',
+                     'keywords = ["push"]'):
             with self.subTest(push=push):
                 self.assertTrue(PUSH.search(push))
         for other in ('"check", "commit", "diff", "gh", "git", "log", "origin", "pr", "push", "pytest",',
-                      'NEVER push or force-push', 'subprocess.run(["git", "-C", repo, "status"])'):
+                      'NEVER push or force-push', 'subprocess.run(["git", "-C", repo, "status"])',
+                      'print("push")', 'allowed_commands = ["push", "pull"]', 'allowed_commands = ["push", "origin"]',
+                      'ALLOWED_COMMANDS = ["push", "origin"]',
+                      'logging.info("push")', 'logger.debug("push")'):
             with self.subTest(other=other):
                 self.assertFalse(PUSH.search(other))
+        for push in ('git --git-dir "$X" push origin HEAD',
+                     'git --work-tree "$W" --git-dir "$G" push',
+                     'git --namespace foo push origin'):
+            with self.subTest(valued=push):
+                self.assertTrue(PUSH.search(push))
         # The force check reads the whole wrapped command.
         for forced in ('run_git([\n    "push",\n    "--force-with-lease", url])', 'run_git(["push",\n    "-f"])',
                        'git push \\\n  --force origin HEAD', 'run_git(["push", url, f"+{sha}:refs/heads/x"])',
@@ -852,7 +1225,7 @@ class CrossLaneAdmissionTests(unittest.TestCase):
                 self.assertIn('concurrency', doc['jobs'][job_name], f'{name}:{job_name} needs the claude-<PR> lock')
                 conc = doc['jobs'][job_name]['concurrency']
                 with self.subTest(workflow=name, job=job_name):
-                    self.assertRegex(conc['group'], r'^claude-\$\{\{ (needs\.resolve-pr\.outputs\.pr_number|inputs\.pr_number) \}\}$')
+                    self.assertEqual(conc['group'], EXPECTED_LOCK[name])
                     self.assertEqual(conc['cancel-in-progress'], 'false')
                     self.assertEqual(conc['queue'], 'max')
 
@@ -874,6 +1247,12 @@ class CrossLaneAdmissionTests(unittest.TestCase):
                         self.assertEqual(perms.get('contents'), 'read')
                         # No writer job may write code, workflows or packages; PR and issue writes only.
                         self.assertTrue(set(perms) <= {'contents', 'pull-requests', 'issues', 'id-token'})
+                    if role == 'model':
+                        # Values, not only scope names: the model token stays read-only.
+                        self.assertEqual(perms, MODEL_PERMS)
+                        self.assertIsNone(MODEL_SECRETS.search(job, inherited=doc.get('env')))
+                        self.assertTrue(model_github_token_ok(job))
+                    self.assertTrue(uses_allowed(job, role), job_uses(job))
                     uses_model = any(str(s.get('uses', '')).startswith('anthropics/claude-code-action') for s in job['steps'])
                     self.assertEqual(uses_model, role == 'model')
                     if role != 'model':
@@ -942,6 +1321,347 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         scan_job = workflow('conflict-scan.yml')['jobs']['conflict-scan']
         self.assertIn(pause_py, job_text(scan_job))
         self.assertIn('${{ vars.CLAUDE_FIXER_PAUSE }}', str(scan_job))
+
+    def test_lock_group_mutation_rejects_the_other_workflows_expression(self):
+        # Before: any of the two expressions passed. After: each workflow is pinned.
+        old = re.compile(r'^claude-\$\{\{ (needs\.resolve-pr\.outputs\.pr_number|inputs\.pr_number) \}\}$')
+        swapped = 'claude-${{ inputs.pr_number }}'
+        self.assertRegex(swapped, old)
+        live = workflow('claude.yml')['jobs']['claude-mention']
+        self.assertEqual(live['concurrency']['group'], EXPECTED_LOCK['claude.yml'])
+        self.assertEqual(live['concurrency']['cancel-in-progress'], 'false')
+        self.assertEqual(live['concurrency']['queue'], 'max')
+        mutated = copy.deepcopy(live)
+        mutated['concurrency']['group'] = swapped
+        self.assertRegex(mutated['concurrency']['group'], old)
+        self.assertNotEqual(mutated['concurrency']['group'], EXPECTED_LOCK['claude.yml'])
+
+    def test_label_write_mutations_cover_issue_patch_graphql_and_full_set(self):
+        mixed = 'write("POST", f"{root}/issues/{n}/labels", {"labels": [HANDOFF_LABEL, "ci:full"]})'
+        self.assertIn('HANDOFF_LABEL', mixed)
+        self.assertTrue(ci_label_add_violations(mixed))
+        patch = ('check_call(["gh", "api", "--method", "PATCH", '
+                 'f"repos/{r}/issues/{n}", "--input", '
+                 '\'{"labels": [HANDOFF_LABEL, "ci:full"]}\'])')
+        self.assertFalse(re.search(r'/labels\b', patch))
+        self.assertTrue(ci_label_add_violations(patch))
+        graphql = ('gh api graphql -f query=\'mutation { addLabelsToLabelable(input: '
+                   '{labelableId: $id, labelIds: ["ci:full"]}) { clientMutationId } }\'')
+        self.assertFalse(re.search(r'/labels\b', graphql))
+        self.assertTrue(ci_label_add_violations(graphql))
+        handoff = 'write("POST", f"{root}/issues/{n}/labels", {"labels": [HANDOFF_LABEL]})'
+        self.assertEqual(ci_label_add_violations(handoff), [])
+        title = 'check_call(["gh", "api", "--method", "PATCH", f"repos/{r}/issues/{n}", "-f", "title=x"])'
+        self.assertEqual(ci_label_add_violations(title), [])
+
+    def test_handoff_constant_mutations_reject_empty_and_wrong_values(self):
+        def old(text):
+            return set(re.findall(r'HANDOFF_LABEL = "([^"]+)"', text)) - {'needs-decision'}
+        self.assertEqual(old(''), set())
+        self.assertEqual(handoff_constants(''), [])
+        quoted = "HANDOFF_LABEL = 'needs-decision'\nMODEL_API_LABEL: needs-decision\n"
+        self.assertEqual(old(quoted), set())
+        self.assertEqual(set(handoff_constants(quoted)), {'needs-decision'})
+        self.assertEqual(set(handoff_constants('HANDOFF_LABEL = \'ci:full\'\n')), {'ci:full'})
+        self.assertEqual(set(handoff_constants('MODEL_API_LABEL: enhancement\n')), {'enhancement'})
+        # CSL-474 extracted HANDOFF_LABEL from claude.yml. YAML-only is empty;
+        # the scan must include the extracted outbox and publisher.
+        yaml_only = (WORKFLOWS / 'claude.yml').read_text(encoding='utf-8')
+        self.assertEqual(handoff_constants(yaml_only), [])
+        combined = writer_handoff_text('claude.yml')
+        self.assertEqual(set(handoff_constants(combined)), {'needs-decision'})
+        wrong = combined.replace('HANDOFF_LABEL = "needs-decision"', 'HANDOFF_LABEL = "ci:full"', 1)
+        self.assertIn('ci:full', handoff_constants(wrong))
+
+    def test_model_job_permission_and_secret_mutations(self):
+        job = copy.deepcopy(workflow('claude.yml')['jobs']['claude-mention'])
+        job['permissions']['issues'] = 'write'
+        self.assertTrue(set(job['permissions']) <= {'contents', 'pull-requests', 'issues', 'id-token'})
+        self.assertNotEqual(job['permissions'], MODEL_PERMS)
+        leaked = copy.deepcopy(workflow('claude.yml')['jobs']['claude-mention'])
+        leaked['steps'][0]['env'] = {**(leaked['steps'][0].get('env') or {}),
+                                     'GH_TOKEN': '${{ secrets.MY_PAT }}'}
+        self.assertIsNotNone(MODEL_SECRETS.search(leaked))
+        live = workflow('claude.yml')['jobs']['claude-mention']
+        self.assertIsNone(MODEL_SECRETS.search(live))
+        self.assertIsNone(MODEL_SECRETS.search(live, inherited=workflow('claude.yml').get('env')))
+        workflow_env = {'GH_TOKEN': '${{ secrets.MY_PAT }}'}
+        self.assertIsNotNone(MODEL_SECRETS.search(live, inherited=workflow_env))
+        oauth_env = copy.deepcopy(live)
+        oauth_env['steps'][0]['env'] = {**(oauth_env['steps'][0].get('env') or {}),
+                                        'CLAUDE_CODE_OAUTH_TOKEN':
+                                            '${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}'}
+        self.assertIsNotNone(MODEL_SECRETS.search(oauth_env))
+        gh_secret = copy.deepcopy(live)
+        gh_secret['steps'][0]['env'] = {**(gh_secret['steps'][0].get('env') or {}),
+                                        'GH_TOKEN': '${{ secrets.GITHUB_TOKEN }}'}
+        self.assertIsNotNone(MODEL_SECRETS.search(gh_secret))
+        oauth_job_env = copy.deepcopy(live)
+        oauth_job_env['env'] = {**(oauth_job_env.get('env') or {}),
+                                'claude_code_oauth_token':
+                                    '${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}'}
+        self.assertIsNone(_SECRET_EXPR.search(_OAUTH_ACTION_INPUT.sub('', str(oauth_job_env))))
+        self.assertIsNotNone(MODEL_SECRETS.search(oauth_job_env))
+        oauth_step_env = copy.deepcopy(live)
+        for step in oauth_step_env['steps']:
+            if str(step.get('uses') or '').startswith('anthropics/claude-code-action'):
+                step['env'] = {**(step.get('env') or {}),
+                               'claude_code_oauth_token':
+                                   '${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}'}
+                break
+        self.assertIsNone(_SECRET_EXPR.search(_OAUTH_ACTION_INPUT.sub('', str(oauth_step_env))))
+        self.assertIsNotNone(MODEL_SECRETS.search(oauth_step_env))
+        if_secret = copy.deepcopy(live)
+        if_secret['steps'][0]['if'] = "${{ secrets.MY_PAT != '' }}"
+        self.assertIsNotNone(MODEL_SECRETS.search(if_secret))
+        container = copy.deepcopy(live)
+        container['container'] = {
+            'image': 'x',
+            'credentials': {'password': '${{ secrets.MY_PAT }}'},
+        }
+        self.assertIsNotNone(MODEL_SECRETS.search(container))
+        indexed = copy.deepcopy(live)
+        indexed.setdefault('env', {})['GH_TOKEN'] = "${{ secrets['MY_PAT'] }}"
+        self.assertIsNotNone(MODEL_SECRETS.search(indexed))
+        lower = copy.deepcopy(live)
+        lower.setdefault('env', {})['GH_TOKEN'] = '${{ secrets.my_pat }}'
+        self.assertIsNotNone(MODEL_SECRETS.search(lower))
+        mixed = copy.deepcopy(live)
+        mixed.setdefault('env', {})['GH_TOKEN'] = "${{ secrets['My_Pat'] }}"
+        self.assertIsNotNone(MODEL_SECRETS.search(mixed))
+        ctx_title = copy.deepcopy(live)
+        ctx_title.setdefault('env', {})['GH_TOKEN'] = '${{ Secrets.MY_PAT }}'
+        self.assertIsNotNone(MODEL_SECRETS.search(ctx_title))
+        ctx_upper = copy.deepcopy(live)
+        ctx_upper.setdefault('env', {})['GH_TOKEN'] = '${{ SECRETS.MY_PAT }}'
+        self.assertIsNotNone(MODEL_SECRETS.search(ctx_upper))
+        quoted_indexed = copy.deepcopy(live)
+        run = 'echo "${{ secrets[\'MY_PAT\'] }}"'
+        quoted_indexed['steps'][0]['run'] = run
+        self.assertIsNone(_SECRET_EXPR.search(str({'run': run})))
+        self.assertIsNotNone(MODEL_SECRETS.search(quoted_indexed))
+        literal = copy.deepcopy(live)
+        literal['steps'][0]['run'] = "echo 'secrets.MY_PAT'"
+        self.assertIsNone(MODEL_SECRETS.search(literal))
+        for dump in ('echo ${{ toJSON(secrets) }}', 'echo ${{ toJson(secrets) }}',
+                     'echo ${{ join(secrets.*) }}',
+                     "echo ${{ secrets[format('MY_{0}','PAT')] }}"):
+            dumped = copy.deepcopy(live)
+            dumped['steps'][0]['run'] = dump
+            self.assertIsNotNone(MODEL_SECRETS.search(dumped), dump)
+        title = copy.deepcopy(live)
+        title['steps'][0]['if'] = "${{ contains(github.event.pull_request.title, 'secrets') }}"
+        self.assertIsNone(MODEL_SECRETS.search(title))
+        phrase = copy.deepcopy(live)
+        phrase['steps'][0]['if'] = (
+            "${{ contains(github.event.pull_request.title, 'update secrets handling') }}")
+        self.assertIsNone(MODEL_SECRETS.search(phrase))
+        doubled = copy.deepcopy(live)
+        doubled['steps'][0]['if'] = (
+            "${{ contains(github.event.pull_request.title, 'it''s secrets') }}")
+        self.assertIsNone(MODEL_SECRETS.search(doubled))
+        inputs = copy.deepcopy(live)
+        inputs['steps'][0]['if'] = '${{ github.event.inputs.secrets }}'
+        self.assertIsNone(MODEL_SECRETS.search(inputs))
+        quoted_span = copy.deepcopy(live)
+        quoted_span['steps'][0]['run'] = '''echo ${{ 'x" && secrets.MY_PAT && "y' }}'''
+        self.assertIsNone(MODEL_SECRETS.search(quoted_span))
+        after_literal = copy.deepcopy(live)
+        after_literal['steps'][0]['run'] = "echo ${{ contains(foo, 'x') && secrets.MY_PAT }}"
+        self.assertIsNotNone(MODEL_SECRETS.search(after_literal))
+        after_doubled = copy.deepcopy(live)
+        after_doubled['steps'][0]['run'] = (
+            "echo ${{ contains(foo, 'it''s x') && secrets.MY_PAT }}")
+        self.assertIsNotNone(MODEL_SECRETS.search(after_doubled))
+        quoted_closer = copy.deepcopy(live)
+        quoted_closer.setdefault('env', {})['GH_TOKEN'] = "${{ '}}' && secrets.MY_PAT }}"
+        self.assertIsNotNone(MODEL_SECRETS.search(quoted_closer))
+        quoted_closer_only = copy.deepcopy(live)
+        quoted_closer_only['steps'][0]['if'] = "${{ '}}' }}"
+        self.assertIsNone(MODEL_SECRETS.search(quoted_closer_only))
+        self.assertTrue(model_github_token_ok(live))
+        self.assertFalse(model_github_token_ok(job))
+        pat_input = copy.deepcopy(live)
+        for step in pat_input['steps']:
+            with_block = step.get('with') or {}
+            if 'github_token' in with_block:
+                with_block['github_token'] = '${{ secrets.MY_PAT }}'
+                step['with'] = with_block
+                break
+        self.assertIsNotNone(_SECRET_GITHUB_TOKEN.search(str(pat_input)))
+        self.assertFalse(model_github_token_ok(pat_input))
+        gh_token_input = copy.deepcopy(live)
+        for step in gh_token_input['steps']:
+            with_block = step.get('with') or {}
+            if 'github_token' in with_block:
+                with_block['github_token'] = '${{ secrets.GITHUB_TOKEN }}'
+                step['with'] = with_block
+                break
+        self.assertIsNotNone(_SECRET_GITHUB_TOKEN.search(str(gh_token_input)))
+        self.assertFalse(model_github_token_ok(gh_token_input))
+        vars_pat = copy.deepcopy(live)
+        for step in vars_pat['steps']:
+            if str(step.get('uses') or '').startswith('anthropics/claude-code-action'):
+                step.setdefault('with', {})['github_token'] = '${{ vars.MY_PAT }}'
+                break
+        vars_pat.setdefault('steps', []).append(
+            {'name': 'decoy', 'run': 'echo github_token: ${{ github.token }}'})
+        self.assertIsNotNone(MODEL_GITHUB_TOKEN_EXCEPTION.search(str(vars_pat)))
+        self.assertFalse(model_github_token_ok(vars_pat))
+        multiline = copy.deepcopy(live)
+        decoy = '${{ vars.MY_PAT }}\ngithub_token: ${{ github.token }}'
+        for step in multiline['steps']:
+            with_block = step.get('with') or {}
+            if 'github_token' in with_block:
+                with_block['github_token'] = decoy
+                step['with'] = with_block
+                break
+        self.assertIsNotNone(MODEL_GITHUB_TOKEN_EXCEPTION.search(f'github_token: {decoy}'))
+        self.assertIsNone(MODEL_SECRETS.search(multiline))
+        self.assertFalse(model_github_token_ok(multiline))
+        string_perms = copy.deepcopy(live)
+        string_perms['permissions'] = 'read-all'
+        self.assertFalse(model_github_token_ok(string_perms))
+
+    def test_quoted_job_key_mutation_is_inventoried(self):
+        text = (WORKFLOWS / 'claude.yml').read_text()
+        mutated = text.replace('\n  claude-mention:',
+                               '\n  "extra-job":\n    runs-on: ubuntu-latest\n  claude-mention:', 1)
+        expected = set(WRITER_JOBS['claude.yml']) | NON_WRITER_JOBS['claude.yml']
+        self.assertEqual(job_keys(text), expected)
+        self.assertIn('extra-job', job_keys(mutated))
+        self.assertIn('extra-job', yaml.load(mutated, Loader=yaml.BaseLoader)['jobs'])
+        self.assertNotEqual(job_keys(mutated), expected)
+
+    def test_reusable_writer_caller_without_model_markers_is_inventoried(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            (tmp / 'quiet.yml').write_text(
+                'name: quiet\non: workflow_dispatch\njobs:\n  call:\n'
+                '    uses: ./.github/workflows/claude-conflict-writer.yml\n'
+                '    secrets: inherit\n', encoding='utf-8')
+            (tmp / 'remote.yml').write_text(
+                'name: remote\non: workflow_dispatch\njobs:\n  call:\n'
+                '    uses: CSL-Laboratories/ai-investment-cockpit/'
+                '.github/workflows/claude-conflict-writer.yml@main\n'
+                '    secrets: inherit\n', encoding='utf-8')
+            (tmp / 'flow.yml').write_text(
+                'name: flow\non: workflow_dispatch\njobs:\n'
+                '  call: {uses: ./.github/workflows/claude-conflict-writer.yml}\n',
+                encoding='utf-8')
+            (tmp / 'yaml-ext.yml').write_text(
+                'name: yaml-ext\non: workflow_dispatch\njobs:\n  call:\n'
+                '    uses: ./.github/workflows/claude-conflict-writer.yaml@'
+                + 'a' * 40 + '\n', encoding='utf-8')
+            (tmp / 'other.yml').write_text(
+                'name: other\non: workflow_dispatch\njobs:\n  x:\n'
+                '    runs-on: ubuntu-latest\n    steps:\n'
+                '      - uses: actions/checkout@v4\n', encoding='utf-8')
+            (tmp / 'foreign.yml').write_text(
+                'name: foreign\non: workflow_dispatch\njobs:\n  call:\n'
+                '    uses: other-org/tools/.github/workflows/claude-conflict-writer.yml@main\n'
+                '    secrets: inherit\n', encoding='utf-8')
+            (tmp / 'lower.yml').write_text(
+                'name: lower\non: workflow_dispatch\njobs:\n  call:\n'
+                '    uses: csl-laboratories/ai-investment-cockpit/'
+                '.github/workflows/claude-conflict-writer.yml@main\n'
+                '    secrets: inherit\n', encoding='utf-8')
+            (tmp / 'mixed.yml').write_text(
+                'name: mixed\non: workflow_dispatch\njobs:\n  call:\n'
+                '    uses: Csl-Laboratories/Ai-Investment-Cockpit/'
+                '.github/workflows/claude-conflict-writer.yml@main\n'
+                '    secrets: inherit\n', encoding='utf-8')
+            markers = {path.name for path in tmp.glob('*.y*ml')
+                       if re.search(r'anthropics/claude-code|ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN',
+                                    path.read_text(encoding='utf-8'))}
+            self.assertEqual(markers, set())
+            self.assertEqual(writer_callers(tmp),
+                             {'quiet.yml', 'remote.yml', 'flow.yml', 'yaml-ext.yml',
+                              'lower.yml', 'mixed.yml'})
+            old = re.compile(
+                r'(?m)^\s+uses:\s*["\']?(?:\./)?\.github/workflows/claude-conflict-writer\.ya?ml["\']?\s*(?:#.*)?$'
+            )
+            self.assertTrue(old.search((tmp / 'quiet.yml').read_text(encoding='utf-8')))
+            self.assertFalse(old.search((tmp / 'remote.yml').read_text(encoding='utf-8')))
+            self.assertFalse(old.search((tmp / 'flow.yml').read_text(encoding='utf-8')))
+            self.assertFalse(calls_conflict_writer(
+                yaml.load((tmp / 'other.yml').read_text(encoding='utf-8'), Loader=yaml.BaseLoader)))
+            foreign = yaml.load((tmp / 'foreign.yml').read_text(encoding='utf-8'),
+                                Loader=yaml.BaseLoader)
+            # Filename-only match would treat another repo's writer as ours.
+            self.assertIn('.github/workflows/claude-conflict-writer.yml',
+                          foreign['jobs']['call']['uses'])
+            self.assertFalse(calls_conflict_writer(foreign))
+            self.assertFalse(conflict_writer_uses(foreign['jobs']['call']['uses']))
+            lower = yaml.load((tmp / 'lower.yml').read_text(encoding='utf-8'),
+                              Loader=yaml.BaseLoader)
+            mixed = yaml.load((tmp / 'mixed.yml').read_text(encoding='utf-8'),
+                              Loader=yaml.BaseLoader)
+            lower_uses = lower['jobs']['call']['uses']
+            mixed_uses = mixed['jobs']['call']['uses']
+            self.assertTrue(conflict_writer_uses(lower_uses))
+            self.assertTrue(conflict_writer_uses(mixed_uses))
+            # Case-sensitive owner/repo startswith misses valid GitHub names.
+            prefix = CONFLICT_WRITER_REPO
+            lower_path = lower_uses.split('@', 1)[0]
+            mixed_path = mixed_uses.split('@', 1)[0]
+            self.assertFalse(lower_path.startswith(prefix))
+            self.assertFalse(mixed_path.startswith(prefix))
+            self.assertFalse(lower_path.startswith(prefix)
+                             and lower_path[len(prefix):] in CONFLICT_WRITER_FILES)
+            self.assertFalse(mixed_path.startswith(prefix)
+                             and mixed_path[len(prefix):] in CONFLICT_WRITER_FILES)
+
+    def test_unapproved_action_in_prep_or_model_is_rejected(self):
+        prep = copy.deepcopy(workflow('claude.yml')['jobs']['mention-prepare'])
+        prep.setdefault('steps', []).append({'uses': 'ad-m/github-push-action@v0.8.0'})
+        self.assertFalse(PUSH.search(job_text(prep)))
+        self.assertFalse(uses_allowed(prep, 'prep'))
+        model = copy.deepcopy(workflow('claude.yml')['jobs']['claude-mention'])
+        model['steps'].append({'uses': './.github/actions/publish/action.yml'})
+        self.assertFalse(uses_allowed(model, 'model'))
+        live = workflow('claude.yml')['jobs']['claude-mention']
+        self.assertTrue(any(u.startswith('oven-sh/setup-bun@') for u in job_uses(live)))
+        self.assertTrue(uses_allowed(live, 'model'))
+        tagged = copy.deepcopy(live)
+        for step in tagged['steps']:
+            uses = str(step.get('uses') or '')
+            if uses.startswith('oven-sh/setup-bun@'):
+                step['uses'] = 'oven-sh/setup-bun@v1.2.3'
+                break
+        self.assertTrue(any(u.startswith('oven-sh/setup-bun@') for u in job_uses(tagged)))
+        self.assertTrue(any(u.startswith('oven-sh/setup-bun@') for u in ROLE_USES['model']))
+        self.assertFalse(uses_sha_pinned('oven-sh/setup-bun@v1.2.3'))
+        self.assertFalse(uses_allowed(tagged, 'model'))
+        pin = next(u for u in job_uses(live) if u.startswith('oven-sh/setup-bun@'))
+        self.assertRegex(pin, r'@([0-9a-f]{40})$')
+        self.assertTrue(uses_sha_pinned(pin))
+        # After Lucas merged main (CSL-474 embeds extracted), prep and publish
+        # check out github.workflow_sha. The old empty/no-checkout allow-lists fail.
+        live_prep = workflow('claude.yml')['jobs']['mention-prepare']
+        live_publish = workflow('claude.yml')['jobs']['mention-publish']
+        self.assertTrue(any(u.startswith('actions/checkout@') for u in job_uses(live_prep)))
+        self.assertTrue(any(u.startswith('actions/checkout@') for u in job_uses(live_publish)))
+        old_prep, old_publish = (), ('actions/download-artifact@',)
+        self.assertFalse(all(
+            any(uses.startswith(prefix) for prefix in old_prep) and uses_sha_pinned(uses)
+            for uses in job_uses(live_prep)))
+        self.assertFalse(all(
+            any(uses.startswith(prefix) for prefix in old_publish) and uses_sha_pinned(uses)
+            for uses in job_uses(live_publish)))
+        self.assertTrue(uses_allowed(live_prep, 'prep'))
+        self.assertTrue(uses_allowed(live_publish, 'publish'))
+        self.assertTrue(any(u.startswith('actions/checkout@') for u in ROLE_USES['prep']))
+        self.assertTrue(any(u.startswith('actions/checkout@') for u in ROLE_USES['publish']))
+
+    def test_runbook_names_the_github_token_dispatch_exception(self):
+        runbook = next(path for path in (ROOT / 'docs').iterdir() if path.name == 'ci-runbook.md')
+        section = runbook.read_text(encoding='utf-8').split('## 5.', 1)[0]
+        self.assertIn('workflow_dispatch', section)
+        self.assertIn('repository_dispatch', section)
+        self.assertIn('forward-conflict-scan', section)
+        self.assertIn('github_token: ${{ github.token }}', section)
+        self.assertIn('CSL-428', section)
 
 
 class P9ProbeWorkflowTests(unittest.TestCase):
