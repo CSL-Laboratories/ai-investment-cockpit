@@ -202,6 +202,9 @@ git -C "$BUNREF" fetch --depth 1 https://github.com/oven-sh/setup-bun.git \
   0c5077e51419868618aeaa5fe8019c62421857d6
 git -C "$BUNREF" ls-tree -r FETCH_HEAD > "$STATE/setup-bun.ls-tree"
 "$PYTHON" -I "$LIB/sandbox_e3_bind.py" verify-pins
+# bun's node_modules/.bin (and isolated-linker aliases) are relative in-tree
+# symlinks. tree_digest hashes those targets; abs/escape links still fail closed.
+# Hosted 40262408416 died here with BindError: symlink before that distinction.
 "$PYTHON" -I "$LIB/sandbox_e3_bind.py" hash-node-modules
 # Pre-create the action's pin-bun destination after the extra-file check and
 # before the ro remount so mkdir -p "$AP/bin" is a no-op. Touch/mkdir after
