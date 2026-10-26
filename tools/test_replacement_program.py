@@ -687,5 +687,103 @@ class FounderPrApprovalReceiptTests(unittest.TestCase):
                 CHECKER.validate(candidate, root)
 
 
+FLOOR_SPEC = importlib.util.spec_from_file_location(
+    "checker_test_floor", ROOT / "tools" / "check_checker_test_floor.py"
+)
+assert FLOOR_SPEC and FLOOR_SPEC.loader
+FLOOR = importlib.util.module_from_spec(FLOOR_SPEC)
+FLOOR_SPEC.loader.exec_module(FLOOR)
+
+DIRECT_CI_COMMANDS = (
+    "python -X utf8 -B tools/check_replacement_program.py",
+    "python -X utf8 -B tools/check_o7_operator_contract.py",
+    "python -X utf8 -B -m unittest -q tools.test_replacement_program",
+    "python -X utf8 -B tools/check_checker_test_floor.py",
+)
+
+
+def floor_counters(value):
+    return {"pytest": lambda root, entry: value, "unittest": lambda root, entry: value}
+
+
+class CheckerTestFloorTests(unittest.TestCase):
+    """CSL-511 WP4: the floor fails closed when a pinned checker test goes away."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        for rel in FLOOR.REQUIRED_FILES + tuple(entry.path for entry in FLOOR.FLOORS):
+            target = self.root / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("x = 1\n", encoding="utf-8")
+
+    def run_floor(self, counters=None):
+        return FLOOR.check(self.root, counters=counters or floor_counters(10_000))
+
+    def test_complete_tree_at_or_above_floor_passes(self):
+        self.assertEqual(self.run_floor(), [])
+
+    def test_floors_pin_both_app_tests_and_this_tools_test(self):
+        paths = {entry.path for entry in FLOOR.FLOORS}
+        self.assertEqual(
+            paths,
+            {
+                "app/tests/test_replacement_program_registry.py",
+                "app/tests/test_o7_operator_contract.py",
+                "tools/test_replacement_program.py",
+            },
+        )
+        self.assertTrue(all(entry.minimum > 0 for entry in FLOOR.FLOORS))
+
+    def test_deleting_any_pinned_file_fails_closed(self):
+        for rel in tuple(entry.path for entry in FLOOR.FLOORS) + FLOOR.REQUIRED_FILES:
+            with self.subTest(rel=rel):
+                path = self.root / rel
+                data = path.read_bytes()
+                path.unlink()
+                problems = self.run_floor()
+                self.assertTrue(any(f"{rel} is missing" in problem for problem in problems), problems)
+                path.write_bytes(data)
+
+    def test_symlinked_test_file_fails_closed(self):
+        path = self.root / "app/tests/test_o7_operator_contract.py"
+        path.unlink()
+        try:
+            path.symlink_to(self.root / "tools/check_o7_operator_contract.py")
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks unavailable on this platform")
+        self.assertTrue(any("is a symlink" in problem for problem in self.run_floor()))
+
+    def test_thinned_test_file_fails_closed(self):
+        for entry in FLOOR.FLOORS:
+            with self.subTest(path=entry.path):
+                def counter(root, found, entry=entry):
+                    return found.minimum - 1 if found.path == entry.path else found.minimum
+
+                problems = self.run_floor({"pytest": counter, "unittest": counter})
+                self.assertEqual(len(problems), 1, problems)
+                self.assertIn("below its floor", problems[0])
+
+    def test_collection_error_and_unknown_runner_fail_closed(self):
+        def boom(root, entry):
+            raise RuntimeError("collection failed")
+
+        self.assertEqual(len(self.run_floor({"pytest": boom, "unittest": boom})), len(FLOOR.FLOORS))
+        problems = FLOOR.check(
+            self.root, floors=(FLOOR.Floor("tools/check_replacement_program.py", "nope", 1),)
+        )
+        self.assertTrue(any("unknown runner" in problem for problem in problems))
+
+    def test_ci_keeps_the_direct_commands_in_the_linux_job(self):
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        start = text.index("\n  linux:\n")
+        end = text.index("\n  linux-gates:\n")
+        for command in DIRECT_CI_COMMANDS:
+            self.assertIn(command, text[start:end], command)
+        self.assertIn("\n    name: linux\n", text[start:end])
+        self.assertIn("\n    name: linux-gates\n", text[end:])
+
+
 if __name__ == "__main__":
     unittest.main()

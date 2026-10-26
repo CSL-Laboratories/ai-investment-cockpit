@@ -241,17 +241,80 @@ def parse_ls_tree(text: str) -> Dict[str, str]:
     return out
 
 
+def _rel_posix(root: Path, path: Path) -> str:
+    return str(path.relative_to(root)).replace("\\", "/")
+
+
+def _rel_under_root(root_abs: str, dest: str) -> str:
+    dest = os.path.normpath(dest)
+    try:
+        common = os.path.commonpath([root_abs, dest])
+    except ValueError as exc:
+        raise BindError("symlink_escape") from exc
+    if common != root_abs:
+        raise BindError("symlink_escape")
+    rel = os.path.relpath(dest, root_abs).replace("\\", "/")
+    if rel.startswith(".."):
+        raise BindError("symlink_escape")
+    return rel
+
+
+def lexical_in_tree_dest(root: str, link_path: str, target: str) -> str:
+    """Join ``target`` onto the link without following any symlink.
+
+    ``Path.resolve()`` follows intermediates, so a relative link that
+    lexically leaves ``root`` and re-enters through an outside symlink
+    would pass and later redirect without changing the hashed text.
+    ``abspath``+``normpath`` stay lexical.
+    """
+    if not target or "\0" in target or "\n" in target or "\r" in target:
+        raise BindError("symlink")
+    if os.path.isabs(target):
+        raise BindError("symlink_abs")
+    root_abs = os.path.normpath(os.path.abspath(root))
+    dest = os.path.normpath(
+        os.path.join(os.path.dirname(os.path.abspath(link_path)), target)
+    )
+    return _rel_under_root(root_abs, dest)
+
+
+def require_in_tree_symlink(root: str, link_path: str, target: str) -> str:
+    """Allow bun's in-tree ``node_modules/.bin`` links; refuse abs/escape.
+
+    Lexical containment and followed resolution must both stay under
+    ``root``. Lexical-only missed ``sub/a -> ..`` plus ``cli ->
+    sub/a/../../outside`` (Devin SEC / Codex P1 on #281). Returns
+    ``lexical\\0resolved`` relative paths for the digest. Callers must
+    not put the path into the public log.
+    """
+    lexical = lexical_in_tree_dest(root, link_path, target)
+    # Followed dest uses realpath(root): abspath leaves a symlinked ancestor
+    # unresolved (macOS /var → /private/var, or a linked work dir), so every
+    # in-tree link compared as symlink_escape (Devin BUG on #281).
+    root_real = os.path.realpath(root)
+    try:
+        resolved = str((Path(os.path.abspath(link_path)).parent / target).resolve())
+    except OSError as exc:
+        raise BindError("symlink") from exc
+    resolved_rel = _rel_under_root(root_real, resolved)
+    return lexical + "\0" + resolved_rel
+
+
 def walk_files(root: str, *, skip_dirs: Sequence[str] = ()) -> List[str]:
+    """Regular files only. Any symlink in the git-tracked action tree fails closed."""
     skip = set(skip_dirs)
     found: List[str] = []
     base = Path(root)
-    for dirpath, dirnames, filenames in os.walk(root):
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        for name in list(dirnames):
+            if (Path(dirpath) / name).is_symlink():
+                raise BindError("symlink")
         dirnames[:] = [d for d in dirnames if d not in skip]
         for name in filenames:
             full = Path(dirpath) / name
             if full.is_symlink():
                 raise BindError("symlink")
-            rel = str(full.relative_to(base)).replace("\\", "/")
+            rel = _rel_posix(base, full)
             found.append(rel)
     return sorted(found)
 
@@ -271,18 +334,54 @@ def check_git_tree(action_dir: str, ls_tree: str, *, skip_dirs: Sequence[str] = 
     return {"files": str(len(expected))}
 
 
+def iter_tree_entries(root: str) -> List[Tuple[str, str, str]]:
+    """Regular files and in-tree relative symlinks. Does not follow dir links."""
+    base = Path(root)
+    entries: List[Tuple[str, str, str]] = []
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        for name in list(dirnames):
+            full = Path(dirpath) / name
+            if not full.is_symlink():
+                continue
+            rel = _rel_posix(base, full)
+            target = os.readlink(full)
+            lexical = require_in_tree_symlink(root, str(full), target)
+            entries.append((rel, "symlink", target + "\0" + lexical))
+            dirnames.remove(name)
+        for name in filenames:
+            full = Path(dirpath) / name
+            rel = _rel_posix(base, full)
+            if full.is_symlink():
+                target = os.readlink(full)
+                lexical = require_in_tree_symlink(root, str(full), target)
+                entries.append((rel, "symlink", target + "\0" + lexical))
+            elif full.is_file():
+                entries.append((rel, "file", sha256_file(str(full))))
+            else:
+                raise BindError("tree")
+    entries.sort(key=lambda item: item[0])
+    return entries
+
+
 def tree_digest(root: str) -> str:
-    """Ordered path+sha256 digest of every regular file under root."""
+    """Ordered digest of regular files and in-tree relative symlink targets.
+
+    File records stay ``rel\\0sha256\\n`` so a symlink-free tree matches the
+    pre-40262408416 hasher. Symlinks append
+    ``rel\\0symlink\\0target\\0lexical_rel\\0resolved_rel\\n``.
+    """
     digest = hashlib.sha256()
     base = Path(root)
-    if not base.is_dir():
+    if base.is_symlink() or not base.is_dir():
         raise BindError("tree")
-    files = walk_files(root)
-    for rel in files:
-        full = base / rel
+    for rel, kind, payload in iter_tree_entries(root):
         digest.update(rel.encode("utf-8"))
         digest.update(b"\0")
-        digest.update(sha256_file(str(full)).encode("ascii"))
+        if kind == "symlink":
+            digest.update(b"symlink\0")
+            digest.update(os.fsencode(payload))
+        else:
+            digest.update(payload.encode("ascii"))
         digest.update(b"\n")
     return digest.hexdigest()
 
@@ -291,6 +390,32 @@ def worker_ns_mnt(path: str, expected: str) -> None:
     got = Path(path).read_text(encoding="ascii").strip()
     if not got or got != expected.strip():
         raise BindError("ns_mnt")
+
+
+_HEX64 = frozenset("0123456789abcdef")
+
+
+def check_node_modules_digest(
+    action_dir: str = ACTION_DIR, state_dir: str = RELAY_STATE
+) -> str:
+    """Fail closed unless ``$AP/node_modules`` matches the 0b digest.
+
+    Hosted 40359709793: the action's ``bun install --production`` collided
+    (EEXIST) with the already-populated, remount-ro tree. The action-PATH
+    wrapper calls this instead of the ELF; it must not fall through to
+    ``bun install``.
+    """
+    digest_path = Path(state_dir, "node_modules.digest")
+    try:
+        expected = digest_path.read_text(encoding="ascii").strip()
+    except OSError as exc:
+        raise BindError("node_modules") from exc
+    if len(expected) != 64 or any(char not in _HEX64 for char in expected):
+        raise BindError("node_modules")
+    got = tree_digest(os.path.join(action_dir, "node_modules"))
+    if got != expected:
+        raise BindError("node_modules")
+    return got
 
 
 def main(argv: Sequence[str]) -> int:
@@ -328,6 +453,10 @@ def main(argv: Sequence[str]) -> int:
         digest = tree_digest(os.path.join(action_dir, "node_modules"))
         Path(state_dir, "node_modules.digest").write_text(digest + "\n", encoding="ascii")
         return 0
+    if cmd == "check-node-modules":
+        check_node_modules_digest()
+        sys.stdout.write("node_modules_digest_ok\n")
+        return 0
     if cmd == "hash-setup-bun":
         digest = tree_digest(SETUP_BUN_DIR)
         Path(state_dir, "setup-bun.digest").write_text(digest + "\n", encoding="ascii")
@@ -335,9 +464,7 @@ def main(argv: Sequence[str]) -> int:
     if cmd == "observe":
         pins = verify_pins(action_dir=action_dir)
         sys.stdout.write(f"sdk_disk_match={pins['sdk_disk_match']}\n")
-        nm = Path(state_dir, "node_modules.digest").read_text(encoding="ascii").strip()
-        if tree_digest(os.path.join(action_dir, "node_modules")) != nm:
-            raise BindError("node_modules")
+        check_node_modules_digest(action_dir=action_dir, state_dir=state_dir)
         bun = Path(state_dir, "setup-bun.digest").read_text(encoding="ascii").strip()
         if tree_digest(SETUP_BUN_DIR) != bun:
             raise BindError("setup_bun")

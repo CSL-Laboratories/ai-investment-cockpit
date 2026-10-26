@@ -749,7 +749,11 @@ class WorkflowStructureTests(unittest.TestCase):
         mention = self._job("claude-mention")
         fixer = self._job("devin-review-fix")
         steps = mention.split("    steps:", 1)[1]
-        self.assertTrue(steps.lstrip().startswith("- name: E3-0-early setup-bun"), steps[:200])
+        self.assertTrue(
+            steps.lstrip().startswith("- name: Checkout trusted workflow commit"),
+            steps[:200],
+        )
+        self.assertIn("- name: E3-0-early setup-bun", steps)
         self.assertIn(
             "uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6",
             mention,
@@ -773,60 +777,67 @@ class WorkflowStructureTests(unittest.TestCase):
             mention,
         )
         self.assertNotIn("uses: actions/checkout@v4", mention)
-        self.assertIn("path_to_bun_executable: /opt/csl-bun/bun", mention)
-        self.assertIn(
-            "path_to_claude_code_executable: /opt/csl-claude/2.1.306/claude",
-            mention,
-        )
+        self.assertIn("path_to_bun_executable: /opt/csl-bun-action/bun", mention)
+        self.assertNotIn("path_to_bun_executable: /opt/csl-bun/bun", mention)
+        self.assertIn("path_to_claude_code_executable: /opt/csl-claude/launch", mention)
         self.assertIn("sandbox_e3_cli_pin.sh", mention)
         self.assertNotIn("SRT_DEBUG:", mention)
         self.assertNotIn("show_full_output", mention)
-        self.assertIn("/opt/csl-relay/bin/relay", mention)
-        self.assertIn("/opt/csl-relay/bin/capture-start", mention)
+        self.assertIn("shell: /usr/bin/sudo -n /opt/csl-relay/bin/relay {0}", mention)
         self.assertIn("/opt/csl-claude/launch", mention)
         self.assertNotIn("background: true", mention)
         self.assertNotIn("isBackground", mention)
-        bootstrap = mention.split("E3-0-early root bootstrap", 1)[1].split(
-            "uses: actions/checkout@", 1
-        )[0]
+        bootstrap = (ROOT / "scripts" / "ci" / "sandbox_e3_bootstrap.sh").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("sysctl -w kernel.apparmor_restrict_unprivileged_userns=0", bootstrap)
         self.assertIn("NOPASSWD: /opt/csl-relay/bin/relay", bootstrap)
+        self.assertIn("/opt/csl-relay/bin/capture-start", bootstrap)
         self.assertNotIn("%sudo   ALL=(ALL:ALL) NOPASSWD:ALL", bootstrap)
         self.assertIn('"$GCC" -static', bootstrap)
+        mention_bootstrap = mention.split("E3-0-early root bootstrap", 1)[1].split(
+            "uses: actions/checkout@", 1
+        )[0]
+        self.assertIn('install -m 0755 "$TRUSTED/sandbox_e3_bootstrap.sh"', mention_bootstrap)
+        self.assertIn("github.workflow_sha", mention)
         self.assertIn("E3-0-early setup-bun", fixer)
         self.assertIn("E3-0-early record bun-path", fixer)
         self.assertIn("C6.2 stub", fixer)
-        self.assertIn("path_to_bun_executable", fixer)
+        self.assertIn("path_to_bun_executable: /opt/csl-bun-action/bun", fixer)
+        self.assertNotIn("path_to_bun_executable: /opt/csl-bun/bun", fixer)
+        self.assertIn("path_to_claude_code_executable: /opt/csl-claude/launch", fixer)
+        self.assertIn("shell: /usr/bin/sudo -n /opt/csl-relay/bin/relay {0}", fixer)
         self.assertIn("sandbox_e3_cli_pin.sh", fixer)
 
     def test_embedded_e3_helpers_match_source_files(self) -> None:
         mention = self._job("claude-mention")
+        fixer = self._job("devin-review-fix")
         mapping = {
-            "CSL_E3_ENVIRON": ROOT / "scripts" / "ci" / "sandbox_e3_environ.py",
-            "CSL_E3_RECORD": ROOT / "scripts" / "ci" / "sandbox_e3_record.py",
-            "CSL_E3_BIND": ROOT / "scripts" / "ci" / "sandbox_e3_bind.py",
-            "CSL_E3_BOOTSTRAP": ROOT / "scripts" / "ci" / "sandbox_e3_bootstrap.sh",
-            "CSL_E3_CLI_PIN": ROOT / "scripts" / "ci" / "sandbox_e3_cli_pin.sh",
-            "CSL_C_LAUNCH": ROOT / "scripts" / "ci" / "sandbox_launch.c",
-            "CSL_C_CAPTURE": ROOT / "scripts" / "ci" / "sandbox_capture.c",
-            "CSL_C_RELAY": ROOT / "scripts" / "ci" / "sandbox_relay.c",
-            "CSL_C_ARGV_C": ROOT / "scripts" / "ci" / "sandbox_argv.c",
-            "CSL_C_FILTER_C": ROOT / "scripts" / "ci" / "sandbox_filter.c",
-            "CSL_C_COMMON_C": ROOT / "scripts" / "ci" / "sandbox_common.c",
-            "CSL_C_PIN": ROOT / "scripts" / "ci" / "sandbox_c.pin",
+            "sandbox_e3_environ.py": "0444",
+            "sandbox_e3_record.py": "0444",
+            "sandbox_e3_bind.py": "0444",
+            "sandbox_e3_bootstrap.sh": "0755",
+            "sandbox_e3_cli_pin.sh": "0755",
+            "sandbox_e3_action_bun.sh": "0755",
+            "sandbox_launch.c": "0444",
+            "sandbox_capture.c": "0444",
+            "sandbox_relay.c": "0444",
+            "sandbox_argv.h": "0444",
+            "sandbox_argv.c": "0444",
+            "sandbox_filter.h": "0444",
+            "sandbox_filter.c": "0444",
+            "sandbox_common.h": "0444",
+            "sandbox_common.c": "0444",
+            "sandbox_c.pin": "0444",
         }
-        for tag, path in mapping.items():
-            start = f"<<'{tag}'\n"
-            self.assertIn(start, mention, tag)
-            after = mention.split(start, 1)[1]
-            body_lines = []
-            for line in after.splitlines():
-                if line.strip() == tag:
-                    break
-                body_lines.append(line)
-            embedded = textwrap.dedent("\n".join(body_lines)).rstrip("\n")
-            source = path.read_text(encoding="utf-8").rstrip("\n")
-            self.assertEqual(embedded, source, tag)
+        for body in (mention, fixer):
+            self.assertIn("ref: ${{ github.workflow_sha }}", body)
+            self.assertIn("path: .csl-trusted-workflow", body)
+            self.assertNotIn("<<'CSL_", body)
+            for name, mode in mapping.items():
+                path = ROOT / "scripts" / "ci" / name
+                self.assertTrue(path.is_file(), name)
+                self.assertIn(f'install -m {mode} "$TRUSTED/{name}"', body, name)
 
     def test_prompt_treats_review_and_files_as_untrusted(self) -> None:
         self.assertIn("UNTRUSTED DATA", self.text)
@@ -865,14 +876,11 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertNotIn("tools/ci_gate.py", claude_args_allow(devin))
 
     def test_embedded_gate_matches_source_file(self) -> None:
-        start = f"python3 - <<'{HEREDOC}'\n"
-        self.assertIn(start, self.text)
-        after = self.text.split(start, 1)[1]
-        closer = after.find(HEREDOC)
-        self.assertGreater(closer, 0)
-        embedded = textwrap.dedent(after[:closer]).rstrip("\n")
-        source = GATE_PATH.read_text(encoding="utf-8").rstrip("\n")
-        self.assertEqual(embedded, source)
+        resolve = self._job("resolve-pr")
+        self.assertIn('python3 -I "$TRUSTED/claude_pr_fixer_gate.py"', resolve)
+        self.assertIn("ref: ${{ github.workflow_sha }}", resolve)
+        self.assertNotIn(f"<<'{HEREDOC}'", self.text)
+        self.assertTrue(GATE_PATH.is_file())
 
     def test_plain_issues_are_not_resolved(self) -> None:
         resolve = self._job("resolve-pr")
@@ -1079,7 +1087,25 @@ class FixerGateAndPromptTests(unittest.TestCase):
             self.assertIn("steps.claude.outputs.execution_file", body, job)
             self.assertIn('interpreter="${PYTHON3:?}"', body, job)
             self.assertNotIn('python3="$PYTHON3"', body, job)
-            self.assertIn('"$interpreter" -I - "$EXECUTION_FILE"', body, job)
+            self.assertIn(
+                'install -m 0444 "$TRUSTED/claude_denials.py" /opt/csl-claude/lib/claude_denials.py',
+                body,
+                job,
+            )
+            _helpers, after_helpers = body.split("E3-0-early write python helpers", 1)
+            before_pr_checkout = after_helpers.split("uses: actions/checkout@", 1)[0]
+            self.assertIn(
+                'install -m 0444 "$TRUSTED/claude_denials.py" /opt/csl-claude/lib/claude_denials.py',
+                before_pr_checkout,
+                job,
+            )
+            denials_step = body.split("Report tool-permission denials", 1)[1].split(
+                "\n      - name:", 1
+            )[0]
+            self.assertIn("DENIALS=/opt/csl-claude/lib/claude_denials.py", denials_step, job)
+            self.assertNotIn("$TRUSTED", denials_step, job)
+            self.assertIn('test "$(stat -c %U "$DENIALS")" = root', denials_step, job)
+            self.assertIn('"$interpreter" -I "$DENIALS" "$EXECUTION_FILE"', denials_step, job)
             self.assertIn("/usr/bin/env -i", body, job)
             self.assertIn('GITHUB_STEP_SUMMARY="${GITHUB_STEP_SUMMARY:-}"', body, job)
             self.assertIn('GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-}"', body, job)
@@ -1099,6 +1125,19 @@ class FixerGateAndPromptTests(unittest.TestCase):
             self.assertNotIn("A credential in any config scope fails the package", body, job)
             self.assertNotIn("show_full_output", body, job)
 
+    def test_model_jobs_do_not_read_trusted_after_pr_head_checkout(self) -> None:
+        # Samir #280: $TRUSTED/ after the PR-head checkout is the wiped
+        # workspace tree (or PR/model bytes), not the workflow_sha install.
+        for job in ("claude-mention", "devin-review-fix"):
+            body = self._job(job)
+            checkouts = body.split("uses: actions/checkout@")
+            self.assertGreaterEqual(len(checkouts), 3, job)
+            after_pr = checkouts[2]
+            after_claude = body.split("\n      - id: claude\n", 1)[1]
+            self.assertIn("$TRUSTED", checkouts[1], job)
+            self.assertNotIn("$TRUSTED", after_pr, job)
+            self.assertNotIn("$TRUSTED", after_claude, job)
+
     def test_mention_job_installs_gate_deps(self) -> None:
         # Preferred I5: no setup-python/pip before uses:. Gates run in linux-gates.
         mention = self._job("claude-mention")
@@ -1111,27 +1150,25 @@ class FixerGateAndPromptTests(unittest.TestCase):
         self.assertNotIn("Bash(python -m pytest -q app/tests)", mention)
 
     def test_embedded_denials_match_source(self) -> None:
-        # Mention/fixer run the trusted pin-python path with -I. Conflict-writer
-        # still uses "${PYTHON3:-python3}" until a later PR.
-        starts = (
-            f"python3 - \"$EXECUTION_FILE\" <<'{DENIALS_HEREDOC}'\n",
-            f"\"${{PYTHON3:-python3}}\" - \"$EXECUTION_FILE\" <<'{DENIALS_HEREDOC}'\n",
-            f"\"$interpreter\" -I - \"$EXECUTION_FILE\" <<'{DENIALS_HEREDOC}'\n",
+        # Mention/fixer copy claude_denials.py from github.workflow_sha into
+        # /opt/csl-claude before the PR-head checkout. Conflict-writer still
+        # inlines until a later PR.
+        preserved = '"$interpreter" -I "$DENIALS" "$EXECUTION_FILE"'
+        writer_start = f"\"${{PYTHON3:-python3}}\" - \"$EXECUTION_FILE\" <<'{DENIALS_HEREDOC}'\n"
+        self.assertEqual(self.text.count(preserved), 2)
+        self.assertNotIn(
+            '"$interpreter" -I "$TRUSTED/claude_denials.py" "$EXECUTION_FILE"',
+            self.text,
         )
-        combined = self.text + "\n" + WRITER_WORKFLOW_PATH.read_text(encoding="utf-8")
-        self.assertEqual(self.text.count(starts[2]), 2)
-        self.assertEqual(sum(self.text.count(s) for s in starts), 2)
-        self.assertEqual(sum(combined.count(s) for s in starts), 3)
+        self.assertNotIn(f"<<'{DENIALS_HEREDOC}'", self.text)
+        writer = WRITER_WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertEqual(writer.count(writer_start), 1)
         scan = SCAN_WORKFLOW_PATH.read_text(encoding="utf-8")
-        self.assertTrue(all(s not in scan for s in starts))
+        self.assertNotIn(DENIALS_HEREDOC, scan)
         source = DENIALS_PATH.read_text(encoding="utf-8").rstrip("\n")
-        chunks: list[str] = []
-        for start in starts:
-            chunks.extend(combined.split(start)[1:])
-        self.assertEqual(len(chunks), 3)
-        for chunk in chunks:
-            embedded = textwrap.dedent(chunk[: chunk.find(DENIALS_HEREDOC)]).rstrip("\n")
-            self.assertEqual(embedded, source)
+        chunk = writer.split(writer_start, 1)[1]
+        embedded = textwrap.dedent(chunk[: chunk.find(DENIALS_HEREDOC)]).rstrip("\n")
+        self.assertEqual(embedded, source)
 
 
 class DenialsReportTests(unittest.TestCase):
@@ -1876,7 +1913,8 @@ class FixerPreflightTests(unittest.TestCase):
         prepare = text.split("  mention-prepare:", 1)[1].split("\n  claude-mention:", 1)[0]
         mention = text.split("  mention-prepare:", 1)[1].split("\n  fixer-prepare:", 1)[0]
         self.assertIn("id: preflight", prepare)
-        self.assertNotIn("uses: actions/checkout", prepare)
+        self.assertIn("ref: ${{ github.workflow_sha }}", prepare)
+        self.assertIn("path: .csl-trusted-workflow", prepare)
         self.assertIn("ref: ${{ needs.mention-prepare.outputs.head_sha }}", mention)
         self.assertNotIn("needs.resolve-pr.outputs.head_sha", mention)
 
@@ -1947,14 +1985,20 @@ class FixerPreflightTests(unittest.TestCase):
 
     def test_receipts_execute_trusted_source_before_checkout(self) -> None:
         text = WORKFLOW_PATH.read_text(encoding="utf-8")
-        chunk = text.split("<<'CLAUDE_FIXER_RECEIPTS'\n", 1)[1].split("          CLAUDE_FIXER_RECEIPTS", 1)[0]
-        self.assertEqual(textwrap.dedent(chunk).rstrip(), (ROOT / "scripts/ci/claude_fixer_receipts.py").read_text().rstrip())
+        self.assertIn(
+            'install -m 0444 "$TRUSTED/claude_fixer_receipts.py"',
+            text,
+        )
+        self.assertNotIn("<<'CLAUDE_FIXER_RECEIPTS'", text)
+        self.assertTrue((ROOT / "scripts/ci/claude_fixer_receipts.py").is_file())
         # CSL-377: eligibility runs in the trusted prepare job, which never
         # checks out PR code; the model job runs only after it proceeds.
         prepare = text.split("  fixer-prepare:", 1)[1].split("\n  devin-review-fix:", 1)[0]
         job = text.split("\n  devin-review-fix:", 1)[1].split("\n  fixer-publish:", 1)[0]
         self.assertLess(prepare.index("id: cap"), prepare.index("id: eligibility"))
-        self.assertNotIn("uses: actions/checkout", prepare)
+        self.assertIn("ref: ${{ github.workflow_sha }}", prepare)
+        self.assertIn("path: .csl-trusted-workflow", prepare)
+        self.assertNotIn("needs.fixer-prepare.outputs.head_sha", prepare.split("Checkout trusted", 1)[0])
         self.assertIn("MANUAL_RETRY: ${{ github.event_name == 'workflow_dispatch' }}", prepare)
         self.assertIn("steps.eligibility.outputs.skip == 'false'", prepare.split("id: prepared", 1)[1])
         self.assertIn("needs.fixer-prepare.outputs.skip == 'false'", job.split("    steps:", 1)[0])
@@ -1963,9 +2007,9 @@ class FixerPreflightTests(unittest.TestCase):
 
     def test_embedded_preflight_and_shared_lock(self) -> None:
         text = WORKFLOW_PATH.read_text()
-        start = "python3 - <<'CLAUDE_FIXER_PREFLIGHT'\n"
-        chunk = text.split(start, 1)[1].split("          CLAUDE_FIXER_PREFLIGHT", 1)[0]
-        self.assertEqual(textwrap.dedent(chunk).rstrip(), (ROOT / "scripts/ci/claude_fixer_preflight.py").read_text().rstrip())
+        self.assertIn('python3 -I "$TRUSTED/claude_fixer_preflight.py"', text)
+        self.assertNotIn("<<'CLAUDE_FIXER_PREFLIGHT'", text)
+        self.assertTrue((ROOT / "scripts/ci/claude_fixer_preflight.py").is_file())
         self.assertIn('ELIGIBLE ROOT COMMENT IDS: ${{ needs.fixer-prepare.outputs.comment_ids }}', text)
         # CSL-377: prepare, model and publish of both writers share the lock.
         self.assertEqual(text.count('group: claude-${{ needs.resolve-pr.outputs.pr_number }}'), 6)
@@ -1973,7 +2017,8 @@ class FixerPreflightTests(unittest.TestCase):
         prepare = text.split('  fixer-prepare:', 1)[1].split("\n  devin-review-fix:", 1)[0]
         job = text.split('\n  devin-review-fix:', 1)[1]
         self.assertIn('id: preflight', prepare)
-        self.assertNotIn('uses: actions/checkout', prepare)
+        self.assertIn("ref: ${{ github.workflow_sha }}", prepare)
+        self.assertIn("path: .csl-trusted-workflow", prepare)
         self.assertNotIn("needs.resolve-pr.outputs.head_sha", job)
         self.assertNotIn("needs.resolve-pr.outputs.head_ref", job)
         self.assertIn("needs.fixer-prepare.outputs.head_sha", job)
@@ -1983,11 +2028,9 @@ class FixerPreflightTests(unittest.TestCase):
 
     def test_every_embedded_preflight_matches_source_and_reads_pause_switch(self) -> None:
         text = WORKFLOW_PATH.read_text()
-        chunks = text.split("python3 - <<'CLAUDE_FIXER_PREFLIGHT'\n")[1:]
-        self.assertEqual(len(chunks), 2)
-        source = (ROOT / "scripts/ci/claude_fixer_preflight.py").read_text().rstrip()
-        for chunk in chunks:
-            self.assertEqual(textwrap.dedent(chunk.split("          CLAUDE_FIXER_PREFLIGHT", 1)[0]).rstrip(), source)
+        self.assertEqual(text.count('python3 -I "$TRUSTED/claude_fixer_preflight.py"'), 2)
+        self.assertNotIn("<<'CLAUDE_FIXER_PREFLIGHT'", text)
+        self.assertTrue((ROOT / "scripts/ci/claude_fixer_preflight.py").is_file())
         for job in ("  mention-prepare:", "  fixer-prepare:"):
             step = text.split(job, 1)[1].split("id: preflight", 1)[1].split("run: |", 1)[0]
             self.assertIn("CLAUDE_FIXER_PAUSE: ${{ vars.CLAUDE_FIXER_PAUSE }}", step)
@@ -2332,7 +2375,11 @@ class ClaudeCodeInstallerPinTests(unittest.TestCase):
         self.assertGreaterEqual(len(steps), 3)
         for index, (name, inputs) in enumerate(steps):
             with self.subTest(workflow=name, step=index):
-                self.assertIn("\n          path_to_claude_code_executable: /opt/csl-claude/2.1.306/claude\n", inputs)
+                if name == "claude.yml":
+                    want = "\n          path_to_claude_code_executable: /opt/csl-claude/launch\n"
+                else:
+                    want = "\n          path_to_claude_code_executable: /opt/csl-claude/2.1.306/claude\n"
+                self.assertIn(want, inputs)
                 self.assertIn("DISABLE_UPDATES", inputs)
 
 
@@ -2355,7 +2402,8 @@ class P9ProbeWorkflowTests(unittest.TestCase):
         self.assertIn("runs-on: ubuntu-24.04", text)
         self.assertNotIn("runs-on: ubuntu-latest", text)
         self.assertNotIn("anthropics/claude-code-action", text)
-        self.assertIn("if: ${{ always() && inputs.enable_probe2_oauth }}", text)
+        self.assertIn("if: ${{ success() && inputs.enable_probe2_oauth }}", text)
+        self.assertNotIn("if: ${{ always() && inputs.enable_probe2_oauth }}", text)
 
 
 if __name__ == "__main__":
