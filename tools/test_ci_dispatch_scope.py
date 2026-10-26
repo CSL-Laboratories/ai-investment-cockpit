@@ -822,10 +822,10 @@ EXPECTED_LOCK = {
     'claude-conflict-writer.yml': 'claude-${{ inputs.pr_number }}',
 }
 ROLE_USES = {
-    'prep': (),
+    'prep': ('actions/checkout@',),
     'model': ('actions/checkout@', 'actions/setup-python@', 'oven-sh/setup-bun@',
               'anthropics/claude-code-action@', 'actions/upload-artifact@'),
-    'publish': ('actions/download-artifact@',),
+    'publish': ('actions/checkout@', 'actions/download-artifact@'),
     'verify': (),
 }
 MODEL_PERMS = {'contents': 'read', 'pull-requests': 'read', 'issues': 'read'}
@@ -967,6 +967,23 @@ def claude_trusted_sources(role):
     return '\n'.join((ROOT / 'scripts' / 'ci' / name).read_text(encoding='utf-8') for name in names)
 
 
+# After CSL-474, claude.yml no longer inlines HANDOFF_LABEL; the extracted
+# model helper and publisher hold the constant.
+CLAUDE_HANDOFF_SOURCES = ('claude_fixer_outbox.py', 'claude_fixer_publish.py')
+
+
+def writer_handoff_text(name):
+    """Workflow YAML plus, for claude.yml, the extracted HANDOFF_LABEL scripts."""
+    text = (WORKFLOWS / name).read_text(encoding='utf-8')
+    if name == 'claude.yml':
+        extra = '\n'.join(
+            (ROOT / 'scripts' / 'ci' / src).read_text(encoding='utf-8')
+            for src in CLAUDE_HANDOFF_SOURCES
+        )
+        text = text + '\n' + extra
+    return text
+
+
 def writer_contract_text(name, job, role):
     text = job_text(job)
     if name == 'claude.yml':
@@ -1052,7 +1069,7 @@ class CrossLaneAdmissionTests(unittest.TestCase):
 
     def test_writers_never_add_ci_labels(self):
         for name in WRITER_FILES:
-            text = (WORKFLOWS / name).read_text()
+            text = writer_handoff_text(name)
             with self.subTest(workflow=name):
                 self.assertNotRegex(text, r'--add-label|gh pr edit|labels\[\]=')
                 self.assertNotRegex(text, r'"labels":\s*\[\s*"(ci:full|enhancement)"')
@@ -1298,6 +1315,14 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         self.assertEqual(set(handoff_constants(quoted)), {'needs-decision'})
         self.assertEqual(set(handoff_constants('HANDOFF_LABEL = \'ci:full\'\n')), {'ci:full'})
         self.assertEqual(set(handoff_constants('MODEL_API_LABEL: enhancement\n')), {'enhancement'})
+        # CSL-474 extracted HANDOFF_LABEL from claude.yml. YAML-only is empty;
+        # the scan must include the extracted outbox and publisher.
+        yaml_only = (WORKFLOWS / 'claude.yml').read_text(encoding='utf-8')
+        self.assertEqual(handoff_constants(yaml_only), [])
+        combined = writer_handoff_text('claude.yml')
+        self.assertEqual(set(handoff_constants(combined)), {'needs-decision'})
+        wrong = combined.replace('HANDOFF_LABEL = "needs-decision"', 'HANDOFF_LABEL = "ci:full"', 1)
+        self.assertIn('ci:full', handoff_constants(wrong))
 
     def test_model_job_permission_and_secret_mutations(self):
         job = copy.deepcopy(workflow('claude.yml')['jobs']['claude-mention'])
@@ -1496,6 +1521,23 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         pin = next(u for u in job_uses(live) if u.startswith('oven-sh/setup-bun@'))
         self.assertRegex(pin, r'@([0-9a-f]{40})$')
         self.assertTrue(uses_sha_pinned(pin))
+        # After Lucas merged main (CSL-474 embeds extracted), prep and publish
+        # check out github.workflow_sha. The old empty/no-checkout allow-lists fail.
+        live_prep = workflow('claude.yml')['jobs']['mention-prepare']
+        live_publish = workflow('claude.yml')['jobs']['mention-publish']
+        self.assertTrue(any(u.startswith('actions/checkout@') for u in job_uses(live_prep)))
+        self.assertTrue(any(u.startswith('actions/checkout@') for u in job_uses(live_publish)))
+        old_prep, old_publish = (), ('actions/download-artifact@',)
+        self.assertFalse(all(
+            any(uses.startswith(prefix) for prefix in old_prep) and uses_sha_pinned(uses)
+            for uses in job_uses(live_prep)))
+        self.assertFalse(all(
+            any(uses.startswith(prefix) for prefix in old_publish) and uses_sha_pinned(uses)
+            for uses in job_uses(live_publish)))
+        self.assertTrue(uses_allowed(live_prep, 'prep'))
+        self.assertTrue(uses_allowed(live_publish, 'publish'))
+        self.assertTrue(any(u.startswith('actions/checkout@') for u in ROLE_USES['prep']))
+        self.assertTrue(any(u.startswith('actions/checkout@') for u in ROLE_USES['publish']))
 
     def test_runbook_names_the_github_token_dispatch_exception(self):
         runbook = next(path for path in (ROOT / 'docs').iterdir() if path.name == 'ci-runbook.md')
