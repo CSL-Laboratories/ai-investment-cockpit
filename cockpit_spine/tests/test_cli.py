@@ -6,7 +6,10 @@ import contextlib
 import io
 import json
 import shutil
+import subprocess
+import sys
 import tempfile
+import textwrap
 import threading
 import time
 import unittest
@@ -227,6 +230,35 @@ class UnusableTests(CliCase):
         self.assertEqual((0, 0), (codes["propose"], codes["stop"]))
         kinds = [record["kind"] for record in self.records()]
         self.assertLess(kinds.index("proposal_received"), kinds.index("session_stopped"))
+
+    def test_without_fcntl_the_cli_imports_and_locks_through_msvcrt(self) -> None:
+        """Native Windows has no ``fcntl``: the CLI must still import, help and lock."""
+
+        script = textwrap.dedent(f"""
+            import io, sys, types
+            sys.modules["fcntl"] = None
+            calls = []
+            msvcrt = types.ModuleType("msvcrt")
+            msvcrt.LK_LOCK, msvcrt.LK_UNLCK = 1, 0
+            msvcrt.locking = lambda fd, mode, size: calls.append((mode, size))
+            sys.modules["msvcrt"] = msvcrt
+            from pathlib import Path
+            from cockpit_spine import cli
+            assert cli.fcntl is None
+            assert cli.main(["--help"], out=io.StringIO()) == 0
+            handle = cli._lock(Path({str(self.log)!r}))
+            cli._unlock(handle)
+            assert handle.closed
+            assert calls == [(1, 1), (0, 1)], calls
+            print("ok")
+        """)
+        done = subprocess.run(
+            [sys.executable, "-X", "utf8", "-B", "-c", script],
+            capture_output=True, text=True, timeout=60,
+            cwd=str(Path(cli.__file__).resolve().parents[1]),
+        )
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn("ok", done.stdout)
 
     def _run_at(self, log: Path, *args: str) -> tuple[int, str]:
         out = io.StringIO()

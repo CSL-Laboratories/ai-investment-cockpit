@@ -12,7 +12,7 @@ audited), 3 the log or the arguments are unusable.
 from __future__ import annotations
 
 import argparse
-import fcntl
+import errno
 import json
 import secrets
 import sys
@@ -27,6 +27,12 @@ from cockpit_spine.projections import ProjectionError, load_registry
 from cockpit_spine.service import API_VERSION, OperatorService
 from cockpit_spine.session import OperatorSession, utc_now
 from cockpit_spine.sources import ProposalSource
+
+try:  # POSIX
+    import fcntl
+except ImportError:  # native Windows, part of the DEC-09 matrix
+    fcntl = None
+    import msvcrt
 
 EXIT_OK, EXIT_REFUSED, EXIT_UNUSABLE = 0, 2, 3
 SourceFactory = Callable[[], ProposalSource]
@@ -68,16 +74,40 @@ def read_log(path: Path) -> list[dict[str, Any]]:
 
 
 def _lock(path: Path):
-    """Exclusive lock held across read, command and write. Released when closed."""
+    """Exclusive lock held across read, command and write. Released when closed.
+
+    ``fcntl.flock`` on POSIX; on Windows ``msvcrt.locking`` on the lock file's
+    first byte, retried while another run holds it.
+    """
 
     handle = path.with_name(path.name + ".lock").open("a+")
-    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    try:
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        else:
+            handle.seek(0)
+            while True:
+                try:
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+                    break
+                except OSError as error:
+                    if error.errno not in (errno.EDEADLOCK, errno.EACCES):
+                        raise
+    except BaseException:
+        handle.close()
+        raise
     return handle
 
 
 def _unlock(handle) -> None:
-    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-    handle.close()
+    try:
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        else:
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    finally:
+        handle.close()
 
 
 def write_log(path: Path, records: list[dict[str, Any]]) -> None:

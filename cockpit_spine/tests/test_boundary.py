@@ -20,7 +20,7 @@ BASE_ALLOWED = frozenset({
 EXTRA_ALLOWED: dict[str, frozenset[str]] = {
     "projections.py": frozenset({"types"}),
     "regen_projections.py": frozenset({"sys"}),
-    "cli.py": frozenset({"argparse", "fcntl", "secrets", "sys"}),
+    "cli.py": frozenset({"argparse", "errno", "fcntl", "msvcrt", "secrets", "sys"}),
     "__main__.py": frozenset({"sys"}),
     "web.py": frozenset({"html", "http", "secrets", "threading", "urllib"}),
     "recorded.py": frozenset({"contextlib", "io"}),
