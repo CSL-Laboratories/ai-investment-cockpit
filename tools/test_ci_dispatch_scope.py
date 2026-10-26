@@ -889,23 +889,28 @@ def model_github_token_ok(job):
     return bool(tokens) and all(_GITHUB_TOKEN_VALUE.fullmatch(token) for token in tokens)
 
 
-def conflict_writer_uses(uses):
-    """Job-level reusable-workflow call of claude-conflict-writer.yml/.yaml.
+CONFLICT_WRITER_FILES = (
+    '.github/workflows/claude-conflict-writer.yml',
+    '.github/workflows/claude-conflict-writer.yaml',
+)
+CONFLICT_WRITER_REPO = 'CSL-Laboratories/ai-investment-cockpit/'
 
-    Accepts a local path (`./.github/workflows/...`) or `owner/repo/.github/workflows/...@ref`.
+
+def conflict_writer_uses(uses):
+    """Job-level reusable-workflow call of this repo's claude-conflict-writer.yml/.yaml.
+
+    Accepts a local path (`./.github/workflows/...`) or this repository at a ref.
+    A same-named workflow in another owner/repo is not a caller.
     """
     if not isinstance(uses, str):
         return False
     path = uses.split('@', 1)[0].replace('\\', '/')
     if path.startswith('./'):
         path = path[2:]
-    marker = '.github/workflows/claude-conflict-writer.'
-    if marker not in path:
-        return False
-    return path[path.index(marker):] in (
-        '.github/workflows/claude-conflict-writer.yml',
-        '.github/workflows/claude-conflict-writer.yaml',
-    )
+    if path in CONFLICT_WRITER_FILES:
+        return True
+    prefix = CONFLICT_WRITER_REPO
+    return path.startswith(prefix) and path[len(prefix):] in CONFLICT_WRITER_FILES
 
 
 def calls_conflict_writer(doc):
@@ -1540,6 +1545,10 @@ class CrossLaneAdmissionTests(unittest.TestCase):
                 'name: other\non: workflow_dispatch\njobs:\n  x:\n'
                 '    runs-on: ubuntu-latest\n    steps:\n'
                 '      - uses: actions/checkout@v4\n', encoding='utf-8')
+            (tmp / 'foreign.yml').write_text(
+                'name: foreign\non: workflow_dispatch\njobs:\n  call:\n'
+                '    uses: other-org/tools/.github/workflows/claude-conflict-writer.yml@main\n'
+                '    secrets: inherit\n', encoding='utf-8')
             markers = {path.name for path in tmp.glob('*.y*ml')
                        if re.search(r'anthropics/claude-code|ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN',
                                     path.read_text(encoding='utf-8'))}
@@ -1554,6 +1563,13 @@ class CrossLaneAdmissionTests(unittest.TestCase):
             self.assertFalse(old.search((tmp / 'flow.yml').read_text(encoding='utf-8')))
             self.assertFalse(calls_conflict_writer(
                 yaml.load((tmp / 'other.yml').read_text(encoding='utf-8'), Loader=yaml.BaseLoader)))
+            foreign = yaml.load((tmp / 'foreign.yml').read_text(encoding='utf-8'),
+                                Loader=yaml.BaseLoader)
+            # Filename-only match would treat another repo's writer as ours.
+            self.assertIn('.github/workflows/claude-conflict-writer.yml',
+                          foreign['jobs']['call']['uses'])
+            self.assertFalse(calls_conflict_writer(foreign))
+            self.assertFalse(conflict_writer_uses(foreign['jobs']['call']['uses']))
 
     def test_unapproved_action_in_prep_or_model_is_rejected(self):
         prep = copy.deepcopy(workflow('claude.yml')['jobs']['mention-prepare'])
