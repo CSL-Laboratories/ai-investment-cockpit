@@ -90,7 +90,10 @@ def run_trials(plan: Plan, consumer_for: Callable[[str], Consumer]) -> dict[str,
                 "request_digest": (
                     canonical_digest(outcome.request_record) if outcome.request_record else None
                 ),
-                "output_digest": reply["output_digest"] if reply else None,
+                "output_digest": (
+                    reply["output_digest"]
+                    if isinstance(reply, dict) and "output_digest" in reply else None
+                ),
             })
     return {
         "kind": BATCH_KIND,

@@ -24,14 +24,12 @@ FORBIDDEN_NAMES = frozenset({
     "open", "print", "input", "exec", "eval", "compile", "__import__", "getattr", "setattr",
     "delattr", "globals", "locals", "vars", "breakpoint", "builtins",
 })
-WRITE_ATTRIBUTES = frozenset({
-    "write", "writelines", "write_text", "write_bytes", "dump", "mkdir", "replace", "rename",
-    "unlink", "remove", "touch", "open", "system", "popen", "run",
+# Exactly the attributes bakeoff.py uses, including list.append. Anything else,
+# including frame, code and globals attributes, is a write-capability problem.
+ALLOWED_ATTRIBUTES = frozenset({
+    "append", "check", "decide", "disposition", "engines", "prompt", "reason",
+    "reply_record", "request_record", "trials",
 })
-
-
-def _dunder(name: str) -> bool:
-    return len(name) > 4 and name.startswith("__") and name.endswith("__")
 
 
 def write_capability_problems(source: str) -> list[str]:
@@ -50,11 +48,11 @@ def write_capability_problems(source: str) -> list[str]:
             node.id in FORBIDDEN_NAMES or node.id == "__builtins__"
         ):
             problems.append(f"name {node.id}")
-        elif isinstance(node, ast.Attribute) and (
-            node.attr in WRITE_ATTRIBUTES | FORBIDDEN_NAMES or _dunder(node.attr)
-        ):
+        elif isinstance(node, ast.Attribute) and node.attr not in ALLOWED_ATTRIBUTES:
             problems.append(f"attribute {node.attr}")
-        elif isinstance(node, ast.Constant) and node.value in FORBIDDEN_NAMES - {"open", "print"}:
+        elif isinstance(node, ast.Constant) and (
+            node.value in FORBIDDEN_NAMES - {"open", "print"} or node.value == "__builtins__"
+        ):
             problems.append(f"string {node.value!r}")
     return problems
 
@@ -142,6 +140,18 @@ class TrialValueTests(unittest.TestCase):
         for trial in self.batch["trials"]:
             self.assertEqual(canonical_digest({"id": "r"}), trial["request_digest"])
 
+    def test_a_refusal_reply_without_an_output_digest_is_omitted(self) -> None:
+        class Refusal(StubConsumer):
+            def decide(self, **kwargs):
+                reply = {"type": "RouteRefusal@0", "request_id": "r", "code": "timeout",
+                         "dispatched": False}
+                return DecisionOutcome(
+                    FAIL_CLOSED, "timeout", None, {"id": "r"}, reply, "watch_only")
+
+        batch = bakeoff.run_trials(bakeoff.Plan(engines=("claude",), trials=1), Refusal)
+        self.assertIsNone(batch["trials"][0]["output_digest"])
+        self.assertEqual("timeout", batch["trials"][0]["reason"])
+
     def test_a_missing_request_record_gives_a_null_request_digest(self) -> None:
         class NoRequest(StubConsumer):
             def decide(self, **kwargs):
@@ -188,8 +198,15 @@ class BlockedOnWp8Tests(unittest.TestCase):
             "import successor.other",
             "__builtins__['open']", "canonical_digest.__globals__",
             "type(x).__subclasses__()", "x.__dict__", "x.__class__",
+            "g = (i for i in ()); g.gi_frame.f_globals['__builtins__']['open']",
+            "'__builtins__'",
         ):
             self.assertTrue(write_capability_problems(snippet), snippet)
+        for name in (
+            "gi_frame", "cr_frame", "ag_frame", "tb_frame", "f_back", "f_globals",
+            "f_builtins", "f_locals", "gi_code", "co_code", "co_names",
+        ):
+            self.assertTrue(write_capability_problems(f"x.{name}"), name)
 
     def test_the_write_guard_accepts_what_the_module_needs(self) -> None:
         for snippet in (
