@@ -712,9 +712,11 @@ class WorkflowStructureTests(unittest.TestCase):
     def test_hashed_lock_installs_and_pip_check_catches_missing_transitive(self) -> None:
         # CSL-471 Devin: --no-deps plus hash syntax is not enough. Install the
         # inline lock the way the write-token jobs do, then pip check. A
-        # missing transitive pin must fail. Runs in claude.yml / codex-gate.yml
-        # event-paths (ubuntu-latest CPython 3.12). Skip only when this
-        # interpreter cannot use the lock or PyPI is unreachable.
+        # missing transitive pin must fail. E3 dropped the mention-job pip
+        # step, so the lock is the conflict-writer heredoc. Runs in
+        # claude.yml / codex-gate.yml event-paths (ubuntu-latest CPython
+        # 3.12). Skip only when this interpreter cannot use the lock or
+        # PyPI is unreachable.
         machine = os.uname().machine if hasattr(os, "uname") else ""
         if (
             sys.platform != "linux"
@@ -821,7 +823,12 @@ class WorkflowStructureTests(unittest.TestCase):
             self.assertIn(dropped, (missing.stdout + missing.stderr).lower())
 
     def _inline_hashed_lock_text(self) -> str:
-        step = self._named_step(self._job("claude-mention"), "Install acceptance-gate deps")
+        # CSL-471 after E3: claude-mention no longer has this step. The only
+        # remaining hashed lock is the conflict-writer model job.
+        writer = WRITER_WORKFLOW_PATH.read_text(encoding="utf-8")
+        step = self._named_step(
+            self._job_text(writer, "model"), "Install acceptance-gate deps"
+        )
         body = self._heredoc_body(step, "CSL_PIP_HASH_LOCK")
         return textwrap.dedent(body.decode("utf-8")).strip()
 
