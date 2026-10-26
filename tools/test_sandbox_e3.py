@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -673,6 +674,120 @@ class BootstrapContractTests(unittest.TestCase):
         mkdir_at = text.find('mkdir "$AP/csl-e3-ro-dir"')
         self.assertGreater(touch_at, remount_at)
         self.assertGreater(mkdir_at, remount_at)
+
+    def test_bootstrap_precreates_refuse_and_f1_miss(self) -> None:
+        text = (SCRIPTS / "sandbox_e3_bootstrap.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            'install -m0600 -o runner -g runner /dev/null "$STATE/launch.refuse"',
+            text,
+        )
+        self.assertIn(
+            'install -m0600 -o root -g root /dev/null "$STATE/f1.miss"',
+            text,
+        )
+        mkdir_at = text.find('chmod 0711 "$STATE"')
+        refuse_at = text.find("$STATE/launch.refuse")
+        miss_at = text.find("$STATE/f1.miss")
+        self.assertGreater(refuse_at, mkdir_at)
+        self.assertGreater(miss_at, mkdir_at)
+
+    def test_bootstrap_git_credential_overlay_after_hash_git_tree(self) -> None:
+        text = (SCRIPTS / "sandbox_e3_bootstrap.sh").read_text(encoding="utf-8")
+        hash_at = text.find('sandbox_e3_bind.py" hash-git-tree')
+        bun_at = text.find(
+            'install -D -m0755 -o root -g root "$BUN_DST" "$AP/bin/bun"'
+        )
+        placeholder_at = text.find(': > "$AP/.git-credential-gh-token"')
+        remount_at = text.find('mount -o remount,bind,ro "$AP"')
+        bind_at = text.find(
+            'mount --bind "$STATE/git-credential.backing" "$AP/.git-credential-gh-token"'
+        )
+        writable_at = text.find("git-credential overlay not runner-writable")
+        parent_at = text.find("$AP writable after credential overlay")
+        self.assertGreater(hash_at, 0)
+        self.assertGreater(bun_at, hash_at)
+        self.assertGreater(placeholder_at, bun_at)
+        self.assertGreater(remount_at, placeholder_at)
+        self.assertGreater(bind_at, remount_at)
+        self.assertGreater(writable_at, bind_at)
+        self.assertGreater(parent_at, bind_at)
+        self.assertNotIn("remount,bind,rw", text)
+        self.assertNotIn("mount -o remount,rw", text)
+        self.assertIn(
+            'install -m0600 -o runner -g runner /dev/null "$STATE/git-credential.backing"',
+            text,
+        )
+
+    def test_model_read_denies_cover_the_git_credential_files(self) -> None:
+        """The overlay and its backing sit under Read denies the model already has.
+
+        Samir, review 5657579383: ``$AP/.git-credential-gh-token`` is under
+        ``//home/runner/work/_actions/**`` and ``$STATE/git-credential.backing``
+        is under ``//var/lib/csl-relay/**``. A later edit that drops either
+        deny, or moves either file, must fail here.
+        """
+        bootstrap = (SCRIPTS / "sandbox_e3_bootstrap.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            "AP=/home/runner/work/_actions/anthropics/claude-code-action/",
+            bootstrap,
+        )
+        self.assertIn("STATE=/var/lib/csl-relay", bootstrap)
+        self.assertIn('"$AP/.git-credential-gh-token"', bootstrap)
+        self.assertIn('"$STATE/git-credential.backing"', bootstrap)
+        workflow = (ROOT / ".github" / "workflows" / "claude.yml").read_text(encoding="utf-8")
+        for job in ("claude-mention", "devin-review-fix"):
+            body = workflow.split(f"\n  {job}:\n", 1)[1]
+            body = re.split(r"\n  [a-z][a-z0-9-]*:\n", body, maxsplit=1)[0]
+            deny = body.split('"deny": [', 1)[1].split("]", 1)[0]
+            self.assertIn('"Read(//home/runner/work/_actions/**)"', deny, job)
+            self.assertIn('"Read(//var/lib/csl-relay/**)"', deny, job)
+
+    def test_nested_file_bind_stays_writable_on_ro_parent(self) -> None:
+        """File bind over remount-ro parent stays rw; parent stays ro."""
+        script = r"""
+set -euo pipefail
+root="$1"
+mkdir -p "$root/ap" "$root/state"
+: > "$root/ap/.git-credential-gh-token"
+: > "$root/state/git-credential.backing"
+chmod 0600 "$root/ap/.git-credential-gh-token" "$root/state/git-credential.backing"
+mount --bind "$root/ap" "$root/ap"
+mount -o remount,bind,ro "$root/ap"
+if touch "$root/ap/probe" 2>/dev/null; then
+  echo "parent still rw" >&2
+  exit 2
+fi
+mount --bind "$root/state/git-credential.backing" "$root/ap/.git-credential-gh-token"
+if ! test -w "$root/ap/.git-credential-gh-token"; then
+  echo "overlay not writable" >&2
+  exit 3
+fi
+printf 'helper\n' > "$root/ap/.git-credential-gh-token"
+got="$(cat "$root/state/git-credential.backing")"
+test "$got" = "helper"
+if touch "$root/ap/probe2" 2>/dev/null; then
+  echo "parent became rw" >&2
+  exit 4
+fi
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = subprocess.run(
+                ["unshare", "-rm", "bash", "-c", script, "nested", tmp],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            # Hosted runners often block unprivileged user namespaces
+            # (`uid_map` EPERM). Production overlay runs as root in 0b, so
+            # the contract test above is the required CI gate; this proves
+            # the mount flags only where userns is allowed.
+            if proc.returncode != 0 and "Operation not permitted" in (proc.stderr or ""):
+                self.skipTest("unprivileged user namespaces are disabled")
+            self.assertEqual(
+                proc.returncode,
+                0,
+                f"rc={proc.returncode} stderr={proc.stderr!r} stdout={proc.stdout!r}",
+            )
 
     def test_bootstrap_installs_action_bun_wrapper_after_digest_before_remount(self) -> None:
         text = (SCRIPTS / "sandbox_e3_bootstrap.sh").read_text(encoding="utf-8")
