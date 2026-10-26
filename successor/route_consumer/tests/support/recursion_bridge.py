@@ -65,12 +65,18 @@ def verify_checkout(root: Path) -> None:
         if not source.is_file() or sha256_hex(source.read_bytes()) != entry["sha256"]:
             raise CheckoutError(f"{entry['source_path']}: differs from the vendored {key}")
     if (root / ".git").exists():
-        head = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "HEAD"],
-            capture_output=True, text=True, check=False,
-        ).stdout.strip()
+        head = checkout_head(root)
         if head != pin.pinned_head():
             raise CheckoutError(f"checkout HEAD {head or '<unknown>'} is not the pin {pin.pinned_head()}")
+
+
+def checkout_head(root: Path) -> str:
+    """The checked-out commit via git itself, so a worktree (``.git`` is a file) and a branch work."""
+
+    return subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        capture_output=True, text=True, check=False,
+    ).stdout.strip()
 
 
 @cache
