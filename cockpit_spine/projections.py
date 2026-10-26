@@ -16,9 +16,11 @@ a reader should look. A test checks the blob at the cited commit whenever that
 commit is reachable in the clone, and fails instead of skipping when
 ``COCKPIT_REQUIRE_COMMIT_PIN=1`` (use it where history is deep enough).
 
-A number is displayed only through ``Registry.render``. A ``Figure`` is a plain
-value anyone can construct, so rendering re-checks it against the loaded entry
-and prints the entry's own text, never the figure's.
+A number is displayed only through ``Registry.render`` or ``render_id``. A
+``Figure`` is a plain value anyone can construct, and so is a ``Registry``:
+rendering re-checks the figure against the entry, and it also re-checks each
+entry digest and the registry digest. A hand-built registry whose value does
+not match those digests renders as withheld.
 
 The wider two-tier definition (X4) lives in the WP11 spine memo on
 csl-research, which the author of this module could not read. Treat this as
@@ -261,11 +263,17 @@ class Registry:
     def __init__(self, projections: dict[str, Projection], digest: str) -> None:
         self._projections = projections
         self.digest = digest
+        # load_registry is the path that verifies source bytes. A caller who
+        # builds a Registry by hand still cannot display a number unless every
+        # entry digest and the registry digest agree with the values inside.
+        self._verified = _registry_digests_hold(projections, digest)
 
     def ids(self) -> tuple[str, ...]:
         return tuple(sorted(self._projections))
 
     def get(self, projection_id: str) -> Projection:
+        if not self._verified:
+            raise UnlinkedNumberError(f"{projection_id}: registry digests do not verify")
         try:
             return self._projections[projection_id]
         except KeyError:
@@ -276,7 +284,7 @@ class Registry:
         return Figure(item.projection_id, item.value, item.unit, item.label, item.digest)
 
     def render(self, figure: object) -> str:
-        if not isinstance(figure, Figure):
+        if not self._verified or not isinstance(figure, Figure):
             return WITHHELD
         item = self._projections.get(figure.projection_id)
         if item is None or not _matches(figure, item):
@@ -284,8 +292,31 @@ class Registry:
         return _text(item)
 
     def render_id(self, projection_id: str) -> str:
+        if not self._verified:
+            return WITHHELD
         item = self._projections.get(projection_id) if isinstance(projection_id, str) else None
         return WITHHELD if item is None else _text(item)
+
+
+def _registry_digests_hold(projections: object, digest: object) -> bool:
+    if not isinstance(projections, dict) or not projections or not isinstance(digest, str):
+        return False
+    try:
+        entries = []
+        for key in sorted(projections):
+            item = projections[key]
+            if not isinstance(item, Projection) or item.projection_id != key:
+                return False
+            entry = item.entry()
+            if item.digest != _entry_digest(entry):
+                return False
+            entries.append(entry)
+        expected = canonical_digest(
+            {"registry_version": REGISTRY_VERSION, "projections": entries}
+        )
+        return digest == expected
+    except (TypeError, ValueError, AttributeError):
+        return False
 
 
 def _matches(figure: Figure, item: Projection) -> bool:
