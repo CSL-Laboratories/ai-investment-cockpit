@@ -2176,7 +2176,7 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertEqual(names.index("claude") - 1, names.index(sandbox["name"]))
         action = [s for s in model["steps"] if s.get("id") == "claude"][0]
         self.assertEqual(action["env"].get("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"), "1")
-        self.assertEqual(action["with"]["path_to_bun_executable"], "/opt/csl-bun/bun")
+        self.assertEqual(action["with"]["path_to_bun_executable"], "/opt/csl-bun-action/bun")
         self.assertEqual(action["with"]["path_to_claude_code_executable"], "/opt/csl-claude/launch")
         self.assertNotIn("SRT_DEBUG", action.get("env", {}))
         self.assertEqual(action["env"].get("DISABLE_UPDATES"), "1")

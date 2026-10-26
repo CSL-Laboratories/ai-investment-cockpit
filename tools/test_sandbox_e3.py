@@ -511,6 +511,9 @@ class BootstrapContractTests(unittest.TestCase):
         self.assertIn("hash-node-modules", text)
         self.assertIn("hash-setup-bun", text)
         self.assertIn("sandbox_e3_cli_pin.sh", text)
+        self.assertIn("sandbox_e3_action_bun.sh", text)
+        self.assertIn("/opt/csl-bun-action/bun", text)
+        self.assertIn("check-node-modules", (SCRIPTS / "sandbox_e3_action_bun.sh").read_text(encoding="utf-8"))
         self.assertIn('readlink /proc/self/ns/mnt', text)
         self.assertIn('"$STATE/launch.sha256"', text)
         self.assertIn('GUARD="/home/runner/work/_temp/claude-fixer-guard"', text)
@@ -605,6 +608,169 @@ class BootstrapContractTests(unittest.TestCase):
         mkdir_at = text.find('mkdir "$AP/csl-e3-ro-dir"')
         self.assertGreater(touch_at, remount_at)
         self.assertGreater(mkdir_at, remount_at)
+
+    def test_bootstrap_installs_action_bun_wrapper_after_digest_before_remount(self) -> None:
+        text = (SCRIPTS / "sandbox_e3_bootstrap.sh").read_text(encoding="utf-8")
+        digest_at = text.find('sandbox_e3_bind.py" hash-node-modules')
+        wrapper_at = text.find(
+            'install -D -m0755 -o root -g root "$LIB/sandbox_e3_action_bun.sh" /opt/csl-bun-action/bun'
+        )
+        remount_at = text.find('mount -o remount,bind,ro "$AP"')
+        elf_at = text.find(
+            'install -D -m0755 -o root -g root "$BUN_DST" "$AP/bin/bun"'
+        )
+        self.assertGreater(digest_at, 0)
+        self.assertGreater(wrapper_at, digest_at)
+        self.assertGreater(elf_at, wrapper_at)
+        self.assertGreater(remount_at, elf_at)
+        self.assertIn("action bun wrapper collides with ELF", text)
+        self.assertIn('BUN_DST=/opt/csl-bun/bun', text)
+        self.assertNotIn("remount,bind,rw", text)
+
+
+class CheckNodeModulesDigestTests(unittest.TestCase):
+    """Hosted 40359709793: action bun install EEXIST vs E3 pre-populated tree."""
+
+    def _tree(self, tmp: str) -> Path:
+        nm = Path(tmp) / "node_modules"
+        pkg = nm / "@anthropic-ai" / "sdk"
+        pkg.mkdir(parents=True)
+        (pkg / "index.js").write_text("export {}\n", encoding="utf-8")
+        return nm
+
+    def test_matching_digest_ok_mismatch_and_missing_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self._tree(tmp)
+            state = Path(tmp) / "state"
+            state.mkdir()
+            digest = bind.tree_digest(str(Path(tmp) / "node_modules"))
+            (state / "node_modules.digest").write_text(digest + "\n", encoding="ascii")
+            self.assertEqual(
+                bind.check_node_modules_digest(action_dir=tmp, state_dir=str(state)),
+                digest,
+            )
+            (state / "node_modules.digest").write_text("0" * 64 + "\n", encoding="ascii")
+            with self.assertRaises(bind.BindError) as ctx:
+                bind.check_node_modules_digest(action_dir=tmp, state_dir=str(state))
+            self.assertEqual(str(ctx.exception), "node_modules")
+            (state / "node_modules.digest").unlink()
+            with self.assertRaises(bind.BindError) as ctx:
+                bind.check_node_modules_digest(action_dir=tmp, state_dir=str(state))
+            self.assertEqual(str(ctx.exception), "node_modules")
+
+    def test_rejects_non_hex_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self._tree(tmp)
+            state = Path(tmp) / "state"
+            state.mkdir()
+            (state / "node_modules.digest").write_text("not-a-digest\n", encoding="ascii")
+            with self.assertRaises(bind.BindError) as ctx:
+                bind.check_node_modules_digest(action_dir=tmp, state_dir=str(state))
+            self.assertEqual(str(ctx.exception), "node_modules")
+
+
+class ActionBunWrapperTests(unittest.TestCase):
+    """Rewrite compiled-in paths so the wrapper can run off the hosted layout."""
+
+    def _layout(self, tmp: str, *, python_rc: int = 0) -> dict:
+        root = Path(tmp)
+        ap = root / "ap"
+        ap.mkdir()
+        workspace = root / "workspace"
+        workspace.mkdir()
+        bun_dir = root / "opt-csl-bun"
+        bun_dir.mkdir()
+        bun_elf = bun_dir / "bun"
+        marker = root / "marker"
+        bun_elf.write_text(
+            "#!/bin/bash\n"
+            f'printf "elf %s\\n" "$*" >> "{marker}"\n',
+            encoding="utf-8",
+        )
+        bun_elf.chmod(0o755)
+        py = root / "python3"
+        py.write_text(
+            "#!/bin/bash\n"
+            f'printf "check %s\\n" "$*" >> "{marker}"\n'
+            f"exit {python_rc}\n",
+            encoding="utf-8",
+        )
+        py.chmod(0o755)
+        bind_py = root / "sandbox_e3_bind.py"
+        bind_py.write_text("# stub; wrapper execs python -I this check-node-modules\n", encoding="utf-8")
+        src = (SCRIPTS / "sandbox_e3_action_bun.sh").read_text(encoding="utf-8")
+        src = src.replace("/opt/csl-bun/bun", str(bun_elf))
+        src = src.replace(
+            "/home/runner/work/_actions/anthropics/claude-code-action/"
+            "a5a423f75c251dcbff8a74e99f83b2cb03c72bfa",
+            str(ap),
+        )
+        src = src.replace("/usr/bin/python3", str(py))
+        src = src.replace("/opt/csl-claude/lib/sandbox_e3_bind.py", str(bind_py))
+        wrapper = root / "wrapper"
+        wrapper.write_text(src, encoding="utf-8")
+        wrapper.chmod(0o755)
+        return {
+            "wrapper": str(wrapper),
+            "ap": str(ap),
+            "workspace": str(workspace),
+            "marker": marker,
+        }
+
+    def _run(self, layout: dict, cwd: str, args: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [layout["wrapper"], *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_action_install_checks_digest_and_does_not_exec_elf(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            layout = self._layout(tmp)
+            proc = self._run(layout, layout["ap"], ["install", "--production"])
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            text = layout["marker"].read_text(encoding="utf-8")
+            self.assertIn("check ", text)
+            self.assertIn("check-node-modules", text)
+            self.assertNotIn("elf ", text)
+
+    def test_action_install_mismatch_does_not_fall_through_to_elf(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            layout = self._layout(tmp, python_rc=1)
+            proc = self._run(layout, layout["ap"], ["install", "--production"])
+            self.assertNotEqual(proc.returncode, 0)
+            text = layout["marker"].read_text(encoding="utf-8")
+            self.assertIn("check ", text)
+            self.assertNotIn("elf ", text)
+
+    def test_workspace_install_and_non_install_exec_elf(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            layout = self._layout(tmp)
+            proc = self._run(layout, layout["workspace"], ["install", "--production"])
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            proc = self._run(layout, layout["ap"], ["--version"])
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            text = layout["marker"].read_text(encoding="utf-8")
+            self.assertIn("elf install --production", text)
+            self.assertIn("elf --version", text)
+            self.assertNotIn("check ", text)
+
+    def test_wrapper_keeps_compiled_in_hosted_paths(self) -> None:
+        text = (SCRIPTS / "sandbox_e3_action_bun.sh").read_text(encoding="utf-8")
+        self.assertIn("BUN_ELF=/opt/csl-bun/bun", text)
+        self.assertIn(
+            "AP=/home/runner/work/_actions/anthropics/claude-code-action/"
+            "a5a423f75c251dcbff8a74e99f83b2cb03c72bfa",
+            text,
+        )
+        self.assertNotIn("${CSL_", text)
+        self.assertIn('exec "$PYTHON" -I "$BIND" check-node-modules', text)
+        self.assertIn('exec "$BUN_ELF" "$@"', text)
+        self.assertLess(
+            text.find('exec "$PYTHON" -I "$BIND" check-node-modules'),
+            text.find('exec "$BUN_ELF" "$@"'),
+        )
 
 
 if __name__ == "__main__":

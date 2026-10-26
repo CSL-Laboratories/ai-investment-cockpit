@@ -22,8 +22,8 @@ runner ALL=(root) NOPASSWD: /opt/csl-relay/bin/relay
 '
 
 umask 022
-mkdir -p /opt/csl-bun /opt/csl-claude/lib /opt/csl-claude/src /opt/csl-relay/bin \
-  "$BUN_BIN" "$STATE"
+mkdir -p /opt/csl-bun /opt/csl-bun-action /opt/csl-claude/lib /opt/csl-claude/src \
+  /opt/csl-relay/bin "$BUN_BIN" "$STATE"
 chmod 0711 "$STATE"
 chown root:root "$STATE"
 
@@ -206,6 +206,20 @@ git -C "$BUNREF" ls-tree -r FETCH_HEAD > "$STATE/setup-bun.ls-tree"
 # symlinks. tree_digest hashes those targets; abs/escape links still fail closed.
 # Hosted 40262408416 died here with BindError: symlink before that distinction.
 "$PYTHON" -I "$LIB/sandbox_e3_bind.py" hash-node-modules
+# Action-PATH wrapper (hosted 40359709793): claude-code-action prepends
+# dirname(path_to_bun_executable) then runs ``bun install --production`` in
+# $AP, which EEXIST-collides with this pre-populated tree once $AP is
+# remount,ro. Wrapper lives at /opt/csl-bun-action/bun so PATH's bun is
+# not the tofu ELF at $BUN_DST. Install after the digest exists.
+test -f "$LIB/sandbox_e3_action_bun.sh" || { echo "e3-0b: action_bun missing" >&2; exit 1; }
+install -D -m0755 -o root -g root "$LIB/sandbox_e3_action_bun.sh" /opt/csl-bun-action/bun
+test -x /opt/csl-bun-action/bun
+test ! -L /opt/csl-bun-action/bun
+test -x "$BUN_DST"
+if [ /opt/csl-bun-action/bun -ef "$BUN_DST" ]; then
+  echo "e3-0b: action bun wrapper collides with ELF" >&2
+  exit 1
+fi
 # Pre-create the action's pin-bun destination after the extra-file check and
 # before the ro remount so mkdir -p "$AP/bin" is a no-op. Touch/mkdir after
 # the remount fail closed if $AP is still writable.

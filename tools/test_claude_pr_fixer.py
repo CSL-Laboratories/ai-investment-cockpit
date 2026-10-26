@@ -777,7 +777,8 @@ class WorkflowStructureTests(unittest.TestCase):
             mention,
         )
         self.assertNotIn("uses: actions/checkout@v4", mention)
-        self.assertIn("path_to_bun_executable: /opt/csl-bun/bun", mention)
+        self.assertIn("path_to_bun_executable: /opt/csl-bun-action/bun", mention)
+        self.assertNotIn("path_to_bun_executable: /opt/csl-bun/bun", mention)
         self.assertIn("path_to_claude_code_executable: /opt/csl-claude/launch", mention)
         self.assertIn("sandbox_e3_cli_pin.sh", mention)
         self.assertNotIn("SRT_DEBUG:", mention)
@@ -802,7 +803,8 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("E3-0-early setup-bun", fixer)
         self.assertIn("E3-0-early record bun-path", fixer)
         self.assertIn("C6.2 stub", fixer)
-        self.assertIn("path_to_bun_executable", fixer)
+        self.assertIn("path_to_bun_executable: /opt/csl-bun-action/bun", fixer)
+        self.assertNotIn("path_to_bun_executable: /opt/csl-bun/bun", fixer)
         self.assertIn("path_to_claude_code_executable: /opt/csl-claude/launch", fixer)
         self.assertIn("shell: /usr/bin/sudo -n /opt/csl-relay/bin/relay {0}", fixer)
         self.assertIn("sandbox_e3_cli_pin.sh", fixer)
@@ -816,6 +818,7 @@ class WorkflowStructureTests(unittest.TestCase):
             "sandbox_e3_bind.py": "0444",
             "sandbox_e3_bootstrap.sh": "0755",
             "sandbox_e3_cli_pin.sh": "0755",
+            "sandbox_e3_action_bun.sh": "0755",
             "sandbox_launch.c": "0444",
             "sandbox_capture.c": "0444",
             "sandbox_relay.c": "0444",
