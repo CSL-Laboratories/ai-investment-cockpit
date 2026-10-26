@@ -25,7 +25,8 @@ _SPECS = (
     ("x2-fake-driver-cells-accepted", "X2 plumbing cells accepted by the consumer",
      "cells", {"kind": "count_where", "pointer": "/cells", "match": {"disposition": "accepted"}}),
     ("x2-fake-driver-cells-fail-closed", "X2 plumbing cells that failed closed",
-     "cells", {"kind": "count_where", "pointer": "/cells", "match": {"disposition": "fail_closed"}}),
+     "cells", {"kind": "count_where", "pointer": "/cells",
+               "match": {"disposition": "fail_closed"}}),
 )
 
 
