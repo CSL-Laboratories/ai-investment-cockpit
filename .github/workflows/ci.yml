@@ -402,7 +402,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.merge_sha || github.sha }}
-          fetch-depth: 2
+          # CSL-544: these jobs run check_replacement_program.py (linux also
+          # invokes it directly; all three via run-gates/pytest). Once #275
+          # pins GitHub receipts, git show <approved_sha>:<path> needs that
+          # SHA in history. Depth 2 cannot see SHAs more than two commits back.
+          fetch-depth: 0
           persist-credentials: false
       - name: Validate exact full candidate
         if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
@@ -676,7 +680,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.merge_sha || github.sha }}
-          fetch-depth: 2
+          # CSL-544: these jobs run check_replacement_program.py (linux also
+          # invokes it directly; all three via run-gates/pytest). Once #275
+          # pins GitHub receipts, git show <approved_sha>:<path> needs that
+          # SHA in history. Depth 2 cannot see SHAs more than two commits back.
+          fetch-depth: 0
           persist-credentials: false
       - name: Validate exact full candidate
         if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
@@ -785,7 +793,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.merge_sha || github.sha }}
-          fetch-depth: 2
+          # CSL-544: these jobs run check_replacement_program.py (linux also
+          # invokes it directly; all three via run-gates/pytest). Once #275
+          # pins GitHub receipts, git show <approved_sha>:<path> needs that
+          # SHA in history. Depth 2 cannot see SHAs more than two commits back.
+          fetch-depth: 0
           persist-credentials: false
       - name: Validate exact full candidate
         if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
