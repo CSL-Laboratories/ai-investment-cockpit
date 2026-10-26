@@ -26,6 +26,10 @@ mkdir -p /opt/csl-bun /opt/csl-bun-action /opt/csl-claude/lib /opt/csl-claude/sr
   /opt/csl-relay/bin "$BUN_BIN" "$STATE"
 chmod 0711 "$STATE"
 chown root:root "$STATE"
+# Launcher is runner-uid; STATE is 0711 so pre-create the refuse file.
+# Capture (root) owns f1.miss. Both stay 0600; relay surfaces the tokens.
+install -m0600 -o runner -g runner /dev/null "$STATE/launch.refuse"
+install -m0600 -o root -g root /dev/null "$STATE/f1.miss"
 
 # Walk $$ → ppid until exe basename is Runner.Worker (N2). Do not persist
 # /proc/PID/environ (may contain GH_TOKEN). worker.status is 0600.
@@ -229,6 +233,10 @@ fi
 # writable.
 mkdir -p "$AP/bin"
 install -D -m0755 -o root -g root "$BUN_DST" "$AP/bin/bun"
+# Placeholder after hash-git-tree (extra-file would reject it) in the same
+# window as $AP/bin/bun. Nested bind overlay comes after remount-ro.
+: > "$AP/.git-credential-gh-token"
+chmod 0600 "$AP/.git-credential-gh-token"
 chown -R root:root "$AP"
 chmod -R go-w "$AP"
 
@@ -245,6 +253,19 @@ if touch "$AP/csl-e3-ro-probe" 2>/dev/null; then
 fi
 if mkdir "$AP/csl-e3-ro-dir" 2>/dev/null; then
   echo "e3-0b: $AP still writable (mkdir)" >&2
+  exit 1
+fi
+# Nested file bind over the placeholder. The backing lives on rw STATE;
+# this must not remount $AP rw. Fail closed if the overlay is not
+# runner-writable or if $AP becomes writable.
+install -m0600 -o runner -g runner /dev/null "$STATE/git-credential.backing"
+mount --bind "$STATE/git-credential.backing" "$AP/.git-credential-gh-token"
+if ! runuser -u runner -- test -w "$AP/.git-credential-gh-token"; then
+  echo "e3-0b: git-credential overlay not runner-writable" >&2
+  exit 1
+fi
+if touch "$AP/csl-e3-cred-ro-probe" 2>/dev/null; then
+  echo "e3-0b: $AP writable after credential overlay" >&2
   exit 1
 fi
 
