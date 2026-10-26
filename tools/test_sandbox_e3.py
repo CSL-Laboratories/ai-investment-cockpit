@@ -674,6 +674,89 @@ class BootstrapContractTests(unittest.TestCase):
         self.assertGreater(touch_at, remount_at)
         self.assertGreater(mkdir_at, remount_at)
 
+    def test_bootstrap_precreates_refuse_and_f1_miss(self) -> None:
+        text = (SCRIPTS / "sandbox_e3_bootstrap.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            'install -m0600 -o runner -g runner /dev/null "$STATE/launch.refuse"',
+            text,
+        )
+        self.assertIn(
+            'install -m0600 -o root -g root /dev/null "$STATE/f1.miss"',
+            text,
+        )
+        mkdir_at = text.find('chmod 0711 "$STATE"')
+        refuse_at = text.find("$STATE/launch.refuse")
+        miss_at = text.find("$STATE/f1.miss")
+        self.assertGreater(refuse_at, mkdir_at)
+        self.assertGreater(miss_at, mkdir_at)
+
+    def test_bootstrap_git_credential_overlay_after_hash_git_tree(self) -> None:
+        text = (SCRIPTS / "sandbox_e3_bootstrap.sh").read_text(encoding="utf-8")
+        hash_at = text.find('sandbox_e3_bind.py" hash-git-tree')
+        bun_at = text.find(
+            'install -D -m0755 -o root -g root "$BUN_DST" "$AP/bin/bun"'
+        )
+        placeholder_at = text.find(': > "$AP/.git-credential-gh-token"')
+        remount_at = text.find('mount -o remount,bind,ro "$AP"')
+        bind_at = text.find(
+            'mount --bind "$STATE/git-credential.backing" "$AP/.git-credential-gh-token"'
+        )
+        writable_at = text.find("git-credential overlay not runner-writable")
+        parent_at = text.find("$AP writable after credential overlay")
+        self.assertGreater(hash_at, 0)
+        self.assertGreater(bun_at, hash_at)
+        self.assertGreater(placeholder_at, bun_at)
+        self.assertGreater(remount_at, placeholder_at)
+        self.assertGreater(bind_at, remount_at)
+        self.assertGreater(writable_at, bind_at)
+        self.assertGreater(parent_at, bind_at)
+        self.assertNotIn("remount,bind,rw", text)
+        self.assertNotIn("mount -o remount,rw", text)
+        self.assertIn(
+            'install -m0600 -o runner -g runner /dev/null "$STATE/git-credential.backing"',
+            text,
+        )
+
+    def test_nested_file_bind_stays_writable_on_ro_parent(self) -> None:
+        """File bind over remount-ro parent stays rw; parent stays ro."""
+        script = r"""
+set -euo pipefail
+root="$1"
+mkdir -p "$root/ap" "$root/state"
+: > "$root/ap/.git-credential-gh-token"
+: > "$root/state/git-credential.backing"
+chmod 0600 "$root/ap/.git-credential-gh-token" "$root/state/git-credential.backing"
+mount --bind "$root/ap" "$root/ap"
+mount -o remount,bind,ro "$root/ap"
+if touch "$root/ap/probe" 2>/dev/null; then
+  echo "parent still rw" >&2
+  exit 2
+fi
+mount --bind "$root/state/git-credential.backing" "$root/ap/.git-credential-gh-token"
+if ! test -w "$root/ap/.git-credential-gh-token"; then
+  echo "overlay not writable" >&2
+  exit 3
+fi
+printf 'helper\n' > "$root/ap/.git-credential-gh-token"
+got="$(cat "$root/state/git-credential.backing")"
+test "$got" = "helper"
+if touch "$root/ap/probe2" 2>/dev/null; then
+  echo "parent became rw" >&2
+  exit 4
+fi
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = subprocess.run(
+                ["unshare", "-rm", "bash", "-c", script, "nested", tmp],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                proc.returncode,
+                0,
+                f"rc={proc.returncode} stderr={proc.stderr!r} stdout={proc.stdout!r}",
+            )
+
     def test_bootstrap_installs_action_bun_wrapper_after_digest_before_remount(self) -> None:
         text = (SCRIPTS / "sandbox_e3_bootstrap.sh").read_text(encoding="utf-8")
         digest_at = text.find('sandbox_e3_bind.py" hash-node-modules')

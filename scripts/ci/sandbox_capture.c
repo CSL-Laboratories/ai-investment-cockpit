@@ -319,6 +319,41 @@ static int x_environ_ok(pid_t pid)
     return 1;
 }
 
+/* F1 last-miss ranks. Higher means closer to a successful arm. */
+enum {
+    F1_MISS_NO_X = 1,
+    F1_MISS_CMDLINE = 2,
+    F1_MISS_CWD = 3,
+    F1_MISS_BASH_B = 4,
+    F1_MISS_TOFU = 5,
+    F1_MISS_ENVIRON = 6,
+    F1_MISS_CHMOD = 7,
+    F1_MISS_ARMED = 8
+};
+
+static int f1_best;
+
+static void f1_note(int rank)
+{
+    if (rank > f1_best) {
+        f1_best = rank;
+    }
+}
+
+static void f1_flush_miss(void)
+{
+    static const char *const tok[] = {
+        NULL, "no_x", "cmdline", "cwd", "bash_b", "tofu", "environ", "chmod", "armed"
+    };
+    char buf[20];
+    int rank = f1_armed ? F1_MISS_ARMED : (f1_best > 0 ? f1_best : F1_MISS_NO_X);
+    int n;
+    n = snprintf(buf, sizeof buf, "%s\n", tok[rank]);
+    if (n > 0 && (size_t)n < sizeof buf) {
+        (void)csl_write_file(CSL_F1_MISS_PATH, buf, (size_t)n, 0600);
+    }
+}
+
 /* F1: observe bun X under parent B, then chmod handoff 0666. */
 static void try_arm_f1(void)
 {
@@ -326,20 +361,28 @@ static void try_arm_f1(void)
     struct dirent *ent;
     char cwdwant[512];
     size_t cn = 0;
+    int saw_bun = 0;
     if (f1_armed) {
+        f1_flush_miss();
         return;
     }
     if (csl_read_file(CSL_WORKSPACE_PATH, cwdwant, sizeof cwdwant, &cn) != 0) {
+        f1_note(F1_MISS_NO_X);
+        f1_flush_miss();
         return;
     }
     while (cn && (cwdwant[cn - 1] == '\n' || cwdwant[cn - 1] == ' ')) {
         cwdwant[--cn] = 0;
     }
     if (cn == 0) {
+        f1_note(F1_MISS_NO_X);
+        f1_flush_miss();
         return;
     }
     d = opendir("/proc");
     if (!d) {
+        f1_note(F1_MISS_NO_X);
+        f1_flush_miss();
         return;
     }
     while ((ent = readdir(d))) {
@@ -360,39 +403,52 @@ static void try_arm_f1(void)
         if (strcmp(exe, CSL_BUN_PATH) != 0) {
             continue;
         }
+        saw_bun = 1;
         ntok = cmdline_tokens(x, tokens, 12);
         if (ntok < 0 || !bun_cmdline_ok(tokens, ntok)) {
+            f1_note(F1_MISS_CMDLINE);
             continue;
         }
         snprintf(link, sizeof link, "/proc/%d/cwd", (int)x);
         {
             ssize_t n = readlink(link, cwd, sizeof cwd - 1);
             if (n < 0) {
+                f1_note(F1_MISS_CWD);
                 continue;
             }
             cwd[n] = 0;
         }
         if (strcmp(cwd, cwdwant) != 0) {
+            f1_note(F1_MISS_CWD);
             continue;
         }
         b = proc_ppid(x);
         if (!b || !bash_b_ok(b, x)) {
+            f1_note(F1_MISS_BASH_B);
             continue;
         }
         if (!bun_tofu_match(x)) {
+            f1_note(F1_MISS_TOFU);
             continue;
         }
         if (!x_environ_ok(x)) {
+            f1_note(F1_MISS_ENVIRON);
             continue;
         }
         if (chmod(CSL_HANDOFF_SOCK, 0666) == 0) {
             f1_armed = 1;
             f1_bun_pid = x;
             (void)csl_write_file(CSL_STATE_DIR "/f1.armed", "1\n", 2, 0600);
+            f1_note(F1_MISS_ARMED);
+            break;
         }
-        break;
+        f1_note(F1_MISS_CHMOD);
     }
     closedir(d);
+    if (!saw_bun) {
+        f1_note(F1_MISS_NO_X);
+    }
+    f1_flush_miss();
 }
 
 static int f2_launcher_parent_is_bun(pid_t launcher)
@@ -847,6 +903,8 @@ int main(int argc, char **argv)
     /* Test compile only: skip F1 wait so socket tests can connect. */
     chmod(CSL_HANDOFF_SOCK, 0666);
     f1_armed = 1;
+    f1_note(F1_MISS_ARMED);
+    f1_flush_miss();
 #else
     /* Production: stay 0600 until F1 bun X is observed (try_arm_f1). */
     f1_armed = 0;

@@ -23,7 +23,7 @@ SAFE_WORKFLOW_LIMIT = 480_000
 
 PINNED = {
     "scripts/ci/sandbox_filter.c": "c7d218317d057037e4c3712af5e79ea38b5763f67a6bfe1e6bcb55d31f29eb45",
-    "scripts/ci/sandbox_c.pin": "4e8ae34f85199ba5646787a4779822abfc8ef39e74d306d4bd8121a93e6038f3",
+    "scripts/ci/sandbox_c.pin": "c72a96f5c569c801b5cf8a5081c0e6062f4a88855dc688b1218467fb48417204",
     "scripts/ci/claude_fixer_publish.py": "cd1ab4234edb098748fc24758f12422a3243f74d827a699a16496b5e67d0f452",
     "scripts/ci/sandbox_e3_cli_pin.sh": None,  # pin string is inside the file
     "scripts/ci/sandbox_e3_record.py": None,
