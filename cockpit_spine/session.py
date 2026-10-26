@@ -50,6 +50,7 @@ MODE_READ_ONLY = "mode_read_only"
 DUPLICATE_REQUEST = "duplicate_request"
 DUPLICATE_PROPOSAL = "duplicate_proposal"
 PAYLOAD_INVALID = "payload_failed_validation"
+SOURCE_ERROR = "source_error"
 UNSAFE_TEXT = "text_too_long_or_unprintable"
 MAX_REASON = 200
 
@@ -88,6 +89,7 @@ class OperatorSession:
         self.stopped = False
         self._proposals: dict[str, dict[str, Any]] = {}
         self._requests: set[str] = set()
+        self._answered: set[str] = set()
         self._schema = load_output_schema(DECISION_PROFILE[PROPOSAL_WORKLOAD])
 
     @classmethod
@@ -141,45 +143,130 @@ class OperatorSession:
         return self._chain.append(kind, data)
 
     def _apply(self, kind: str, data: dict[str, Any]) -> None:
+        """The one place state changes, shared by live commands and replay.
+
+        A chain only proves records link: the hashes carry no key, so anyone can
+        recompute them. Every invariant therefore lives here, and a record that
+        the live commands would refuse is refused here too. Checks run before
+        any mutation, so a refused record leaves the state untouched.
+        """
+
+        try:
+            self._apply_checked(kind, data)
+        except (KeyError, TypeError, AttributeError) as error:
+            raise AuditError(f"{kind}: malformed record ({type(error).__name__})") from None
+
+    def _apply_checked(self, kind: str, data: dict[str, Any]) -> None:
+        if not isinstance(data, dict) or not isinstance(data["at"], str):
+            raise AuditError(f"{kind}: record has no timestamp")
         if kind == "session_opened":
             if self.session_id is not None:
                 raise AuditError("session opened twice")
+            if data["mode"] not in SESSION_MODES:
+                raise AuditError("session_opened: mode is not read_only or paper")
+            if _clean(data["session_id"], limit=64) != data["session_id"]:
+                raise AuditError("session_opened: session_id is not short printable text")
+            if not isinstance(data["adapter_kind"], str):
+                raise AuditError("session_opened: adapter_kind missing")
             self.session_id, self.mode = data["session_id"], data["mode"]
             return
         if self.session_id is None:
             raise AuditError(f"{kind}: no session is open")
         if kind == "command_refused":
+            if not isinstance(data["command"], str) or not isinstance(data["code"], str):
+                raise AuditError("command_refused: command and code are required")
             return
         if self.stopped:
             raise AuditError(f"{kind}: the session is stopped")
         if kind == "proposal_requested":
-            self._requests.add(data["request_id"])
+            request_id = data["request_id"]
+            if _clean(request_id, limit=64) != request_id:
+                raise AuditError("proposal_requested: request_id is not clean text")
+            if request_id in self._requests:
+                raise AuditError("proposal_requested: request_id already used")
+            if not isinstance(data["prompt_digest"], str):
+                raise AuditError("proposal_requested: prompt_digest missing")
+            self._requests.add(request_id)
         elif kind == "proposal_received":
-            if data["request_id"] not in self._requests:
-                raise AuditError("proposal_received: no matching request")
-            self._proposals[data["proposal_id"]] = {
-                "proposal_id": data["proposal_id"], "request_id": data["request_id"],
-                "payload": data["payload"], "payload_digest": data["payload_digest"],
-                "state": PENDING, "operator": None, "reason": None,
-            }
+            self._apply_received(data)
         elif kind == "proposal_refused":
-            pass
+            self._take_request(data["request_id"], "proposal_refused")
+            quarantined = data["quarantined"]
+            if not isinstance(quarantined, bool) or not isinstance(data["reason"], str):
+                raise AuditError("proposal_refused: reason and quarantined are required")
+            if data["fail_closed_to"] != (None if quarantined else WATCH_ONLY):
+                raise AuditError("proposal_refused: fail_closed_to does not match quarantined")
         elif kind in ("proposal_approved", "proposal_vetoed"):
-            item = self._proposals.get(data["proposal_id"])
-            if item is None or item["state"] != PENDING:
-                raise AuditError(f"{kind}: proposal is not pending")
-            item["state"] = APPROVED if kind == "proposal_approved" else VETOED
-            item["operator"] = data["operator"]
-            item["reason"] = data.get("reason")
+            self._apply_decision(kind, data)
         elif kind == "session_stopped":
-            for proposal_id in data["abandoned"]:
-                item = self._proposals.get(proposal_id)
-                if item is None or item["state"] != PENDING:
-                    raise AuditError("session_stopped: abandoned a non-pending proposal")
-                item["state"] = ABANDONED
-            self.stopped = True
+            self._apply_stop(data)
         else:
             raise AuditError(f"unknown record kind {kind!r}")
+
+    def _take_request(self, request_id: object, kind: str) -> None:
+        if request_id not in self._requests:
+            raise AuditError(f"{kind}: no matching request")
+        if request_id in self._answered:
+            raise AuditError(f"{kind}: request already has an outcome")
+        self._answered.add(request_id)
+
+    def _apply_received(self, data: dict[str, Any]) -> None:
+        payload = data["payload"]
+        validator = jsonschema.Draft202012Validator(
+            self._schema, format_checker=jsonschema.FormatChecker()
+        )
+        if not validator.is_valid(payload):
+            raise AuditError("proposal_received: payload fails the output schema")
+        if data["payload_digest"] != canonical_digest(payload):
+            raise AuditError("proposal_received: payload_digest is not the payload's digest")
+        proposal_id = data["proposal_id"]
+        if proposal_id != payload["proposal_id"]:
+            raise AuditError("proposal_received: proposal_id differs from the payload's")
+        if proposal_id in self._proposals:
+            raise AuditError("proposal_received: duplicate proposal_id")
+        reply_digest = data["reply_output_digest"]
+        if reply_digest is not None and not isinstance(reply_digest, str):
+            raise AuditError("proposal_received: reply_output_digest is not text")
+        self._take_request(data["request_id"], "proposal_received")
+        self._proposals[proposal_id] = {
+            "proposal_id": proposal_id, "request_id": data["request_id"],
+            "payload": payload, "payload_digest": data["payload_digest"],
+            "state": PENDING, "operator": None, "reason": None,
+        }
+
+    def _apply_decision(self, kind: str, data: dict[str, Any]) -> None:
+        item = self._proposals.get(data["proposal_id"])
+        if item is None or item["state"] != PENDING:
+            raise AuditError(f"{kind}: proposal is not pending")
+        operator = data["operator"]
+        if _clean(operator, limit=64) != operator:
+            raise AuditError(f"{kind}: operator is not clean text")
+        if kind == "proposal_approved":
+            if self.mode != "paper":
+                raise AuditError("proposal_approved: the session is not in paper mode")
+            if data["payload_digest"] != item["payload_digest"]:
+                raise AuditError("proposal_approved: digest does not match the proposal")
+            item["state"], item["reason"] = APPROVED, None
+        else:
+            reason = data["reason"]
+            if _clean(reason) != reason:
+                raise AuditError("proposal_vetoed: reason is not clean text")
+            item["state"], item["reason"] = VETOED, reason
+        item["operator"] = operator
+
+    def _apply_stop(self, data: dict[str, Any]) -> None:
+        for field in ("operator", "reason"):
+            if _clean(data[field], limit=64 if field == "operator" else MAX_REASON) != data[field]:
+                raise AuditError(f"session_stopped: {field} is not clean text")
+        if data["fail_closed_to"] != WATCH_ONLY:
+            raise AuditError("session_stopped: must fail closed to watch_only")
+        abandoned = data["abandoned"]
+        pending = [pid for pid, item in self._proposals.items() if item["state"] == PENDING]
+        if not isinstance(abandoned, list) or sorted(abandoned) != sorted(pending):
+            raise AuditError("session_stopped: abandoned is not exactly the pending set")
+        for proposal_id in abandoned:
+            self._proposals[proposal_id]["state"] = ABANDONED
+        self.stopped = True
 
     def _refused(self, command: str, code: str, **detail: Any) -> CommandResult:
         if self.session_id is not None:
@@ -189,14 +276,21 @@ class OperatorSession:
     def request_proposal(self, *, request_id: str, prompt: str) -> CommandResult:
         if self.stopped:
             return self._refused("propose", SESSION_STOPPED)
-        if _clean(request_id, limit=64) is None or not isinstance(prompt, str):
+        cleaned_id = _clean(request_id, limit=64)
+        if cleaned_id is None or not isinstance(prompt, str):
             return self._refused("propose", UNSAFE_TEXT)
+        request_id = cleaned_id
         if request_id in self._requests:
             return self._refused("propose", DUPLICATE_REQUEST, request_id=request_id)
         self._emit("proposal_requested", {
             "request_id": request_id, "prompt_digest": prompt_digest(prompt),
         })
-        outcome = self._source.fetch(request_id=request_id, mode=self.mode or "", prompt=prompt)
+        try:
+            outcome = self._source.fetch(
+                request_id=request_id, mode=self.mode or "", prompt=prompt
+            )
+        except Exception:  # noqa: BLE001 - any source failure must fail closed, not dangle
+            return self._refusal_record(request_id, SOURCE_ERROR, quarantined=False)
         if outcome.disposition == NEEDS_HUMAN_REVIEW:
             return self._refusal_record(request_id, outcome.reason, quarantined=True)
         if outcome.disposition != ACCEPTED or not outcome.usable:
