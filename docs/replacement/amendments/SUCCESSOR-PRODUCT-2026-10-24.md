@@ -7,6 +7,8 @@ under [CSL-511](https://linear.app/csl-laboratories/issue/CSL-511); umbrella
 so Lucas's exact-digest receipt accepts it. Exact-digest acceptance remains a
 separate human decision.
 
+> **Superseded in part by [SUCCESSOR-PRODUCT-2026-10-26.md](SUCCESSOR-PRODUCT-2026-10-26.md)** (v2, proposed; accepted only by an exact-digest receipt from Lucas). This v1 file is otherwise unchanged. The `program.json` pins stay on the 2026-10-16 accepted bytes until that receipt and a reviewed promotion.
+
 This file is a **proposed amendment**. It does not replace the last accepted
 bytes, which remain `docs/replacement/SUCCESSOR-PRODUCT.md`
 at SHA-256
