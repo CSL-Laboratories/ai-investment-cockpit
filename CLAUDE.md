@@ -15,9 +15,10 @@ For the replacement program, read
 [SUCCESSOR-PRODUCT.md](docs/replacement/SUCCESSOR-PRODUCT.md),
 [MONTH-PROGRAM.md](docs/replacement/MONTH-PROGRAM.md) and the exact acceptance
 record in [program.json](docs/replacement/program.json). Accepted bytes and scoped
-gates remain controlling. Exact acceptance is the `program.json` receipt: Lucas
-Linear digest or founder GitHub PR approval as defined in
-[AGENTS.md](AGENTS.md#founder-decisions-and-integration). Follow [AGENTS.md's founder decision and integration rules](AGENTS.md#founder-decisions-and-integration)
+gates remain controlling. Until the ISSUE-CONTRACT amendment of 2026-10-25 is accepted
+and promoted, only the Lucas Linear digest receipt recorded in `program.json` is exact
+acceptance; once it is, a checker-pinned founder GitHub PR approval will also count, as
+defined in [AGENTS.md](AGENTS.md#founder-decisions-and-integration). Follow [AGENTS.md's founder decision and integration rules](AGENTS.md#founder-decisions-and-integration)
 for operational authority; they do not amend accepted contracts, activate R2a or
 unlock live capital. Founders merge after the required current-head reviews and checks;
 agents never merge. A founder's own PR requires another founder's approval before merge,

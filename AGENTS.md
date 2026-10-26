@@ -38,12 +38,13 @@ ruleset enforcement. Non-author approval checks alone do not establish founder i
 Protected-path amendments require a separately recorded founder-approved
 authoring session; this paragraph grants no blanket editing permission.
 Accepted contracts require their own versioned amendment, exact acceptance and reviewed
-promotion. Exact acceptance is either the recorded Lucas Linear digest receipt or a
-founder GitHub PR approval recorded in `docs/replacement/program.json` (approving
-founder login on the checker allowlist `CDanTheMan` / `NotSkittlz` /
-`samir-shah-ahmed`, exact-case match, approver other than the PR author, approved
-head SHA, exact file digest map, checker-pinned receipt identity). Merge and
-non-founder review are not acceptance.
+promotion. Until the ISSUE-CONTRACT amendment of 2026-10-25 is accepted and promoted,
+only the recorded Lucas Linear digest receipt is exact acceptance. Once it is accepted and
+promoted, a checker-pinned founder GitHub PR approval recorded in
+`docs/replacement/program.json` will also count (approving founder login on the checker
+allowlist `CDanTheMan` / `NotSkittlz` / `samir-shah-ahmed`, exact-case match, approver
+other than the PR author, approved head SHA, exact file digest map, checker-pinned receipt
+identity). Merge and non-founder review are not acceptance.
 No person-level decision unlocks live capital or bypasses the nine invariants,
 paper-only boundary or pre-live gates. Existing account, credential and runtime restrictions
 remain in force; this wording does not activate R2a or grant a live run.

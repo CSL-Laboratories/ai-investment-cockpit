@@ -31,10 +31,13 @@ These pins do not constitute a new human receipt or settle the discretion-label
 reconciliation and other deferred questions in CSL-223. An annotation correction
 needs scoped review; a change to governing direction needs a fresh human receipt.
 
-Acceptance receipts are dual-path and fail closed. The live CSL-212 record is a
-Lucas Linear digest receipt (`kind: linear_digest`). Spec changes may also be
-accepted by a founder GitHub PR approval recorded in `program.json`
-(`kind: github_founder_pr_approval`): allowlisted founder login (`CDanTheMan`,
+Acceptance receipts fail closed. The live CSL-212 record is a Lucas Linear digest
+receipt (`kind: linear_digest`), and until the ISSUE-CONTRACT amendment of
+2026-10-25 is accepted and promoted it is the only acceptance. Once that amendment
+is accepted and promoted, spec changes may also be accepted by a checker-pinned
+founder GitHub PR approval recorded in `program.json`
+(`kind: github_founder_pr_approval`; the checker code path is present but inert
+while its pin table is empty): allowlisted founder login (`CDanTheMan`,
 `NotSkittlz`, `samir-shah-ahmed`; exact-case match), approver other than the PR
 author, approved head SHA, and the exact file digest map. The checker pins
 accepted GitHub receipts the same way it pins Linear comment IDs: editing
