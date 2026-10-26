@@ -900,17 +900,21 @@ def conflict_writer_uses(uses):
     """Job-level reusable-workflow call of this repo's claude-conflict-writer.yml/.yaml.
 
     Accepts a local path (`./.github/workflows/...`) or this repository at a ref.
-    A same-named workflow in another owner/repo is not a caller.
+    Owner/repo on a remote call is matched case-insensitively (GitHub names are
+    case-insensitive). A same-named workflow in another owner/repo is not a caller.
     """
     if not isinstance(uses, str):
         return False
-    path = uses.split('@', 1)[0].replace('\\', '/')
-    if path.startswith('./'):
-        path = path[2:]
+    path = uses.split('@', 1)[0].replace('\\', '/').removeprefix('./')
     if path in CONFLICT_WRITER_FILES:
         return True
-    prefix = CONFLICT_WRITER_REPO
-    return path.startswith(prefix) and path[len(prefix):] in CONFLICT_WRITER_FILES
+    owner, _, rest = path.partition('/')
+    repo, _, workflow = rest.partition('/')
+    if not (owner and repo and workflow):
+        return False
+    owner_repo = f'{owner}/{repo}/'
+    return (owner_repo.casefold() == CONFLICT_WRITER_REPO.casefold()
+            and workflow in CONFLICT_WRITER_FILES)
 
 
 def calls_conflict_writer(doc):
@@ -1549,12 +1553,23 @@ class CrossLaneAdmissionTests(unittest.TestCase):
                 'name: foreign\non: workflow_dispatch\njobs:\n  call:\n'
                 '    uses: other-org/tools/.github/workflows/claude-conflict-writer.yml@main\n'
                 '    secrets: inherit\n', encoding='utf-8')
+            (tmp / 'lower.yml').write_text(
+                'name: lower\non: workflow_dispatch\njobs:\n  call:\n'
+                '    uses: csl-laboratories/ai-investment-cockpit/'
+                '.github/workflows/claude-conflict-writer.yml@main\n'
+                '    secrets: inherit\n', encoding='utf-8')
+            (tmp / 'mixed.yml').write_text(
+                'name: mixed\non: workflow_dispatch\njobs:\n  call:\n'
+                '    uses: Csl-Laboratories/Ai-Investment-Cockpit/'
+                '.github/workflows/claude-conflict-writer.yml@main\n'
+                '    secrets: inherit\n', encoding='utf-8')
             markers = {path.name for path in tmp.glob('*.y*ml')
                        if re.search(r'anthropics/claude-code|ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN',
                                     path.read_text(encoding='utf-8'))}
             self.assertEqual(markers, set())
             self.assertEqual(writer_callers(tmp),
-                             {'quiet.yml', 'remote.yml', 'flow.yml', 'yaml-ext.yml'})
+                             {'quiet.yml', 'remote.yml', 'flow.yml', 'yaml-ext.yml',
+                              'lower.yml', 'mixed.yml'})
             old = re.compile(
                 r'(?m)^\s+uses:\s*["\']?(?:\./)?\.github/workflows/claude-conflict-writer\.ya?ml["\']?\s*(?:#.*)?$'
             )
@@ -1570,6 +1585,24 @@ class CrossLaneAdmissionTests(unittest.TestCase):
                           foreign['jobs']['call']['uses'])
             self.assertFalse(calls_conflict_writer(foreign))
             self.assertFalse(conflict_writer_uses(foreign['jobs']['call']['uses']))
+            lower = yaml.load((tmp / 'lower.yml').read_text(encoding='utf-8'),
+                              Loader=yaml.BaseLoader)
+            mixed = yaml.load((tmp / 'mixed.yml').read_text(encoding='utf-8'),
+                              Loader=yaml.BaseLoader)
+            lower_uses = lower['jobs']['call']['uses']
+            mixed_uses = mixed['jobs']['call']['uses']
+            self.assertTrue(conflict_writer_uses(lower_uses))
+            self.assertTrue(conflict_writer_uses(mixed_uses))
+            # Case-sensitive owner/repo startswith misses valid GitHub names.
+            prefix = CONFLICT_WRITER_REPO
+            lower_path = lower_uses.split('@', 1)[0]
+            mixed_path = mixed_uses.split('@', 1)[0]
+            self.assertFalse(lower_path.startswith(prefix))
+            self.assertFalse(mixed_path.startswith(prefix))
+            self.assertFalse(lower_path.startswith(prefix)
+                             and lower_path[len(prefix):] in CONFLICT_WRITER_FILES)
+            self.assertFalse(mixed_path.startswith(prefix)
+                             and mixed_path[len(prefix):] in CONFLICT_WRITER_FILES)
 
     def test_unapproved_action_in_prep_or_model_is_rejected(self):
         prep = copy.deepcopy(workflow('claude.yml')['jobs']['mention-prepare'])
