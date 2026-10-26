@@ -112,17 +112,31 @@ class NativeArgvTests(unittest.TestCase):
             capture_output=True,
         )
         self.assertNotEqual(proc.returncode, 0)
-        self.assertIn(b"launcher refused", proc.stderr)
+        self.assertEqual(proc.stderr, b"launcher refused\n")
+        self.assertEqual(
+            (self.prefix / "state" / "launch.refuse").read_text(encoding="ascii"),
+            "bad_argv\n",
+        )
 
     def test_u15_presence_refuses(self) -> None:
         env = {**os.environ, "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1", "SRT_DEBUG": "0"}
         proc = subprocess.run([str(self.bins["launch"])], env=env, capture_output=True)
         self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(proc.stderr, b"launcher refused\n")
+        self.assertEqual(
+            (self.prefix / "state" / "launch.refuse").read_text(encoding="ascii"),
+            "u15\n",
+        )
 
     def test_ld_preload_refuses(self) -> None:
         env = {**os.environ, "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1", "LD_PRELOAD": "x"}
         proc = subprocess.run([str(self.bins["launch"])], env=env, capture_output=True)
         self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(proc.stderr, b"launcher refused\n")
+        self.assertEqual(
+            (self.prefix / "state" / "launch.refuse").read_text(encoding="ascii"),
+            "ld\n",
+        )
 
     def test_argv_requires_setting_sources_and_tools(self) -> None:
         env = {k: v for k, v in os.environ.items() if k not in {
@@ -135,7 +149,11 @@ class NativeArgvTests(unittest.TestCase):
             capture_output=True,
         )
         self.assertNotEqual(proc.returncode, 0)
-        self.assertIn(b"launcher refused", proc.stderr)
+        self.assertEqual(proc.stderr, b"launcher refused\n")
+        self.assertEqual(
+            (self.prefix / "state" / "launch.refuse").read_text(encoding="ascii"),
+            "bad_argv\n",
+        )
 
     def test_n1_does_not_stat_cwd_mcp_json(self) -> None:
         src = (SRC / "sandbox_launch.c").read_text(encoding="utf-8")
@@ -414,7 +432,7 @@ class NativeRelayOneShotTests(unittest.TestCase):
             relay = bins["relay"]
             first = subprocess.run([str(relay)], capture_output=True, text=True)
             self.assertEqual(first.returncode, 0)
-            self.assertIn("NOT RELAYED reason=no_end", first.stdout)
+            self.assertIn("NOT RELAYED reason=no_end why=none f1=none", first.stdout)
             (state / "end").write_text("ok\n", encoding="ascii")
             (state / "pair.closed").write_text("1\n", encoding="ascii")
             (state / "capture").write_bytes(WRAP)
@@ -454,8 +472,61 @@ class NativeRelayOneShotTests(unittest.TestCase):
             prefix = Path(tmp)
             bins = compile_prefix(prefix)
             first = subprocess.run([str(bins["relay"])], capture_output=True, text=True)
-            self.assertIn("no_end", first.stdout)
+            self.assertIn("no_end why=none f1=none", first.stdout)
             self.assertNotIn("filter error", first.stdout)
+
+    def test_no_end_surfaces_why_and_f1_tokens(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = Path(tmp)
+            bins = compile_prefix(prefix)
+            state = prefix / "state"
+            (state / "launch.refuse").write_text("handoff\n", encoding="ascii")
+            (state / "f1.miss").write_text("environ\n", encoding="ascii")
+            proc = subprocess.run([str(bins["relay"])], capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0)
+            self.assertIn(
+                "NOT RELAYED reason=no_end why=handoff f1=environ",
+                proc.stdout,
+            )
+
+    def test_no_end_sanitises_garbage_tokens(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = Path(tmp)
+            bins = compile_prefix(prefix)
+            state = prefix / "state"
+            (state / "launch.refuse").write_text("HANDOFF; rm -rf /\n", encoding="ascii")
+            (state / "f1.miss").write_text("env iron\n", encoding="ascii")
+            proc = subprocess.run([str(bins["relay"])], capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0)
+            self.assertIn("NOT RELAYED reason=no_end why=none f1=none", proc.stdout)
+            self.assertNotIn("HANDOFF", proc.stdout)
+            self.assertNotIn("rm -rf", proc.stdout)
+
+
+class NativeDiagSourceTests(unittest.TestCase):
+    def test_refuse_and_f1_miss_paths_stay_root_state(self) -> None:
+        header = (SRC / "sandbox_common.h").read_text(encoding="utf-8")
+        self.assertIn('#define CSL_REFUSE_PATH CSL_STATE_DIR "/launch.refuse"', header)
+        self.assertIn('#define CSL_F1_MISS_PATH CSL_STATE_DIR "/f1.miss"', header)
+        launch = (SRC / "sandbox_launch.c").read_text(encoding="utf-8")
+        self.assertIn("CSL_REFUSE_PATH", launch)
+        self.assertIn('write(2, "launcher refused\\n", 17)', launch)
+        self.assertNotIn("write(2, why", launch)
+        capture = (SRC / "sandbox_capture.c").read_text(encoding="utf-8")
+        for tok in (
+            '"no_x"',
+            '"cmdline"',
+            '"cwd"',
+            '"bash_b"',
+            '"tofu"',
+            '"environ"',
+            '"chmod"',
+            '"armed"',
+        ):
+            self.assertIn(tok, capture)
+        self.assertIn("CSL_F1_MISS_PATH", capture)
+        relay = (SRC / "sandbox_relay.c").read_text(encoding="utf-8")
+        self.assertIn("no_end why=%s f1=%s", relay)
 
 
 class NativeSocketTests(unittest.TestCase):
@@ -481,6 +552,10 @@ class NativeSocketTests(unittest.TestCase):
                     time.sleep(0.05)
                 self.assertTrue(sock_path.exists(), "handoff.sock")
                 self.assertTrue(fifo_path.exists(), "stderr.fifo")
+                self.assertEqual(
+                    (state / "f1.miss").read_text(encoding="ascii"),
+                    "armed\n",
+                )
                 mode = stat.S_IMODE(fifo_path.stat().st_mode)
                 self.assertEqual(mode, 0o600)
                 client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

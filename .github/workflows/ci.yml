@@ -443,6 +443,17 @@ jobs:
           python -X utf8 -B tools/test_ci_docs_filter.py
           python -X utf8 -B tools/test_workflow_size.py
           python -X utf8 -B tools/test_sandbox_e3.py
+      # CSL-511 WP4: run the replacement-program and O7 checkers directly so the
+      # acceptance pins no longer depend only on the app/tests wrappers that a
+      # later app/ deletion could remove. The floor fails closed when a pinned
+      # test file is deleted, symlinked, uncollectable or thinned. Same linux
+      # job, same venv and interpreter; no new action, secret or network use.
+      - name: Replacement program checkers and test-inventory floor
+        run: |
+          python -X utf8 -B tools/check_replacement_program.py
+          python -X utf8 -B tools/check_o7_operator_contract.py
+          python -X utf8 -B -m unittest -q tools.test_replacement_program
+          python -X utf8 -B tools/check_checker_test_floor.py
       # CSL-515 WP12: the successor/ route-consumer tests replay Recursion's Route
       # Contract v0 conformance cases against a read-only checkout of the public
       # CSL-Laboratories/recursion repository at the commit pinned in

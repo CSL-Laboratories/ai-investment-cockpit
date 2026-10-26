@@ -14,7 +14,15 @@ extern char **environ;
 
 static void refuse(const char *why)
 {
-    (void)why;
+    char tok[17];
+    char rec[18];
+    int n;
+    if (csl_token_copy(why, tok, sizeof tok) == 0) {
+        n = snprintf(rec, sizeof rec, "%s\n", tok);
+        if (n > 0 && (size_t)n < sizeof rec) {
+            (void)csl_write_file(CSL_REFUSE_PATH, rec, (size_t)n, 0600);
+        }
+    }
     if (write(2, "launcher refused\n", 17) < 0) {
         /* ignore */
     }
