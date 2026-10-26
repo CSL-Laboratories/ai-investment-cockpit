@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import copy
 import datetime
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -86,6 +87,27 @@ def _clean_id(text: object, *, limit: int = 64) -> str | None:
     return cleaned if cleaned is not None and is_id(cleaned) else None
 
 
+def _is_exact_clean(text: object, *, limit: int = MAX_REASON) -> bool:
+    """True only for text the live commands would store: cleaned, and unchanged."""
+
+    cleaned = _clean(text, limit=limit)
+    return cleaned is not None and cleaned == text
+
+
+def _is_exact_id(text: object, *, limit: int = 64) -> bool:
+    """Like ``_is_exact_clean``, and the value must be an identifier. Null fails."""
+
+    cleaned = _clean_id(text, limit=limit)
+    return cleaned is not None and cleaned == text
+
+
+_REPLY_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+def _is_reply_digest(value: object) -> bool:
+    return value is None or (isinstance(value, str) and _REPLY_DIGEST.fullmatch(value) is not None)
+
+
 class OperatorSession:
     def __init__(self, *, source: ProposalSource, clock: Callable[[], str] = utc_now) -> None:
         self._source = source
@@ -123,8 +145,9 @@ class OperatorSession:
         verify_chain(records)
         session = cls(source=source, clock=clock)
         for record in records:
-            session._chain.append(record["kind"], record["data"])
-            session._apply(record["kind"], record["data"])
+            stored = session._chain.append(record["kind"], record["data"])
+            # Apply the chain's copy, not the caller's record.
+            session._apply(stored["kind"], stored["data"])
         if session._chain.records() != records:
             raise AuditError("replayed chain differs from the stored chain")
         if session.session_id is None:
@@ -160,7 +183,7 @@ class OperatorSession:
         """
 
         try:
-            self._apply_checked(kind, data)
+            self._apply_checked(kind, copy.deepcopy(data))
         except (KeyError, TypeError, AttributeError) as error:
             raise AuditError(f"{kind}: malformed record ({type(error).__name__})") from None
 
@@ -172,7 +195,7 @@ class OperatorSession:
                 raise AuditError("session opened twice")
             if data["mode"] not in SESSION_MODES:
                 raise AuditError("session_opened: mode is not read_only or paper")
-            if _clean_id(data["session_id"]) != data["session_id"]:
+            if not _is_exact_id(data["session_id"]):
                 raise AuditError("session_opened: session_id is not a short identifier")
             if not isinstance(data["adapter_kind"], str):
                 raise AuditError("session_opened: adapter_kind missing")
@@ -188,7 +211,7 @@ class OperatorSession:
             raise AuditError(f"{kind}: the session is stopped")
         if kind == "proposal_requested":
             request_id = data["request_id"]
-            if _clean(request_id, limit=64) != request_id:
+            if not _is_exact_clean(request_id, limit=64):
                 raise AuditError("proposal_requested: request_id is not clean text")
             if request_id in self._requests:
                 raise AuditError("proposal_requested: request_id already used")
@@ -200,7 +223,7 @@ class OperatorSession:
         elif kind == "proposal_refused":
             self._take_request(data["request_id"], "proposal_refused")
             quarantined = data["quarantined"]
-            if not isinstance(quarantined, bool) or not isinstance(data["reason"], str):
+            if not isinstance(quarantined, bool) or not _is_exact_clean(data["reason"]):
                 raise AuditError("proposal_refused: reason and quarantined are required")
             if data["fail_closed_to"] != (None if quarantined else WATCH_ONLY):
                 raise AuditError("proposal_refused: fail_closed_to does not match quarantined")
@@ -233,12 +256,12 @@ class OperatorSession:
         if proposal_id in self._proposals:
             raise AuditError("proposal_received: duplicate proposal_id")
         reply_digest = data["reply_output_digest"]
-        if reply_digest is not None and not isinstance(reply_digest, str):
-            raise AuditError("proposal_received: reply_output_digest is not text")
+        if not _is_reply_digest(reply_digest):
+            raise AuditError("proposal_received: reply_output_digest is not a sha256 digest")
         self._take_request(data["request_id"], "proposal_received")
         self._proposals[proposal_id] = {
             "proposal_id": proposal_id, "request_id": data["request_id"],
-            "payload": payload, "payload_digest": data["payload_digest"],
+            "payload": copy.deepcopy(payload), "payload_digest": data["payload_digest"],
             "state": PENDING, "operator": None, "reason": None,
         }
 
@@ -247,7 +270,7 @@ class OperatorSession:
         if item is None or item["state"] != PENDING:
             raise AuditError(f"{kind}: proposal is not pending")
         operator = data["operator"]
-        if _clean_id(operator) != operator:
+        if not _is_exact_id(operator):
             raise AuditError(f"{kind}: operator is not a short identifier")
         if kind == "proposal_approved":
             if self.mode != "paper":
@@ -257,15 +280,15 @@ class OperatorSession:
             item["state"], item["reason"] = APPROVED, None
         else:
             reason = data["reason"]
-            if _clean(reason) != reason:
+            if not _is_exact_clean(reason):
                 raise AuditError("proposal_vetoed: reason is not clean text")
             item["state"], item["reason"] = VETOED, reason
         item["operator"] = operator
 
     def _apply_stop(self, data: dict[str, Any]) -> None:
-        if _clean_id(data["operator"]) != data["operator"]:
+        if not _is_exact_id(data["operator"]):
             raise AuditError("session_stopped: operator is not a short identifier")
-        if _clean(data["reason"]) != data["reason"]:
+        if not _is_exact_clean(data["reason"]):
             raise AuditError("session_stopped: reason is not clean text")
         if data["fail_closed_to"] != WATCH_ONLY:
             raise AuditError("session_stopped: must fail closed to watch_only")
@@ -298,19 +321,30 @@ class OperatorSession:
             outcome = self._source.fetch(
                 request_id=request_id, mode=self.mode or "", prompt=prompt
             )
+            return self._from_outcome(request_id, outcome)
         except Exception:  # noqa: BLE001 - any source failure must fail closed, not dangle
+            if request_id in self._answered:
+                raise
             return self._refusal_record(request_id, SOURCE_ERROR, quarantined=False)
+
+    def _from_outcome(self, request_id: str, outcome: object) -> CommandResult:
+        """Read a source result. Any failure here is a source error, not a dangling request."""
+
         raw_reason = getattr(outcome, "reason", None)
-        reason = raw_reason if isinstance(raw_reason, str) else SOURCE_ERROR
-        if outcome.disposition == NEEDS_HUMAN_REVIEW:
+        cleaned_reason = _clean(raw_reason)
+        reason = cleaned_reason if cleaned_reason is not None else SOURCE_ERROR
+        disposition = getattr(outcome, "disposition")
+        usable = getattr(outcome, "usable")
+        if disposition == NEEDS_HUMAN_REVIEW:
             return self._refusal_record(request_id, reason, quarantined=True)
-        if outcome.disposition != ACCEPTED or not outcome.usable:
+        if disposition != ACCEPTED or not usable:
             return self._refusal_record(request_id, reason, quarantined=False)
-        reply = outcome.reply_record if isinstance(outcome.reply_record, dict) else None
+        reply_record = getattr(outcome, "reply_record")
+        reply = reply_record if isinstance(reply_record, dict) else None
         reply_digest = None if reply is None else reply.get("output_digest")
-        if reply_digest is not None and not isinstance(reply_digest, str):
+        if not _is_reply_digest(reply_digest):
             return self._refusal_record(request_id, SOURCE_ERROR, quarantined=False)
-        payload = copy.deepcopy(outcome.payload)
+        payload = copy.deepcopy(getattr(outcome, "payload"))
         validator = jsonschema.Draft202012Validator(
             self._schema, format_checker=jsonschema.FormatChecker()
         )

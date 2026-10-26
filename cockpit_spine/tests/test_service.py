@@ -55,6 +55,19 @@ class RequestShapeTests(unittest.TestCase):
         service = make(accepted(proposal_payload()))
         self.assertTrue(call(service, "propose", request_id="req-1")["ok"])
 
+    def test_a_proposal_missing_an_optional_size_still_renders(self) -> None:
+        for missing in ("quantity", "notional"):
+            payload = proposal_payload("prop-1")
+            del payload[missing]
+            service = make(accepted(payload))
+            proposed = call(service, "propose", request_id="req-1", prompt="p")
+            self.assertTrue(proposed["ok"], missing)
+            self.assertEqual("none", value(proposed, missing))
+            status = call(service, "status")
+            self.assertTrue(status["ok"], missing)
+            self.assertEqual("none", value(status, missing))
+            self.assertEqual("pending", value(status, "proposal state"))
+
 
 class FlowTests(unittest.TestCase):
     def flow(self) -> list[dict]:

@@ -12,7 +12,9 @@ audited), 3 the log or the arguments are unusable.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
+import secrets
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -65,11 +67,28 @@ def read_log(path: Path) -> list[dict[str, Any]]:
         raise AuditError("transcript unreadable") from None
 
 
+def _lock(path: Path):
+    """Exclusive lock held across read, command and write. Released when closed."""
+
+    handle = path.with_name(path.name + ".lock").open("a+")
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    return handle
+
+
+def _unlock(handle) -> None:
+    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    handle.close()
+
+
 def write_log(path: Path, records: list[dict[str, Any]]) -> None:
     text = "".join(json.dumps(r, sort_keys=True) + "\n" for r in records)
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(text, encoding="utf-8")
-    temporary.replace(path)
+    temporary = path.with_name(path.name + "." + secrets.token_hex(8) + ".tmp")
+    try:
+        temporary.write_text(text, encoding="utf-8")
+        temporary.replace(path)
+    except OSError:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def _args_for(namespace: argparse.Namespace) -> dict[str, str]:
@@ -94,7 +113,9 @@ def main(
         namespace = build_parser().parse_args(argv)
     except SystemExit as stop:
         return EXIT_OK if stop.code in (0, None) else EXIT_UNUSABLE
+    lock = None
     try:
+        lock = _lock(namespace.log)
         registry = load_registry()
         source = source_factory()
         if namespace.command == "open":
@@ -107,12 +128,18 @@ def main(
             session = OperatorSession.replay(read_log(namespace.log), source=source, clock=clock)
             request = {"api": API_VERSION, "command": namespace.command,
                        "args": _args_for(namespace)}
+        response = OperatorService(session, registry).handle(request)
+        if namespace.command != "audit":
+            write_log(namespace.log, session.records())
     except (AuditError, ProjectionError, ValueError) as error:
         out.write(f"unusable: {type(error).__name__}\n")
         return EXIT_UNUSABLE
-    response = OperatorService(session, registry).handle(request)
-    if namespace.command != "audit":
-        write_log(namespace.log, session.records())
+    except OSError:
+        out.write("unusable: OSError\n")
+        return EXIT_UNUSABLE
+    finally:
+        if lock is not None:
+            _unlock(lock)
     if namespace.json:
         out.write(json.dumps(response, sort_keys=True) + "\n")
     else:
