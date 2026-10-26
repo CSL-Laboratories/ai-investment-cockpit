@@ -34,7 +34,7 @@ class Floor(NamedTuple):
 FLOORS = (
     Floor("app/tests/test_replacement_program_registry.py", "pytest", 142),
     Floor("app/tests/test_o7_operator_contract.py", "pytest", 69),
-    Floor("tools/test_replacement_program.py", "unittest", 27),
+    Floor("tools/test_replacement_program.py", "unittest", 34),
 )
 
 REQUIRED_FILES = (
@@ -94,6 +94,7 @@ def check(
     floors: tuple[Floor, ...] = FLOORS,
     required: tuple[str, ...] = REQUIRED_FILES,
     counters: dict[str, Counter] | None = None,
+    report: Callable[[str], None] | None = None,
 ) -> list[str]:
     counters = COUNTERS if counters is None else counters
     problems: list[str] = []
@@ -118,12 +119,13 @@ def check(
         if found < floor.minimum:
             problems.append(f"{floor.path} collects {found} tests, below its floor of {floor.minimum}")
         else:
-            print(f"floor ok: {floor.path} {found} >= {floor.minimum}")
+            if report is not None:
+                report(f"floor ok: {floor.path} {found} >= {floor.minimum}")
     return problems
 
 
 def main() -> int:
-    problems = check()
+    problems = check(report=print)
     for problem in problems:
         print(f"::error::checker test floor: {problem}", file=sys.stderr)
     if problems:
