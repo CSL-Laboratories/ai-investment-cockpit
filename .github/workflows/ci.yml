@@ -453,7 +453,6 @@ jobs:
           python -X utf8 -B tools/check_replacement_program.py
           python -X utf8 -B tools/check_o7_operator_contract.py
           python -X utf8 -B -m unittest -q tools.test_replacement_program
-          python -X utf8 -B tools/test_checker_test_floor.py
           python -X utf8 -B tools/check_checker_test_floor.py
       # CSL-166: the required linux gate runs pytest before any wheel exists, so
       # test_book_batch.py's skipif dropped the whole file. Build the extension
