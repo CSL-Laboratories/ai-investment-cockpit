@@ -80,7 +80,7 @@ class DetectorTests(unittest.TestCase):
 
 class BoundaryTests(unittest.TestCase):
     def test_modules_exist(self) -> None:
-        self.assertGreaterEqual(len(production_modules()), 2)
+        self.assertGreaterEqual(len(production_modules()), 5)
 
     def test_imports_stay_on_the_allow_list(self) -> None:
         for path in production_modules():
