@@ -245,22 +245,43 @@ def _rel_posix(root: Path, path: Path) -> str:
     return str(path.relative_to(root)).replace("\\", "/")
 
 
-def require_in_tree_symlink(root: str, link_path: str, target: str) -> None:
+def lexical_in_tree_dest(root: str, link_path: str, target: str) -> str:
+    """Join ``target`` onto the link without following any symlink.
+
+    ``Path.resolve()`` follows intermediates, so a relative link that
+    lexically leaves ``root`` and re-enters through an outside symlink
+    would pass today and later redirect without changing the hashed
+    text (Devin SEC on #281). ``abspath``+``normpath`` stay lexical.
+    Returns the posix path of the dest relative to ``root``.
+    """
+    if not target or "\0" in target or "\n" in target or "\r" in target:
+        raise BindError("symlink")
+    if os.path.isabs(target):
+        raise BindError("symlink_abs")
+    root_abs = os.path.normpath(os.path.abspath(root))
+    dest = os.path.normpath(
+        os.path.join(os.path.dirname(os.path.abspath(link_path)), target)
+    )
+    try:
+        common = os.path.commonpath([root_abs, dest])
+    except ValueError as exc:
+        raise BindError("symlink_escape") from exc
+    if common != root_abs:
+        raise BindError("symlink_escape")
+    rel = os.path.relpath(dest, root_abs).replace("\\", "/")
+    if rel.startswith(".."):
+        raise BindError("symlink_escape")
+    return rel
+
+
+def require_in_tree_symlink(root: str, link_path: str, target: str) -> str:
     """Allow bun's in-tree ``node_modules/.bin`` links; refuse abs/escape.
 
     Hosted run 40262408416 failed at ``hash-node-modules`` with
     ``BindError: symlink`` because ``walk_files`` treated those relative
     links as hostile. Callers must not put the path into the public log.
     """
-    if not target or "\0" in target or "\n" in target or "\r" in target:
-        raise BindError("symlink")
-    if os.path.isabs(target):
-        raise BindError("symlink_abs")
-    try:
-        resolved = (Path(link_path).parent / target).resolve()
-        resolved.relative_to(Path(root).resolve())
-    except (OSError, ValueError) as exc:
-        raise BindError("symlink_escape") from exc
+    return lexical_in_tree_dest(root, link_path, target)
 
 
 def walk_files(root: str, *, skip_dirs: Sequence[str] = ()) -> List[str]:
@@ -308,16 +329,16 @@ def iter_tree_entries(root: str) -> List[Tuple[str, str, str]]:
                 continue
             rel = _rel_posix(base, full)
             target = os.readlink(full)
-            require_in_tree_symlink(root, str(full), target)
-            entries.append((rel, "symlink", target))
+            lexical = require_in_tree_symlink(root, str(full), target)
+            entries.append((rel, "symlink", target + "\0" + lexical))
             dirnames.remove(name)
         for name in filenames:
             full = Path(dirpath) / name
             rel = _rel_posix(base, full)
             if full.is_symlink():
                 target = os.readlink(full)
-                require_in_tree_symlink(root, str(full), target)
-                entries.append((rel, "symlink", target))
+                lexical = require_in_tree_symlink(root, str(full), target)
+                entries.append((rel, "symlink", target + "\0" + lexical))
             elif full.is_file():
                 entries.append((rel, "file", sha256_file(str(full))))
             else:
@@ -330,7 +351,8 @@ def tree_digest(root: str) -> str:
     """Ordered digest of regular files and in-tree relative symlink targets.
 
     File records stay ``rel\\0sha256\\n`` so a symlink-free tree matches the
-    pre-40262408416 hasher. Symlinks append ``rel\\0symlink\\0target\\n``.
+    pre-40262408416 hasher. Symlinks append
+    ``rel\\0symlink\\0target\\0lexical_rel\\n``.
     """
     digest = hashlib.sha256()
     base = Path(root)

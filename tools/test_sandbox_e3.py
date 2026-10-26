@@ -392,6 +392,42 @@ class NodeModulesDigestTests(unittest.TestCase):
             self.assertEqual(str(ctx.exception), "symlink_escape")
 
     @unittest.skipIf(os.name == "nt", "POSIX symlink fixture")
+    def test_lexical_bounce_through_outside_symlink_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            nm = Path(tmp) / "node_modules"
+            pkg = nm / "pkg"
+            pkg.mkdir(parents=True)
+            (pkg / "cli.js").write_text("console.log(1)\n", encoding="utf-8")
+            (nm / ".bin").mkdir()
+            outside = Path(tmp) / "outside"
+            outside.mkdir()
+            os.symlink(pkg, outside / "back")
+            bounce = os.path.relpath(outside / "back" / "cli.js", nm / ".bin")
+            self.assertFalse(os.path.isabs(bounce))
+            os.symlink(bounce, nm / ".bin" / "cli")
+            # Following intermediates would land back in pkg/; lexical path leaves nm.
+            with self.assertRaises(bind.BindError) as ctx:
+                bind.tree_digest(str(nm))
+            self.assertEqual(str(ctx.exception), "symlink_escape")
+            bind.require_in_tree_symlink(
+                str(nm), str(nm / ".bin" / "ok"), "../pkg/cli.js"
+            )
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink fixture")
+    def test_dotbin_through_in_tree_dir_symlink_is_hashed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            nm = Path(tmp) / "node_modules"
+            real = nm / ".bun" / "pkg@1"
+            real.mkdir(parents=True)
+            (real / "cli.js").write_text("console.log(1)\n", encoding="utf-8")
+            os.symlink(".bun/pkg@1", nm / "pkg")
+            (nm / ".bin").mkdir()
+            os.symlink("../pkg/cli.js", nm / ".bin" / "cli")
+            digest = bind.tree_digest(str(nm))
+            self.assertEqual(len(digest), 64)
+            self.assertEqual(digest, bind.tree_digest(str(nm)))
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink fixture")
     def test_directory_symlink_is_recorded_and_not_followed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             nm = Path(tmp) / "node_modules"
