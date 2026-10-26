@@ -55,6 +55,7 @@ on:
       - "scripts/ci/sandbox_e3_bind.py"
       - "scripts/ci/sandbox_e3_bootstrap.sh"
       - "scripts/ci/sandbox_e3_cli_pin.sh"
+      - "scripts/ci/sandbox_e3_action_bun.sh"
       - "scripts/ci/sandbox_*.c"
       - "scripts/ci/sandbox_*.h"
       - "scripts/ci/sandbox_c.pin"
@@ -454,6 +455,7 @@ jobs:
           install -m 0444 "$TRUSTED/sandbox_relay.c" /opt/csl-claude/src/sandbox_relay.c
           install -m 0444 "$TRUSTED/sandbox_c.pin" /opt/csl-claude/lib/sandbox_c.pin
           install -m 0755 "$TRUSTED/sandbox_e3_cli_pin.sh" /opt/csl-claude/lib/sandbox_e3_cli_pin.sh
+          install -m 0755 "$TRUSTED/sandbox_e3_action_bun.sh" /opt/csl-claude/lib/sandbox_e3_action_bun.sh
 
       - name: E3-0-early root bootstrap
         shell: /usr/bin/sudo -n /bin/bash --noprofile --norc -e -o pipefail {0}
@@ -546,7 +548,7 @@ jobs:
           # CSL-383: no post-step that publishes the model-writable inline-comment
           # buffer (/tmp/inline-comments-buffer.jsonl) with a write token.
           classify_inline_comments: "false"
-          path_to_bun_executable: /opt/csl-bun/bun
+          path_to_bun_executable: /opt/csl-bun-action/bun
           path_to_claude_code_executable: /opt/csl-claude/launch
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Read-only job token: no OIDC App-token exchange in this job.
@@ -1347,6 +1349,7 @@ jobs:
           install -m 0444 "$TRUSTED/sandbox_relay.c" /opt/csl-claude/src/sandbox_relay.c
           install -m 0444 "$TRUSTED/sandbox_c.pin" /opt/csl-claude/lib/sandbox_c.pin
           install -m 0755 "$TRUSTED/sandbox_e3_cli_pin.sh" /opt/csl-claude/lib/sandbox_e3_cli_pin.sh
+          install -m 0755 "$TRUSTED/sandbox_e3_action_bun.sh" /opt/csl-claude/lib/sandbox_e3_action_bun.sh
 
       - name: E3-0-early root bootstrap
         shell: /usr/bin/sudo -n /bin/bash --noprofile --norc -e -o pipefail {0}
@@ -1441,7 +1444,7 @@ jobs:
           # CSL-383: no post-step that publishes the model-writable inline-comment
           # buffer (/tmp/inline-comments-buffer.jsonl) with a write token.
           classify_inline_comments: "false"
-          path_to_bun_executable: /opt/csl-bun/bun
+          path_to_bun_executable: /opt/csl-bun-action/bun
           path_to_claude_code_executable: /opt/csl-claude/launch
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Read-only job token: no OIDC App-token exchange in this job.

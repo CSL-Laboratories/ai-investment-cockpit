@@ -29,6 +29,7 @@ PINNED = {
     "scripts/ci/sandbox_e3_record.py": None,
     "scripts/ci/sandbox_e3_bind.py": None,
     "scripts/ci/sandbox_e3_bootstrap.sh": None,
+    "scripts/ci/sandbox_e3_action_bun.sh": None,
 }
 
 CLI_SHA = "520bc6c1f40af466bd03a278b5ae1af1a2938bc7de5b9e5cb15526da20d71cfe"
@@ -50,6 +51,7 @@ BANNED_CLAUDE_HEREDOCS = (
     "CSL_E3_RECORD",
     "CSL_E3_BIND",
     "CSL_E3_BOOTSTRAP",
+    "CSL_E3_ACTION_BUN",
     "CSL_E3_CLI_PIN",
     "CLAUDE_FIXER_OUTBOX",
     "CLAUDE_FIXER_RECEIPTS",

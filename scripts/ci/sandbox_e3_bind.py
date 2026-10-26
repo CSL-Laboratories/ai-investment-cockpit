@@ -392,6 +392,32 @@ def worker_ns_mnt(path: str, expected: str) -> None:
         raise BindError("ns_mnt")
 
 
+_HEX64 = frozenset("0123456789abcdef")
+
+
+def check_node_modules_digest(
+    action_dir: str = ACTION_DIR, state_dir: str = RELAY_STATE
+) -> str:
+    """Fail closed unless ``$AP/node_modules`` matches the 0b digest.
+
+    Hosted 40359709793: the action's ``bun install --production`` collided
+    (EEXIST) with the already-populated, remount-ro tree. The action-PATH
+    wrapper calls this instead of the ELF; it must not fall through to
+    ``bun install``.
+    """
+    digest_path = Path(state_dir, "node_modules.digest")
+    try:
+        expected = digest_path.read_text(encoding="ascii").strip()
+    except OSError as exc:
+        raise BindError("node_modules") from exc
+    if len(expected) != 64 or any(char not in _HEX64 for char in expected):
+        raise BindError("node_modules")
+    got = tree_digest(os.path.join(action_dir, "node_modules"))
+    if got != expected:
+        raise BindError("node_modules")
+    return got
+
+
 def main(argv: Sequence[str]) -> int:
     sys.tracebacklimit = 0
     cmd = argv[1] if len(argv) > 1 else ""
@@ -427,6 +453,10 @@ def main(argv: Sequence[str]) -> int:
         digest = tree_digest(os.path.join(action_dir, "node_modules"))
         Path(state_dir, "node_modules.digest").write_text(digest + "\n", encoding="ascii")
         return 0
+    if cmd == "check-node-modules":
+        check_node_modules_digest()
+        sys.stdout.write("node_modules_digest_ok\n")
+        return 0
     if cmd == "hash-setup-bun":
         digest = tree_digest(SETUP_BUN_DIR)
         Path(state_dir, "setup-bun.digest").write_text(digest + "\n", encoding="ascii")
@@ -434,9 +464,7 @@ def main(argv: Sequence[str]) -> int:
     if cmd == "observe":
         pins = verify_pins(action_dir=action_dir)
         sys.stdout.write(f"sdk_disk_match={pins['sdk_disk_match']}\n")
-        nm = Path(state_dir, "node_modules.digest").read_text(encoding="ascii").strip()
-        if tree_digest(os.path.join(action_dir, "node_modules")) != nm:
-            raise BindError("node_modules")
+        check_node_modules_digest(action_dir=action_dir, state_dir=state_dir)
         bun = Path(state_dir, "setup-bun.digest").read_text(encoding="ascii").strip()
         if tree_digest(SETUP_BUN_DIR) != bun:
             raise BindError("setup_bun")

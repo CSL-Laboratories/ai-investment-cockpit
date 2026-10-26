@@ -48,6 +48,7 @@ CAT_FILES = {
     "CSL_C_RELAY": ("sandbox_relay.c", "0444"),
     "CSL_C_PIN": ("sandbox_c.pin", "0444"),
     "CSL_E3_CLI_PIN": ("sandbox_e3_cli_pin.sh", "0755"),
+    "CSL_E3_ACTION_BUN": ("sandbox_e3_action_bun.sh", "0755"),
     "CSL_E3_BOOTSTRAP": ("sandbox_e3_bootstrap.sh", "0755"),
     "CLAUDE_FIXER_RECEIPTS": ("claude_fixer_receipts.py", "0444"),
     "CLAUDE_FIXER_PUBLISH": ("claude_fixer_publish.py", "0444"),
