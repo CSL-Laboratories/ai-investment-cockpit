@@ -242,6 +242,7 @@ class TestSourceGuardTests(unittest.TestCase):
                      'tools/test_review_gate.py', 'tools/test_queue_gates.py',
                      'tools/test_ci_cancel_controller.py', 'tools/test_candidate_workflows.py',
                      'tools/test_workflow_size.py',
+                     'tools/test_sandbox_e3.py',
                      'tools/test_run_gates_action.py', 'app/tests/test_o7_operator_contract.py'):
             self.assertIn(name, sources)
         self.assertNotIn(SELF, sources)

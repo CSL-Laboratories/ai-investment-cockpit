@@ -5,6 +5,7 @@ Run: python3 -X utf8 -B tools/test_sandbox_e3.py
 """
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import os
 import stat
@@ -323,6 +324,155 @@ class GitTreeTests(unittest.TestCase):
             (Path(tmp) / "bin" / "bun").write_bytes(b"bun")
             with self.assertRaises(bind.BindError):
                 bind.check_git_tree(tmp, ls, skip_dirs=())
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink fixture")
+    def test_git_tree_still_rejects_source_symlinks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "action.yml").write_text("name: pin\n", encoding="utf-8")
+            os.symlink("action.yml", str(Path(tmp) / "link.yml"))
+            blob = bind.git_blob_sha1(str(Path(tmp) / "action.yml"))
+            ls = f"100644 blob {blob}\taction.yml\n"
+            with self.assertRaises(bind.BindError) as ctx:
+                bind.check_git_tree(tmp, ls, skip_dirs=())
+            self.assertEqual(str(ctx.exception), "symlink")
+
+
+class NodeModulesDigestTests(unittest.TestCase):
+    """Hosted 40262408416: bun's node_modules/.bin links tripped BindError: symlink."""
+
+    def _bun_style_node_modules(self, tmp: str) -> Path:
+        nm = Path(tmp) / "node_modules"
+        pkg = nm / "pkg"
+        pkg.mkdir(parents=True)
+        (pkg / "cli.js").write_text("console.log(1)\n", encoding="utf-8")
+        (pkg / "index.js").write_text("export {}\n", encoding="utf-8")
+        binv = nm / ".bin"
+        binv.mkdir()
+        os.symlink("../pkg/cli.js", binv / "cli")
+        return nm
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink fixture")
+    def test_bun_style_dotbin_relative_symlink_is_hashed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            nm = self._bun_style_node_modules(tmp)
+            digest = bind.tree_digest(str(nm))
+            self.assertEqual(len(digest), 64)
+            self.assertEqual(digest, bind.tree_digest(str(nm)))
+            os.remove(nm / ".bin" / "cli")
+            os.symlink("../pkg/index.js", nm / ".bin" / "cli")
+            self.assertNotEqual(digest, bind.tree_digest(str(nm)))
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink fixture")
+    def test_file_only_tree_digest_matches_pre_symlink_format(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "action.yml"
+            path.write_text("name: pin\n", encoding="utf-8")
+            rel = "action.yml"
+            expected = hashlib.sha256()
+            expected.update(rel.encode("utf-8"))
+            expected.update(b"\0")
+            expected.update(bind.sha256_file(str(path)).encode("ascii"))
+            expected.update(b"\n")
+            self.assertEqual(bind.tree_digest(tmp), expected.hexdigest())
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink fixture")
+    def test_absolute_and_escaping_symlinks_still_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            nm = Path(tmp) / "node_modules"
+            nm.mkdir()
+            (nm / "ok.txt").write_text("x\n", encoding="utf-8")
+            os.symlink("/etc/passwd", nm / "abs")
+            with self.assertRaises(bind.BindError) as ctx:
+                bind.tree_digest(str(nm))
+            self.assertEqual(str(ctx.exception), "symlink_abs")
+            os.remove(nm / "abs")
+            os.symlink("../../etc/passwd", nm / "escape")
+            with self.assertRaises(bind.BindError) as ctx:
+                bind.tree_digest(str(nm))
+            self.assertEqual(str(ctx.exception), "symlink_escape")
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink fixture")
+    def test_lexical_bounce_through_outside_symlink_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            nm = Path(tmp) / "node_modules"
+            pkg = nm / "pkg"
+            pkg.mkdir(parents=True)
+            (pkg / "cli.js").write_text("console.log(1)\n", encoding="utf-8")
+            (nm / ".bin").mkdir()
+            outside = Path(tmp) / "outside"
+            outside.mkdir()
+            os.symlink(pkg, outside / "back")
+            bounce = os.path.relpath(outside / "back" / "cli.js", nm / ".bin")
+            self.assertFalse(os.path.isabs(bounce))
+            os.symlink(bounce, nm / ".bin" / "cli")
+            # Following intermediates would land back in pkg/; lexical path leaves nm.
+            with self.assertRaises(bind.BindError) as ctx:
+                bind.tree_digest(str(nm))
+            self.assertEqual(str(ctx.exception), "symlink_escape")
+            bind.require_in_tree_symlink(
+                str(nm), str(nm / ".bin" / "ok"), "../pkg/cli.js"
+            )
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink fixture")
+    def test_dotdot_after_in_tree_symlink_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            nm = Path(tmp) / "node_modules"
+            sub = nm / "sub"
+            sub.mkdir(parents=True)
+            os.symlink("..", sub / "a")
+            os.symlink("sub/a/../../outside.js", nm / "cli")
+            (Path(tmp) / "outside.js").write_text("pwned\n", encoding="utf-8")
+            with self.assertRaises(bind.BindError) as ctx:
+                bind.tree_digest(str(nm))
+            self.assertEqual(str(ctx.exception), "symlink_escape")
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink fixture")
+    def test_symlinked_ancestor_of_root_still_hashes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            real = Path(tmp) / "real"
+            nm = real / "nm"
+            pkg = nm / "pkg"
+            pkg.mkdir(parents=True)
+            (pkg / "cli.js").write_text("console.log(1)\n", encoding="utf-8")
+            (nm / ".bin").mkdir()
+            os.symlink("../pkg/cli.js", nm / ".bin" / "cli")
+            alias = Path(tmp) / "alias"
+            os.symlink(real, alias)
+            via_alias = alias / "nm"
+            digest = bind.tree_digest(str(nm))
+            self.assertEqual(digest, bind.tree_digest(str(via_alias)))
+            self.assertEqual(len(digest), 64)
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink fixture")
+    def test_dotbin_through_in_tree_dir_symlink_is_hashed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            nm = Path(tmp) / "node_modules"
+            real = nm / ".bun" / "pkg@1"
+            real.mkdir(parents=True)
+            (real / "cli.js").write_text("console.log(1)\n", encoding="utf-8")
+            os.symlink(".bun/pkg@1", nm / "pkg")
+            (nm / ".bin").mkdir()
+            os.symlink("../pkg/cli.js", nm / ".bin" / "cli")
+            digest = bind.tree_digest(str(nm))
+            self.assertEqual(len(digest), 64)
+            self.assertEqual(digest, bind.tree_digest(str(nm)))
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink fixture")
+    def test_directory_symlink_is_recorded_and_not_followed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            nm = Path(tmp) / "node_modules"
+            real = nm / ".bun" / "pkg@1"
+            real.mkdir(parents=True)
+            (real / "index.js").write_text("export {}\n", encoding="utf-8")
+            alias = nm / "pkg"
+            os.symlink(".bun/pkg@1", alias)
+            digest = bind.tree_digest(str(nm))
+            self.assertEqual(len(digest), 64)
+            os.remove(alias)
+            os.symlink("/tmp", alias)
+            with self.assertRaises(bind.BindError) as ctx:
+                bind.tree_digest(str(nm))
+            self.assertEqual(str(ctx.exception), "symlink_abs")
 
 
 class BootstrapContractTests(unittest.TestCase):
