@@ -25,6 +25,7 @@ from typing import Any
 import jsonschema
 
 from cockpit_spine.audit import AuditChain, AuditError, verify_chain
+from cockpit_spine.ids import is_id
 from cockpit_spine.sources import PROPOSAL_WORKLOAD, ProposalSource
 from successor.route_consumer import ACCEPTED, DECISION_PROFILE, NEEDS_HUMAN_REVIEW
 from successor.route_consumer.profile import canonical_digest, load_output_schema
@@ -45,6 +46,7 @@ UNKNOWN_PROPOSAL = "unknown_proposal"
 NOT_PENDING = "not_pending"
 DIGEST_MISMATCH = "digest_mismatch"
 OPERATOR_REQUIRED = "operator_required"
+OPERATOR_INVALID = "operator_invalid"
 REASON_REQUIRED = "reason_required"
 MODE_READ_ONLY = "mode_read_only"
 DUPLICATE_REQUEST = "duplicate_request"
@@ -79,6 +81,11 @@ def _clean(text: object, *, limit: int = MAX_REASON) -> str | None:
     return stripped
 
 
+def _clean_id(text: object, *, limit: int = 64) -> str | None:
+    cleaned = _clean(text, limit=limit)
+    return cleaned if cleaned is not None and is_id(cleaned) else None
+
+
 class OperatorSession:
     def __init__(self, *, source: ProposalSource, clock: Callable[[], str] = utc_now) -> None:
         self._source = source
@@ -99,8 +106,8 @@ class OperatorSession:
     ) -> OperatorSession:
         if mode not in SESSION_MODES:
             raise ValueError(f"mode must be one of {SESSION_MODES}; auto rungs are not expressible")
-        if _clean(session_id, limit=64) is None:
-            raise ValueError("session_id must be short printable text")
+        if _clean_id(session_id) is None:
+            raise ValueError("session_id must be a short identifier")
         session = cls(source=source, clock=clock)
         session._emit("session_opened", {
             "session_id": session_id, "mode": mode, "adapter_kind": source.adapter_kind,
@@ -164,8 +171,8 @@ class OperatorSession:
                 raise AuditError("session opened twice")
             if data["mode"] not in SESSION_MODES:
                 raise AuditError("session_opened: mode is not read_only or paper")
-            if _clean(data["session_id"], limit=64) != data["session_id"]:
-                raise AuditError("session_opened: session_id is not short printable text")
+            if _clean_id(data["session_id"]) != data["session_id"]:
+                raise AuditError("session_opened: session_id is not a short identifier")
             if not isinstance(data["adapter_kind"], str):
                 raise AuditError("session_opened: adapter_kind missing")
             self.session_id, self.mode = data["session_id"], data["mode"]
@@ -239,8 +246,8 @@ class OperatorSession:
         if item is None or item["state"] != PENDING:
             raise AuditError(f"{kind}: proposal is not pending")
         operator = data["operator"]
-        if _clean(operator, limit=64) != operator:
-            raise AuditError(f"{kind}: operator is not clean text")
+        if _clean_id(operator) != operator:
+            raise AuditError(f"{kind}: operator is not a short identifier")
         if kind == "proposal_approved":
             if self.mode != "paper":
                 raise AuditError("proposal_approved: the session is not in paper mode")
@@ -255,9 +262,10 @@ class OperatorSession:
         item["operator"] = operator
 
     def _apply_stop(self, data: dict[str, Any]) -> None:
-        for field in ("operator", "reason"):
-            if _clean(data[field], limit=64 if field == "operator" else MAX_REASON) != data[field]:
-                raise AuditError(f"session_stopped: {field} is not clean text")
+        if _clean_id(data["operator"]) != data["operator"]:
+            raise AuditError("session_stopped: operator is not a short identifier")
+        if _clean(data["reason"]) != data["reason"]:
+            raise AuditError("session_stopped: reason is not clean text")
         if data["fail_closed_to"] != WATCH_ONLY:
             raise AuditError("session_stopped: must fail closed to watch_only")
         abandoned = data["abandoned"]
@@ -318,11 +326,19 @@ class OperatorSession:
         })
         return CommandResult(False, reason, record)
 
+    def _operator_refusal(self, command: str, operator: object) -> CommandResult | None:
+        if _clean(operator, limit=64) is None:
+            return self._refused(command, OPERATOR_REQUIRED)
+        if _clean_id(operator) is None:
+            return self._refused(command, OPERATOR_INVALID)
+        return None
+
     def _gate(self, command: str, proposal_id: str, operator: str) -> CommandResult | None:
         if self.stopped:
             return self._refused(command, SESSION_STOPPED, proposal_id=str(proposal_id)[:64])
-        if _clean(operator, limit=64) is None:
-            return self._refused(command, OPERATOR_REQUIRED)
+        refusal = self._operator_refusal(command, operator)
+        if refusal is not None:
+            return refusal
         item = self._proposals.get(proposal_id) if isinstance(proposal_id, str) else None
         if item is None:
             return self._refused(command, UNKNOWN_PROPOSAL)
@@ -365,8 +381,9 @@ class OperatorSession:
     def stop(self, *, operator: str, reason: str) -> CommandResult:
         if self.stopped:
             return self._refused("stop", SESSION_STOPPED)
-        if _clean(operator, limit=64) is None:
-            return self._refused("stop", OPERATOR_REQUIRED)
+        refusal = self._operator_refusal("stop", operator)
+        if refusal is not None:
+            return refusal
         cleaned = _clean(reason)
         if cleaned is None:
             return self._refused("stop", REASON_REQUIRED)

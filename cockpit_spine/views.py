@@ -20,20 +20,22 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from cockpit_spine.projections import WITHHELD, Figure, Registry, render_figure
+from cockpit_spine.ids import is_id
+from cockpit_spine.projections import WITHHELD, Figure, Registry
 
 KINDS = ("id", "time", "digest", "code", "term", "figure", "text", "quoted")
 TERM_LABELS = frozenset(
     {"symbol", "side", "asset_type", "order_type", "quantity", "notional", "time_horizon"}
 )
 MAX_QUOTED = 280
-_ID = re.compile(r"^[A-Za-z0-9:/#._@\-]{1,200}$")
-_NUMERIC_ONLY = re.compile(r"^[0-9.,+\-]+$")
 _TIME = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 _CODE = re.compile(r"^[a-z][a-z_]{0,63}$")
 _TERM_VALUE = re.compile(r"^[A-Za-z0-9._\-]{1,32}$|^none$")
-_LINK = re.compile(r"^(?P<value>\S+) (?P<unit>[a-z]+) \[projection:(?P<pid>[a-z0-9._-]+)@(?P<digest>sha256:[0-9a-f]{64})\]$")
+_LINK = re.compile(
+    r"^(?P<value>\S+) (?P<unit>[a-z]+) "
+    r"\[projection:(?P<pid>[a-z0-9._-]+)@(?P<digest>sha256:[0-9a-f]{64})\]$"
+)
 _DIGIT = re.compile(r"[0-9]")
 _NUMERAL = re.compile(r"[0-9]+(?:[.,][0-9]+)*")
 UNRECOGNIZED = "unrecognized_code"
@@ -68,8 +70,8 @@ def code(label: str, value: object) -> Line:
     return Line("code", label, text)
 
 
-def figure(label: str, item: Figure | None) -> Line:
-    return Line("figure", label, render_figure(item))
+def figure(label: str, item: Figure | None, registry: Registry) -> Line:
+    return Line("figure", label, registry.render(item))
 
 
 def term(label: str, value: object) -> Line:
@@ -91,7 +93,7 @@ def validate_lines(lines: list[Line], registry: Registry) -> None:
             if _DIGIT.search(value) or len(value) > MAX_QUOTED:
                 raise ViewError(f"{where}: quoted text carries an unmasked numeral")
         elif item.kind == "id":
-            if not _ID.match(value) or _NUMERIC_ONLY.match(value):
+            if not is_id(value):
                 raise ViewError(f"{where}: not an identifier")
         elif item.kind == "time":
             if not _TIME.match(value):
@@ -122,6 +124,31 @@ def _validate_figure(where: str, value: str, registry: Registry) -> None:
     if (projection.digest != match["digest"] or projection.unit != match["unit"]
             or str(projection.value) != match["value"]):
         raise ViewError(f"{where}: displayed number differs from its projection")
+
+
+WITHHELD_LINE = Line("text", "withheld line", "line withheld: it failed view validation")
+
+
+def sanitize_lines(lines: list[Line], registry: Registry) -> tuple[list[Line], int]:
+    """Replace each line that fails validation with a withheld marker.
+
+    A rejected line costs only itself. The caller keeps the truth about the command
+    it ran, and every other line (digests, states, the stop control's result)
+    still shows. Returns the safe lines and how many were withheld.
+    """
+
+    safe: list[Line] = []
+    withheld = 0
+    for item in lines:
+        try:
+            validate_lines([item], registry)
+        except ViewError:
+            safe.append(WITHHELD_LINE)
+            withheld += 1
+        else:
+            safe.append(item)
+    validate_lines(safe, registry)
+    return safe, withheld
 
 
 def render_text(lines: list[Line]) -> str:

@@ -5,8 +5,8 @@ one JSON record per line; each invocation verifies it, replays it into a
 session, applies one command through ``OperatorService`` and writes the chain
 back. A broken chain is refused (exit 3) and never repaired.
 
-Exit codes: 0 done, 2 the command was refused (the refusal is audited), 3 the
-log or the arguments are unusable.
+Exit codes: 0 done (also --help), 2 the command was refused (the refusal is
+audited), 3 the log or the arguments are unusable.
 """
 
 from __future__ import annotations
@@ -92,8 +92,8 @@ def main(
     out = out or sys.stdout
     try:
         namespace = build_parser().parse_args(argv)
-    except SystemExit:
-        return EXIT_UNUSABLE
+    except SystemExit as stop:
+        return EXIT_OK if stop.code in (0, None) else EXIT_UNUSABLE
     try:
         registry = load_registry()
         source = source_factory()

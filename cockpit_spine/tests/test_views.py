@@ -7,7 +7,7 @@ from cockpit_spine import views
 from cockpit_spine.views import Line, ViewError
 
 REGISTRY = proj.load_registry()
-GOOD_LINK = REGISTRY.figure("x2-fake-driver-cells-accepted").text()
+GOOD_LINK = REGISTRY.render_id("x2-fake-driver-cells-accepted")
 
 
 def check(*lines: Line) -> None:
@@ -25,8 +25,8 @@ class AcceptedLineTests(unittest.TestCase):
             Line("term", "notional", "none"),
             Line("text", "state", "running"),
             Line("quoted", "thesis", "masked [n] text"),
-            views.figure("accepted", REGISTRY.figure("x2-fake-driver-cells-accepted")),
-            views.figure("withheld", None),
+            views.figure("accepted", REGISTRY.figure("x2-fake-driver-cells-accepted"), REGISTRY),
+            views.figure("withheld", None, REGISTRY),
         )
 
 
@@ -43,7 +43,8 @@ class UnlinkedNumberTests(unittest.TestCase):
         self.assertRejected(Line("figure", "accepted", GOOD_LINK.replace("15 cells", "16 cells")))
         self.assertRejected(Line("figure", "accepted", GOOD_LINK.replace("cells", "rows")))
         digest = REGISTRY.get("x2-fake-driver-cells-accepted").digest
-        self.assertRejected(Line("figure", "accepted", GOOD_LINK.replace(digest, "sha256:" + "0" * 64)))
+        self.assertRejected(
+            Line("figure", "accepted", GOOD_LINK.replace(digest, "sha256:" + "0" * 64)))
 
     def test_a_link_to_another_projections_number_is_rejected(self) -> None:
         other = REGISTRY.figure("x2-fake-driver-cells-total")
@@ -86,6 +87,36 @@ class MaskTests(unittest.TestCase):
         for bad in ("http_429", "Upper", "", None, 7, "x" * 70):
             self.assertEqual(views.UNRECOGNIZED, views.code("result", bad).value)
         self.assertEqual("timeout", views.code("result", "timeout").value)
+
+
+class SanitizeTests(unittest.TestCase):
+    def test_a_bad_line_costs_only_itself(self) -> None:
+        good = Line("id", "session", "s-1")
+        bad = Line("text", "state", "up 12 percent")
+        safe, withheld = views.sanitize_lines([good, bad, good], REGISTRY)
+        self.assertEqual(1, withheld)
+        self.assertEqual([good, views.WITHHELD_LINE, good], safe)
+        views.validate_lines(safe, REGISTRY)
+        self.assertNotRegex(views.render_text(safe), r"12")
+
+    def test_all_good_lines_pass_through_untouched(self) -> None:
+        lines = [Line("id", "session", "s-1"), Line("code", "result", "stopped")]
+        self.assertEqual((lines, 0), views.sanitize_lines(lines, REGISTRY))
+
+    def test_a_forged_figure_line_is_withheld_not_shown(self) -> None:
+        forged = Line("figure", "accepted", "99 cells [projection:x@sha256:" + "0" * 64 + "]")
+        safe, withheld = views.sanitize_lines([forged], REGISTRY)
+        self.assertEqual((1, [views.WITHHELD_LINE]), (withheld, safe))
+
+
+class IdentifierTests(unittest.TestCase):
+    def test_numeric_only_and_spaced_strings_are_not_identifiers(self) -> None:
+        from cockpit_spine.ids import is_id
+
+        for bad in ("Samir Shah", "a,b", "123456", "1.5", "", " ", None, 5, "x" * 201):
+            self.assertFalse(is_id(bad), repr(bad))
+        for good in ("operator-1", "a:b/c#d.e_f@g", "parquet://2026-10-26/events-1#0"):
+            self.assertTrue(is_id(good), good)
 
 
 if __name__ == "__main__":

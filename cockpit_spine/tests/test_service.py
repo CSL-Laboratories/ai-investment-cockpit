@@ -103,19 +103,25 @@ class FlowTests(unittest.TestCase):
                 if item["kind"] in ("text", "quoted", "code"):
                     self.assertNotRegex(item["value"], r"[0-9]", item)
                 if item["kind"] == "figure":
-                    self.assertRegex(item["value"], r"\[projection:[a-z0-9._-]+@sha256:[0-9a-f]{64}\]$")
+                    self.assertRegex(
+                        item["value"], r"\[projection:[a-z0-9._-]+@sha256:[0-9a-f]{64}\]$")
 
     def test_model_prose_numerals_are_masked_in_the_view_but_kept_in_the_record(self) -> None:
         payload = proposal_payload(thesis="Up 12 percent by 2027.", invalidation="Below 3.5.")
         service = make(accepted(payload))
         response = call(service, "propose", request_id="req-1")
-        self.assertEqual("Up [n] percent by [n].", value(response, "thesis (model text, unverified)"))
+        self.assertEqual(
+            "Up [n] percent by [n].", value(response, "thesis (model text, unverified)"))
         self.assertEqual(payload, service.session.proposal("prop-1")["payload"])
 
-    def test_a_response_that_would_show_an_unlinked_number_is_replaced(self) -> None:
+    def test_a_line_that_would_show_an_unlinked_number_is_withheld_not_the_truth(self) -> None:
         service = make()
-        response = service._reply(True, "x", [views.Line("text", "state", "up 12 percent")])
-        self.assertEqual((False, svc.VIEW_REJECTED, []), (response["ok"], response["code"], response["lines"]))
+        response = service._reply(True, "x", [views.Line("text", "state", "up 12 percent"),
+                                              views.Line("id", "session", "s-1")])
+        self.assertEqual((True, "x", 1), (response["ok"], response["code"], response["withheld"]))
+        self.assertEqual([views.WITHHELD_LINE.as_dict(),
+                          views.Line("id", "session", "s-1").as_dict()], response["lines"])
+        self.assertNotIn("12", str(response["lines"]))
 
     def test_audit_view_lists_every_record_with_time_and_hash(self) -> None:
         r = self.flow()[-1]
@@ -127,8 +133,88 @@ class FlowTests(unittest.TestCase):
     def test_read_only_mode_refuses_approval_through_the_service_too(self) -> None:
         service = make(accepted(proposal_payload()), mode="read_only")
         digest = value(call(service, "propose", request_id="req-1"), "confirm digest")
-        response = call(service, "approve", proposal_id="prop-1", operator=OP, confirm_digest=digest)
+        response = call(
+            service, "approve", proposal_id="prop-1", operator=OP, confirm_digest=digest)
         self.assertEqual((False, "mode_read_only"), (response["ok"], response["code"]))
+
+
+class AppliedChangeIsNeverHiddenTests(unittest.TestCase):
+    """Samir's reproductions: a recorded change must be reported as it happened."""
+
+    def labels(self, response: dict) -> list[str]:
+        return [item["label"] for item in response["lines"]]
+
+    def test_an_operator_name_with_a_space_is_refused_before_anything_is_recorded(self) -> None:
+        service = make(accepted(proposal_payload()))
+        digest = value(call(service, "propose", request_id="r1"), "confirm digest")
+        before = [r["kind"] for r in service.session.records()]
+        for command, args in (
+            ("veto", {"reason": "no"}),
+            ("approve", {"confirm_digest": digest}),
+            ("stop", {"reason": "halt"}),
+        ):
+            extra = {} if command == "stop" else {"proposal_id": "prop-1"}
+            response = call(service, command, operator="Samir Shah", **extra, **args)
+            self.assertEqual((False, sess.OPERATOR_INVALID), (response["ok"], response["code"]))
+        kinds = [r["kind"] for r in service.session.records()]
+        self.assertEqual(before + ["command_refused"] * 3, kinds)
+        self.assertEqual("pending", service.session.proposal("prop-1")["state"])
+        status = call(service, "status")
+        self.assertTrue(status["ok"])
+        self.assertEqual(0, status["withheld"])
+        self.assertGreater(len(status["lines"]), 5)
+
+    def test_two_source_refs_each_show_and_the_confirm_digest_is_visible(self) -> None:
+        refs = ["parquet://2026-10-26/events-1#0", "parquet://2026-10-26/events-1#1"]
+        service = make(accepted(proposal_payload(source_refs=refs)))
+        response = call(service, "propose", request_id="r1")
+        self.assertEqual((True, "proposal_received", 0), (
+            response["ok"], response["code"], response["withheld"]))
+        shown = [i["value"] for i in response["lines"] if i["label"] == "source ref"]
+        self.assertEqual(refs, shown)
+        self.assertRegex(value(response, "confirm digest"), r"^sha256:[0-9a-f]{64}$")
+
+    def test_a_stop_that_took_effect_reports_ok_even_when_a_line_is_withheld(self) -> None:
+        service = make(accepted(proposal_payload("123456")))
+        response = call(service, "propose", request_id="r1")
+        self.assertEqual((True, "proposal_received"), (response["ok"], response["code"]))
+        self.assertEqual(1, response["withheld"])
+        self.assertIn("withheld line", self.labels(response))
+        self.assertRegex(value(response, "confirm digest"), r"^sha256:")
+        stopped = call(service, "stop", operator=OP, reason="halt")
+        self.assertEqual((True, "stopped"), (stopped["ok"], stopped["code"]))
+        self.assertTrue(service.session.stopped)
+        self.assertEqual(1, stopped["withheld"])
+
+    def test_after_a_withheld_line_every_later_status_still_works(self) -> None:
+        service = make(accepted(proposal_payload("123456")))
+        call(service, "propose", request_id="r1")
+        for _ in range(2):
+            status = call(service, "status")
+            self.assertTrue(status["ok"])
+            self.assertEqual("status", status["code"])
+            self.assertGreater(len(status["lines"]), 5)
+        self.assertEqual("stopped, watch_only" if service.session.stopped else "running",
+                         value(status, "state"))
+
+    def test_a_numeric_only_source_ref_is_withheld_alone(self) -> None:
+        service = make(accepted(proposal_payload(source_refs=["20261026", "ref-ok"])))
+        response = call(service, "propose", request_id="r1")
+        self.assertEqual(1, response["withheld"])
+        self.assertIn("ref-ok", [i["value"] for i in response["lines"]])
+        self.assertNotIn("20261026", str(response["lines"]))
+
+    def test_an_invalid_operator_id_never_reaches_the_transcript_via_replay(self) -> None:
+        from cockpit_spine.audit import AuditChain, AuditError
+
+        chain = AuditChain()
+        chain.append("session_opened", {"session_id": "s", "mode": "paper",
+                                        "adapter_kind": "fake", "at": "t"})
+        chain.append("session_stopped", {"operator": "Samir Shah", "reason": "r",
+                                         "abandoned": [], "fail_closed_to": "watch_only",
+                                         "at": "t"})
+        with self.assertRaises(AuditError):
+            sess.OperatorSession.replay(chain.records(), source=ScriptedSource())
 
 
 if __name__ == "__main__":
