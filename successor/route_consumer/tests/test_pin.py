@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import re
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -103,9 +103,62 @@ class CheckoutPinTests(unittest.TestCase):
     def test_head_matches_when_the_checkout_is_a_git_tree(self) -> None:
         if not (self.root / ".git").exists():
             self.skipTest("checkout is not a git tree; file digests above are the proof")
-        head = (self.root / ".git" / "HEAD").read_text(encoding="utf-8").strip()
-        if re.fullmatch(r"[0-9a-f]{40}", head):
-            self.assertEqual(pin.pinned_head(), head)
+        head = bridge.checkout_head(self.root)
+        self.assertRegex(head, r"^[0-9a-f]{40}$", "git rev-parse HEAD failed on the checkout")
+        self.assertEqual(pin.pinned_head(), head)
+
+
+def _git(cwd: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+         "-c", "commit.gpgsign=false", *args],
+        cwd=cwd, capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+
+class CheckoutHeadTests(unittest.TestCase):
+    """verify_checkout compares the real git HEAD on a plain clone, a branch and a worktree."""
+
+    def setUp(self) -> None:
+        if shutil.which("git") is None:
+            self.skipTest("git is not installed")
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name)
+        self.repo = base / "repo"
+        self.repo.mkdir()
+        _git(self.repo, "init", "-q", "-b", "main")
+        (self.repo / "README").write_text("x", encoding="utf-8")
+        _git(self.repo, "add", "README")
+        _git(self.repo, "commit", "-q", "-m", "one")
+        self.first = _git(self.repo, "rev-parse", "HEAD")
+        (self.repo / "README").write_text("y", encoding="utf-8")
+        _git(self.repo, "commit", "-q", "-am", "two")
+        self.second = _git(self.repo, "rev-parse", "HEAD")
+        _git(self.repo, "worktree", "add", "-q", "--detach", str(base / "wt"), self.first)
+        self.worktree = base / "wt"
+
+    def verify_with_pin(self, root: Path, pinned: str) -> None:
+        with mock.patch.object(pin, "load_pin", return_value={
+            "subject_manifest": {}, "vendored": {}, "source": {"head_sha": pinned},
+        }), mock.patch.object(pin, "pinned_head", return_value=pinned):
+            bridge.verify_checkout(root)
+
+    def test_worktree_has_a_gitfile_and_head_is_read_through_git(self) -> None:
+        self.assertTrue((self.worktree / ".git").is_file())
+        self.assertEqual(self.first, bridge.checkout_head(self.worktree))
+
+    def test_a_matching_head_passes_on_a_branch_checkout_and_a_worktree(self) -> None:
+        self.assertTrue((self.repo / ".git").is_dir())
+        self.assertTrue(_git(self.repo, "symbolic-ref", "HEAD").startswith("refs/heads/"))
+        self.verify_with_pin(self.repo, self.second)
+        self.verify_with_pin(self.worktree, self.first)
+
+    def test_a_head_that_is_not_the_pin_is_refused_on_both(self) -> None:
+        for root, other in ((self.repo, self.first), (self.worktree, self.second)):
+            with self.assertRaises(bridge.CheckoutError) as caught:
+                self.verify_with_pin(root, other)
+            self.assertIn("is not the pin", str(caught.exception))
 
 
 if __name__ == "__main__":
