@@ -30,6 +30,10 @@ WRITE_ATTRIBUTES = frozenset({
 })
 
 
+def _dunder(name: str) -> bool:
+    return len(name) > 4 and name.startswith("__") and name.endswith("__")
+
+
 def write_capability_problems(source: str) -> list[str]:
     """Why a module could write, or reach something that can. Allow-list, not deny-list."""
 
@@ -42,9 +46,13 @@ def write_capability_problems(source: str) -> list[str]:
             module = ("." * node.level) + (node.module or "")
             if node.level or module not in ALLOWED_IMPORT_MODULES:
                 problems.append(f"from {module} import ...")
-        elif isinstance(node, ast.Name) and node.id in FORBIDDEN_NAMES:
+        elif isinstance(node, ast.Name) and (
+            node.id in FORBIDDEN_NAMES or node.id == "__builtins__"
+        ):
             problems.append(f"name {node.id}")
-        elif isinstance(node, ast.Attribute) and node.attr in WRITE_ATTRIBUTES | FORBIDDEN_NAMES:
+        elif isinstance(node, ast.Attribute) and (
+            node.attr in WRITE_ATTRIBUTES | FORBIDDEN_NAMES or _dunder(node.attr)
+        ):
             problems.append(f"attribute {node.attr}")
         elif isinstance(node, ast.Constant) and node.value in FORBIDDEN_NAMES - {"open", "print"}:
             problems.append(f"string {node.value!r}")
@@ -178,6 +186,8 @@ class BlockedOnWp8Tests(unittest.TestCase):
             "open('x', 'w')", "__import__('os')", "exec('x')", "eval('x')",
             "getattr(object, 'x')", "x.write_text('y')", "x.unlink()",
             "import successor.other",
+            "__builtins__['open']", "canonical_digest.__globals__",
+            "type(x).__subclasses__()", "x.__dict__", "x.__class__",
         ):
             self.assertTrue(write_capability_problems(snippet), snippet)
 
