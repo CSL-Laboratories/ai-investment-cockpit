@@ -5,10 +5,11 @@ is whole. The chain verifies and replays under the session rules, and the step
 transcript is bound to that chain: every step's head must be a chain hash, heads
 may only move forward, and the chain records a step added (none for status and
 audit, one or two for a command) must be exactly the event its command, arguments,
-``ok`` and ``code`` claim. The lines the operator saw are rebuilt from the
+``ok`` and ``code`` claim. The response the operator got is rebuilt from the
 replayed session at that head, using the same ``OperatorService`` rendering the
-CLI uses, and must match exactly (result, state, mode, authority, and anything
-added later). The steps must cover the whole chain, every displayed number in
+CLI uses, and must match exactly (``api``, ``ok``, ``code``, ``head``,
+``withheld``, ``lines``, and no extra keys). The steps must cover the whole
+chain, every displayed number in
 every step is a verified published-tier link, and approve, veto and stop each
 happened. Malformed input is reported as a problem, never raised.
 """
@@ -21,8 +22,9 @@ from cockpit_spine import views
 from cockpit_spine.audit import AuditError, verify_chain
 from cockpit_spine.projections import Registry
 from cockpit_spine.service import OperatorService
-from cockpit_spine.session import OperatorSession
+from cockpit_spine.session import CommandResult, OperatorSession, _clean
 from cockpit_spine.sources import ProposalSource
+from successor.route_consumer.records import prompt_digest
 
 REQUIRED_CODES = ("approved", "vetoed", "stopped")
 EXPECTED_KIND = "operator session transcript; not a model comparison; no CP7 result; no verdict"
@@ -69,7 +71,7 @@ def _check_step(
         claim(False, _expected_code(data[0].get("code")), f"{actor} refusal")
 
     def same(label: str, flag: str, recorded: object, index: int = 0) -> None:
-        if _flag(argv, flag) != recorded:
+        if _as_stored(flag, _flag(argv, flag)) != recorded:
             found.append(f"{command}: {label} differs from the chain record {index}")
 
     if command in ("status", "audit"):
@@ -89,6 +91,9 @@ def _check_step(
         elif kinds in (["proposal_requested", "proposal_received"],
                        ["proposal_requested", "proposal_refused"]):
             same("request id", "--request-id", data[0].get("request_id"))
+            prompt = _flag(argv, "--prompt")
+            if prompt_digest("" if prompt is None else prompt) != data[0].get("prompt_digest"):
+                found.append(f"{command}: prompt differs from the chain record")
             if data[1].get("request_id") != data[0].get("request_id"):
                 found.append("propose: outcome answers a different request")
             if kinds[1] == "proposal_received":
@@ -119,26 +124,94 @@ def _check_step(
     return found
 
 
+def _as_stored(flag: str, supplied: str | None) -> object:
+    """The value the session would store, so surrounding space is not damage."""
+
+    if not isinstance(supplied, str):
+        return supplied
+    if flag in ("--operator", "--session-id"):
+        return supplied.strip()
+    if flag == "--reason":
+        return _clean(supplied)
+    if flag == "--request-id":
+        return _clean(supplied, limit=64)
+    return supplied
+
+
+def _invoke(session: OperatorSession, command: str, argv: list[str]) -> CommandResult | None:
+    """Re-run one command. ``None`` means the argv could not name its arguments."""
+
+    def flag(name: str) -> str | None:
+        return _flag(argv, name)
+
+    if command == "propose":
+        request_id = flag("--request-id")
+        if request_id is None:
+            return None
+        prompt = flag("--prompt")
+        return session.request_proposal(
+            request_id=request_id, prompt="" if prompt is None else prompt)
+    if command == "approve":
+        proposal_id, operator, digest = (
+            flag("--proposal-id"), flag("--operator"), flag("--confirm-digest"))
+        if None in (proposal_id, operator, digest):
+            return None
+        return session.approve(
+            proposal_id=proposal_id, operator=operator, confirm_digest=digest)
+    if command == "veto":
+        proposal_id, operator, reason = flag("--proposal-id"), flag("--operator"), flag("--reason")
+        if None in (proposal_id, operator, reason):
+            return None
+        return session.veto(proposal_id=proposal_id, operator=operator, reason=reason)
+    if command == "stop":
+        operator, reason = flag("--operator"), flag("--reason")
+        if None in (operator, reason):
+            return None
+        return session.stop(operator=operator, reason=reason)
+    return None
+
+
+def _check_refusal(
+    command: str, argv: list[str], prior: list[dict[str, Any]], refusal: dict[str, Any],
+) -> list[str]:
+    """A refusal must be what these arguments do to the session before the step."""
+
+    if command not in ("propose", "approve", "veto", "stop"):
+        return []
+    if not prior:
+        return [f"{command}: refusal has no session to check"]
+    try:
+        session = OperatorSession.replay(prior, source=_NoSource())
+        result = _invoke(session, command, argv)
+    except (AuditError, TypeError, ValueError) as error:
+        return [f"{command}: cannot re-check the refusal ({type(error).__name__})"]
+    if result is None:
+        return [f"{command}: refusal arguments are incomplete"]
+    if result.ok or result.code != refusal.get("code"):
+        return [f"{command}: arguments would not be refused as {refusal.get('code')!r}"]
+    return []
+
+
 def _view_lines(
     session: OperatorSession, registry: Registry, command: str, segment: list[dict[str, Any]],
-) -> list[dict[str, str]] | None:
-    """The lines the CLI would have shown, rebuilt from the replayed session."""
+) -> dict[str, Any] | None:
+    """The response the CLI would have shown, rebuilt from the replayed session."""
 
     svc = OperatorService(session, registry)
     kinds = [record["kind"] for record in segment]
     data = [record["data"] for record in segment]
 
-    def show(ok: bool, code: object, extra: list[views.Line] | None = None) -> list[dict[str, str]]:
+    def show(ok: bool, code: object, extra: list[views.Line] | None = None) -> dict[str, Any]:
         shown = views.code("result", code)
         lines = [shown, *(extra or []), *svc._status_lines()]
-        return svc._reply(ok, shown.value, lines)["lines"]
+        return svc._reply(ok, shown.value, lines)
 
     if command == "status":
-        return svc._reply(True, "status", svc._status_lines())["lines"]
+        return svc._reply(True, "status", svc._status_lines())
     if command == "audit":
-        return svc._reply(True, "audit", svc._audit_lines())["lines"]
+        return svc._reply(True, "audit", svc._audit_lines())
     if command == "open":
-        return svc._reply(True, "status", svc._status_lines())["lines"]
+        return svc._reply(True, "status", svc._status_lines())
     if kinds == ["command_refused"]:
         return show(False, data[0].get("code"))
     if command == "propose" and kinds == ["proposal_requested", "proposal_received"]:
@@ -182,7 +255,8 @@ def _check_steps(
         if not isinstance(ok, bool):
             found.append(f"{where}: ok is not a boolean")
             continue
-        if step.get("exit_code") != (EXIT_OK if ok else EXIT_REFUSED):
+        exit_code = step.get("exit_code")
+        if type(exit_code) is not int or exit_code != (EXIT_OK if ok else EXIT_REFUSED):
             found.append(f"{where}: exit code does not match the response")
         lines = response.get("lines")
         try:
@@ -200,9 +274,14 @@ def _check_steps(
         if end < cursor:
             found.append(f"{where}: head moves backwards in the chain")
             continue
+        previous = cursor
         segment = chain[cursor + 1:end + 1]
         cursor = end
         found += [f"{where}: {m}" for m in _check_step(argv[0], argv, response, segment)]
+        if len(segment) == 1 and segment[0].get("kind") == "command_refused":
+            prior = chain[: previous + 1] if previous >= 0 else []
+            found += [f"{where}: {m}" for m in _check_refusal(
+                argv[0], argv, prior, segment[0].get("data") or {})]
         try:
             snap = OperatorSession.replay(chain[: end + 1], source=_NoSource())
             expected = _view_lines(snap, registry, argv[0], segment)
@@ -211,8 +290,8 @@ def _check_steps(
         else:
             if expected is None:
                 found.append(f"{where}: no rendered view for this command")
-            elif response.get("lines") != expected:
-                found.append(f"{where}: lines differ from the replayed view")
+            elif response != expected:
+                found.append(f"{where}: response differs from the replayed view")
         (codes if ok else refusals).append(response.get("code"))
     if cursor != len(chain) - 1 or head != chain[-1]["hash"]:
         found.append("the steps do not cover the whole chain")

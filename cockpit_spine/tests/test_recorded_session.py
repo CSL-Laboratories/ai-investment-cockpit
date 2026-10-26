@@ -177,7 +177,57 @@ class StepsAreBoundToTheChainTests(unittest.TestCase):
             found = self.damaged(
                 lambda r, a=argv0, c=code, lab=label, val=value: self._retitle(r, a, c, lab, val)
             )
-            self.assertTrue(any("lines differ" in item for item in found), (argv0, label, found))
+            self.assertTrue(
+                any("response differs" in item for item in found), (argv0, label, found))
+
+    def test_an_edited_response_envelope_is_reported(self) -> None:
+        def withheld(r: dict) -> None:
+            self.step(r, "approve", "approved")["response"]["withheld"] = 9
+
+        def api(r: dict) -> None:
+            self.step(r, "open", "status")["response"]["api"] = "operator-api/9"
+
+        def extra(r: dict) -> None:
+            self.step(r, "stop", "stopped")["response"]["live"] = True
+
+        for mutate in (withheld, api, extra):
+            found = self.damaged(mutate)
+            self.assertTrue(any("response differs" in item for item in found), found)
+
+    def test_a_changed_prompt_is_reported(self) -> None:
+        def prompt(r: dict) -> None:
+            step = self.step(r, "propose", "timeout")
+            step["argv"][step["argv"].index("--prompt") + 1] = "not-fail-closed"
+
+        def added(r: dict) -> None:
+            step = self.step(r, "propose", "proposal_received")
+            step["argv"] += ["--prompt", "other"]
+
+        for mutate in (prompt, added):
+            found = self.damaged(mutate)
+            self.assertTrue(any("prompt differs" in item for item in found), found)
+
+    def test_a_refusal_whose_arguments_would_succeed_is_reported(self) -> None:
+        def swap(r: dict) -> None:
+            refused = self.step(r, "approve", "digest_mismatch")
+            accepted = self.step(r, "approve", "approved")
+            refused["argv"][refused["argv"].index("--confirm-digest") + 1] = (
+                accepted["argv"][accepted["argv"].index("--confirm-digest") + 1])
+
+        found = self.damaged(swap)
+        self.assertTrue(any("would not be refused" in item for item in found), found)
+
+    def test_surrounding_whitespace_matches_what_the_session_stores(self) -> None:
+        def pad(r: dict) -> None:
+            veto = self.step(r, "veto", "vetoed")
+            veto["argv"][veto["argv"].index("--operator") + 1] = " operator-1 "
+            stop = self.step(r, "stop", "stopped")
+            stop["argv"][stop["argv"].index("--reason") + 1] = " end of demo session "
+
+        self.assertEqual([], self.damaged(pad))
+
+    def test_a_boolean_exit_code_is_reported(self) -> None:
+        self.assertTrue(self.damaged(lambda r: r["steps"][0].update(exit_code=False)))
 
     def test_a_chain_head_line_that_differs_from_the_response_head_is_reported(self) -> None:
         def line(r: dict) -> None:
