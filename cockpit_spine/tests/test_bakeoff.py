@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import json
 import re
 import unittest
@@ -20,9 +21,12 @@ ALLOWED_IMPORT_MODULES = frozenset({
     "__future__", "collections.abc", "dataclasses", "typing",
     "successor.route_consumer", "successor.route_consumer.profile",
 })
-FORBIDDEN_NAMES = frozenset({
-    "open", "print", "input", "exec", "eval", "compile", "__import__", "getattr", "setattr",
-    "delattr", "globals", "locals", "vars", "breakpoint", "builtins",
+# Exactly the builtins bakeoff.py calls or names. Every other builtin, including
+# open, print, getattr, vars, globals, eval, exec, __import__, help and memoryview,
+# is refused by name, so a new dynamic accessor cannot slip past a short deny-list.
+ALLOWED_BUILTINS = frozenset({
+    "Exception", "ValueError", "bool", "dict", "int", "isinstance", "len", "list", "range",
+    "set", "str", "tuple",
 })
 # Exactly the attributes bakeoff.py uses, including list.append. Anything else,
 # including frame, code and globals attributes, is a write-capability problem.
@@ -30,10 +34,23 @@ ALLOWED_ATTRIBUTES = frozenset({
     "append", "check", "decide", "disposition", "engines", "prompt", "reason",
     "reply_record", "request_record", "trials",
 })
+_BUILTIN_NAMES = frozenset(vars(builtins))
+
+
+def _is_dunder(text: object) -> bool:
+    return isinstance(text, str) and len(text) > 4 and text[:2] == text[-2:] == "__"
 
 
 def write_capability_problems(source: str) -> list[str]:
-    """Why a module could write, or reach something that can. Allow-list, not deny-list."""
+    """Why a module could write, or reach something that can. Allow-lists, not deny-lists.
+
+    Imports, builtins and attribute reads are each limited to what bakeoff.py uses.
+    Every dunder name or string is refused, and so is a ``match`` class pattern,
+    because it reads attributes without an ``ast.Attribute`` node
+    (``case object(gi_frame=f)``). ``successor.route_consumer`` is trusted
+    wholesale: whatever that package exports is the dependency, so this guard
+    does not inspect it.
+    """
 
     problems: list[str] = []
     for node in ast.walk(ast.parse(source)):
@@ -45,14 +62,15 @@ def write_capability_problems(source: str) -> list[str]:
             if node.level or module not in ALLOWED_IMPORT_MODULES:
                 problems.append(f"from {module} import ...")
         elif isinstance(node, ast.Name) and (
-            node.id in FORBIDDEN_NAMES or node.id == "__builtins__"
+            _is_dunder(node.id)
+            or (node.id in _BUILTIN_NAMES and node.id not in ALLOWED_BUILTINS)
         ):
             problems.append(f"name {node.id}")
         elif isinstance(node, ast.Attribute) and node.attr not in ALLOWED_ATTRIBUTES:
             problems.append(f"attribute {node.attr}")
-        elif isinstance(node, ast.Constant) and (
-            node.value in FORBIDDEN_NAMES - {"open", "print"} or node.value == "__builtins__"
-        ):
+        elif isinstance(node, ast.MatchClass):
+            problems.append("match class pattern")
+        elif isinstance(node, ast.Constant) and _is_dunder(node.value):
             problems.append(f"string {node.value!r}")
     return problems
 
@@ -199,7 +217,11 @@ class BlockedOnWp8Tests(unittest.TestCase):
             "__builtins__['open']", "canonical_digest.__globals__",
             "type(x).__subclasses__()", "x.__dict__", "x.__class__",
             "g = (i for i in ()); g.gi_frame.f_globals['__builtins__']['open']",
-            "'__builtins__'",
+            "'__builtins__'", "x = '__globals__'",
+            "match g:\n    case object(gi_frame=f): pass",
+            "match canonical_digest:\n    case Callable(__globals__=g): pass",
+            "__loader__", "__spec__", "help()", "memoryview(b'')", "vars()", "globals()",
+            "type(x)", "object",
         ):
             self.assertTrue(write_capability_problems(snippet), snippet)
         for name in (
@@ -207,6 +229,30 @@ class BlockedOnWp8Tests(unittest.TestCase):
             "f_builtins", "f_locals", "gi_code", "co_code", "co_names",
         ):
             self.assertTrue(write_capability_problems(f"x.{name}"), name)
+
+    def test_the_refused_hops_really_reach_the_builtins(self) -> None:
+        """Positive controls: each hop the guard refuses does reach ``open`` at runtime."""
+
+        hops = {
+            "attribute": "g = (i for i in ())\nfound = g.gi_frame.f_globals['__builtins__']",
+            # Only names and attributes the module may use: the read hides in the pattern.
+            "match": (
+                "from collections.abc import Callable\n"
+                "from successor.route_consumer.profile import canonical_digest\n"
+                "match canonical_digest:\n"
+                "    case Callable(__globals__=found): pass"
+            ),
+        }
+        for label, snippet in hops.items():
+            with self.subTest(label):
+                space: dict = {}
+                exec(snippet, space)
+                found = space["found"]
+                if "__builtins__" in found:
+                    found = found["__builtins__"]
+                found = found if isinstance(found, dict) else vars(found)
+                self.assertIs(open, found["open"])
+                self.assertTrue(write_capability_problems(snippet))
 
     def test_the_write_guard_accepts_what_the_module_needs(self) -> None:
         for snippet in (
