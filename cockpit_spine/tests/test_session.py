@@ -10,6 +10,7 @@ from cockpit_spine.audit import AuditChain, AuditError, verify_chain
 from cockpit_spine.tests.support.scripted import (
     ScriptedSource, accepted, counter_clock, fail_closed, proposal_payload, quarantined,
 )
+from successor.route_consumer import ACCEPTED, FAIL_CLOSED, DecisionOutcome
 from successor.route_consumer.profile import canonical_digest
 
 OP = "operator-1"
@@ -40,6 +41,13 @@ class OpenTests(unittest.TestCase):
         for bad in ("", " ", "x" * 65, "a\nb", None):
             with self.assertRaises(ValueError):
                 sess.OperatorSession.open(session_id=bad, mode="paper", source=ScriptedSource())
+
+    def test_a_padded_session_id_is_stored_clean(self) -> None:
+        session = sess.OperatorSession.open(
+            session_id=" s-1 ", mode="paper", source=ScriptedSource(), clock=counter_clock())
+        self.assertEqual("s-1", session.session_id)
+        self.assertEqual("s-1", session.records()[0]["data"]["session_id"])
+        sess.OperatorSession.replay(session.records(), source=ScriptedSource())
 
 
 class ProposeTests(unittest.TestCase):
@@ -448,6 +456,29 @@ class SourceFailureTests(unittest.TestCase):
         self.assertEqual([], session.proposals())
         sess.OperatorSession.replay(session.records(), source=ScriptedSource())
         self.assertTrue(session.stop(operator=OP, reason="halt").ok)
+
+    def test_a_non_text_reason_is_refused_instead_of_dangling(self) -> None:
+        source = ScriptedSource(DecisionOutcome(
+            FAIL_CLOSED, None, None, {"id": "r"}, None, "watch_only"))  # type: ignore[arg-type]
+        session = sess.OperatorSession.open(
+            session_id="s-1", mode="paper", source=source, clock=counter_clock())
+        result = session.request_proposal(request_id="r1", prompt="p")
+        self.assertEqual((False, sess.SOURCE_ERROR), (result.ok, result.code))
+        self.assertEqual(
+            ["session_opened", "proposal_requested", "proposal_refused"], kinds(session))
+        sess.OperatorSession.replay(session.records(), source=ScriptedSource())
+
+    def test_a_non_text_reply_digest_is_refused_instead_of_dangling(self) -> None:
+        source = ScriptedSource(DecisionOutcome(
+            ACCEPTED, "ok", proposal_payload(), {"id": "r"}, {"output_digest": 1}, None))
+        session = sess.OperatorSession.open(
+            session_id="s-1", mode="paper", source=source, clock=counter_clock())
+        result = session.request_proposal(request_id="r1", prompt="p")
+        self.assertEqual((False, sess.SOURCE_ERROR), (result.ok, result.code))
+        self.assertEqual(
+            ["session_opened", "proposal_requested", "proposal_refused"], kinds(session))
+        self.assertEqual([], session.proposals())
+        sess.OperatorSession.replay(session.records(), source=ScriptedSource())
 
 
 if __name__ == "__main__":

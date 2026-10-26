@@ -226,6 +226,19 @@ class UnlinkedNumberTests(unittest.TestCase):
         self.assertEqual(proj.WITHHELD, self.registry.render_id("no-such-projection"))
         self.assertEqual(proj.WITHHELD, self.registry.render_id(None))
 
+    def test_a_hand_built_registry_cannot_render(self) -> None:
+        pid = "x2-fake-driver-cells-accepted"
+        real = self.registry.get(pid)
+        forged = dataclasses.replace(real, value=99)
+        bad = proj.Registry({pid: forged}, self.registry.digest)
+        shown = bad.render_id(pid)
+        self.assertEqual(proj.WITHHELD, shown)
+        self.assertNotIn("99", shown)
+        figure = proj.Figure(pid, 99, real.unit, real.label, real.digest)
+        self.assertEqual(proj.WITHHELD, bad.render(figure))
+        with self.assertRaises(proj.UnlinkedNumberError):
+            bad.figure(pid)
+
     def test_a_hand_built_figure_does_not_render(self) -> None:
         forged = proj.Figure("x2-fake-driver-cells-accepted", 99, "cells", "forged",
                              "sha256:" + "0" * 64)
