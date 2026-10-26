@@ -16,11 +16,14 @@ a reader should look. A test checks the blob at the cited commit whenever that
 commit is reachable in the clone, and fails instead of skipping when
 ``COCKPIT_REQUIRE_COMMIT_PIN=1`` (use it where history is deep enough).
 
-A number is displayed only through ``Registry.render`` or ``render_id``. A
-``Figure`` is a plain value anyone can construct, and so is a ``Registry``:
-rendering re-checks the figure against the entry, and it also re-checks each
-entry digest and the registry digest. A hand-built registry whose value does
-not match those digests renders as withheld.
+A number is displayed only through ``Registry.render`` or ``render_id``, and
+only a registry returned by ``load_registry`` can render. ``Figure`` and
+``Registry`` are both plain values anyone can construct. Content hashes have
+no secret, so recomputing them does not make a hand-built registry render.
+Construction takes a private immutable copy of the projections and verifies
+that copy, so a later edit of the caller's dict cannot change a loaded
+registry or slip a forged value through. Anything that does not verify is
+withheld.
 
 The wider two-tier definition (X4) lives in the WP11 spine memo on
 csl-research, which the author of this module could not read. Treat this as
@@ -32,12 +35,16 @@ does not fetch one.
 
 from __future__ import annotations
 
+import copy
+import dataclasses
 import hashlib
 import json
 import math
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from successor.route_consumer.profile import canonical_digest
@@ -249,7 +256,7 @@ def _build(raw: Any, root: Path) -> Projection:
     except ValueError:
         raise ProjectionError(f"{pid}: source is not JSON") from None
     recomputed = derive(document, derivation)
-    if recomputed != value:
+    if not _same(recomputed, value):
         raise ProjectionError(f"{pid}: stated {value} but the source gives {recomputed}")
     return Projection(
         projection_id=pid, label=raw["label"], value=value, unit=raw["unit"],
@@ -259,14 +266,44 @@ def _build(raw: Any, root: Path) -> Projection:
     )
 
 
+# Only load_registry holds this. A public Registry(...) never verifies.
+_LOAD_TOKEN = object()
+
+
+def _private_projections(projections: object) -> MappingProxyType:
+    """Copy into a mapping the caller cannot mutate afterwards."""
+
+    try:
+        items = dict(projections)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return MappingProxyType({})
+    copied: dict[Any, Any] = {}
+    for key, item in items.items():
+        if isinstance(item, Projection):
+            copied[key] = dataclasses.replace(
+                item, derivation=copy.deepcopy(item.derivation)
+            )
+        else:
+            copied[key] = item
+    return MappingProxyType(copied)
+
+
 class Registry:
-    def __init__(self, projections: dict[str, Projection], digest: str) -> None:
-        self._projections = projections
+    def __init__(
+        self,
+        projections: dict[str, Projection],
+        digest: str,
+        *,
+        _from_loader: object = None,
+    ) -> None:
+        # Verify the copy, not the caller's dict. A later replacement in that
+        # dict must not change what render_id shows.
+        self._projections = _private_projections(projections)
         self.digest = digest
-        # load_registry is the path that verifies source bytes. A caller who
-        # builds a Registry by hand still cannot display a number unless every
-        # entry digest and the registry digest agree with the values inside.
-        self._verified = _registry_digests_hold(projections, digest)
+        self._verified = (
+            _from_loader is _LOAD_TOKEN
+            and _registry_digests_hold(self._projections, digest)
+        )
 
     def ids(self) -> tuple[str, ...]:
         return tuple(sorted(self._projections))
@@ -299,7 +336,7 @@ class Registry:
 
 
 def _registry_digests_hold(projections: object, digest: object) -> bool:
-    if not isinstance(projections, dict) or not projections or not isinstance(digest, str):
+    if not isinstance(projections, Mapping) or not projections or not isinstance(digest, str):
         return False
     try:
         entries = []
@@ -351,7 +388,7 @@ def load_registry(path: Path = REGISTRY_PATH, root: Path = REPO_ROOT) -> Registr
                                  "projections": [built[k].entry() for k in sorted(built)]})
     if raw.get("registry_digest") != expected:
         raise ProjectionError("registry digest does not match its entries")
-    return Registry(built, expected)
+    return Registry(built, expected, _from_loader=_LOAD_TOKEN)
 
 
 def make_entry(

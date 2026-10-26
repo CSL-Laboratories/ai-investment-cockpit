@@ -18,6 +18,7 @@ BASE_ALLOWED = frozenset({
     "re", "typing", "collections", "jsonschema", "successor", "cockpit_spine",
 })
 EXTRA_ALLOWED: dict[str, frozenset[str]] = {
+    "projections.py": frozenset({"types"}),
     "regen_projections.py": frozenset({"sys"}),
 }
 FORBIDDEN_IDENTIFIER_WORDS = ("broker", "gateway", "submit_order", "place_order", "execute_order",
