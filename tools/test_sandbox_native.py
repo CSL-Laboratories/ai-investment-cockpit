@@ -1033,27 +1033,28 @@ class EmbedPinTests(unittest.TestCase):
             self.assertEqual(got, want[name], name)
         yml = (ROOT / ".github" / "workflows" / "claude.yml").read_text(encoding="utf-8")
         names = {
-            "CSL_C_COMMON_H": "sandbox_common.h",
-            "CSL_C_COMMON_C": "sandbox_common.c",
-            "CSL_C_FILTER_H": "sandbox_filter.h",
-            "CSL_C_FILTER_C": "sandbox_filter.c",
-            "CSL_C_ARGV_H": "sandbox_argv.h",
-            "CSL_C_ARGV_C": "sandbox_argv.c",
-            "CSL_C_LAUNCH": "sandbox_launch.c",
-            "CSL_C_CAPTURE": "sandbox_capture.c",
-            "CSL_C_RELAY": "sandbox_relay.c",
-            "CSL_C_PIN": "sandbox_c.pin",
+            "sandbox_common.h": "0444",
+            "sandbox_common.c": "0444",
+            "sandbox_filter.h": "0444",
+            "sandbox_filter.c": "0444",
+            "sandbox_argv.h": "0444",
+            "sandbox_argv.c": "0444",
+            "sandbox_launch.c": "0444",
+            "sandbox_capture.c": "0444",
+            "sandbox_relay.c": "0444",
+            "sandbox_c.pin": "0444",
         }
-        for tag, name in names.items():
-            extracted = extract_heredoc(yml, tag)
-            repo = (SRC / name).read_text(encoding="utf-8")
-            if not repo.endswith("\n"):
-                repo += "\n"
-            self.assertEqual(extracted, repo, tag)
-            digest = hashlib.sha256(extracted.encode("utf-8")).hexdigest()
+        self.assertNotIn("<<'CSL_C_", yml)
+        self.assertIn("ref: ${{ github.workflow_sha }}", yml)
+        for name, mode in names.items():
+            marker = f'install -m {mode} "$TRUSTED/{name}"'
+            self.assertGreaterEqual(yml.count(marker), 2, name)
             if name in want:
-                self.assertEqual(digest, want[name], f"embed {name}")
-            self.assertGreaterEqual(yml.count(f"<<'{tag}'"), 2)
+                self.assertEqual(
+                    hashlib.sha256((SRC / name).read_bytes()).hexdigest(),
+                    want[name],
+                    name,
+                )
 
 
 class R3ContractTests(unittest.TestCase):

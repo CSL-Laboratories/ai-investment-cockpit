@@ -88,11 +88,12 @@ class DeadPythonGoneTests(unittest.TestCase):
             self.assertFalse((SCRIPTS / name).exists(), name)
         text = WORKFLOW.read_text(encoding="utf-8")
         mention = text.split("  claude-mention:", 1)[1].split("  mention-publish:", 1)[0]
-        for tag in ("CSL_C_LAUNCH", "CSL_C_RELAY", "CSL_C_CAPTURE"):
-            self.assertIn(f"<<'{tag}'\n", mention, tag)
-        for tag in ("CSL_E1_LAUNCH", "CSL_E1_RELAY", "CSL_E1_INSTALL"):
+        for name in ("sandbox_launch.c", "sandbox_relay.c", "sandbox_capture.c"):
+            self.assertIn(f'install -m 0444 "$TRUSTED/{name}"', mention, name)
+        for tag in ("CSL_C_LAUNCH", "CSL_C_RELAY", "CSL_C_CAPTURE",
+                    "CSL_E1_LAUNCH", "CSL_E1_RELAY", "CSL_E1_INSTALL"):
             self.assertNotIn(f"<<'{tag}'\n", mention, tag)
-        self.assertIn('"$GCC" -static', mention)
+        self.assertIn('"$GCC" -static', (SCRIPTS / "sandbox_e3_bootstrap.sh").read_text(encoding="utf-8"))
         paths = text.split("paths:", 1)[1].split("jobs:", 1)[0]
         for name in DEAD_PYTHON:
             self.assertNotIn(name, paths)

@@ -354,8 +354,9 @@ class EvidenceTests(unittest.TestCase):
         import textwrap
         text = (ROOT / ".github/workflows/claude.yml").read_text(encoding="utf-8")
         self.assertEqual(text.count('name: "Fixer attempt ${{ needs.fixer-prepare.outputs.attempt_key }}"'), 1)
-        embedded = textwrap.dedent(text.split("<<'CLAUDE_FIXER_RECEIPTS'\n")[1].split("          CLAUDE_FIXER_RECEIPTS")[0]).rstrip()
-        self.assertEqual(embedded, (ROOT / "scripts/ci/claude_fixer_receipts.py").read_text().rstrip())
+        self.assertIn('install -m 0444 "$TRUSTED/claude_fixer_receipts.py"', text)
+        self.assertNotIn("<<'CLAUDE_FIXER_RECEIPTS'", text)
+        self.assertTrue((ROOT / "scripts/ci/claude_fixer_receipts.py").is_file())
         # Parse the supported indentation/step schema without adding a YAML
         # dependency to the existing standard-library-only event-path job.
         job = re.split(r"\n  [A-Za-z0-9_-]+:\n", text.split("\n  devin-review-fix:\n", 1)[1])[0]

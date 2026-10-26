@@ -441,6 +441,7 @@ jobs:
           python -X utf8 -B tools/test_ci_cancel_controller.py
           python -X utf8 -B tools/test_candidate_workflows.py
           python -X utf8 -B tools/test_ci_docs_filter.py
+          python -X utf8 -B tools/test_workflow_size.py
       # CSL-166: the required linux gate runs pytest before any wheel exists, so
       # test_book_batch.py's skipif dropped the whole file. Build the extension
       # here and run that file. This is the existing linux job, not a new
