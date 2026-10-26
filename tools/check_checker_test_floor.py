@@ -18,8 +18,9 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, NamedTuple
+from typing import NamedTuple
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -53,7 +54,7 @@ def count_pytest(root: Path, floor: Floor) -> int:
     proc = subprocess.run(
         [sys.executable, "-X", "utf8", "-B", "-m", "pytest", "--collect-only", "-q",
          "-p", "no:cacheprovider", target],
-        cwd=app, capture_output=True, text=True, timeout=300,
+        check=False, cwd=app, capture_output=True, text=True, timeout=300,
     )
     if proc.returncode != 0:
         raise RuntimeError(f"pytest collection failed (exit {proc.returncode}):\n{proc.stdout}{proc.stderr}")
@@ -69,7 +70,7 @@ def count_unittest(root: Path, floor: Floor) -> int:
     )
     proc = subprocess.run(
         [sys.executable, "-X", "utf8", "-B", "-c", code],
-        cwd=root, capture_output=True, text=True, timeout=300,
+        check=False, cwd=root, capture_output=True, text=True, timeout=300,
     )
     if proc.returncode != 0 or not proc.stdout.strip().isdigit():
         raise RuntimeError(f"unittest load failed (exit {proc.returncode}):\n{proc.stdout}{proc.stderr}")

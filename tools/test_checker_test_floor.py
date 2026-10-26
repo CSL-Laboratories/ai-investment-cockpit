@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import check_checker_test_floor as floor  # noqa: E402
+import check_checker_test_floor as floor
 
 ROOT = Path(__file__).resolve().parents[1]
 CI = ROOT / ".github" / "workflows" / "ci.yml"
