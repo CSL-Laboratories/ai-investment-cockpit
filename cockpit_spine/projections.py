@@ -3,12 +3,22 @@
 A projection is a thin, digest-pinned record of one number. "Published tier"
 here means the minimal reading that can be checked offline:
 
-* the number comes from a source that is public at an exact repository, a
-  40-hex commit and a path;
+* the number comes from a source that is public at a repository, a 40-hex
+  commit and a path (the commit is a citation: see below);
 * the source bytes are pinned by sha256, and the registry refuses to load if
   they changed;
 * the stated value is recomputed from those bytes by a named derivation and
   must equal the stated value, so a number nobody can reproduce never shows.
+
+The sha256 is the only pin this module enforces. It does not run git, so it
+does not prove that the cited commit contains those bytes; the commit says where
+a reader should look. A test checks the blob at the cited commit whenever that
+commit is reachable in the clone, and fails instead of skipping when
+``COCKPIT_REQUIRE_COMMIT_PIN=1`` (use it where history is deep enough).
+
+A number is displayed only through ``Registry.render``. A ``Figure`` is a plain
+value anyone can construct, so rendering re-checks it against the loaded entry
+and prints the entry's own text, never the figure's.
 
 The wider two-tier definition (X4) lives in the WP11 spine memo on
 csl-research, which the author of this module could not read. Treat this as
@@ -40,7 +50,13 @@ WITHHELD = "[number withheld: no published-tier projection]"
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
-_DERIVATIONS = ("value_at", "count_where", "len_at")
+_INDEX = re.compile(r"^(?:0|[1-9][0-9]*)$")
+_DERIVATION_KEYS = {
+    "value_at": frozenset({"kind", "pointer"}),
+    "len_at": frozenset({"kind", "pointer"}),
+    "count_where": frozenset({"kind", "pointer", "match"}),
+}
+_DERIVATIONS = tuple(_DERIVATION_KEYS)
 _ENTRY_KEYS = frozenset(
     {"projection_id", "tier", "label", "value", "unit", "source", "derivation", "digest"}
 )
@@ -63,6 +79,10 @@ def _is_number(value: object) -> bool:
     )
 
 
+def _same(left: object, right: object) -> bool:
+    return type(left) is type(right) and left == right
+
+
 def _pointer_get(document: Any, pointer: str) -> Any:
     if pointer == "":
         return document
@@ -73,7 +93,7 @@ def _pointer_get(document: Any, pointer: str) -> Any:
         part = raw.replace("~1", "/").replace("~0", "~")
         if isinstance(node, dict) and part in node:
             node = node[part]
-        elif isinstance(node, list) and part.isdecimal() and int(part) < len(node):
+        elif isinstance(node, list) and _INDEX.match(part) and int(part) < len(node):
             node = node[int(part)]
         else:
             raise ProjectionError(f"pointer {pointer!r} does not resolve")
@@ -86,6 +106,9 @@ def derive(document: Any, derivation: dict[str, Any]) -> int | float:
     kind = derivation.get("kind")
     if kind not in _DERIVATIONS:
         raise ProjectionError(f"unknown derivation {kind!r}")
+    unused = set(derivation) - _DERIVATION_KEYS[kind]
+    if unused:
+        raise ProjectionError(f"{kind}: unexpected derivation keys {sorted(unused)}")
     target = _pointer_get(document, derivation.get("pointer", ""))
     if kind == "value_at":
         value = target
@@ -99,7 +122,8 @@ def derive(document: Any, derivation: dict[str, Any]) -> int | float:
             raise ProjectionError("count_where needs a non-empty match")
         value = sum(
             1 for item in target
-            if isinstance(item, dict) and all(item.get(k) == v for k, v in match.items())
+            if isinstance(item, dict)
+            and all(k in item and _same(item[k], v) for k, v in match.items())
         )
     if not _is_number(value):
         raise ProjectionError("derived value is not a finite number")
@@ -150,16 +174,19 @@ class Figure:
     def link(self) -> str:
         return f"projection:{self.projection_id}@{self.projection_digest}"
 
-    def text(self) -> str:
-        return f"{self.value} {self.unit} [{self.link()}]"
+
+def _text(item: Projection) -> str:
+    return f"{item.value} {item.unit} [projection:{item.projection_id}@{item.digest}]"
 
 
-def render_figure(figure: Figure | None) -> str:
-    """The one text form of a displayed number; anything unlinked is withheld."""
+def render_figure(figure: object, registry: Registry) -> str:
+    """The one text form of a displayed number.
 
-    if not isinstance(figure, Figure):
-        return WITHHELD
-    return figure.text()
+    The figure must match the registry's entry on id, value (and its type), unit,
+    label and digest. Anything else, including a forged or stale figure, is withheld.
+    """
+
+    return registry.render(figure)
 
 
 def _entry_digest(entry: dict[str, Any]) -> str:
@@ -247,6 +274,28 @@ class Registry:
     def figure(self, projection_id: str) -> Figure:
         item = self.get(projection_id)
         return Figure(item.projection_id, item.value, item.unit, item.label, item.digest)
+
+    def render(self, figure: object) -> str:
+        if not isinstance(figure, Figure):
+            return WITHHELD
+        item = self._projections.get(figure.projection_id)
+        if item is None or not _matches(figure, item):
+            return WITHHELD
+        return _text(item)
+
+    def render_id(self, projection_id: str) -> str:
+        item = self._projections.get(projection_id) if isinstance(projection_id, str) else None
+        return WITHHELD if item is None else _text(item)
+
+
+def _matches(figure: Figure, item: Projection) -> bool:
+    return (
+        figure.projection_id == item.projection_id
+        and _same(figure.value, item.value)
+        and figure.unit == item.unit
+        and figure.label == item.label
+        and figure.projection_digest == item.digest
+    )
 
 
 def load_registry(path: Path = REGISTRY_PATH, root: Path = REPO_ROOT) -> Registry:

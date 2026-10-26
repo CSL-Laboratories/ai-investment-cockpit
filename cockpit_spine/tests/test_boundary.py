@@ -21,7 +21,7 @@ EXTRA_ALLOWED: dict[str, frozenset[str]] = {
     "regen_projections.py": frozenset({"sys"}),
     "cli.py": frozenset({"argparse", "sys"}),
     "__main__.py": frozenset({"sys"}),
-    "web.py": frozenset({"html", "http", "secrets", "urllib"}),
+    "web.py": frozenset({"html", "http", "secrets", "threading", "urllib"}),
 }
 FORBIDDEN_IDENTIFIER_WORDS = ("broker", "gateway", "submit_order", "place_order", "execute_order",
                               "send_order", "killswitch", "arm_auto")

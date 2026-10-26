@@ -1,0 +1,5 @@
+# Same settings as app/pyproject.toml so the spine lints like the rest of the repo.
+line-length = 100
+
+[lint]
+select = ["E", "F"]
