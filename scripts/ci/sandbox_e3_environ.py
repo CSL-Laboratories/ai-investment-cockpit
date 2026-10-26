@@ -113,6 +113,8 @@ BUN_DIR = "/opt/csl-bun"
 BUN_HOME_BIN = "/home/runner/.bun/bin"
 LAUNCHER = "/opt/csl-claude/launch"
 BUN_EXE = "/opt/csl-bun/bun"
+# Action PATH wrapper (hosted 40359709793). Capture tofu still hashes BUN_EXE.
+BUN_ACTION = "/opt/csl-bun-action/bun"
 SYS_BIN = "/usr/bin"
 BIN_DIR = "/bin"
 
@@ -121,7 +123,7 @@ SET2_VALUE_RULES = {
     "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1",
     "PATH_TO_CLAUDE_CODE_EXECUTABLE": LAUNCHER,
     "INPUT_PATH_TO_CLAUDE_CODE_EXECUTABLE": LAUNCHER,
-    "INPUT_PATH_TO_BUN_EXECUTABLE": BUN_EXE,
+    "INPUT_PATH_TO_BUN_EXECUTABLE": BUN_ACTION,
     "ANTHROPIC_BASE_URL": "",
     "ANTHROPIC_CUSTOM_HEADERS": "",
     "GOOGLE_APPLICATION_CREDENTIALS": "",

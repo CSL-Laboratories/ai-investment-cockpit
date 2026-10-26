@@ -46,6 +46,51 @@ class Set2PinTests(unittest.TestCase):
         self.assertEqual(bind.ACTION_YML_SHA256, e3.ACTION_YML_SHA256)
         self.assertEqual(bind.SDK_MJS_SHA256, e3.SDK_MJS_SHA256)
 
+    def test_set2_bun_input_is_the_action_wrapper_not_the_elf(self) -> None:
+        self.assertEqual(environ.BUN_EXE, "/opt/csl-bun/bun")
+        self.assertEqual(environ.BUN_ACTION, "/opt/csl-bun-action/bun")
+        self.assertEqual(
+            environ.SET2_VALUE_RULES["INPUT_PATH_TO_BUN_EXECUTABLE"],
+            environ.BUN_ACTION,
+        )
+        self.assertNotEqual(
+            environ.SET2_VALUE_RULES["INPUT_PATH_TO_BUN_EXECUTABLE"],
+            environ.BUN_EXE,
+        )
+        worker = {"PATH": "/usr/bin", "FOO": "1"}
+        path = environ.expected_job_path("/usr/bin")
+        b_env = {"PATH": path, "FOO": "1"}
+        x_ok = {
+            "PATH": path,
+            "FOO": "1",
+            "PWD": "/workspace",
+            "SHLVL": "1",
+            "_": environ.BUN_EXE,
+            "INPUT_PATH_TO_BUN_EXECUTABLE": environ.BUN_ACTION,
+        }
+        self.assertTrue(
+            environ.check_environ(
+                proc_env=x_ok,
+                worker_env=worker,
+                b_env=b_env,
+                on_x=True,
+                workspace="/workspace",
+                worker_path="/usr/bin",
+            ).ok
+        )
+        x_elf = dict(x_ok)
+        x_elf["INPUT_PATH_TO_BUN_EXECUTABLE"] = environ.BUN_EXE
+        self.assertFalse(
+            environ.check_environ(
+                proc_env=x_elf,
+                worker_env=worker,
+                b_env=b_env,
+                on_x=True,
+                workspace="/workspace",
+                worker_path="/usr/bin",
+            ).ok
+        )
+
 
 class E3RecordTests(unittest.TestCase):
     def _fields(self, **overrides: str) -> Dict[str, str]:
