@@ -58,13 +58,15 @@ CONFLICT_GIT = {"conflicts": ("diff", "--name-only", "--diff-filter=U"), "merge-
 STAGE = ("add", "-A", "--", ".")
 # Not `:(exclude)` pathspecs: the model job lists these in .git/info/exclude, and `git add`
 # exits 1 when a pathspec names an ignored path (CSL-377 canary, run 39569528483).
-UNSTAGE = ("reset", "-q", "--", ".claude-fixer-out", ".claude-fixer-replies")
+UNSTAGE = ("reset", "-q", "--", ".claude-fixer-out", ".claude-fixer-replies", "AGENTS.md")
 # claude-code-action's restoreConfigFromBase (SENSITIVE_PATHS) replaces these with the base branch's
 # versions and leaves them unstaged; "callers that stage files must exclude these". It runs only for a
 # PR entity event (run.ts: isEntityContext && isPR), never for workflow/repository dispatch or the
 # conflict job, where an edit or a base-side change to them is real. Recheck both on every re-pin.
+# AGENTS.md is not in the action's restore list. C6.2 stubs it before launch and always
+# unstages it (UNSTAGE above) so a stub or PR-head copy is never committed; publish already refuses it.
 ACTION_RESTORED = (".claude", ".mcp.json", ".claude.json", ".gitmodules", ".ripgreprc", "CLAUDE.md",
-                   "CLAUDE.local.md", ".husky")
+                   "CLAUDE.local.md", ".husky", "AGENTS.md")
 RESTORE_EVENTS = frozenset({"issue_comment", "pull_request", "pull_request_review", "pull_request_review_comment"})
 UNTRACKED = ("ls-files", "-z", "--others", "--exclude-standard")
 MODIFIED = ("ls-files", "-z", "--modified")
