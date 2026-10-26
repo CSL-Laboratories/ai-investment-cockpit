@@ -3,8 +3,10 @@
 Every surface (CLI, loopback view) is a thin client of ``OperatorService.handle``
 and renders the lines it returns. Requests are strict: exact command names,
 exact argument keys, strings only. Anything else is refused with a code and
-changes nothing. Each response is validated by ``validate_lines`` before it
-leaves, so an unlinked number cannot reach a screen through any surface.
+changes nothing. Each response line is validated before it leaves, so an
+unlinked number cannot reach a screen through any surface. A line that fails
+validation is replaced by a withheld marker; it never changes ``ok`` or ``code``,
+which always report what the session did, and it never hides the other lines.
 """
 
 from __future__ import annotations
@@ -18,7 +20,8 @@ from cockpit_spine.views import Line
 
 API_VERSION = "operator-api/0"
 CONTEXT_FIGURES = (
-    ("Plumbing cells accepted (route plumbing record, not a result)", "x2-fake-driver-cells-accepted"),
+    ("Plumbing cells accepted (route plumbing record, not a result)",
+     "x2-fake-driver-cells-accepted"),
     ("Plumbing cells in that record", "x2-fake-driver-cells-total"),
 )
 COMMANDS: dict[str, frozenset[str]] = {
@@ -32,7 +35,6 @@ COMMANDS: dict[str, frozenset[str]] = {
 OPTIONAL_ARGS = {"propose": frozenset({"prompt"})}
 BAD_REQUEST = "bad_request"
 UNKNOWN_COMMAND = "unknown_command"
-VIEW_REJECTED = "view_rejected"
 LABEL_DEFERRED = "live route integration deferred; route contract plumbing only"
 
 
@@ -55,12 +57,9 @@ class OperatorService:
         return getattr(self, f"_{name}")(args)
 
     def _reply(self, ok: bool, code: str, lines: list[Line]) -> dict[str, Any]:
-        try:
-            views.validate_lines(lines, self._registry)
-        except views.ViewError:
-            ok, code, lines = False, VIEW_REJECTED, []
-        return {"api": API_VERSION, "ok": ok, "code": code,
-                "head": self.session.head, "lines": [item.as_dict() for item in lines]}
+        safe, withheld = views.sanitize_lines(lines, self._registry)
+        return {"api": API_VERSION, "ok": ok, "code": code, "head": self.session.head,
+                "withheld": withheld, "lines": [item.as_dict() for item in safe]}
 
     def _status_lines(self) -> list[Line]:
         session = self.session
@@ -73,7 +72,7 @@ class OperatorService:
             Line("text", "label", LABEL_DEFERRED),
         ]
         for label, projection_id in CONTEXT_FIGURES:
-            lines.append(views.figure(label, self._registry.figure(projection_id)))
+            lines.append(views.figure(label, self._registry.figure(projection_id), self._registry))
         for item in session.proposals():
             payload = item["payload"]
             lines += [
@@ -88,7 +87,7 @@ class OperatorService:
                 views.term("time_horizon", payload["time_horizon"]),
                 views.quoted("thesis (model text, unverified)", payload["thesis"]),
                 views.quoted("invalidation (model text, unverified)", payload["invalidation"]),
-                Line("id", "source refs", ",".join(payload["source_refs"]) or "none"),
+                *[Line("id", "source ref", ref) for ref in payload["source_refs"]],
                 Line("digest", "confirm digest", item["payload_digest"]),
             ]
             if item["operator"]:

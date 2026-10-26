@@ -10,6 +10,7 @@ from cockpit_spine.audit import AuditChain, AuditError, verify_chain
 from cockpit_spine.tests.support.scripted import (
     ScriptedSource, accepted, counter_clock, fail_closed, proposal_payload, quarantined,
 )
+from successor.route_consumer.profile import canonical_digest
 
 OP = "operator-1"
 
@@ -161,7 +162,8 @@ class VetoTests(unittest.TestCase):
         result = self.session.veto(proposal_id="prop-1", operator=OP, reason="  too big  ")
         self.assertTrue(result.ok)
         item = self.session.proposal("prop-1")
-        self.assertEqual(("vetoed", OP, "too big"), (item["state"], item["operator"], item["reason"]))
+        self.assertEqual(
+            ("vetoed", OP, "too big"), (item["state"], item["operator"], item["reason"]))
 
     def test_veto_needs_a_reason(self) -> None:
         for bad in ("", "   ", "x" * 201, "a\nb", None):
@@ -288,6 +290,164 @@ class ReplayTests(unittest.TestCase):
     def test_replay_of_an_empty_chain_is_refused(self) -> None:
         with self.assertRaises(AuditError):
             sess.OperatorSession.replay([], source=ScriptedSource())
+
+
+def _forge(*events) -> list:
+    chain = AuditChain()
+    for kind, data in events:
+        chain.append(kind, {"at": "t", **data})
+    return chain.records()
+
+
+def _opened(mode: str = "paper"):
+    return ("session_opened", {"session_id": "s", "mode": mode, "adapter_kind": "fake"})
+
+
+def _requested(request_id: str = "r1"):
+    return ("proposal_requested", {"request_id": request_id, "prompt_digest": "sha256:x"})
+
+
+def _received(request_id: str = "r1", payload: dict | None = None, **over):
+    payload = payload if payload is not None else proposal_payload("prop-1")
+    data = {"request_id": request_id, "proposal_id": payload.get("proposal_id"),
+            "payload": payload, "payload_digest": canonical_digest(payload),
+            "reply_output_digest": None}
+    data.update(over)
+    return ("proposal_received", data)
+
+
+def _refused_record(request_id: str = "r1", reason: str = "timeout"):
+    return ("proposal_refused", {"request_id": request_id, "reason": reason,
+                                 "quarantined": False, "fail_closed_to": "watch_only"})
+
+
+def _approved(proposal_id: str = "prop-1", digest: str | None = None):
+    digest = digest or canonical_digest(proposal_payload(proposal_id))
+    return ("proposal_approved", {"proposal_id": proposal_id, "operator": OP,
+                                  "payload_digest": digest})
+
+
+def _stopped(abandoned: list):
+    return ("session_stopped", {"operator": OP, "reason": "halt", "abandoned": abandoned,
+                                "fail_closed_to": "watch_only"})
+
+
+class ReplayInvariantTests(unittest.TestCase):
+    """A chain only links records; the rules the live commands enforce must hold on replay."""
+
+    def refuses(self, name: str, *events) -> None:
+        with self.assertRaises(AuditError, msg=name):
+            sess.OperatorSession.replay(_forge(*events), source=ScriptedSource())
+
+    def test_a_well_formed_forged_chain_replays(self) -> None:
+        session = sess.OperatorSession.replay(
+            _forge(_opened(), _requested(), _received(), _approved(),
+                   _requested("r2"), _refused_record("r2"), _stopped([])),
+            source=ScriptedSource())
+        self.assertEqual("approved", session.proposal("prop-1")["state"])
+        self.assertTrue(session.stopped)
+
+    def test_read_only_sessions_never_replay_an_approval(self) -> None:
+        self.refuses("read-only approve", _opened("read_only"), _requested(), _received(),
+                     _approved())
+
+    def test_an_approval_with_the_wrong_digest_does_not_replay(self) -> None:
+        self.refuses("digest mismatch", _opened(), _requested(), _received(),
+                     _approved(digest="sha256:" + "0" * 64))
+
+    def test_a_second_proposal_with_the_same_id_does_not_replay(self) -> None:
+        self.refuses("duplicate proposal_id", _opened(), _requested(), _received(), _approved(),
+                     _requested("r2"), _received("r2"))
+
+    def test_a_payload_that_fails_the_schema_does_not_replay(self) -> None:
+        bad = proposal_payload("prop-1", side="short-the-world")
+        self.refuses("schema", _opened(), _requested(), _received(payload=bad))
+        extra = proposal_payload("prop-1", execute_now=True)
+        self.refuses("extra field", _opened(), _requested(), _received(payload=extra))
+
+    def test_a_payload_digest_that_is_not_recomputed_does_not_replay(self) -> None:
+        self.refuses("digest not recomputed", _opened(), _requested(),
+                     _received(payload_digest="sha256:" + "0" * 64))
+
+    def test_proposal_id_must_be_the_payloads(self) -> None:
+        self.refuses("id differs", _opened(), _requested(), _received(proposal_id="prop-9"))
+
+    def test_a_request_gets_one_outcome(self) -> None:
+        second = proposal_payload("prop-2")
+        self.refuses("received twice", _opened(), _requested(), _received(),
+                     _received(payload=second))
+        self.refuses("refused twice", _opened(), _requested(), _refused_record(),
+                     _refused_record())
+        self.refuses("refused then received", _opened(), _requested(), _refused_record(),
+                     _received())
+        self.refuses("received then refused", _opened(), _requested(), _received(),
+                     _refused_record())
+
+    def test_an_outcome_needs_a_request_and_a_request_cannot_repeat(self) -> None:
+        self.refuses("received without request", _opened(), _received())
+        self.refuses("refused without request", _opened(), _refused_record())
+        self.refuses("request twice", _opened(), _requested(), _requested())
+
+    def test_stop_must_abandon_exactly_the_pending_proposals(self) -> None:
+        self.refuses("omits pending", _opened(), _requested(), _received(), _stopped([]))
+        self.refuses("names a decided one", _opened(), _requested(), _received(), _approved(),
+                     _stopped(["prop-1"]))
+        self.refuses("names an unknown one", _opened(), _stopped(["ghost"]))
+        self.refuses("duplicates", _opened(), _requested(), _received(),
+                     _stopped(["prop-1", "prop-1"]))
+
+    def test_refusal_records_must_state_the_fail_closed_target_consistently(self) -> None:
+        bad = ("proposal_refused", {"request_id": "r1", "reason": "x", "quarantined": False,
+                                    "fail_closed_to": None})
+        self.refuses("refused without watch_only", _opened(), _requested(), bad)
+        bad = ("session_stopped", {"operator": OP, "reason": "r", "abandoned": [],
+                                   "fail_closed_to": "trade"})
+        self.refuses("stop to something else", _opened(), bad)
+
+    def test_malformed_records_are_audit_errors_not_crashes(self) -> None:
+        self.refuses("missing keys", _opened(), ("proposal_requested", {}))
+        self.refuses("not a dict payload", _opened(), _requested(),
+                     ("proposal_received", {"request_id": "r1", "proposal_id": "x",
+                                            "payload": None, "payload_digest": "d",
+                                            "reply_output_digest": None}))
+        self.refuses("bad mode", ("session_opened", {"session_id": "s", "mode": "live",
+                                                     "adapter_kind": "fake"}))
+        self.refuses("padded request id", _opened(), _requested(" r1"))
+        self.refuses("dirty operator", _opened(), _requested(), _received(),
+                     ("proposal_vetoed", {"proposal_id": "prop-1", "operator": " ",
+                                          "reason": "no"}))
+
+    def test_whitespace_variants_of_a_request_id_are_one_request(self) -> None:
+        session, source = open_session(accepted(proposal_payload("prop-1")),
+                                       accepted(proposal_payload("prop-2")))
+        self.assertTrue(session.request_proposal(request_id=" r1 ", prompt="p").ok)
+        again = session.request_proposal(request_id="r1", prompt="p")
+        self.assertEqual((False, sess.DUPLICATE_REQUEST), (again.ok, again.code))
+        self.assertEqual(1, len(source.calls))
+        self.assertEqual("r1", session.records()[1]["data"]["request_id"])
+        sess.OperatorSession.replay(session.records(), source=ScriptedSource())
+
+
+class RaisingSource:
+    adapter_kind = "fake"
+
+    def fetch(self, *, request_id: str, mode: str, prompt: str):
+        raise RuntimeError("boom")
+
+
+class SourceFailureTests(unittest.TestCase):
+    def test_a_source_that_raises_fails_closed_with_a_recorded_refusal(self) -> None:
+        session = sess.OperatorSession.open(
+            session_id="s-1", mode="paper", source=RaisingSource(), clock=counter_clock())
+        result = session.request_proposal(request_id="r1", prompt="p")
+        self.assertEqual((False, sess.SOURCE_ERROR), (result.ok, result.code))
+        last = session.records()[-1]
+        self.assertEqual(("proposal_refused", "watch_only"),
+                         (last["kind"], last["data"]["fail_closed_to"]))
+        self.assertNotIn("boom", str(session.records()))
+        self.assertEqual([], session.proposals())
+        sess.OperatorSession.replay(session.records(), source=ScriptedSource())
+        self.assertTrue(session.stop(operator=OP, reason="halt").ok)
 
 
 if __name__ == "__main__":

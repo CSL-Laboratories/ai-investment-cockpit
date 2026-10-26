@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import shutil
@@ -107,8 +108,38 @@ class FlowTests(CliCase):
         head = self.json_of("propose", "--request-id", "r1")[1]["head"]
         self.assertEqual(head, self.json_of("status")[1]["head"])
 
+    def test_an_operator_name_with_a_space_is_refused_and_the_view_keeps_working(self) -> None:
+        self.open()
+        digest = digest_of(self.json_of("propose", "--request-id", "r1")[1])
+        before = len(self.records())
+        for args in (
+            ("veto", "--proposal-id", "prop-1", "--reason", "no"),
+            ("approve", "--proposal-id", "prop-1", "--confirm-digest", digest),
+            ("stop", "--reason", "halt"),
+        ):
+            code, response = self.json_of(args[0], "--operator", "Samir Shah", *args[1:])
+            self.assertEqual((2, "operator_invalid"), (code, response["code"]))
+        self.assertEqual(before + 3, len(self.records()))
+        self.assertEqual({"command_refused"}, {r["kind"] for r in self.records()[before:]})
+        code, status = self.json_of("status")
+        self.assertEqual((0, True, 0), (code, status["ok"], status["withheld"]))
+        self.assertEqual("running", next(i["value"] for i in status["lines"]
+                                         if i["label"] == "state"))
+
+    def test_a_spaced_session_id_cannot_be_opened(self) -> None:
+        code = self.run_cli("open", "--session-id", "my session", "--mode", "paper")[0]
+        self.assertEqual(3, code)
+        self.assertFalse(self.log.exists())
+
 
 class UnusableTests(CliCase):
+    def test_help_exits_zero_and_bad_arguments_still_exit_three(self) -> None:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(0, cli.main(["--help"], out=io.StringIO()))
+            self.assertEqual(0, cli.main(["--log", str(self.log), "stop", "--help"],
+                                         out=io.StringIO()))
+            self.assertEqual(3, cli.main(["--log"], out=io.StringIO()))
+
     def test_opening_twice_or_with_an_auto_mode_is_refused(self) -> None:
         self.assertEqual(3, self.run_cli("open", "--session-id", "s", "--mode", "auto_full")[0])
         self.assertFalse(self.log.exists())
