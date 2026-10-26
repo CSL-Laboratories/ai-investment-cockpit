@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -13,6 +15,7 @@ from pathlib import Path
 
 from cockpit_spine import projections as proj
 from cockpit_spine import regen_projections as regen
+from cockpit_spine.tests.gitpin import blob_sha256_at
 
 
 def _scratch() -> tuple[Path, Path]:
@@ -49,24 +52,43 @@ class CommittedRegistryTests(unittest.TestCase):
         self.assertEqual(regen.render(regen.build()), committed)
 
     def test_source_blob_at_the_cited_commit_has_the_pinned_bytes(self) -> None:
-        entry = proj.load_registry().get("x2-fake-driver-cells-total")
-        probe = subprocess.run(
-            ["git", "cat-file", "-e", f"{entry.source_commit}:{entry.source_path}"],
-            cwd=proj.REPO_ROOT, capture_output=True, check=False,
-        )
-        if probe.returncode != 0:
-            self.skipTest("cited commit is not in this clone; byte check not run")
-        blob = subprocess.run(
-            ["git", "show", f"{entry.source_commit}:{entry.source_path}"],
-            cwd=proj.REPO_ROOT, capture_output=True, check=True,
-        ).stdout
-        self.assertEqual(entry.source_sha256, hashlib.sha256(blob).hexdigest())
+        registry = proj.load_registry()
+        for projection_id in registry.ids():
+            entry = registry.get(projection_id)
+            blob_sha = blob_sha256_at(proj.REPO_ROOT, entry.source_commit, entry.source_path)
+            if blob_sha is None:
+                if os.environ.get("COCKPIT_REQUIRE_COMMIT_PIN") == "1":
+                    self.fail(f"{projection_id}: cited commit is not in this clone")
+                self.skipTest("cited commit is not in this clone; byte check not run")
+            self.assertEqual(entry.source_sha256, blob_sha, projection_id)
 
-    def test_a_figure_carries_its_link_and_renders_with_it(self) -> None:
-        figure = proj.load_registry().figure("x2-fake-driver-cells-accepted")
-        self.assertIn(figure.link(), proj.render_figure(figure))
+    def test_a_figure_carries_its_link_and_renders_through_the_registry(self) -> None:
+        registry = proj.load_registry()
+        figure = registry.figure("x2-fake-driver-cells-accepted")
+        text = registry.render(figure)
+        self.assertIn(figure.link(), text)
+        self.assertEqual(text, proj.render_figure(figure, registry))
+        self.assertEqual(text, registry.render_id("x2-fake-driver-cells-accepted"))
         self.assertTrue(figure.link().startswith("projection:x2-fake-driver-cells-accepted@sha256:"))
-        self.assertTrue(proj.render_figure(figure).startswith("15 cells "))
+        self.assertTrue(text.startswith("15 cells "))
+
+
+class CommitPinHelperTests(unittest.TestCase):
+    def test_helper_finds_real_bytes_and_refuses_a_forged_commit(self) -> None:
+        root = Path(tempfile.mkdtemp(prefix="pin-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        (root / "f.json").write_bytes(b'{"n": 1}')
+        git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+               "-c", "commit.gpgsign=false"]
+        subprocess.run([*git, "init", "-q"], cwd=root, check=True)
+        subprocess.run([*git, "add", "f.json"], cwd=root, check=True)
+        subprocess.run([*git, "commit", "-q", "-m", "x"], cwd=root, check=True)
+        commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True,
+                                check=True, text=True).stdout.strip()
+        self.assertEqual(hashlib.sha256(b'{"n": 1}').hexdigest(),
+                         blob_sha256_at(root, commit, "f.json"))
+        self.assertIsNone(blob_sha256_at(root, "f" * 40, "f.json"))
+        self.assertIsNone(blob_sha256_at(root, commit, "absent.json"))
 
 
 class RefusalTests(unittest.TestCase):
@@ -190,14 +212,86 @@ class DeriveTests(unittest.TestCase):
 
 
 class UnlinkedNumberTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.registry = proj.load_registry()
+
     def test_unknown_projection_id_raises_unlinked(self) -> None:
         with self.assertRaises(proj.UnlinkedNumberError):
-            proj.load_registry().figure("no-such-projection")
+            self.registry.figure("no-such-projection")
 
     def test_anything_that_is_not_a_figure_renders_as_withheld(self) -> None:
         for value in (None, 15, "15 cells", 1.5, {"value": 15}):
-            self.assertEqual(proj.WITHHELD, proj.render_figure(value))
-        self.assertNotIn("15", proj.render_figure(15))
+            self.assertEqual(proj.WITHHELD, proj.render_figure(value, self.registry))
+        self.assertNotIn("15", proj.render_figure(15, self.registry))
+        self.assertEqual(proj.WITHHELD, self.registry.render_id("no-such-projection"))
+        self.assertEqual(proj.WITHHELD, self.registry.render_id(None))
+
+    def test_a_hand_built_figure_does_not_render(self) -> None:
+        forged = proj.Figure("x2-fake-driver-cells-accepted", 99, "cells", "forged",
+                             "sha256:" + "0" * 64)
+        self.assertEqual(proj.WITHHELD, self.registry.render(forged))
+        self.assertEqual(proj.WITHHELD, proj.render_figure(forged, self.registry))
+
+    def test_each_field_of_a_figure_is_checked_against_the_entry(self) -> None:
+        real = self.registry.figure("x2-fake-driver-cells-accepted")
+        for change in (
+            {"value": 99}, {"value": 15.0}, {"value": True}, {"unit": "rows"},
+            {"label": "other"}, {"projection_digest": "sha256:" + "0" * 64},
+            {"projection_id": "x2-fake-driver-cells-total"}, {"projection_id": "absent"},
+        ):
+            figure = dataclasses.replace(real, **change)
+            self.assertEqual(proj.WITHHELD, self.registry.render(figure), str(change))
+
+    def test_a_figure_from_another_registry_is_stale_and_withheld(self) -> None:
+        root, _ = _scratch()
+        self.addCleanup(shutil.rmtree, root, True)
+        other = proj.load_registry(_registry_for(root), root)
+        figure = other.figure("p1")
+        self.assertEqual(proj.WITHHELD, self.registry.render(figure))
+        self.assertNotEqual(proj.WITHHELD, other.render(figure))
+
+    def test_rendering_prints_the_registry_text_not_the_figure_text(self) -> None:
+        real = self.registry.figure("x2-fake-driver-cells-accepted")
+        self.assertEqual("15 cells [" + real.link() + "]", self.registry.render(real))
+
+    def test_there_is_no_registry_free_way_to_render(self) -> None:
+        figure = self.registry.figure("x2-fake-driver-cells-accepted")
+        with self.assertRaises(TypeError):
+            proj.render_figure(figure)  # type: ignore[call-arg]
+        self.assertFalse(hasattr(figure, "text"))
+
+
+class StrictDerivationTests(unittest.TestCase):
+    def test_count_where_does_not_match_across_types(self) -> None:
+        doc = {"xs": [{"k": 1}, {"k": True}, {"k": 1.0}]}
+        self.assertEqual(1, proj.derive(doc, {"kind": "count_where", "pointer": "/xs",
+                                              "match": {"k": 1}}))
+        self.assertEqual(1, proj.derive(doc, {"kind": "count_where", "pointer": "/xs",
+                                              "match": {"k": True}}))
+
+    def test_count_where_requires_the_key_to_exist(self) -> None:
+        doc = {"xs": [{"a": 1}, {"k": None}]}
+        self.assertEqual(1, proj.derive(doc, {"kind": "count_where", "pointer": "/xs",
+                                              "match": {"k": None}}))
+
+    def test_unused_derivation_keys_are_refused(self) -> None:
+        doc = {"xs": [1, 2], "n": 3}
+        for bad in (
+            {"kind": "len_at", "pointer": "/xs", "match": {"k": 1}},
+            {"kind": "value_at", "pointer": "/n", "match": {"k": 1}},
+            {"kind": "count_where", "pointer": "/xs", "match": {"k": 1}, "extra": 1},
+            {"kind": "len_at", "pointer": "/xs", "note": "x"},
+        ):
+            with self.assertRaisesRegex(proj.ProjectionError, "unexpected derivation keys"):
+                proj.derive(doc, bad)
+
+    def test_pointer_indexes_are_plain_ascii_without_leading_zeros(self) -> None:
+        doc = {"xs": [10, 20, 30]}
+        self.assertEqual(10, proj.derive(doc, {"kind": "value_at", "pointer": "/xs/0"}))
+        self.assertEqual(30, proj.derive(doc, {"kind": "value_at", "pointer": "/xs/2"}))
+        for bad in ("/xs/01", "/xs/00", "/xs/\u0661", "/xs/\u0660", "/xs/-1", "/xs/ 1", "/xs/3"):
+            with self.assertRaises(proj.ProjectionError, msg=bad):
+                proj.derive(doc, {"kind": "value_at", "pointer": bad})
 
 
 if __name__ == "__main__":
