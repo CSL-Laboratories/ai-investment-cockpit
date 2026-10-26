@@ -42,6 +42,11 @@ class OpenTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 sess.OperatorSession.open(session_id=bad, mode="paper", source=ScriptedSource())
 
+    def test_open_refuses_a_non_identifier_session_id(self) -> None:
+        for bad in ("Samir Shah", "12345", "has space"):
+            with self.assertRaises(ValueError, msg=bad):
+                sess.OperatorSession.open(session_id=bad, mode="paper", source=ScriptedSource())
+
     def test_a_padded_session_id_is_stored_clean(self) -> None:
         session = sess.OperatorSession.open(
             session_id=" s-1 ", mode="paper", source=ScriptedSource(), clock=counter_clock())

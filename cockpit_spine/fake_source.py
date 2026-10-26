@@ -21,10 +21,24 @@ FAIL_PROMPT = "fail-closed"
 QUARANTINE_PROMPT = "quarantine"
 
 
+def proposal_id_for(request_id: str) -> str:
+    """A schema-sized id. Short request ids stay readable; long ones use a digest.
+
+    ``prop-`` plus a 60-character request id does not fit the 64-character
+    proposal id, and slicing the prefix would make two different requests collide.
+    """
+
+    plain = f"prop-{request_id}"
+    if len(plain) <= 64:
+        return plain
+    digest = hashlib.sha256(request_id.encode("utf-8")).hexdigest()
+    return f"prop-{digest}"[:64]
+
+
 def inline_payload(request_id: str) -> dict[str, Any]:
     seed = int(hashlib.sha256(request_id.encode("utf-8")).hexdigest()[:8], 16)
     return {
-        "proposal_id": f"prop-{request_id}"[:64],
+        "proposal_id": proposal_id_for(request_id),
         "symbol": SYMBOLS[seed % len(SYMBOLS)],
         "side": "buy" if seed % 2 == 0 else "sell",
         "asset_type": "equity",

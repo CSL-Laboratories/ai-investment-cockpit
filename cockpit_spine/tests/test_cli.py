@@ -7,12 +7,16 @@ import io
 import json
 import shutil
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
 from cockpit_spine import cli
 from cockpit_spine.audit import verify_chain
-from cockpit_spine.fake_source import FAIL_PROMPT, QUARANTINE_PROMPT
+from cockpit_spine.fake_source import (
+    FAIL_PROMPT, QUARANTINE_PROMPT, FakeProposalSource, proposal_id_for,
+)
 from cockpit_spine.tests.support.scripted import counter_clock
 
 
@@ -167,6 +171,67 @@ class UnusableTests(CliCase):
     def test_bad_arguments_exit_3(self) -> None:
         self.assertEqual(3, cli.main(["--log", str(self.log), "nonsense"], out=io.StringIO()))
         self.assertEqual(3, cli.main([], out=io.StringIO()))
+
+    def test_a_write_failure_is_an_unusable_log(self) -> None:
+        parent = self.dir / "not-a-directory"
+        parent.write_text("x")
+        code, text = self._run_at(
+            parent / "t.jsonl", "open", "--session-id", "s-1", "--mode", "paper")
+        self.assertEqual(3, code)
+        self.assertTrue(text.startswith("unusable: OSError"))
+        self.assertEqual([], list(self.dir.glob("*.tmp")))
+
+    def test_long_request_ids_do_not_share_a_proposal_id(self) -> None:
+        left = "a" * 59 + "x"
+        right = "a" * 59 + "y"
+        self.assertNotEqual(proposal_id_for(left), proposal_id_for(right))
+        self.assertLessEqual(len(proposal_id_for(left)), 64)
+        self.assertEqual("prop-r1", proposal_id_for("r1"))
+
+    def test_an_overlapping_stop_cannot_drop_the_proposal(self) -> None:
+        self.open()
+        started = threading.Event()
+        release = threading.Event()
+
+        class Gate:
+            adapter_kind = "fake-inline"
+
+            def fetch(self, *, request_id: str, mode: str, prompt: str):
+                started.set()
+                release.wait(5)
+                return FakeProposalSource().fetch(
+                    request_id=request_id, mode=mode, prompt=prompt)
+
+        codes: dict[str, int] = {}
+
+        def propose() -> None:
+            codes["propose"] = cli.main(
+                ["--log", str(self.log), "propose", "--request-id", "r1", "--prompt", "p"],
+                source_factory=Gate, out=io.StringIO(), clock=self.clock)
+
+        def stop() -> None:
+            codes["stop"] = cli.main(
+                ["--log", str(self.log), "stop", "--operator", "op", "--reason", "end"],
+                out=io.StringIO(), clock=self.clock)
+
+        first = threading.Thread(target=propose)
+        second = threading.Thread(target=stop)
+        first.start()
+        self.assertTrue(started.wait(5))
+        second.start()
+        time.sleep(0.3)
+        release.set()
+        first.join(5)
+        second.join(5)
+        self.assertFalse(first.is_alive() or second.is_alive())
+        self.assertEqual((0, 0), (codes["propose"], codes["stop"]))
+        kinds = [record["kind"] for record in self.records()]
+        self.assertLess(kinds.index("proposal_received"), kinds.index("session_stopped"))
+
+    def _run_at(self, log: Path, *args: str) -> tuple[int, str]:
+        out = io.StringIO()
+        code = cli.main(["--log", str(log), *args], out=out, clock=self.clock)
+        return code, out.getvalue()
 
 
 if __name__ == "__main__":
