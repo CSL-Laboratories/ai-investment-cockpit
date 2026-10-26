@@ -6,8 +6,10 @@ import http.client
 import io
 import json
 import shutil
+import socket
 import tempfile
 import threading
+import time
 import unittest
 from html.parser import HTMLParser
 from pathlib import Path
@@ -39,11 +41,11 @@ class Texts(HTMLParser):
 
 
 class ViewCase(unittest.TestCase):
-    def start(self, source=None) -> web.LoopbackView:
+    def start(self, source=None, **options) -> web.LoopbackView:
         session = sess.OperatorSession.open(
             session_id="s-1", mode="paper", source=source or FakeProposalSource(),
             clock=counter_clock())
-        view = web.LoopbackView(svc.OperatorService(session, REGISTRY))
+        view = web.LoopbackView(svc.OperatorService(session, REGISTRY), **options)
         thread = threading.Thread(target=view.serve_forever, daemon=True)
         thread.start()
         self.addCleanup(thread.join, 5)
@@ -153,7 +155,8 @@ class FlowTests(ViewCase):
         stopped = self.request(view, "POST", "/act", form)[2]
         self.assertIn("result: stopped", stopped)
         self.assertNotIn("<form", stopped)
-        again = self.request(view, "POST", "/act", f"token={view.token}&command=propose&request_id=r9")[2]
+        again = self.request(
+            view, "POST", "/act", f"token={view.token}&command=propose&request_id=r9")[2]
         self.assertIn("result: session_stopped", again)
 
     def test_a_wrong_digest_from_the_form_does_not_approve(self) -> None:
@@ -194,7 +197,8 @@ class ParityTests(ViewCase):
         cli_steps = [run("propose", "--request-id", "r1"), run("propose", "--request-id", "r2")]
         digest = next(i["value"] for i in cli_steps[0]["lines"] if i["label"] == "confirm digest")
         cli_steps += [
-            run("approve", "--proposal-id", "prop-r1", "--operator", "op", "--confirm-digest", digest),
+            run("approve", "--proposal-id", "prop-r1", "--operator", "op",
+                "--confirm-digest", digest),
             run("veto", "--proposal-id", "prop-r2", "--operator", "op", "--reason", "no"),
             run("stop", "--operator", "op", "--reason", "end"),
             run("propose", "--request-id", "r3"),
@@ -203,13 +207,144 @@ class ParityTests(ViewCase):
         view = self.start()
         web_steps = [
             self.api(view, "propose", request_id="r1"), self.api(view, "propose", request_id="r2"),
-            self.api(view, "approve", proposal_id="prop-r1", operator="op", confirm_digest=digest),
+            self.api(view, "approve", proposal_id="prop-r1", operator="op",
+                     confirm_digest=digest),
             self.api(view, "veto", proposal_id="prop-r2", operator="op", reason="no"),
             self.api(view, "stop", operator="op", reason="end"),
             self.api(view, "propose", request_id="r3"),
         ]
         self.assertEqual(cli_steps, web_steps)
         self.assertEqual(cli.read_log(log), view.service.session.records())
+
+
+STOP_FORM = "command=stop&operator=op&reason=done"
+
+
+class AvailabilityTests(ViewCase):
+    """One stuck connection must never take the stop control away."""
+
+    def idle_socket(self, view: web.LoopbackView, send: bytes = b"") -> socket.socket:
+        conn = socket.create_connection((web.LOOPBACK, view.port), timeout=5)
+        self.addCleanup(conn.close)
+        if send:
+            conn.sendall(send)
+        return conn
+
+    def stop_within(self, view: web.LoopbackView, bound: float = 3.0) -> float:
+        started = time.monotonic()
+        status, _, body = self.request(
+            view, "POST", "/act", f"token={view.token}&{STOP_FORM}")
+        elapsed = time.monotonic() - started
+        self.assertEqual(200, status)
+        self.assertIn("result: stopped", body)
+        self.assertTrue(view.service.session.stopped)
+        self.assertLess(elapsed, bound)
+        return elapsed
+
+    def test_an_idle_connection_does_not_block_stop(self) -> None:
+        view = self.start()
+        self.idle_socket(view)
+        self.stop_within(view)
+
+    def test_many_idle_connections_do_not_block_stop(self) -> None:
+        view = self.start()
+        for _ in range(8):
+            self.idle_socket(view)
+        self.stop_within(view)
+
+    def test_a_stalled_request_body_does_not_block_stop(self) -> None:
+        view = self.start()
+        head = (f"POST /act HTTP/1.1\r\nHost: {web.LOOPBACK}:{view.port}\r\n"
+                "Content-Length: 100\r\n\r\npartial").encode()
+        self.idle_socket(view, head)
+        self.stop_within(view)
+
+    def test_a_half_sent_request_line_does_not_block_stop(self) -> None:
+        view = self.start()
+        self.idle_socket(view, b"GET / HT")
+        self.stop_within(view)
+
+    def test_idle_connections_are_closed_after_the_timeout(self) -> None:
+        view = self.start(socket_timeout=0.3)
+        conn = self.idle_socket(view)
+        conn.settimeout(3)
+        started = time.monotonic()
+        self.assertEqual(b"", conn.recv(1))
+        self.assertLess(time.monotonic() - started, 3)
+
+    def test_the_timeout_is_set_on_the_handler_and_bounded(self) -> None:
+        view = self.start()
+        self.assertEqual(web.SOCKET_TIMEOUT, view.server.RequestHandlerClass.timeout)
+        for bad in (0, -1, 61):
+            with self.assertRaises(ValueError):
+                web.LoopbackView(view.service, socket_timeout=bad)
+
+    def test_concurrent_commands_do_not_corrupt_the_session(self) -> None:
+        view = self.start(ScriptedSource(*[accepted(proposal_payload(f"prop-{n}"))
+                                           for n in range(1, 7)]))
+        results: list[dict] = []
+
+        def go(n: int) -> None:
+            results.append(self.api(view, "propose", request_id=f"req-{n}"))
+
+        threads = [threading.Thread(target=go, args=(n,)) for n in range(1, 7)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10)
+        self.assertEqual(6, len(results))
+        self.assertTrue(all(r["ok"] for r in results))
+        records = view.service.session.records()
+        from cockpit_spine.audit import verify_chain
+
+        self.assertEqual(view.service.session.head, verify_chain(records))
+        sess.OperatorSession.replay(records, source=ScriptedSource())
+
+
+class PageStateTests(ViewCase):
+    def test_only_pending_proposals_get_approve_and_veto_forms(self) -> None:
+        view = self.start(ScriptedSource(
+            accepted(proposal_payload("prop-1")), accepted(proposal_payload("prop-2")),
+            accepted(proposal_payload("prop-3"))))
+        for n in (1, 2, 3):
+            self.api(view, "propose", request_id=f"req-{n}")
+        digest = view.service.session.proposal("prop-1")["payload_digest"]
+        self.api(view, "approve", proposal_id="prop-1", operator="op", confirm_digest=digest)
+        self.api(view, "veto", proposal_id="prop-2", operator="op", reason="no")
+        page = self.request(view, "GET", "/")[2]
+        self.assertEqual(1, page.count('value="approve"'))
+        self.assertEqual(1, page.count('value="veto"'))
+        self.assertIn('name="proposal_id" value="prop-3"', page)
+        self.assertNotIn('name="proposal_id" value="prop-1"', page)
+        self.assertNotIn('name="proposal_id" value="prop-2"', page)
+
+    def test_labels_and_values_are_escaped(self) -> None:
+        view = self.start(ScriptedSource(accepted(proposal_payload(
+            thesis="<img src=x onerror=alert(1)>"))))
+        self.api(view, "propose", request_id="req-1")
+        page = self.request(view, "GET", "/")[2]
+        self.assertNotIn("<img", page)
+        self.assertIn("&lt;img", page)
+
+    def test_persist_runs_after_each_api_and_form_command_but_not_on_reads(self) -> None:
+        session = sess.OperatorSession.open(
+            session_id="s-1", mode="paper", source=ScriptedSource(accepted(proposal_payload())),
+            clock=counter_clock())
+        seen: list[int] = []
+        view = web.LoopbackView(
+            svc.OperatorService(session, REGISTRY),
+            persist=lambda service: seen.append(len(service.session.records())))
+        thread = threading.Thread(target=view.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join, 5)
+        self.addCleanup(view.close)
+        self.request(view, "GET", "/")
+        self.request(view, "GET", "/api/status")
+        self.assertEqual([], seen)
+        self.api(view, "propose", request_id="req-1")
+        self.request(view, "POST", "/act", f"token={view.token}&{STOP_FORM}")
+        self.assertEqual(2, len(seen))
+        self.assertLess(seen[0], seen[1])
 
 
 if __name__ == "__main__":

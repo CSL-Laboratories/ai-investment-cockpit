@@ -9,7 +9,19 @@ Hardening, all tested: the listener binds ``127.0.0.1`` and takes no host
 argument; a request must carry a loopback ``Host`` (no DNS-rebinding reads);
 every POST needs the per-start token; a cross-origin ``Origin`` is refused;
 bodies are capped; every value is HTML-escaped; the page sets a no-script
-content security policy. It is single-threaded and makes no outbound call.
+content security policy. It makes no outbound call.
+
+Availability: each connection runs on its own thread and has a socket timeout, so
+an idle or stalled connection (a browser's speculative preconnect, or a client
+that sends a Content-Length and no body) cannot block another request, including
+stop. Access to the one session is serialised by a lock.
+
+Limits, stated plainly. The web approve form carries the confirm digest as a
+hidden field, so the web operator does not type it back the way a CLI user does;
+it still binds the approval to the payload that was rendered, but it is not
+equivalent to typing the digest. The per-start token defends against browser
+CSRF only: any local process can ``GET /`` and read it from the page, so this is
+a stand-in for a single-user loopback, not a boundary against other local users.
 """
 
 from __future__ import annotations
@@ -17,8 +29,9 @@ from __future__ import annotations
 import html
 import json
 import secrets
+import threading
 from collections.abc import Callable
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 from cockpit_spine.service import API_VERSION, OperatorService
@@ -26,6 +39,7 @@ from cockpit_spine.session import PENDING
 
 LOOPBACK = "127.0.0.1"
 MAX_BODY = 8192
+SOCKET_TIMEOUT = 5.0
 HEADERS = {
     "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'",
     "X-Content-Type-Options": "nosniff",
@@ -79,13 +93,25 @@ class LoopbackView:
     def __init__(
         self, service: OperatorService, *, port: int = 0,
         persist: Callable[[OperatorService], None] | None = None,
+        socket_timeout: float = SOCKET_TIMEOUT,
     ) -> None:
+        if not 0 < socket_timeout <= 60:
+            raise ValueError("socket_timeout must be in (0, 60] seconds")
         self.service = service
         self.token = secrets.token_urlsafe(18)
         self._persist = persist
+        self._lock = threading.Lock()
         view = self
 
         class Handler(BaseHTTPRequestHandler):
+            timeout = socket_timeout
+
+            def handle(self) -> None:
+                try:
+                    super().handle()
+                except (ConnectionError, TimeoutError):
+                    self.close_connection = True
+
             def log_message(self, *args: object) -> None:
                 return
 
@@ -110,10 +136,13 @@ class LoopbackView:
                 if not self._local():
                     return self._send(403, "forbidden")
                 if self.path == "/":
-                    return self._send(200, render_page(view.service, view.token))
+                    with view._lock:
+                        page = render_page(view.service, view.token)
+                    return self._send(200, page)
                 if self.path == "/api/status":
-                    reply = view.service.handle(
-                        {"api": API_VERSION, "command": "status", "args": {}})
+                    with view._lock:
+                        reply = view.service.handle(
+                            {"api": API_VERSION, "command": "status", "args": {}})
                     return self._send(200, json.dumps(reply, sort_keys=True), "application/json")
                 self._send(404, "not found")
 
@@ -164,21 +193,29 @@ class LoopbackView:
                 if command not in FORM_FIELDS:
                     return self._send(400, "bad command")
                 args = {k: form.get(k, "") for k in FORM_FIELDS[command]}
-                reply = view._run({"api": API_VERSION, "command": command, "args": args})
-                self._send(200, render_page(view.service, view.token, reply))
+                with view._lock:
+                    reply = view._run_locked(
+                        {"api": API_VERSION, "command": command, "args": args})
+                    page = render_page(view.service, view.token, reply)
+                self._send(200, page)
 
             def do_PUT(self) -> None:
                 self._send(405, "method not allowed")
 
             do_DELETE = do_PATCH = do_PUT
 
-        self.server = HTTPServer((LOOPBACK, port), Handler)
+        self.server = ThreadingHTTPServer((LOOPBACK, port), Handler)
+        self.server.daemon_threads = True
 
-    def _run(self, request: object) -> dict:
+    def _run_locked(self, request: object) -> dict:
         reply = self.service.handle(request)
         if self._persist is not None:
             self._persist(self.service)
         return reply
+
+    def _run(self, request: object) -> dict:
+        with self._lock:
+            return self._run_locked(request)
 
     @property
     def port(self) -> int:
