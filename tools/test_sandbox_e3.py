@@ -748,9 +748,16 @@ fi
         with tempfile.TemporaryDirectory() as tmp:
             proc = subprocess.run(
                 ["unshare", "-rm", "bash", "-c", script, "nested", tmp],
+                check=False,
                 capture_output=True,
                 text=True,
             )
+            # Hosted runners often block unprivileged user namespaces
+            # (`uid_map` EPERM). Production overlay runs as root in 0b, so
+            # the contract test above is the required CI gate; this proves
+            # the mount flags only where userns is allowed.
+            if proc.returncode != 0 and "Operation not permitted" in (proc.stderr or ""):
+                self.skipTest("unprivileged user namespaces are disabled")
             self.assertEqual(
                 proc.returncode,
                 0,
