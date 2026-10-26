@@ -412,6 +412,39 @@ class ReplayInvariantTests(unittest.TestCase):
                                    "fail_closed_to": "trade"})
         self.refuses("stop to something else", _opened(), bad)
 
+    def test_a_null_operator_or_reason_does_not_replay(self) -> None:
+        digest = canonical_digest(proposal_payload("prop-1"))
+        self.refuses("null approve operator", _opened(), _requested(), _received(),
+                     ("proposal_approved", {"proposal_id": "prop-1", "operator": None,
+                                            "payload_digest": digest}))
+        self.refuses("null veto operator", _opened(), _requested(), _received(),
+                     ("proposal_vetoed", {"proposal_id": "prop-1", "operator": None,
+                                          "reason": "no"}))
+        self.refuses("null veto reason", _opened(), _requested(), _received(),
+                     ("proposal_vetoed", {"proposal_id": "prop-1", "operator": OP,
+                                          "reason": None}))
+        self.refuses("null stop operator", _opened(),
+                     ("session_stopped", {"operator": None, "reason": "halt", "abandoned": [],
+                                          "fail_closed_to": "watch_only"}))
+        self.refuses("null stop reason", _opened(),
+                     ("session_stopped", {"operator": OP, "reason": None, "abandoned": [],
+                                          "fail_closed_to": "watch_only"}))
+        self.refuses("null session id",
+                     ("session_opened", {"session_id": None, "mode": "paper",
+                                         "adapter_kind": "fake"}))
+
+    def test_a_reply_digest_that_is_not_a_digest_does_not_replay(self) -> None:
+        self.refuses("not a digest", _opened(), _requested(),
+                     _received(reply_output_digest="not-a-digest"))
+
+    def test_mutating_the_callers_payload_after_replay_does_not_change_the_session(self) -> None:
+        records = _forge(_opened(), _requested(), _received())
+        session = sess.OperatorSession.replay(records, source=ScriptedSource())
+        records[2]["data"]["payload"]["symbol"] = "BBB"
+        self.assertEqual("AAA", session.proposal("prop-1")["payload"]["symbol"])
+        self.assertEqual("AAA", session.records()[2]["data"]["payload"]["symbol"])
+        self.assertEqual(records[2]["hash"], session.head)
+
     def test_malformed_records_are_audit_errors_not_crashes(self) -> None:
         self.refuses("missing keys", _opened(), ("proposal_requested", {}))
         self.refuses("not a dict payload", _opened(), _requested(),
@@ -479,6 +512,68 @@ class SourceFailureTests(unittest.TestCase):
             ["session_opened", "proposal_requested", "proposal_refused"], kinds(session))
         self.assertEqual([], session.proposals())
         sess.OperatorSession.replay(session.records(), source=ScriptedSource())
+
+    def test_a_source_that_returns_none_fails_closed(self) -> None:
+        session = sess.OperatorSession.open(
+            session_id="s-1", mode="paper", source=_Returns(None), clock=counter_clock())
+        result = session.request_proposal(request_id="r1", prompt="p")
+        self.assertEqual((False, sess.SOURCE_ERROR), (result.ok, result.code))
+        self.assertEqual(
+            ["session_opened", "proposal_requested", "proposal_refused"], kinds(session))
+        self.assertEqual([], session.proposals())
+        sess.OperatorSession.replay(session.records(), source=ScriptedSource())
+
+    def test_a_raising_disposition_fails_closed(self) -> None:
+        session = sess.OperatorSession.open(
+            session_id="s-1", mode="paper", source=_Returns(_RaisingDisposition()),
+            clock=counter_clock())
+        result = session.request_proposal(request_id="r1", prompt="p")
+        self.assertEqual((False, sess.SOURCE_ERROR), (result.ok, result.code))
+        self.assertEqual(
+            ["session_opened", "proposal_requested", "proposal_refused"], kinds(session))
+        self.assertNotIn("disposition blew up", str(session.records()))
+        sess.OperatorSession.replay(session.records(), source=ScriptedSource())
+
+    def test_a_dirty_source_reason_is_stored_as_source_error(self) -> None:
+        dirty = "line\nbreak" + ("x" * 500)
+        source = ScriptedSource(DecisionOutcome(
+            FAIL_CLOSED, dirty, None, {"id": "r"}, None, "watch_only"))
+        session = sess.OperatorSession.open(
+            session_id="s-1", mode="paper", source=source, clock=counter_clock())
+        result = session.request_proposal(request_id="r1", prompt="p")
+        self.assertEqual((False, sess.SOURCE_ERROR), (result.ok, result.code))
+        self.assertEqual(sess.SOURCE_ERROR, session.records()[-1]["data"]["reason"])
+        self.assertNotIn(dirty, str(session.records()))
+        sess.OperatorSession.replay(session.records(), source=ScriptedSource())
+
+    def test_a_string_that_is_not_a_digest_is_refused(self) -> None:
+        source = ScriptedSource(DecisionOutcome(
+            ACCEPTED, "ok", proposal_payload(), {"id": "r"},
+            {"output_digest": "not-a-digest"}, None))
+        session = sess.OperatorSession.open(
+            session_id="s-1", mode="paper", source=source, clock=counter_clock())
+        result = session.request_proposal(request_id="r1", prompt="p")
+        self.assertEqual((False, sess.SOURCE_ERROR), (result.ok, result.code))
+        self.assertEqual([], session.proposals())
+        sess.OperatorSession.replay(session.records(), source=ScriptedSource())
+
+
+class _Returns:
+    adapter_kind = "fake"
+
+    def __init__(self, outcome: object) -> None:
+        self._outcome = outcome
+
+    def fetch(self, *, request_id: str, mode: str, prompt: str) -> object:
+        return self._outcome
+
+
+class _RaisingDisposition:
+    reason = "ok"
+
+    @property
+    def disposition(self) -> str:
+        raise RuntimeError("disposition blew up")
 
 
 if __name__ == "__main__":

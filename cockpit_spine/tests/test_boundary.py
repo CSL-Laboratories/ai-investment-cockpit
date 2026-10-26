@@ -18,6 +18,7 @@ BASE_ALLOWED = frozenset({
     "re", "typing", "collections", "jsonschema", "successor", "cockpit_spine",
 })
 EXTRA_ALLOWED: dict[str, frozenset[str]] = {
+    "projections.py": frozenset({"types"}),
     "regen_projections.py": frozenset({"sys"}),
     "cli.py": frozenset({"argparse", "sys"}),
     "__main__.py": frozenset({"sys"}),
