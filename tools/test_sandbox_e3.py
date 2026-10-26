@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -716,6 +717,30 @@ class BootstrapContractTests(unittest.TestCase):
             'install -m0600 -o runner -g runner /dev/null "$STATE/git-credential.backing"',
             text,
         )
+
+    def test_model_read_denies_cover_the_git_credential_files(self) -> None:
+        """The overlay and its backing sit under Read denies the model already has.
+
+        Samir, review 5657579383: ``$AP/.git-credential-gh-token`` is under
+        ``//home/runner/work/_actions/**`` and ``$STATE/git-credential.backing``
+        is under ``//var/lib/csl-relay/**``. A later edit that drops either
+        deny, or moves either file, must fail here.
+        """
+        bootstrap = (SCRIPTS / "sandbox_e3_bootstrap.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            "AP=/home/runner/work/_actions/anthropics/claude-code-action/",
+            bootstrap,
+        )
+        self.assertIn("STATE=/var/lib/csl-relay", bootstrap)
+        self.assertIn('"$AP/.git-credential-gh-token"', bootstrap)
+        self.assertIn('"$STATE/git-credential.backing"', bootstrap)
+        workflow = (ROOT / ".github" / "workflows" / "claude.yml").read_text(encoding="utf-8")
+        for job in ("claude-mention", "devin-review-fix"):
+            body = workflow.split(f"\n  {job}:\n", 1)[1]
+            body = re.split(r"\n  [a-z][a-z0-9-]*:\n", body, maxsplit=1)[0]
+            deny = body.split('"deny": [', 1)[1].split("]", 1)[0]
+            self.assertIn('"Read(//home/runner/work/_actions/**)"', deny, job)
+            self.assertIn('"Read(//var/lib/csl-relay/**)"', deny, job)
 
     def test_nested_file_bind_stays_writable_on_ro_parent(self) -> None:
         """File bind over remount-ro parent stays rw; parent stays ro."""

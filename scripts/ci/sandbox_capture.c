@@ -319,7 +319,10 @@ static int x_environ_ok(pid_t pid)
     return 1;
 }
 
-/* F1 last-miss ranks. Higher means closer to a successful arm. */
+/* F1 furthest-stage ranks. Higher means closer to a successful arm.
+ * f1_best is the furthest stage reached across the whole run, not a
+ * per-scan reset: once bun exits, the next scan must not overwrite a
+ * useful stage with no_x. */
 enum {
     F1_MISS_NO_X = 1,
     F1_MISS_CMDLINE = 2,
