@@ -5,9 +5,12 @@ is whole. The chain verifies and replays under the session rules, and the step
 transcript is bound to that chain: every step's head must be a chain hash, heads
 may only move forward, and the chain records a step added (none for status and
 audit, one or two for a command) must be exactly the event its command, arguments,
-``ok`` and ``code`` claim. The steps must cover the whole chain, every displayed
-number in every step is a verified published-tier link, and approve, veto and
-stop each happened. Malformed input is reported as a problem, never raised.
+``ok`` and ``code`` claim. The lines the operator saw are rebuilt from the
+replayed session at that head, using the same ``OperatorService`` rendering the
+CLI uses, and must match exactly (result, state, mode, authority, and anything
+added later). The steps must cover the whole chain, every displayed number in
+every step is a verified published-tier link, and approve, veto and stop each
+happened. Malformed input is reported as a problem, never raised.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ from typing import Any
 from cockpit_spine import views
 from cockpit_spine.audit import AuditError, verify_chain
 from cockpit_spine.projections import Registry
+from cockpit_spine.service import OperatorService
 from cockpit_spine.session import OperatorSession
 from cockpit_spine.sources import ProposalSource
 
@@ -115,6 +119,47 @@ def _check_step(
     return found
 
 
+def _view_lines(
+    session: OperatorSession, registry: Registry, command: str, segment: list[dict[str, Any]],
+) -> list[dict[str, str]] | None:
+    """The lines the CLI would have shown, rebuilt from the replayed session."""
+
+    svc = OperatorService(session, registry)
+    kinds = [record["kind"] for record in segment]
+    data = [record["data"] for record in segment]
+
+    def show(ok: bool, code: object, extra: list[views.Line] | None = None) -> list[dict[str, str]]:
+        shown = views.code("result", code)
+        lines = [shown, *(extra or []), *svc._status_lines()]
+        return svc._reply(ok, shown.value, lines)["lines"]
+
+    if command == "status":
+        return svc._reply(True, "status", svc._status_lines())["lines"]
+    if command == "audit":
+        return svc._reply(True, "audit", svc._audit_lines())["lines"]
+    if command == "open":
+        return svc._reply(True, "status", svc._status_lines())["lines"]
+    if kinds == ["command_refused"]:
+        return show(False, data[0].get("code"))
+    if command == "propose" and kinds == ["proposal_requested", "proposal_received"]:
+        return show(True, "proposal_received")
+    if command == "propose" and kinds == ["proposal_requested", "proposal_refused"]:
+        return show(False, data[1].get("reason"))
+    if command == "approve" and kinds == ["proposal_approved"]:
+        record = segment[0]
+        extra = [
+            views.Line("text", "authority", "none, inert record"),
+            views.Line("id", "approved intent", str(record["data"].get("proposal_id"))),
+            views.Line("digest", "audit hash", record["hash"]),
+        ]
+        return show(True, "approved", extra)
+    if command == "veto" and kinds == ["proposal_vetoed"]:
+        return show(True, "vetoed")
+    if command == "stop" and kinds == ["session_stopped"]:
+        return show(True, "stopped")
+    return None
+
+
 def _check_steps(
     steps: object, chain: list[dict[str, Any]], head: str, registry: Registry,
 ) -> list[str]:
@@ -158,6 +203,16 @@ def _check_steps(
         segment = chain[cursor + 1:end + 1]
         cursor = end
         found += [f"{where}: {m}" for m in _check_step(argv[0], argv, response, segment)]
+        try:
+            snap = OperatorSession.replay(chain[: end + 1], source=_NoSource())
+            expected = _view_lines(snap, registry, argv[0], segment)
+        except (AuditError, TypeError, KeyError, AttributeError, ValueError) as error:
+            found.append(f"{where}: cannot rebuild the view ({type(error).__name__})")
+        else:
+            if expected is None:
+                found.append(f"{where}: no rendered view for this command")
+            elif response.get("lines") != expected:
+                found.append(f"{where}: lines differ from the replayed view")
         (codes if ok else refusals).append(response.get("code"))
     if cursor != len(chain) - 1 or head != chain[-1]["hash"]:
         found.append("the steps do not cover the whole chain")

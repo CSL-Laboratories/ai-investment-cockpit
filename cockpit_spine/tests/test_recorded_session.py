@@ -157,6 +157,28 @@ class StepsAreBoundToTheChainTests(unittest.TestCase):
 
         self.assertTrue(self.damaged(write))
 
+    def _retitle(self, record: dict, argv0: str, code: str, label: str, value: str) -> None:
+        step = self.step(record, argv0, code)
+        for line in step["response"]["lines"]:
+            if line.get("label") == label:
+                line["value"] = value
+                return
+        raise AssertionError(f"no {label} line on {argv0}/{code}")
+
+    def test_edited_operator_lines_are_reported(self) -> None:
+        cases = (
+            ("approve", "approved", "authority", "live"),
+            ("approve", "approved", "result", "vetoed"),
+            ("approve", "digest_mismatch", "result", "something-else"),
+            ("stop", "stopped", "state", "running"),
+            ("open", "status", "mode", "read_only"),
+        )
+        for argv0, code, label, value in cases:
+            found = self.damaged(
+                lambda r, a=argv0, c=code, lab=label, val=value: self._retitle(r, a, c, lab, val)
+            )
+            self.assertTrue(any("lines differ" in item for item in found), (argv0, label, found))
+
     def test_a_chain_head_line_that_differs_from_the_response_head_is_reported(self) -> None:
         def line(r: dict) -> None:
             status = r["steps"][0]["response"]
