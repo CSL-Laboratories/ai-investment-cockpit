@@ -687,9 +687,6 @@ LABEL_ARRAY = re.compile(
     r'''(?:["']labels["']\s*:|labels\s*=)\s*\[([^\]]*)\]''', re.IGNORECASE | re.DOTALL
 )
 ISSUE_RESOURCE = re.compile(r'/issues/(?:\{[^}]+\}|\$[\w.]+|\d+)(?!/)')
-WRITER_CALL = re.compile(
-    r'(?m)^\s+uses:\s*["\']?(?:\./)?\.github/workflows/claude-conflict-writer\.ya?ml["\']?\s*(?:#.*)?$'
-)
 _SECRET_EXPR = re.compile(
     r'''secrets(?:\.[A-Za-z0-9_]+|\[\s*['"][A-Za-z0-9_]+['"]\s*\])'''
 )
@@ -892,9 +889,40 @@ def model_github_token_ok(job):
     return bool(tokens) and all(_GITHUB_TOKEN_VALUE.fullmatch(token) for token in tokens)
 
 
+def conflict_writer_uses(uses):
+    """Job-level reusable-workflow call of claude-conflict-writer.yml/.yaml.
+
+    Accepts a local path (`./.github/workflows/...`) or `owner/repo/.github/workflows/...@ref`.
+    """
+    if not isinstance(uses, str):
+        return False
+    path = uses.split('@', 1)[0].replace('\\', '/')
+    if path.startswith('./'):
+        path = path[2:]
+    marker = '.github/workflows/claude-conflict-writer.'
+    if marker not in path:
+        return False
+    return path[path.index(marker):] in (
+        '.github/workflows/claude-conflict-writer.yml',
+        '.github/workflows/claude-conflict-writer.yaml',
+    )
+
+
+def calls_conflict_writer(doc):
+    jobs = (doc or {}).get('jobs') if isinstance(doc, dict) else None
+    if not isinstance(jobs, dict):
+        return False
+    return any(isinstance(job, dict) and conflict_writer_uses(job.get('uses'))
+               for job in jobs.values())
+
+
 def writer_callers(directory):
-    return {path.name for path in Path(directory).glob('*.y*ml')
-            if WRITER_CALL.search(path.read_text(encoding='utf-8'))}
+    found = set()
+    for path in Path(directory).glob('*.y*ml'):
+        doc = yaml.load(path.read_text(encoding='utf-8'), Loader=yaml.BaseLoader)
+        if calls_conflict_writer(doc):
+            found.add(path.name)
+    return found
 
 
 def handoff_constants(text):
@@ -1282,10 +1310,14 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         old = re.compile(r'^claude-\$\{\{ (needs\.resolve-pr\.outputs\.pr_number|inputs\.pr_number) \}\}$')
         swapped = 'claude-${{ inputs.pr_number }}'
         self.assertRegex(swapped, old)
-        self.assertNotEqual(swapped, EXPECTED_LOCK['claude.yml'])
-        job = copy.deepcopy(workflow('claude.yml')['jobs']['claude-mention'])
-        job['concurrency']['group'] = swapped
-        self.assertNotEqual(job['concurrency']['group'], EXPECTED_LOCK['claude.yml'])
+        live = workflow('claude.yml')['jobs']['claude-mention']
+        self.assertEqual(live['concurrency']['group'], EXPECTED_LOCK['claude.yml'])
+        self.assertEqual(live['concurrency']['cancel-in-progress'], 'false')
+        self.assertEqual(live['concurrency']['queue'], 'max')
+        mutated = copy.deepcopy(live)
+        mutated['concurrency']['group'] = swapped
+        self.assertRegex(mutated['concurrency']['group'], old)
+        self.assertNotEqual(mutated['concurrency']['group'], EXPECTED_LOCK['claude.yml'])
 
     def test_label_write_mutations_cover_issue_patch_graphql_and_full_set(self):
         mixed = 'write("POST", f"{root}/issues/{n}/labels", {"labels": [HANDOFF_LABEL, "ci:full"]})'
@@ -1491,11 +1523,37 @@ class CrossLaneAdmissionTests(unittest.TestCase):
                 'name: quiet\non: workflow_dispatch\njobs:\n  call:\n'
                 '    uses: ./.github/workflows/claude-conflict-writer.yml\n'
                 '    secrets: inherit\n', encoding='utf-8')
+            (tmp / 'remote.yml').write_text(
+                'name: remote\non: workflow_dispatch\njobs:\n  call:\n'
+                '    uses: CSL-Laboratories/ai-investment-cockpit/'
+                '.github/workflows/claude-conflict-writer.yml@main\n'
+                '    secrets: inherit\n', encoding='utf-8')
+            (tmp / 'flow.yml').write_text(
+                'name: flow\non: workflow_dispatch\njobs:\n'
+                '  call: {uses: ./.github/workflows/claude-conflict-writer.yml}\n',
+                encoding='utf-8')
+            (tmp / 'yaml-ext.yml').write_text(
+                'name: yaml-ext\non: workflow_dispatch\njobs:\n  call:\n'
+                '    uses: ./.github/workflows/claude-conflict-writer.yaml@'
+                + 'a' * 40 + '\n', encoding='utf-8')
+            (tmp / 'other.yml').write_text(
+                'name: other\non: workflow_dispatch\njobs:\n  x:\n'
+                '    runs-on: ubuntu-latest\n    steps:\n'
+                '      - uses: actions/checkout@v4\n', encoding='utf-8')
             markers = {path.name for path in tmp.glob('*.y*ml')
                        if re.search(r'anthropics/claude-code|ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN',
                                     path.read_text(encoding='utf-8'))}
             self.assertEqual(markers, set())
-            self.assertEqual(writer_callers(tmp), {'quiet.yml'})
+            self.assertEqual(writer_callers(tmp),
+                             {'quiet.yml', 'remote.yml', 'flow.yml', 'yaml-ext.yml'})
+            old = re.compile(
+                r'(?m)^\s+uses:\s*["\']?(?:\./)?\.github/workflows/claude-conflict-writer\.ya?ml["\']?\s*(?:#.*)?$'
+            )
+            self.assertTrue(old.search((tmp / 'quiet.yml').read_text(encoding='utf-8')))
+            self.assertFalse(old.search((tmp / 'remote.yml').read_text(encoding='utf-8')))
+            self.assertFalse(old.search((tmp / 'flow.yml').read_text(encoding='utf-8')))
+            self.assertFalse(calls_conflict_writer(
+                yaml.load((tmp / 'other.yml').read_text(encoding='utf-8'), Loader=yaml.BaseLoader)))
 
     def test_unapproved_action_in_prep_or_model_is_rejected(self):
         prep = copy.deepcopy(workflow('claude.yml')['jobs']['mention-prepare'])

@@ -142,7 +142,9 @@ their own tests (`tools/test_codex_gate.py`, `app/tests/test_stuck_thread_watch.
   re-pinned `file:line` citations when lines move, or says "no contract row changes" and why.
 - Writer workflows (`claude.yml`, `conflict-scan.yml`, `claude-conflict-writer.yml`) must keep the
   admission surface that `CrossLaneAdmissionTests` checks statically: no CI dispatch, re-run,
-  ready-for-review or CI-label add (the only CI-label write is revoking a gate-owned `ci:full`);
+  ready-for-review or CI-label add (the only CI-label write is revoking a gate-owned `ci:full`).
+  The label check reads workflow and extracted-script text; a `gh api --method PATCH` whose
+  label names live only in `--input body.json` is not visible. Also required:
   pushes only from the model-free publish jobs as one ordinary fast-forward (no prep or publish job
   holds `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` or the Claude action); one shared
   `claude-<PR>` lock without cancellation; the eight-commit guard on both claude.yml writers, the
