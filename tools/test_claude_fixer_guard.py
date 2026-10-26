@@ -255,11 +255,9 @@ class GuardTests(unittest.TestCase):
 class WorkflowTests(unittest.TestCase):
     def test_workflow_embeds_trusted_publisher_and_terminal_after_model_failure(self):
         text = (ROOT / ".github/workflows/claude.yml").read_text(encoding="utf-8")
-        chunks = text.split("<<'CLAUDE_FIXER_PUBLISH'\n")[1:]
-        self.assertEqual(len(chunks), 2)
-        for chunk in chunks:
-            embedded = textwrap.dedent(chunk.split("          CLAUDE_FIXER_PUBLISH", 1)[0]).rstrip()
-            self.assertEqual(embedded, SOURCE.read_text(encoding="utf-8").rstrip())
+        self.assertEqual(text.count('install -m 0444 "$TRUSTED/claude_fixer_publish.py"'), 2)
+        self.assertNotIn("<<'CLAUDE_FIXER_PUBLISH'", text)
+        self.assertTrue(SOURCE.is_file())
         self.assertNotIn("CLAUDE_FIXER_GUARD", text)
         # The publish job runs after a failed model job; only workflow cancellation stops it.
         self.assertEqual(text.count("\n      !cancelled() &&\n"), 2)
@@ -424,9 +422,15 @@ class TerminalReceiptIntegrationTests(unittest.TestCase):
 
     def test_install_captures_context_and_workflow_uses_trusted_consumer(self):
         text = (ROOT / ".github/workflows/claude.yml").read_text(encoding="utf-8")
-        self.assertIn('cat > "$RUNNER_TEMP/claude-fixer-guard/receipts.py"', text)
+        self.assertIn(
+            'install -m 0444 "$TRUSTED/claude_fixer_receipts.py" "$RUNNER_TEMP/claude-fixer-guard/receipts.py"',
+            text,
+        )
         self.assertIn('python3 "$RUNNER_TEMP/claude-fixer-guard/receipts.py"', text)
-        self.assertIn('cat > "$RUNNER_TEMP/claude-fixer-publish/receipts.py"', text)
+        self.assertIn(
+            'install -m 0444 "$TRUSTED/claude_fixer_receipts.py" "$RUNNER_TEMP/claude-fixer-publish/receipts.py"',
+            text,
+        )
         # The model helper (allowed roots) and the publisher (receipt fields) both bind prepare's context.
         # E3 copies the fixer 0b env into each prefix step, then the outbox verify
         # step and the publisher: 6 0b (incl. runner-uid helper context) + outbox + publish.

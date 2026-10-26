@@ -21,7 +21,8 @@ static int f1_armed;
 static int fifo_hup;
 static unsigned char capture_buf[CSL_CAP_BYTES];
 static size_t captured;
-static unsigned extra_handoffs;
+static unsigned extra_handoffs; /* attempts after a recorded success */
+static unsigned ok_handoffs;    /* successful handoffs; 0 or 1 */
 static pid_t worker_pid;
 static pid_t f1_bun_pid;
 
@@ -505,6 +506,18 @@ static int peer_uid_ok(uid_t uid)
 #endif
 }
 
+static void handoff_fail(int cfd, int aux, int aux2)
+{
+    extra_handoffs++;
+    if (aux2 >= 0) {
+        close(aux2);
+    }
+    if (aux >= 0) {
+        close(aux);
+    }
+    close(cfd);
+}
+
 static void accept_handoff(void)
 {
     int cfd = accept4(listen_fd, NULL, NULL, SOCK_CLOEXEC);
@@ -523,23 +536,30 @@ static void accept_handoff(void)
     if (cfd < 0) {
         return;
     }
-    extra_handoffs++;
+    /* First success owns pair_fd. Later accepts (including a backlog
+     * connect after unlink) are extras, not a second pair. Any accepted
+     * peer that does not become that pair also counts as extra, so a
+     * rejected impostor before the launcher still sets conflict. */
+    if (pair_fd >= 0 || ok_handoffs > 0) {
+        handoff_fail(cfd, -1, -1);
+        return;
+    }
     /* Blocking accept + SO_RCVTIMEO: connect-before-sendmsg must not EAGAIN. */
     if (setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &rcv, sizeof rcv) < 0) {
-        close(cfd);
+        handoff_fail(cfd, -1, -1);
         return;
     }
     /* N11: do not unlink until the peer is verified. */
     if (setsockopt(cfd, SOL_SOCKET, SO_PASSCRED, &pass, sizeof pass) < 0) {
-        close(cfd);
+        handoff_fail(cfd, -1, -1);
         return;
     }
     if (getsockopt(cfd, SOL_SOCKET, SO_PEERCRED, &peer, &plen) < 0) {
-        close(cfd);
+        handoff_fail(cfd, -1, -1);
         return;
     }
     if (!peer_uid_ok(peer.uid)) {
-        close(cfd);
+        handoff_fail(cfd, -1, -1);
         return;
     }
     memset(&msg, 0, sizeof msg);
@@ -550,12 +570,12 @@ static void accept_handoff(void)
     msg.msg_control = cmsgbuf;
     msg.msg_controllen = sizeof cmsgbuf;
     if (recvmsg(cfd, &msg, 0) < 0) {
-        close(cfd);
+        handoff_fail(cfd, -1, -1);
         return;
     }
     if (msg.msg_flags & MSG_CTRUNC) {
         close_rights(&msg, -1);
-        close(cfd);
+        handoff_fail(cfd, -1, -1);
         return;
     }
     for (cmsg = CMSG_FIRSTHDR(&msg); cmsg; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
@@ -564,7 +584,7 @@ static void accept_handoff(void)
             int *fds = (int *)CMSG_DATA(cmsg);
             if (nfds != 1 || got_pair >= 0) {
                 close_rights(&msg, -1);
-                close(cfd);
+                handoff_fail(cfd, -1, -1);
                 return;
             }
             got_pair = fds[0];
@@ -574,7 +594,7 @@ static void accept_handoff(void)
             memcpy(&scm, CMSG_DATA(cmsg), sizeof scm);
             if (scm.pid != peer.pid || scm.uid != peer.uid) {
                 close_rights(&msg, -1);
-                close(cfd);
+                handoff_fail(cfd, -1, -1);
                 return;
             }
             saw_cred = 1;
@@ -582,7 +602,7 @@ static void accept_handoff(void)
     }
     if (got_pair < 0 || !saw_cred) {
         close_rights(&msg, -1);
-        close(cfd);
+        handoff_fail(cfd, -1, -1);
         return;
     }
     /* F5: SO_PEERPIDFD identity. Fail closed if unavailable. */
@@ -595,34 +615,25 @@ static void accept_handoff(void)
         size_t pn = 0;
         pid_t pfd_pid = 0;
         if (getsockopt(cfd, SOL_SOCKET, SO_PEERPIDFD, &peerpidfd, &sl) < 0) {
-            close(cfd);
-            close(got_pair);
+            handoff_fail(cfd, got_pair, -1);
             return;
         }
         if (csl_read_pidfd_pid(peerpidfd, &pfd_pid) < 0 || pfd_pid != peer.pid) {
-            close(peerpidfd);
-            close(cfd);
-            close(got_pair);
+            handoff_fail(cfd, got_pair, peerpidfd);
             return;
         }
         if (csl_proc_exe(peer.pid, exe, sizeof exe) < 0) {
-            close(peerpidfd);
-            close(cfd);
-            close(got_pair);
+            handoff_fail(cfd, got_pair, peerpidfd);
             return;
         }
         if (strcmp(exe, CSL_LAUNCH_PATH) != 0) {
-            close(peerpidfd);
-            close(cfd);
-            close(got_pair);
+            handoff_fail(cfd, got_pair, peerpidfd);
             return;
         }
         if (csl_sha256_file(exe, dig) != 0 ||
             csl_read_file(CSL_LAUNCH_SHA_PATH, pinhex, sizeof pinhex, &pn) != 0 ||
             pn == 0) {
-            close(peerpidfd);
-            close(cfd);
-            close(got_pair);
+            handoff_fail(cfd, got_pair, peerpidfd);
             return;
         }
         while (pn && (pinhex[pn - 1] == '\n' || pinhex[pn - 1] == '\r' ||
@@ -630,15 +641,11 @@ static void accept_handoff(void)
             pinhex[--pn] = 0;
         }
         if (!csl_hex_eq(dig, pinhex)) {
-            close(peerpidfd);
-            close(cfd);
-            close(got_pair);
+            handoff_fail(cfd, got_pair, peerpidfd);
             return;
         }
         if (!f1_armed || !f2_launcher_parent_is_bun(peer.pid)) {
-            close(peerpidfd);
-            close(cfd);
-            close(got_pair);
+            handoff_fail(cfd, got_pair, peerpidfd);
             return;
         }
         close(peerpidfd);
@@ -653,8 +660,7 @@ static void accept_handoff(void)
         struct cmsghdr *sc;
         char d = 'S';
         if (wfd < 0) {
-            close(cfd);
-            close(got_pair);
+            handoff_fail(cfd, got_pair, -1);
             return;
         }
         memset(&sm, 0, sizeof sm);
@@ -671,8 +677,7 @@ static void accept_handoff(void)
         memcpy(CMSG_DATA(sc), &wfd, sizeof wfd);
         if (sendmsg(got_pair, &sm, 0) < 0) {
             close(wfd);
-            close(cfd);
-            close(got_pair);
+            handoff_fail(cfd, got_pair, -1);
             return;
         }
         close(wfd); /* F4c send copy */
@@ -682,7 +687,7 @@ static void accept_handoff(void)
         }
     }
     pair_fd = got_pair;
-    extra_handoffs--; /* first successful peer is the launcher */
+    ok_handoffs = 1;
     close(cfd);
 }
 
@@ -722,10 +727,11 @@ static void handle_control(void)
     }
     req[n] = 0;
     if (strncmp(req, "STATUS", 6) == 0) {
-        snprintf(resp, sizeof resp, "end=%d pair=%d writers=%d already=%d worker=%d extra=%u\n",
+        snprintf(resp, sizeof resp,
+                 "end=%d pair=%d writers=%d already=%d worker=%d extra=%u ok=%u\n",
                  got_end ? 1 : 0, pair_closed ? 1 : 0, fifo_writers(),
                  access(CSL_ALREADY_PATH, F_OK) == 0 ? 1 : 0, (int)worker_pid,
-                 extra_handoffs);
+                 extra_handoffs, ok_handoffs);
         (void)csl_write_all(cfd, resp, strlen(resp));
     } else if (strncmp(req, "RAN", 3) == 0) {
         (void)csl_write_file(CSL_ALREADY_PATH, "1\n", 2, 0600);

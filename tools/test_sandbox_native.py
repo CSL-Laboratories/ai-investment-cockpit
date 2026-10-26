@@ -418,6 +418,21 @@ class NativeRelayOneShotTests(unittest.TestCase):
             (state / "end").write_text("ok\n", encoding="ascii")
             (state / "pair.closed").write_text("1\n", encoding="ascii")
             (state / "capture").write_bytes(WRAP)
+            (state / "e3.record").write_text(
+                "claude_sha256=" + "a" * 64 + "\n"
+                "claude_realpath_class=pinned\n"
+                "sdk_mjs_sha256=" + "b" * 64 + "\n"
+                "sdk_source=downloaded-action-dir-frozen-lockfile-ignore-scripts\n"
+                "sdk_disk_match=true\n"
+                "bun_tofu_sha256=" + "c" * 64 + "\n"
+                "bwrap_sha256=" + "d" * 64 + "\n"
+                "socat_sha256=" + "e" * 64 + "\n"
+                "bash_sha256=" + "f" * 64 + "\n"
+                "match=true\n"
+                "handoff_count=0\n"
+                "handoff_conflict=false\n",
+                encoding="ascii",
+            )
             second = subprocess.run([str(relay)], capture_output=True, text=True)
             self.assertEqual(second.returncode, 0)
             self.assertNotIn("NOT RELAYED", second.stdout)
@@ -425,6 +440,10 @@ class NativeRelayOneShotTests(unittest.TestCase):
             self.assertIn("[Sandbox Linux] Wrapped command with bwrap (", second.stdout)
             self.assertIn("channel=S", second.stdout)
             self.assertIn("origin=unattributed", second.stdout)
+            # File-based path has no daemon STATUS ok=/extra=, so
+            # placeholders stay 0/false instead of inventing pair+1.
+            self.assertIn("handoff_count=0", second.stdout)
+            self.assertIn("handoff_conflict=false", second.stdout)
             self.assertTrue((state / "already_ran").is_file())
             self.assertFalse((state / "capture").exists())
             third = subprocess.run([str(relay)], capture_output=True, text=True)
@@ -528,6 +547,8 @@ int main(void)
     if (connect(fd, (struct sockaddr *)&addr, sizeof addr) < 0) {
         return 2;
     }
+    (void)csl_write_file(CSL_STATE_DIR "/connected", "1\n", 2, 0600);
+    sl.tv_nsec = 800 * 1000 * 1000;
     (void)nanosleep(&sl, NULL);
     if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) < 0) {
         return 3;
@@ -571,6 +592,7 @@ int main(void)
     msg.msg_control = cmsgbuf;
     msg.msg_controllen = sizeof cmsgbuf;
     (void)recvmsg(pair[0], &msg, 0);
+    (void)csl_write_all(pair[0], "END\n", 4);
     close(pair[0]);
     return 0;
 }
@@ -593,6 +615,7 @@ int main(void)
                     f'-DCSL_PREFIX="{prefix}"',
                     "-o", str(bins["launch"]),
                     str(stub),
+                    str(SRC / "sandbox_common.c"),
                     f"-I{SRC}",
                     "-O2", "-Wall", "-Werror",
                 ],
@@ -627,6 +650,366 @@ int main(void)
                 finally:
                     control.close()
                 self.assertIn(b"extra=0", reply, reply)
+                self.assertIn(b"ok=1", reply, reply)
+            finally:
+                daemon.send_signal(15)
+                try:
+                    daemon.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    daemon.kill()
+                    daemon.wait(timeout=2)
+
+    def test_second_handoff_after_success_sets_conflict(self) -> None:
+        """A backlog connect after the first success must count as extra."""
+        delayed = r'''
+#define _GNU_SOURCE
+#include "sandbox_common.h"
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <time.h>
+
+int main(void)
+{
+    int fd, pair[2], pass = 1;
+    struct sockaddr_un addr;
+    struct msghdr msg;
+    struct iovec iov;
+    char cmsgbuf[CMSG_SPACE(sizeof(int)) + CMSG_SPACE(sizeof(struct ucred))];
+    struct cmsghdr *cmsg;
+    struct ucred cred;
+    char dummy = 1;
+    char reply = 0;
+    struct timespec sl = {0, 800 * 1000 * 1000};
+
+    fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) {
+        return 1;
+    }
+    memset(&addr, 0, sizeof addr);
+    addr.sun_family = AF_UNIX;
+    snprintf(addr.sun_path, sizeof addr.sun_path, "%s", CSL_HANDOFF_SOCK);
+    if (connect(fd, (struct sockaddr *)&addr, sizeof addr) < 0) {
+        return 2;
+    }
+    (void)csl_write_file(CSL_STATE_DIR "/connected", "1\n", 2, 0600);
+    (void)nanosleep(&sl, NULL);
+    if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) < 0) {
+        return 3;
+    }
+    (void)setsockopt(fd, SOL_SOCKET, SO_PASSCRED, &pass, sizeof pass);
+    memset(&msg, 0, sizeof msg);
+    iov.iov_base = &dummy;
+    iov.iov_len = 1;
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = cmsgbuf;
+    msg.msg_controllen = sizeof cmsgbuf;
+    cmsg = CMSG_FIRSTHDR(&msg);
+    if (!cmsg) {
+        return 4;
+    }
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
+    cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+    memcpy(CMSG_DATA(cmsg), &pair[1], sizeof(int));
+    cred.pid = getpid();
+    cred.uid = getuid();
+    cred.gid = getgid();
+    cmsg = CMSG_NXTHDR(&msg, cmsg);
+    if (cmsg) {
+        cmsg->cmsg_level = SOL_SOCKET;
+        cmsg->cmsg_type = SCM_CREDENTIALS;
+        cmsg->cmsg_len = CMSG_LEN(sizeof cred);
+        memcpy(CMSG_DATA(cmsg), &cred, sizeof cred);
+    }
+    if (sendmsg(fd, &msg, 0) < 0) {
+        return 5;
+    }
+    close(pair[1]);
+    close(fd);
+    memset(&msg, 0, sizeof msg);
+    iov.iov_base = &reply;
+    iov.iov_len = 1;
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = cmsgbuf;
+    msg.msg_controllen = sizeof cmsgbuf;
+    (void)recvmsg(pair[0], &msg, 0);
+    (void)csl_write_all(pair[0], "END\n", 4);
+    close(pair[0]);
+    return 0;
+}
+'''
+        e3_record = (
+            "claude_sha256=" + "a" * 64 + "\n"
+            "claude_realpath_class=pinned\n"
+            "sdk_mjs_sha256=" + "b" * 64 + "\n"
+            "sdk_source=downloaded-action-dir-frozen-lockfile-ignore-scripts\n"
+            "sdk_disk_match=true\n"
+            "bun_tofu_sha256=" + "c" * 64 + "\n"
+            "bwrap_sha256=" + "d" * 64 + "\n"
+            "socat_sha256=" + "e" * 64 + "\n"
+            "bash_sha256=" + "f" * 64 + "\n"
+            "match=true\n"
+            "handoff_count=0\n"
+            "handoff_conflict=false\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = Path(tmp)
+            bins = compile_prefix(prefix)
+            state = prefix / "state"
+            state.mkdir(parents=True, exist_ok=True)
+            (state / "worker.pid").write_text(f"{os.getpid()}\n", encoding="ascii")
+            (state / "worker.pid").chmod(0o600)
+            stub = prefix / "delayed_handoff.c"
+            stub.write_text(delayed, encoding="utf-8")
+            subprocess.run(
+                [
+                    "gcc",
+                    f'-DCSL_PREFIX="{prefix}"',
+                    "-o", str(bins["launch"]),
+                    str(stub),
+                    str(SRC / "sandbox_common.c"),
+                    f"-I{SRC}",
+                    "-O2", "-Wall", "-Werror",
+                ],
+                check=True,
+                cwd=SRC,
+            )
+            digest = hashlib.sha256(bins["launch"].read_bytes()).hexdigest()
+            (state / "launch.sha256").write_text(digest + "\n", encoding="ascii")
+            daemon = subprocess.Popen(
+                [str(bins["capture"])],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            extra_client = None
+            try:
+                sock_path = state / "handoff.sock"
+                for _ in range(50):
+                    if sock_path.exists() and (state / "control.sock").exists():
+                        break
+                    time.sleep(0.05)
+                self.assertTrue(sock_path.exists(), "handoff.sock")
+                first = subprocess.Popen([str(bins["launch"])])
+                connected = state / "connected"
+                for _ in range(40):
+                    if connected.is_file():
+                        break
+                    time.sleep(0.05)
+                self.assertTrue(connected.is_file(), "first launcher connected")
+                time.sleep(0.7)
+                extra_client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                extra_client.settimeout(2)
+                extra_client.connect(str(sock_path))
+                rc = first.wait(timeout=5)
+                self.assertEqual(rc, 0, "first launcher")
+                reply = b""
+                for _ in range(40):
+                    control = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    try:
+                        control.settimeout(2)
+                        control.connect(str(state / "control.sock"))
+                        control.sendall(b"STATUS\n")
+                        reply = control.recv(256)
+                    finally:
+                        control.close()
+                    if b"ok=1" in reply and b"extra=1" in reply:
+                        break
+                    time.sleep(0.05)
+                self.assertIn(b"ok=1", reply, reply)
+                self.assertIn(b"extra=1", reply, reply)
+                (state / "capture").write_bytes(WRAP)
+                (state / "e3.record").write_text(e3_record, encoding="ascii")
+                relayed = subprocess.run(
+                    [str(bins["relay"])], capture_output=True, text=True, timeout=8,
+                )
+                self.assertEqual(relayed.returncode, 0, relayed.stderr)
+                self.assertNotIn("NOT RELAYED", relayed.stdout)
+                self.assertIn("handoff_count=1", relayed.stdout)
+                self.assertIn("handoff_conflict=true", relayed.stdout)
+                self.assertNotIn("handoff_count=0\n", relayed.stdout)
+            finally:
+                if extra_client is not None:
+                    extra_client.close()
+                daemon.send_signal(15)
+                try:
+                    daemon.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    daemon.kill()
+                    daemon.wait(timeout=2)
+
+    def test_rejected_peer_before_launcher_sets_conflict(self) -> None:
+        """A failed connect before the real launcher must still set extra."""
+        success = r'''
+#define _GNU_SOURCE
+#include "sandbox_common.h"
+#include <sys/socket.h>
+#include <sys/un.h>
+
+int main(void)
+{
+    int fd, pair[2], pass = 1;
+    struct sockaddr_un addr;
+    struct msghdr msg;
+    struct iovec iov;
+    char cmsgbuf[CMSG_SPACE(sizeof(int)) + CMSG_SPACE(sizeof(struct ucred))];
+    struct cmsghdr *cmsg;
+    struct ucred cred;
+    char dummy = 1;
+    char reply = 0;
+
+    fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) {
+        return 1;
+    }
+    memset(&addr, 0, sizeof addr);
+    addr.sun_family = AF_UNIX;
+    snprintf(addr.sun_path, sizeof addr.sun_path, "%s", CSL_HANDOFF_SOCK);
+    if (connect(fd, (struct sockaddr *)&addr, sizeof addr) < 0) {
+        return 2;
+    }
+    if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) < 0) {
+        return 3;
+    }
+    (void)setsockopt(fd, SOL_SOCKET, SO_PASSCRED, &pass, sizeof pass);
+    memset(&msg, 0, sizeof msg);
+    iov.iov_base = &dummy;
+    iov.iov_len = 1;
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = cmsgbuf;
+    msg.msg_controllen = sizeof cmsgbuf;
+    cmsg = CMSG_FIRSTHDR(&msg);
+    if (!cmsg) {
+        return 4;
+    }
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
+    cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+    memcpy(CMSG_DATA(cmsg), &pair[1], sizeof(int));
+    cred.pid = getpid();
+    cred.uid = getuid();
+    cred.gid = getgid();
+    cmsg = CMSG_NXTHDR(&msg, cmsg);
+    if (cmsg) {
+        cmsg->cmsg_level = SOL_SOCKET;
+        cmsg->cmsg_type = SCM_CREDENTIALS;
+        cmsg->cmsg_len = CMSG_LEN(sizeof cred);
+        memcpy(CMSG_DATA(cmsg), &cred, sizeof cred);
+    }
+    if (sendmsg(fd, &msg, 0) < 0) {
+        return 5;
+    }
+    close(pair[1]);
+    close(fd);
+    memset(&msg, 0, sizeof msg);
+    iov.iov_base = &reply;
+    iov.iov_len = 1;
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = cmsgbuf;
+    msg.msg_controllen = sizeof cmsgbuf;
+    (void)recvmsg(pair[0], &msg, 0);
+    (void)csl_write_all(pair[0], "END\n", 4);
+    close(pair[0]);
+    return 0;
+}
+'''
+        e3_record = (
+            "claude_sha256=" + "a" * 64 + "\n"
+            "claude_realpath_class=pinned\n"
+            "sdk_mjs_sha256=" + "b" * 64 + "\n"
+            "sdk_source=downloaded-action-dir-frozen-lockfile-ignore-scripts\n"
+            "sdk_disk_match=true\n"
+            "bun_tofu_sha256=" + "c" * 64 + "\n"
+            "bwrap_sha256=" + "d" * 64 + "\n"
+            "socat_sha256=" + "e" * 64 + "\n"
+            "bash_sha256=" + "f" * 64 + "\n"
+            "match=true\n"
+            "handoff_count=0\n"
+            "handoff_conflict=false\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = Path(tmp)
+            bins = compile_prefix(prefix)
+            state = prefix / "state"
+            state.mkdir(parents=True, exist_ok=True)
+            (state / "worker.pid").write_text(f"{os.getpid()}\n", encoding="ascii")
+            (state / "worker.pid").chmod(0o600)
+            stub = prefix / "ok_handoff.c"
+            stub.write_text(success, encoding="utf-8")
+            subprocess.run(
+                [
+                    "gcc",
+                    f'-DCSL_PREFIX="{prefix}"',
+                    "-o", str(bins["launch"]),
+                    str(stub),
+                    str(SRC / "sandbox_common.c"),
+                    f"-I{SRC}",
+                    "-O2", "-Wall", "-Werror",
+                ],
+                check=True,
+                cwd=SRC,
+            )
+            digest = hashlib.sha256(bins["launch"].read_bytes()).hexdigest()
+            (state / "launch.sha256").write_text(digest + "\n", encoding="ascii")
+            daemon = subprocess.Popen(
+                [str(bins["capture"])],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            try:
+                sock_path = state / "handoff.sock"
+                for _ in range(50):
+                    if sock_path.exists() and (state / "control.sock").exists():
+                        break
+                    time.sleep(0.05)
+                self.assertTrue(sock_path.exists(), "handoff.sock")
+                impostor = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                try:
+                    impostor.settimeout(2)
+                    impostor.connect(str(sock_path))
+                    impostor.sendall(b"x")
+                finally:
+                    impostor.close()
+                for _ in range(40):
+                    control = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    try:
+                        control.settimeout(2)
+                        control.connect(str(state / "control.sock"))
+                        control.sendall(b"STATUS\n")
+                        reply = control.recv(256)
+                    finally:
+                        control.close()
+                    if b"extra=1" in reply:
+                        break
+                    time.sleep(0.05)
+                self.assertIn(b"extra=1", reply, reply)
+                self.assertIn(b"ok=0", reply, reply)
+                client = subprocess.run(
+                    [str(bins["launch"])], capture_output=True, timeout=5,
+                )
+                self.assertEqual(client.returncode, 0, client.stderr)
+                control = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                try:
+                    control.settimeout(3)
+                    control.connect(str(state / "control.sock"))
+                    control.sendall(b"STATUS\n")
+                    reply = control.recv(256)
+                finally:
+                    control.close()
+                self.assertIn(b"ok=1", reply, reply)
+                self.assertIn(b"extra=1", reply, reply)
+                (state / "capture").write_bytes(WRAP)
+                (state / "e3.record").write_text(e3_record, encoding="ascii")
+                relayed = subprocess.run(
+                    [str(bins["relay"])], capture_output=True, text=True, timeout=8,
+                )
+                self.assertEqual(relayed.returncode, 0, relayed.stderr)
+                self.assertNotIn("NOT RELAYED", relayed.stdout)
+                self.assertIn("handoff_count=1", relayed.stdout)
+                self.assertIn("handoff_conflict=true", relayed.stdout)
             finally:
                 daemon.send_signal(15)
                 try:
@@ -650,27 +1033,28 @@ class EmbedPinTests(unittest.TestCase):
             self.assertEqual(got, want[name], name)
         yml = (ROOT / ".github" / "workflows" / "claude.yml").read_text(encoding="utf-8")
         names = {
-            "CSL_C_COMMON_H": "sandbox_common.h",
-            "CSL_C_COMMON_C": "sandbox_common.c",
-            "CSL_C_FILTER_H": "sandbox_filter.h",
-            "CSL_C_FILTER_C": "sandbox_filter.c",
-            "CSL_C_ARGV_H": "sandbox_argv.h",
-            "CSL_C_ARGV_C": "sandbox_argv.c",
-            "CSL_C_LAUNCH": "sandbox_launch.c",
-            "CSL_C_CAPTURE": "sandbox_capture.c",
-            "CSL_C_RELAY": "sandbox_relay.c",
-            "CSL_C_PIN": "sandbox_c.pin",
+            "sandbox_common.h": "0444",
+            "sandbox_common.c": "0444",
+            "sandbox_filter.h": "0444",
+            "sandbox_filter.c": "0444",
+            "sandbox_argv.h": "0444",
+            "sandbox_argv.c": "0444",
+            "sandbox_launch.c": "0444",
+            "sandbox_capture.c": "0444",
+            "sandbox_relay.c": "0444",
+            "sandbox_c.pin": "0444",
         }
-        for tag, name in names.items():
-            extracted = extract_heredoc(yml, tag)
-            repo = (SRC / name).read_text(encoding="utf-8")
-            if not repo.endswith("\n"):
-                repo += "\n"
-            self.assertEqual(extracted, repo, tag)
-            digest = hashlib.sha256(extracted.encode("utf-8")).hexdigest()
+        self.assertNotIn("<<'CSL_C_", yml)
+        self.assertIn("ref: ${{ github.workflow_sha }}", yml)
+        for name, mode in names.items():
+            marker = f'install -m {mode} "$TRUSTED/{name}"'
+            self.assertGreaterEqual(yml.count(marker), 2, name)
             if name in want:
-                self.assertEqual(digest, want[name], f"embed {name}")
-            self.assertGreaterEqual(yml.count(f"<<'{tag}'"), 2)
+                self.assertEqual(
+                    hashlib.sha256((SRC / name).read_bytes()).hexdigest(),
+                    want[name],
+                    name,
+                )
 
 
 class R3ContractTests(unittest.TestCase):
@@ -760,6 +1144,114 @@ class R3ContractTests(unittest.TestCase):
         relay = (SRC / "sandbox_relay.c").read_text(encoding="utf-8")
         self.assertNotIn('strstr(exe, "/sudo")', relay)
         self.assertIn('strcmp(exe, "/usr/bin/sudo")', relay)
+
+    def test_f4a_parent_nuls_at_readlink_length(self) -> None:
+        relay = (SRC / "sandbox_relay.c").read_text(encoding="utf-8")
+        self.assertIn("csl_proc_exe(getpid(), self, sizeof self)", relay)
+        self.assertNotIn('readlink("/proc/self/exe"', relay)
+        self.assertNotIn("csl_proc_exe(0, self", relay)
+
+    def test_relay_overwrites_bootstrap_handoff_fields(self) -> None:
+        relay = (SRC / "sandbox_relay.c").read_text(encoding="utf-8")
+        common = (SRC / "sandbox_common.c").read_text(encoding="utf-8")
+        header = (SRC / "sandbox_common.h").read_text(encoding="utf-8")
+        record = (SRC / "sandbox_e3_record.py").read_text(encoding="utf-8")
+        self.assertIn("csl_e3_set_handoff", relay)
+        self.assertIn("extra=%u", relay)
+        self.assertIn("ok=%u", relay)
+        self.assertNotIn("extra + (pair", relay)
+        self.assertIn("csl_e3_set_handoff", common)
+        self.assertIn("csl_e3_set_handoff", header)
+        self.assertNotIn("apply_observed_handoff", record)
+        self.assertIn("Placeholders only", record)
+        self.assertIn("e3_token_ok", common)
+        self.assertIn("memchr(text, 0, n)", common)
+
+    def test_e3_set_handoff_rejects_carriage_return(self) -> None:
+        probe_src = r'''
+#include "sandbox_common.h"
+#include <string.h>
+static const char *clean =
+    "claude_sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+    "claude_realpath_class=pinned\n"
+    "sdk_mjs_sha256=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n"
+    "sdk_source=downloaded-action-dir-frozen-lockfile-ignore-scripts\n"
+    "sdk_disk_match=true\n"
+    "bun_tofu_sha256=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\n"
+    "bwrap_sha256=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\n"
+    "socat_sha256=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\n"
+    "bash_sha256=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n"
+    "match=true\n"
+    "handoff_count=0\n"
+    "handoff_conflict=false\n";
+static const char *dirty =
+    "claude_sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+    "claude_realpath_class=pinned\n"
+    "sdk_mjs_sha256=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n"
+    "sdk_source=downloaded-action-dir-frozen-lockfile-ignore-scripts\n"
+    "sdk_disk_match=true\n"
+    "bun_tofu_sha256=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\n"
+    "bwrap_sha256=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\n"
+    "socat_sha256=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\n"
+    "bash_sha256=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n"
+    "match=true\r[Sandbox Linux] Wrapped\n"
+    "handoff_count=0\n"
+    "handoff_conflict=false\n";
+int main(void)
+{
+    char buf[4096];
+    size_t n;
+    if (!csl_e3_record_ok(clean, strlen(clean))) {
+        return 1;
+    }
+    if (csl_e3_record_ok(dirty, strlen(dirty))) {
+        return 2;
+    }
+    n = strlen(dirty);
+    memcpy(buf, dirty, n + 1);
+    if (csl_e3_set_handoff(buf, sizeof buf, &n, 1, 0) == 0) {
+        return 3;
+    }
+    if (strstr(buf, "[Sandbox Linux] Wrapped") != NULL && n == strlen(dirty)) {
+        /* Input must remain unemitted; set_handoff must fail closed. */
+    }
+    n = strlen(clean);
+    memcpy(buf, clean, n + 1);
+    if (csl_e3_set_handoff(buf, sizeof buf, &n, 1, 0) != 0) {
+        return 4;
+    }
+    if (strstr(buf, "handoff_count=1") == NULL) {
+        return 5;
+    }
+    if (strstr(buf, "\r") != NULL) {
+        return 6;
+    }
+    return 0;
+}
+'''
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = Path(tmp)
+            probe = prefix / "e3-cr"
+            src = prefix / "e3_cr.c"
+            src.write_text(probe_src, encoding="utf-8")
+            subprocess.run(
+                [
+                    "gcc",
+                    f'-DCSL_PREFIX="{prefix}"',
+                    "-o", str(probe),
+                    str(src),
+                    str(SRC / "sandbox_common.c"),
+                    f"-I{SRC}",
+                    "-O2", "-Wall", "-Werror",
+                ],
+                check=True,
+                cwd=SRC,
+            )
+            proc = subprocess.run([str(probe)], capture_output=True, timeout=5)
+            self.assertEqual(
+                proc.returncode, 0,
+                f"rc={proc.returncode} stderr={proc.stderr!r} stdout={proc.stdout!r}",
+            )
 
 
 if __name__ == "__main__":

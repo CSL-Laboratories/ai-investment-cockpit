@@ -113,6 +113,9 @@ BUN_DIR = "/opt/csl-bun"
 BUN_HOME_BIN = "/home/runner/.bun/bin"
 LAUNCHER = "/opt/csl-claude/launch"
 BUN_EXE = "/opt/csl-bun/bun"
+# Action PATH wrapper (hosted 40359709793). Capture tofu still hashes BUN_EXE.
+BUN_ACTION_DIR = "/opt/csl-bun-action"
+BUN_ACTION = BUN_ACTION_DIR + "/bun"
 SYS_BIN = "/usr/bin"
 BIN_DIR = "/bin"
 
@@ -121,7 +124,7 @@ SET2_VALUE_RULES = {
     "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1",
     "PATH_TO_CLAUDE_CODE_EXECUTABLE": LAUNCHER,
     "INPUT_PATH_TO_CLAUDE_CODE_EXECUTABLE": LAUNCHER,
-    "INPUT_PATH_TO_BUN_EXECUTABLE": BUN_EXE,
+    "INPUT_PATH_TO_BUN_EXECUTABLE": BUN_ACTION,
     "ANTHROPIC_BASE_URL": "",
     "ANTHROPIC_CUSTOM_HEADERS": "",
     "GOOGLE_APPLICATION_CREDENTIALS": "",
@@ -172,12 +175,14 @@ def expected_job_path(worker_path: str) -> str:
     """K1 exact expected PATH for B and X.
 
     Writers before the Run step, in job order: setup-bun ~/.bun/bin, custom bun
-    /opt/csl-bun, then /usr/bin and /bin. Newest-first:
-    ``/bin:/usr/bin:/opt/csl-bun:/home/runner/.bun/bin:<Worker PATH>``.
+    wrapper dir (dirname of path_to_bun_executable), then /usr/bin and /bin.
+    Newest-first:
+    ``/bin:/usr/bin:/opt/csl-bun-action:/home/runner/.bun/bin:<Worker PATH>``.
+    The tofu ELF stays at BUN_EXE; that directory is not this PATH entry.
     """
     return prepend_path(
         worker_path,
-        (BUN_HOME_BIN, BUN_DIR, SYS_BIN, BIN_DIR),
+        (BUN_HOME_BIN, BUN_ACTION_DIR, SYS_BIN, BIN_DIR),
     )
 
 

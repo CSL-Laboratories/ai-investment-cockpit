@@ -22,8 +22,8 @@ runner ALL=(root) NOPASSWD: /opt/csl-relay/bin/relay
 '
 
 umask 022
-mkdir -p /opt/csl-bun /opt/csl-claude/lib /opt/csl-claude/src /opt/csl-relay/bin \
-  "$BUN_BIN" "$STATE"
+mkdir -p /opt/csl-bun /opt/csl-bun-action /opt/csl-claude/lib /opt/csl-claude/src \
+  /opt/csl-relay/bin "$BUN_BIN" "$STATE"
 chmod 0711 "$STATE"
 chown root:root "$STATE"
 
@@ -202,10 +202,31 @@ git -C "$BUNREF" fetch --depth 1 https://github.com/oven-sh/setup-bun.git \
   0c5077e51419868618aeaa5fe8019c62421857d6
 git -C "$BUNREF" ls-tree -r FETCH_HEAD > "$STATE/setup-bun.ls-tree"
 "$PYTHON" -I "$LIB/sandbox_e3_bind.py" verify-pins
+# bun's node_modules/.bin (and isolated-linker aliases) are relative in-tree
+# symlinks. tree_digest hashes those targets; abs/escape links still fail closed.
+# Hosted 40262408416 died here with BindError: symlink before that distinction.
 "$PYTHON" -I "$LIB/sandbox_e3_bind.py" hash-node-modules
-# Pre-create the action's pin-bun destination after the extra-file check and
-# before the ro remount so mkdir -p "$AP/bin" is a no-op. Touch/mkdir after
-# the remount fail closed if $AP is still writable.
+# Action-PATH wrapper (hosted 40359709793): claude-code-action prepends
+# dirname(path_to_bun_executable) then runs ``bun install --production`` in
+# $AP, which EEXIST-collides with this pre-populated tree once $AP is
+# remount,ro. Wrapper lives at /opt/csl-bun-action/bun so PATH's bun is
+# not the tofu ELF at $BUN_DST. Install after the digest exists.
+test -f "$LIB/sandbox_e3_action_bun.sh" || { echo "e3-0b: action_bun missing" >&2; exit 1; }
+install -D -m0755 -o root -g root "$LIB/sandbox_e3_action_bun.sh" /opt/csl-bun-action/bun
+test -x /opt/csl-bun-action/bun
+test ! -L /opt/csl-bun-action/bun
+test -x "$BUN_DST"
+if [ /opt/csl-bun-action/bun -ef "$BUN_DST" ]; then
+  echo "e3-0b: action bun wrapper collides with ELF" >&2
+  exit 1
+fi
+# Seed $AP/bin/bun with the ELF after the extra-file check and before the
+# remount. The action's "Pin bun binary for post-steps" (triggered when
+# allowed_non_write_users is set) later `cp`s path_to_bun_executable onto
+# this path; that fails on remount,ro and is continue-on-error, so this
+# ELF remains. Do not install the wrapper here: capture tofu hashes
+# CSL_BUN_PATH. Touch/mkdir after the remount fail closed if $AP is still
+# writable.
 mkdir -p "$AP/bin"
 install -D -m0755 -o root -g root "$BUN_DST" "$AP/bin/bun"
 chown -R root:root "$AP"
