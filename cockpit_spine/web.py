@@ -58,13 +58,26 @@ def _esc(value: str) -> str:
     return html.escape(value, quote=True)
 
 
-def _form(token: str, command: str, hidden: dict[str, str], visible: tuple[str, ...]) -> str:
+def _tokens_match(supplied: str, expected: str) -> bool:
+    """Byte compare, so a non-ASCII token is a 403 and not a dropped connection."""
+
+    return secrets.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8"))
+
+
+def _form(
+    token: str, command: str, hidden: dict[str, str], visible: tuple[str, ...],
+    subject: str = "",
+) -> str:
     fields = [f'<input type="hidden" name="token" value="{_esc(token)}">',
               f'<input type="hidden" name="command" value="{command}">']
     fields += [f'<input type="hidden" name="{k}" value="{_esc(v)}">' for k, v in hidden.items()]
     fields += [f'<label>{name} <input type="text" name="{name}" maxlength="200"></label>'
                for name in visible]
-    return f'<form method="post" action="/act">{"".join(fields)}<button>{command}</button></form>'
+    button = command if not subject else f"{command} {subject}"
+    return (
+        f'<form method="post" action="/act">{"".join(fields)}'
+        f'<button>{_esc(button)}</button></form>'
+    )
 
 
 def render_page(service: OperatorService, token: str, response: dict | None = None) -> str:
@@ -78,9 +91,10 @@ def render_page(service: OperatorService, token: str, response: dict | None = No
             if item["state"] == PENDING:
                 hidden = {"proposal_id": item["proposal_id"],
                           "confirm_digest": item["payload_digest"]}
-                forms.append(_form(token, "approve", hidden, ("operator",)))
+                subject = item["proposal_id"]
+                forms.append(_form(token, "approve", hidden, ("operator",), subject))
                 forms.append(_form(
-                    token, "veto", {"proposal_id": item["proposal_id"]}, ("operator", "reason")))
+                    token, "veto", {"proposal_id": subject}, ("operator", "reason"), subject))
         forms.append(_form(token, "stop", {}, ("operator", "reason")))
     return (
         "<!doctype html><html><head><meta charset=\"utf-8\"><title>Operator</title></head>"
@@ -175,8 +189,7 @@ class LoopbackView:
             def _api(self, raw: str) -> None:
                 if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
                     return self._send(415, "json only")
-                if not secrets.compare_digest(
-                        self.headers.get("X-Operator-Token", ""), view.token):
+                if not _tokens_match(self.headers.get("X-Operator-Token", ""), view.token):
                     return self._send(403, "forbidden")
                 try:
                     request = json.loads(raw)
@@ -187,7 +200,7 @@ class LoopbackView:
 
             def _act(self, raw: str) -> None:
                 form = {k: v[0] for k, v in parse_qs(raw, keep_blank_values=True).items()}
-                if not secrets.compare_digest(form.pop("token", ""), view.token):
+                if not _tokens_match(form.pop("token", ""), view.token):
                     return self._send(403, "forbidden")
                 command = form.pop("command", "")
                 if command not in FORM_FIELDS:
