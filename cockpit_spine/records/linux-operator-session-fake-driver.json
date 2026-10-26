@@ -1,0 +1,2766 @@
+{
+  "adapter_kind": "recursion-fake-driver",
+  "chain": [
+    {
+      "data": {
+        "adapter_kind": "recursion-fake-driver",
+        "at": "2026-10-26T20:00:01Z",
+        "mode": "paper",
+        "session_id": "demo-1"
+      },
+      "hash": "sha256:0577e2d06e0cb16da819af670c62db26e44e96c5837d31b5a97b80a4d9f7f0a6",
+      "kind": "session_opened",
+      "prev": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "seq": 1
+    },
+    {
+      "data": {
+        "at": "2026-10-26T20:00:02Z",
+        "prompt_digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "request_id": "r1"
+      },
+      "hash": "sha256:ee84bffea279770807a52eea0829afde9dcf62f9ece2a49e56f2e447406fcbad",
+      "kind": "proposal_requested",
+      "prev": "sha256:0577e2d06e0cb16da819af670c62db26e44e96c5837d31b5a97b80a4d9f7f0a6",
+      "seq": 2
+    },
+    {
+      "data": {
+        "at": "2026-10-26T20:00:03Z",
+        "payload": {
+          "asset_type": "equity",
+          "invalidation": "Synthetic fixture invalidation below 10 percent.",
+          "notional": null,
+          "order_type": "limit",
+          "proposal_id": "prop-r1",
+          "quantity": 5,
+          "side": "buy",
+          "sizing_basis": "fixed-fraction",
+          "source_refs": [
+            "parquet://2026-10-26/events-1#0"
+          ],
+          "symbol": "AAA",
+          "thesis": "Synthetic fixture thesis; expects a 3 percent move. Not analysis.",
+          "time_horizon": "short"
+        },
+        "payload_digest": "sha256:b5cd5e952ab2445c205e71c28e5ef71a5d19ec496624b38276df543553c7a3f0",
+        "proposal_id": "prop-r1",
+        "reply_output_digest": "sha256:566ed58a5cce99b321624f060edfe113eb448156271327542317d6e21921c0f6",
+        "request_id": "r1"
+      },
+      "hash": "sha256:2b5a421e5e805470d77f6ea06cae7eb4b1afde4de4f3e896f82a0fc06ecd7421",
+      "kind": "proposal_received",
+      "prev": "sha256:ee84bffea279770807a52eea0829afde9dcf62f9ece2a49e56f2e447406fcbad",
+      "seq": 3
+    },
+    {
+      "data": {
+        "at": "2026-10-26T20:00:04Z",
+        "prompt_digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "request_id": "r2"
+      },
+      "hash": "sha256:5cd42079fb6d918d8c0576388bce3505ee637d8f9ab5a8a39e3a397c5c05610f",
+      "kind": "proposal_requested",
+      "prev": "sha256:2b5a421e5e805470d77f6ea06cae7eb4b1afde4de4f3e896f82a0fc06ecd7421",
+      "seq": 4
+    },
+    {
+      "data": {
+        "at": "2026-10-26T20:00:05Z",
+        "payload": {
+          "asset_type": "equity",
+          "invalidation": "Synthetic fixture invalidation below 10 percent.",
+          "notional": null,
+          "order_type": "limit",
+          "proposal_id": "prop-r2",
+          "quantity": 3,
+          "side": "sell",
+          "sizing_basis": "fixed-fraction",
+          "source_refs": [
+            "parquet://2026-10-26/events-1#0"
+          ],
+          "symbol": "BBB",
+          "thesis": "Synthetic fixture thesis; expects a 3 percent move. Not analysis.",
+          "time_horizon": "short"
+        },
+        "payload_digest": "sha256:2e59ca76e93d1d016b0736c806bd64f3607b42fcd176a9057eeef673a081860a",
+        "proposal_id": "prop-r2",
+        "reply_output_digest": "sha256:66626892bbd10579f74f8cc603b13fc7c1998f0a2e3766bfd6185b6373eea1b4",
+        "request_id": "r2"
+      },
+      "hash": "sha256:e63d2f213d52650fe4f195ec2ce707d885721155c243e97e167ab66a8d844bcc",
+      "kind": "proposal_received",
+      "prev": "sha256:5cd42079fb6d918d8c0576388bce3505ee637d8f9ab5a8a39e3a397c5c05610f",
+      "seq": 5
+    },
+    {
+      "data": {
+        "at": "2026-10-26T20:00:06Z",
+        "prompt_digest": "sha256:1ee058438eaea6ccf0706a0c176df0c61e5be1a792272ef1d249aa2bcf0ecd51",
+        "request_id": "r3"
+      },
+      "hash": "sha256:4c7d5b22a1b0b69f93a451f741e3283339859df85a81e068de393994870cbae9",
+      "kind": "proposal_requested",
+      "prev": "sha256:e63d2f213d52650fe4f195ec2ce707d885721155c243e97e167ab66a8d844bcc",
+      "seq": 6
+    },
+    {
+      "data": {
+        "at": "2026-10-26T20:00:07Z",
+        "fail_closed_to": "watch_only",
+        "quarantined": false,
+        "reason": "timeout",
+        "request_id": "r3"
+      },
+      "hash": "sha256:55c22f4e84debc6a166a9f5861a8cb3600fe31a666398f4224a731769d0228a8",
+      "kind": "proposal_refused",
+      "prev": "sha256:4c7d5b22a1b0b69f93a451f741e3283339859df85a81e068de393994870cbae9",
+      "seq": 7
+    },
+    {
+      "data": {
+        "at": "2026-10-26T20:00:08Z",
+        "code": "digest_mismatch",
+        "command": "approve",
+        "proposal_id": "prop-r1"
+      },
+      "hash": "sha256:aa69acf781c44a90beca668ffc1b56af0dea5351d8b3bbc6c9455741bed0de9c",
+      "kind": "command_refused",
+      "prev": "sha256:55c22f4e84debc6a166a9f5861a8cb3600fe31a666398f4224a731769d0228a8",
+      "seq": 8
+    },
+    {
+      "data": {
+        "at": "2026-10-26T20:00:09Z",
+        "operator": "operator-1",
+        "payload_digest": "sha256:b5cd5e952ab2445c205e71c28e5ef71a5d19ec496624b38276df543553c7a3f0",
+        "proposal_id": "prop-r1"
+      },
+      "hash": "sha256:794a9035336f30b0faaffdc229b0cd0e4cfaca2fa536c2b58ec1d5705bb370f6",
+      "kind": "proposal_approved",
+      "prev": "sha256:aa69acf781c44a90beca668ffc1b56af0dea5351d8b3bbc6c9455741bed0de9c",
+      "seq": 9
+    },
+    {
+      "data": {
+        "at": "2026-10-26T20:00:10Z",
+        "operator": "operator-1",
+        "proposal_id": "prop-r2",
+        "reason": "size not justified"
+      },
+      "hash": "sha256:7779d8452a5f0e66ed1d48d06618ba7fb09e0a73c5db6728c7ed73731b9a4d99",
+      "kind": "proposal_vetoed",
+      "prev": "sha256:794a9035336f30b0faaffdc229b0cd0e4cfaca2fa536c2b58ec1d5705bb370f6",
+      "seq": 10
+    },
+    {
+      "data": {
+        "at": "2026-10-26T20:00:11Z",
+        "prompt_digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "request_id": "r4"
+      },
+      "hash": "sha256:1075fcb3c68de0002b8b94c667427262a88b623655844a0e6b721cf8cc4db6d8",
+      "kind": "proposal_requested",
+      "prev": "sha256:7779d8452a5f0e66ed1d48d06618ba7fb09e0a73c5db6728c7ed73731b9a4d99",
+      "seq": 11
+    },
+    {
+      "data": {
+        "at": "2026-10-26T20:00:12Z",
+        "payload": {
+          "asset_type": "equity",
+          "invalidation": "Synthetic fixture invalidation below 10 percent.",
+          "notional": null,
+          "order_type": "limit",
+          "proposal_id": "prop-r4",
+          "quantity": 5,
+          "side": "buy",
+          "sizing_basis": "fixed-fraction",
+          "source_refs": [
+            "parquet://2026-10-26/events-1#0"
+          ],
+          "symbol": "BBB",
+          "thesis": "Synthetic fixture thesis; expects a 3 percent move. Not analysis.",
+          "time_horizon": "short"
+        },
+        "payload_digest": "sha256:c69263c84d4b869a865c7336579a9675e222ce5a3a5d1729d763cdf5aa67f5a2",
+        "proposal_id": "prop-r4",
+        "reply_output_digest": "sha256:c533628d21ea47e6304d2700fa54fe3ba1d050b0d07b5e3ca9095c4e653bf201",
+        "request_id": "r4"
+      },
+      "hash": "sha256:ea4e9e3c634071210d20bf23b3b829794ef32ff5ce759dad3e14d25bf1f56a79",
+      "kind": "proposal_received",
+      "prev": "sha256:1075fcb3c68de0002b8b94c667427262a88b623655844a0e6b721cf8cc4db6d8",
+      "seq": 12
+    },
+    {
+      "data": {
+        "abandoned": [
+          "prop-r4"
+        ],
+        "at": "2026-10-26T20:00:13Z",
+        "fail_closed_to": "watch_only",
+        "operator": "operator-1",
+        "reason": "end of demo session"
+      },
+      "hash": "sha256:e0234fc5c8c27bbb6226fdce1828e18845a76509e174494a9f7525f9f22b19cf",
+      "kind": "session_stopped",
+      "prev": "sha256:ea4e9e3c634071210d20bf23b3b829794ef32ff5ce759dad3e14d25bf1f56a79",
+      "seq": 13
+    },
+    {
+      "data": {
+        "at": "2026-10-26T20:00:14Z",
+        "code": "session_stopped",
+        "command": "propose"
+      },
+      "hash": "sha256:189e6f6cfa7c45d0981e4cd67fad668e1f92e7efdc9bf8730a078fb02055e769",
+      "kind": "command_refused",
+      "prev": "sha256:e0234fc5c8c27bbb6226fdce1828e18845a76509e174494a9f7525f9f22b19cf",
+      "seq": 14
+    },
+    {
+      "data": {
+        "at": "2026-10-26T20:00:15Z",
+        "code": "session_stopped",
+        "command": "approve",
+        "proposal_id": "prop-r4"
+      },
+      "hash": "sha256:fe705048145b73e66ddefce915b96052bba35a8d259f28f30a9c0de54a3b259e",
+      "kind": "command_refused",
+      "prev": "sha256:189e6f6cfa7c45d0981e4cd67fad668e1f92e7efdc9bf8730a078fb02055e769",
+      "seq": 15
+    }
+  ],
+  "contract": {
+    "head_sha": "baf6fdc2e1d29592721c8dbaac65878b12ec4a98",
+    "pull_request": 302,
+    "repository": "CSL-Laboratories/recursion",
+    "schema_sha256": "22a85ce775c51934569ad3a1f253472e06e695e46962f46b40f0848178a19016"
+  },
+  "head": "sha256:fe705048145b73e66ddefce915b96052bba35a8d259f28f30a9c0de54a3b259e",
+  "kind": "operator session transcript; not a model comparison; no CP7 result; no verdict",
+  "label": "live route integration deferred; recorded on the fake driver; no verdict",
+  "live_calls": false,
+  "platform": "linux",
+  "projection_registry_digest": "sha256:51931126867f9e141bfafccb7d3fbc5923575618afc6a80c5ba5c1f9f4ab9843",
+  "steps": [
+    {
+      "argv": [
+        "open",
+        "--session-id",
+        "demo-1",
+        "--mode",
+        "paper"
+      ],
+      "exit_code": 0,
+      "response": {
+        "api": "operator-api/0",
+        "code": "status",
+        "head": "sha256:0577e2d06e0cb16da819af670c62db26e44e96c5837d31b5a97b80a4d9f7f0a6",
+        "lines": [
+          {
+            "kind": "id",
+            "label": "api",
+            "value": "operator-api/0"
+          },
+          {
+            "kind": "id",
+            "label": "session",
+            "value": "demo-1"
+          },
+          {
+            "kind": "text",
+            "label": "mode",
+            "value": "paper"
+          },
+          {
+            "kind": "text",
+            "label": "state",
+            "value": "running"
+          },
+          {
+            "kind": "digest",
+            "label": "chain head",
+            "value": "sha256:0577e2d06e0cb16da819af670c62db26e44e96c5837d31b5a97b80a4d9f7f0a6"
+          },
+          {
+            "kind": "text",
+            "label": "label",
+            "value": "live route integration deferred; route contract plumbing only"
+          },
+          {
+            "kind": "figure",
+            "label": "Plumbing cells accepted (route plumbing record, not a result)",
+            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:04664e66cb4ed8c6bb520c6d5e8fd39447a64f4ccf2427a499a712e5722107ab]"
+          },
+          {
+            "kind": "figure",
+            "label": "Plumbing cells in that record",
+            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:789f8e01b4d1aa7592236387044d6b82da3f02ae632a50ed700aab00dd02f41d]"
+          }
+        ],
+        "ok": true
+      }
+    },
+    {
+      "argv": [
+        "propose",
+        "--request-id",
+        "r1"
+      ],
+      "exit_code": 0,
+      "response": {
+        "api": "operator-api/0",
+        "code": "proposal_received",
+        "head": "sha256:2b5a421e5e805470d77f6ea06cae7eb4b1afde4de4f3e896f82a0fc06ecd7421",
+        "lines": [
+          {
+            "kind": "code",
+            "label": "result",
+            "value": "proposal_received"
+          },
+          {
+            "kind": "id",
+            "label": "api",
+            "value": "operator-api/0"
+          },
+          {
+            "kind": "id",
+            "label": "session",
+            "value": "demo-1"
+          },
+          {
+            "kind": "text",
+            "label": "mode",
+            "value": "paper"
+          },
+          {
+            "kind": "text",
+            "label": "state",
+            "value": "running"
+          },
+          {
+            "kind": "digest",
+            "label": "chain head",
+            "value": "sha256:2b5a421e5e805470d77f6ea06cae7eb4b1afde4de4f3e896f82a0fc06ecd7421"
+          },
+          {
+            "kind": "text",
+            "label": "label",
+            "value": "live route integration deferred; route contract plumbing only"
+          },
+          {
+            "kind": "figure",
+            "label": "Plumbing cells accepted (route plumbing record, not a result)",
+            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:04664e66cb4ed8c6bb520c6d5e8fd39447a64f4ccf2427a499a712e5722107ab]"
+          },
+          {
+            "kind": "figure",
+            "label": "Plumbing cells in that record",
+            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:789f8e01b4d1aa7592236387044d6b82da3f02ae632a50ed700aab00dd02f41d]"
+          },
+          {
+            "kind": "id",
+            "label": "proposal",
+            "value": "prop-r1"
+          },
+          {
+            "kind": "text",
+            "label": "proposal state",
+            "value": "pending"
+          },
+          {
+            "kind": "term",
+            "label": "symbol",
+            "value": "AAA"
+          },
+          {
+            "kind": "term",
+            "label": "side",
+            "value": "buy"
+          },
+          {
+            "kind": "term",
+            "label": "asset_type",
+            "value": "equity"
+          },
+          {
+            "kind": "term",
+            "label": "order_type",
+            "value": "limit"
+          },
+          {
+            "kind": "term",
+            "label": "quantity",
+            "value": "5"
+          },
+          {
+            "kind": "term",
+            "label": "notional",
+            "value": "none"
+          },
+          {
+            "kind": "term",
+            "label": "time_horizon",
+            "value": "short"
+          },
+          {
+            "kind": "quoted",
+            "label": "thesis (model text, unverified)",
+            "value": "Synthetic fixture thesis; expects a [n] percent move. Not analysis."
+          },
+          {
+            "kind": "quoted",
+            "label": "invalidation (model text, unverified)",
+            "value": "Synthetic fixture invalidation below [n] percent."
+          },
+          {
+            "kind": "id",
+            "label": "source refs",
+            "value": "parquet://2026-10-26/events-1#0"
+          },
+          {
+            "kind": "digest",
+            "label": "confirm digest",
+            "value": "sha256:b5cd5e952ab2445c205e71c28e5ef71a5d19ec496624b38276df543553c7a3f0"
+          }
+        ],
+        "ok": true
+      }
+    },
+    {
+      "argv": [
+        "propose",
+        "--request-id",
+        "r2"
+      ],
+      "exit_code": 0,
+      "response": {
+        "api": "operator-api/0",
+        "code": "proposal_received",
+        "head": "sha256:e63d2f213d52650fe4f195ec2ce707d885721155c243e97e167ab66a8d844bcc",
+        "lines": [
+          {
+            "kind": "code",
+            "label": "result",
+            "value": "proposal_received"
+          },
+          {
+            "kind": "id",
+            "label": "api",
+            "value": "operator-api/0"
+          },
+          {
+            "kind": "id",
+            "label": "session",
+            "value": "demo-1"
+          },
+          {
+            "kind": "text",
+            "label": "mode",
+            "value": "paper"
+          },
+          {
+            "kind": "text",
+            "label": "state",
+            "value": "running"
+          },
+          {
+            "kind": "digest",
+            "label": "chain head",
+            "value": "sha256:e63d2f213d52650fe4f195ec2ce707d885721155c243e97e167ab66a8d844bcc"
+          },
+          {
+            "kind": "text",
+            "label": "label",
+            "value": "live route integration deferred; route contract plumbing only"
+          },
+          {
+            "kind": "figure",
+            "label": "Plumbing cells accepted (route plumbing record, not a result)",
+            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:04664e66cb4ed8c6bb520c6d5e8fd39447a64f4ccf2427a499a712e5722107ab]"
+          },
+          {
+            "kind": "figure",
+            "label": "Plumbing cells in that record",
+            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:789f8e01b4d1aa7592236387044d6b82da3f02ae632a50ed700aab00dd02f41d]"
+          },
+          {
+            "kind": "id",
+            "label": "proposal",
+            "value": "prop-r1"
+          },
+          {
+            "kind": "text",
+            "label": "proposal state",
+            "value": "pending"
+          },
+          {
+            "kind": "term",
+            "label": "symbol",
+            "value": "AAA"
+          },
+          {
+            "kind": "term",
+            "label": "side",
+            "value": "buy"
+          },
+          {
+            "kind": "term",
+            "label": "asset_type",
+            "value": "equity"
+          },
+          {
+            "kind": "term",
+            "label": "order_type",
+            "value": "limit"
+          },
+          {
+            "kind": "term",
+            "label": "quantity",
+            "value": "5"
+          },
+          {
+            "kind": "term",
+            "label": "notional",
+            "value": "none"
+          },
+          {
+            "kind": "term",
+            "label": "time_horizon",
+            "value": "short"
+          },
+          {
+            "kind": "quoted",
+            "label": "thesis (model text, unverified)",
+            "value": "Synthetic fixture thesis; expects a [n] percent move. Not analysis."
+          },
+          {
+            "kind": "quoted",
+            "label": "invalidation (model text, unverified)",
+            "value": "Synthetic fixture invalidation below [n] percent."
+          },
+          {
+            "kind": "id",
+            "label": "source refs",
+            "value": "parquet://2026-10-26/events-1#0"
+          },
+          {
+            "kind": "digest",
+            "label": "confirm digest",
+            "value": "sha256:b5cd5e952ab2445c205e71c28e5ef71a5d19ec496624b38276df543553c7a3f0"
+          },
+          {
+            "kind": "id",
+            "label": "proposal",
+            "value": "prop-r2"
+          },
+          {
+            "kind": "text",
+            "label": "proposal state",
+            "value": "pending"
+          },
+          {
+            "kind": "term",
+            "label": "symbol",
+            "value": "BBB"
+          },
+          {
+            "kind": "term",
+            "label": "side",
+            "value": "sell"
+          },
+          {
+            "kind": "term",
+            "label": "asset_type",
+            "value": "equity"
+          },
+          {
+            "kind": "term",
+            "label": "order_type",
+            "value": "limit"
+          },
+          {
+            "kind": "term",
+            "label": "quantity",
+            "value": "3"
+          },
+          {
+            "kind": "term",
+            "label": "notional",
+            "value": "none"
+          },
+          {
+            "kind": "term",
+            "label": "time_horizon",
+            "value": "short"
+          },
+          {
+            "kind": "quoted",
+            "label": "thesis (model text, unverified)",
+            "value": "Synthetic fixture thesis; expects a [n] percent move. Not analysis."
+          },
+          {
+            "kind": "quoted",
+            "label": "invalidation (model text, unverified)",
+            "value": "Synthetic fixture invalidation below [n] percent."
+          },
+          {
+            "kind": "id",
+            "label": "source refs",
+            "value": "parquet://2026-10-26/events-1#0"
+          },
+          {
+            "kind": "digest",
+            "label": "confirm digest",
+            "value": "sha256:2e59ca76e93d1d016b0736c806bd64f3607b42fcd176a9057eeef673a081860a"
+          }
+        ],
+        "ok": true
+      }
+    },
+    {
+      "argv": [
+        "propose",
+        "--request-id",
+        "r3",
+        "--prompt",
+        "fail-closed"
+      ],
+      "exit_code": 2,
+      "response": {
+        "api": "operator-api/0",
+        "code": "timeout",
+        "head": "sha256:55c22f4e84debc6a166a9f5861a8cb3600fe31a666398f4224a731769d0228a8",
+        "lines": [
+          {
+            "kind": "code",
+            "label": "result",
+            "value": "timeout"
+          },
+          {
+            "kind": "id",
+            "label": "api",
+            "value": "operator-api/0"
+          },
+          {
+            "kind": "id",
+            "label": "session",
+            "value": "demo-1"
+          },
+          {
+            "kind": "text",
+            "label": "mode",
+            "value": "paper"
+          },
+          {
+            "kind": "text",
+            "label": "state",
+            "value": "running"
+          },
+          {
+            "kind": "digest",
+            "label": "chain head",
+            "value": "sha256:55c22f4e84debc6a166a9f5861a8cb3600fe31a666398f4224a731769d0228a8"
+          },
+          {
+            "kind": "text",
+            "label": "label",
+            "value": "live route integration deferred; route contract plumbing only"
+          },
+          {
+            "kind": "figure",
+            "label": "Plumbing cells accepted (route plumbing record, not a result)",
+            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:04664e66cb4ed8c6bb520c6d5e8fd39447a64f4ccf2427a499a712e5722107ab]"
+          },
+          {
+            "kind": "figure",
+            "label": "Plumbing cells in that record",
+            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:789f8e01b4d1aa7592236387044d6b82da3f02ae632a50ed700aab00dd02f41d]"
+          },
+          {
+            "kind": "id",
+            "label": "proposal",
+            "value": "prop-r1"
+          },
+          {
+            "kind": "text",
+            "label": "proposal state",
+            "value": "pending"
+          },
+          {
+            "kind": "term",
+            "label": "symbol",
+            "value": "AAA"
+          },
+          {
+            "kind": "term",
+            "label": "side",
+            "value": "buy"
+          },
+          {
+            "kind": "term",
+            "label": "asset_type",
+            "value": "equity"
+          },
+          {
+            "kind": "term",
+            "label": "order_type",
+            "value": "limit"
+          },
+          {
+            "kind": "term",
+            "label": "quantity",
+            "value": "5"
+          },
+          {
+            "kind": "term",
+            "label": "notional",
+            "value": "none"
+          },
+          {
+            "kind": "term",
+            "label": "time_horizon",
+            "value": "short"
+          },
+          {
+            "kind": "quoted",
+            "label": "thesis (model text, unverified)",
+            "value": "Synthetic fixture thesis; expects a [n] percent move. Not analysis."
+          },
+          {
+            "kind": "quoted",
+            "label": "invalidation (model text, unverified)",
+            "value": "Synthetic fixture invalidation below [n] percent."
+          },
+          {
+            "kind": "id",
+            "label": "source refs",
+            "value": "parquet://2026-10-26/events-1#0"
+          },
+          {
+            "kind": "digest",
+            "label": "confirm digest",
+            "value": "sha256:b5cd5e952ab2445c205e71c28e5ef71a5d19ec496624b38276df543553c7a3f0"
+          },
+          {
+            "kind": "id",
+            "label": "proposal",
+            "value": "prop-r2"
+          },
+          {
+            "kind": "text",
+            "label": "proposal state",
+            "value": "pending"
+          },
+          {
+            "kind": "term",
+            "label": "symbol",
+            "value": "BBB"
+          },
+          {
+            "kind": "term",
+            "label": "side",
+            "value": "sell"
+          },
+          {
+            "kind": "term",
+            "label": "asset_type",
+            "value": "equity"
+          },
+          {
+            "kind": "term",
+            "label": "order_type",
+            "value": "limit"
+          },
+          {
+            "kind": "term",
+            "label": "quantity",
+            "value": "3"
+          },
+          {
+            "kind": "term",
+            "label": "notional",
+            "value": "none"
+          },
+          {
+            "kind": "term",
+            "label": "time_horizon",
+            "value": "short"
+          },
+          {
+            "kind": "quoted",
+            "label": "thesis (model text, unverified)",
+            "value": "Synthetic fixture thesis; expects a [n] percent move. Not analysis."
+          },
+          {
+            "kind": "quoted",
+            "label": "invalidation (model text, unverified)",
+            "value": "Synthetic fixture invalidation below [n] percent."
+          },
+          {
+            "kind": "id",
+            "label": "source refs",
+            "value": "parquet://2026-10-26/events-1#0"
+          },
+          {
+            "kind": "digest",
+            "label": "confirm digest",
+            "value": "sha256:2e59ca76e93d1d016b0736c806bd64f3607b42fcd176a9057eeef673a081860a"
+          }
+        ],
+        "ok": false
+      }
+    },
+    {
+      "argv": [
+        "approve",
+        "--proposal-id",
+        "prop-r1",
+        "--operator",
+        "operator-1",
+        "--confirm-digest",
+        "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      ],
+      "exit_code": 2,
+      "response": {
+        "api": "operator-api/0",
+        "code": "digest_mismatch",
+        "head": "sha256:aa69acf781c44a90beca668ffc1b56af0dea5351d8b3bbc6c9455741bed0de9c",
+        "lines": [
+          {
+            "kind": "code",
+            "label": "result",
+            "value": "digest_mismatch"
+          },
+          {
+            "kind": "id",
+            "label": "api",
+            "value": "operator-api/0"
+          },
+          {
+            "kind": "id",
+            "label": "session",
+            "value": "demo-1"
+          },
+          {
+            "kind": "text",
+            "label": "mode",
+            "value": "paper"
+          },
+          {
+            "kind": "text",
+            "label": "state",
+            "value": "running"
+          },
+          {
+            "kind": "digest",
+            "label": "chain head",
+            "value": "sha256:aa69acf781c44a90beca668ffc1b56af0dea5351d8b3bbc6c9455741bed0de9c"
+          },
+          {
+            "kind": "text",
+            "label": "label",
+            "value": "live route integration deferred; route contract plumbing only"
+          },
+          {
+            "kind": "figure",
+            "label": "Plumbing cells accepted (route plumbing record, not a result)",
+            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:04664e66cb4ed8c6bb520c6d5e8fd39447a64f4ccf2427a499a712e5722107ab]"
+          },
+          {
+            "kind": "figure",
+            "label": "Plumbing cells in that record",
+            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:789f8e01b4d1aa7592236387044d6b82da3f02ae632a50ed700aab00dd02f41d]"
+          },
+          {
+            "kind": "id",
+            "label": "proposal",
+            "value": "prop-r1"
+          },
+          {
+            "kind": "text",
+            "label": "proposal state",
+            "value": "pending"
+          },
+          {
+            "kind": "term",
+            "label": "symbol",
+            "value": "AAA"
+          },
+          {
+            "kind": "term",
+            "label": "side",
+            "value": "buy"
+          },
+          {
+            "kind": "term",
+            "label": "asset_type",
+            "value": "equity"
+          },
+          {
+            "kind": "term",
+            "label": "order_type",
+            "value": "limit"
+          },
+          {
+            "kind": "term",
+            "label": "quantity",
+            "value": "5"
+          },
+          {
+            "kind": "term",
+            "label": "notional",
+            "value": "none"
+          },
+          {
+            "kind": "term",
+            "label": "time_horizon",
+            "value": "short"
+          },
+          {
+            "kind": "quoted",
+            "label": "thesis (model text, unverified)",
+            "value": "Synthetic fixture thesis; expects a [n] percent move. Not analysis."
+          },
+          {
+            "kind": "quoted",
+            "label": "invalidation (model text, unverified)",
+            "value": "Synthetic fixture invalidation below [n] percent."
+          },
+          {
+            "kind": "id",
+            "label": "source refs",
+            "value": "parquet://2026-10-26/events-1#0"
+          },
+          {
+            "kind": "digest",
+            "label": "confirm digest",
+            "value": "sha256:b5cd5e952ab2445c205e71c28e5ef71a5d19ec496624b38276df543553c7a3f0"
+          },
+          {
+            "kind": "id",
+            "label": "proposal",
+            "value": "prop-r2"
+          },
+          {
+            "kind": "text",
+            "label": "proposal state",
+            "value": "pending"
+          },
+          {
+            "kind": "term",
+            "label": "symbol",
+            "value": "BBB"
+          },
+          {
+            "kind": "term",
+            "label": "side",
+            "value": "sell"
+          },
+          {
+            "kind": "term",
+            "label": "asset_type",
+            "value": "equity"
+          },
+          {
+            "kind": "term",
+            "label": "order_type",
+            "value": "limit"
+          },
+          {
+            "kind": "term",
+            "label": "quantity",
+            "value": "3"
+          },
+          {
+            "kind": "term",
+            "label": "notional",
+            "value": "none"
+          },
+          {
+            "kind": "term",
+            "label": "time_horizon",
+            "value": "short"
+          },
+          {
+            "kind": "quoted",
+            "label": "thesis (model text, unverified)",
+            "value": "Synthetic fixture thesis; expects a [n] percent move. Not analysis."
+          },
+          {
+            "kind": "quoted",
+            "label": "invalidation (model text, unverified)",
+            "value": "Synthetic fixture invalidation below [n] percent."
+          },
+          {
+            "kind": "id",
+            "label": "source refs",
+            "value": "parquet://2026-10-26/events-1#0"
+          },
+          {
+            "kind": "digest",
+            "label": "confirm digest",
+            "value": "sha256:2e59ca76e93d1d016b0736c806bd64f3607b42fcd176a9057eeef673a081860a"
+          }
+        ],
+        "ok": false
+      }
+    },
+    {
+      "argv": [
+        "approve",
+        "--proposal-id",
+        "prop-r1",
+        "--operator",
+        "operator-1",
+        "--confirm-digest",
+        "sha256:b5cd5e952ab2445c205e71c28e5ef71a5d19ec496624b38276df543553c7a3f0"
+      ],
+      "exit_code": 0,
+      "response": {
+        "api": "operator-api/0",
+        "code": "approved",
+        "head": "sha256:794a9035336f30b0faaffdc229b0cd0e4cfaca2fa536c2b58ec1d5705bb370f6",
+        "lines": [
+          {
+            "kind": "code",
+            "label": "result",
+            "value": "approved"
+          },
+          {
+            "kind": "text",
+            "label": "authority",
+            "value": "none, inert record"
+          },
+          {
+            "kind": "id",
+            "label": "approved intent",
+            "value": "prop-r1"
+          },
+          {
+            "kind": "digest",
+            "label": "audit hash",
+            "value": "sha256:794a9035336f30b0faaffdc229b0cd0e4cfaca2fa536c2b58ec1d5705bb370f6"
+          },
+          {
+            "kind": "id",
+            "label": "api",
+            "value": "operator-api/0"
+          },
+          {
+            "kind": "id",
+            "label": "session",
+            "value": "demo-1"
+          },
+          {
+            "kind": "text",
+            "label": "mode",
+            "value": "paper"
+          },
+          {
+            "kind": "text",
+            "label": "state",
+            "value": "running"
+          },
+          {
+            "kind": "digest",
+            "label": "chain head",
+            "value": "sha256:794a9035336f30b0faaffdc229b0cd0e4cfaca2fa536c2b58ec1d5705bb370f6"
+          },
+          {
+            "kind": "text",
+            "label": "label",
+            "value": "live route integration deferred; route contract plumbing only"
+          },
+          {
+            "kind": "figure",
+            "label": "Plumbing cells accepted (route plumbing record, not a result)",
+            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:04664e66cb4ed8c6bb520c6d5e8fd39447a64f4ccf2427a499a712e5722107ab]"
+          },
+          {
+            "kind": "figure",
+            "label": "Plumbing cells in that record",
+            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:789f8e01b4d1aa7592236387044d6b82da3f02ae632a50ed700aab00dd02f41d]"
+          },
+          {
+            "kind": "id",
+            "label": "proposal",
+            "value": "prop-r1"
+          },
+          {
+            "kind": "text",
+            "label": "proposal state",
+            "value": "approved"
+          },
+          {
+            "kind": "term",
+            "label": "symbol",
+            "value": "AAA"
+          },
+          {
+            "kind": "term",
+            "label": "side",
+            "value": "buy"
+          },
+          {
+            "kind": "term",
+            "label": "asset_type",
+            "value": "equity"
+          },
+          {
+            "kind": "term",
+            "label": "order_type",
+            "value": "limit"
+          },
+          {
+            "kind": "term",
+            "label": "quantity",
+            "value": "5"
+          },
+          {
+            "kind": "term",
+            "label": "notional",
+            "value": "none"
+          },
+          {
+            "kind": "term",
+            "label": "time_horizon",
+            "value": "short"
+          },
+          {
+            "kind": "quoted",
+            "label": "thesis (model text, unverified)",
+            "value": "Synthetic fixture thesis; expects a [n] percent move. Not analysis."
+          },
+          {
+            "kind": "quoted",
+            "label": "invalidation (model text, unverified)",
+            "value": "Synthetic fixture invalidation below [n] percent."
+          },
+          {
+            "kind": "id",
+            "label": "source refs",
+            "value": "parquet://2026-10-26/events-1#0"
+          },
+          {
+            "kind": "digest",
+            "label": "confirm digest",
+            "value": "sha256:b5cd5e952ab2445c205e71c28e5ef71a5d19ec496624b38276df543553c7a3f0"
+          },
+          {
+            "kind": "id",
+            "label": "decided by",
+            "value": "operator-1"
+          },
+          {
+            "kind": "id",
+            "label": "proposal",
+            "value": "prop-r2"
+          },
+          {
+            "kind": "text",
+            "label": "proposal state",
+            "value": "pending"
+          },
+          {
+            "kind": "term",
+            "label": "symbol",
+            "value": "BBB"
+          },
+          {
+            "kind": "term",
+            "label": "side",
+            "value": "sell"
+          },
+          {
+            "kind": "term",
+            "label": "asset_type",
+            "value": "equity"
+          },
+          {
+            "kind": "term",
+            "label": "order_type",
+            "value": "limit"
+          },
+          {
+            "kind": "term",
+            "label": "quantity",
+            "value": "3"
+          },
+          {
+            "kind": "term",
+            "label": "notional",
+            "value": "none"
+          },
+          {
+            "kind": "term",
+            "label": "time_horizon",
+            "value": "short"
+          },
+          {
+            "kind": "quoted",
+            "label": "thesis (model text, unverified)",
+            "value": "Synthetic fixture thesis; expects a [n] percent move. Not analysis."
+          },
+          {
+            "kind": "quoted",
+            "label": "invalidation (model text, unverified)",
+            "value": "Synthetic fixture invalidation below [n] percent."
+          },
+          {
+            "kind": "id",
+            "label": "source refs",
+            "value": "parquet://2026-10-26/events-1#0"
+          },
+          {
+            "kind": "digest",
+            "label": "confirm digest",
+            "value": "sha256:2e59ca76e93d1d016b0736c806bd64f3607b42fcd176a9057eeef673a081860a"
+          }
+        ],
+        "ok": true
+      }
+    },
+    {
+      "argv": [
+        "veto",
+        "--proposal-id",
+        "prop-r2",
+        "--operator",
+        "operator-1",
+        "--reason",
+        "size not justified"
+      ],
+      "exit_code": 0,
+      "response": {
+        "api": "operator-api/0",
+        "code": "vetoed",
+        "head": "sha256:7779d8452a5f0e66ed1d48d06618ba7fb09e0a73c5db6728c7ed73731b9a4d99",
+        "lines": [
+          {
+            "kind": "code",
+            "label": "result",
+            "value": "vetoed"
+          },
+          {
+            "kind": "id",
+            "label": "api",
+            "value": "operator-api/0"
+          },
+          {
+            "kind": "id",
+            "label": "session",
+            "value": "demo-1"
+          },
+          {
+            "kind": "text",
+            "label": "mode",
+            "value": "paper"
+          },
+          {
+            "kind": "text",
+            "label": "state",
+            "value": "running"
+          },
+          {
+            "kind": "digest",
+            "label": "chain head",
+            "value": "sha256:7779d8452a5f0e66ed1d48d06618ba7fb09e0a73c5db6728c7ed73731b9a4d99"
+          },
+          {
+            "kind": "text",
+            "label": "label",
+            "value": "live route integration deferred; route contract plumbing only"
+          },
+          {
+            "kind": "figure",
+            "label": "Plumbing cells accepted (route plumbing record, not a result)",
+            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:04664e66cb4ed8c6bb520c6d5e8fd39447a64f4ccf2427a499a712e5722107ab]"
+          },
+          {
+            "kind": "figure",
+            "label": "Plumbing cells in that record",
+            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:789f8e01b4d1aa7592236387044d6b82da3f02ae632a50ed700aab00dd02f41d]"
+          },
+          {
+            "kind": "id",
+            "label": "proposal",
+            "value": "prop-r1"
+          },
+          {
+            "kind": "text",
+            "label": "proposal state",
+            "value": "approved"
+          },
+          {
+            "kind": "term",
+            "label": "symbol",
+            "value": "AAA"
+          },
+          {
+            "kind": "term",
+            "label": "side",
+            "value": "buy"
+          },
+          {
+            "kind": "term",
+            "label": "asset_type",
+            "value": "equity"
+          },
+          {
+            "kind": "term",
+            "label": "order_type",
+            "value": "limit"
+          },
+          {
+            "kind": "term",
+            "label": "quantity",
+            "value": "5"
+          },
+          {
+            "kind": "term",
+            "label": "notional",
+            "value": "none"
+          },
+          {
+            "kind": "term",
+            "label": "time_horizon",
+            "value": "short"
+          },
+          {
+            "kind": "quoted",
+            "label": "thesis (model text, unverified)",
+            "value": "Synthetic fixture thesis; expects a [n] percent move. Not analysis."
+          },
+          {
+            "kind": "quoted",
+            "label": "invalidation (model text, unverified)",
+            "value": "Synthetic fixture invalidation below [n] percent."
+          },
+          {
+            "kind": "id",
+            "label": "source refs",
+            "value": "parquet://2026-10-26/events-1#0"
+          },
+          {
+            "kind": "digest",
+            "label": "confirm digest",
+            "value": "sha256:b5cd5e952ab2445c205e71c28e5ef71a5d19ec496624b38276df543553c7a3f0"
+          },
+          {
+            "kind": "id",
+            "label": "decided by",
+            "value": "operator-1"
+          },
+          {
+            "kind": "id",
+            "label": "proposal",
+            "value": "prop-r2"
+          },
+          {
+            "kind": "text",
+            "label": "proposal state",
+            "value": "vetoed"
+          },
+          {
+            "kind": "term",
+            "label": "symbol",
+            "value": "BBB"
+          },
+          {
+            "kind": "term",
+            "label": "side",
+            "value": "sell"
+          },
+          {
+            "kind": "term",
+            "label": "asset_type",
+            "value": "equity"
+          },
+          {
+            "kind": "term",
+            "label": "order_type",
+            "value": "limit"
+          },
+          {
+            "kind": "term",
+            "label": "quantity",
+            "value": "3"
+          },
+          {
+            "kind": "term",
+            "label": "notional",
+            "value": "none"
+          },
+          {
+            "kind": "term",
+            "label": "time_horizon",
+            "value": "short"
+          },
+          {
+            "kind": "quoted",
+            "label": "thesis (model text, unverified)",
+            "value": "Synthetic fixture thesis; expects a [n] percent move. Not analysis."
+          },
+          {
+            "kind": "quoted",
+            "label": "invalidation (model text, unverified)",
+            "value": "Synthetic fixture invalidation below [n] percent."
+          },
+          {
+            "kind": "id",
+            "label": "source refs",
+            "value": "parquet://2026-10-26/events-1#0"
+          },
+          {
+            "kind": "digest",
+            "label": "confirm digest",
+            "value": "sha256:2e59ca76e93d1d016b0736c806bd64f3607b42fcd176a9057eeef673a081860a"
+          },
+          {
+            "kind": "id",
+            "label": "decided by",
+            "value": "operator-1"
+          },
+          {
+            "kind": "quoted",
+            "label": "reason",
+            "value": "size not justified"
+          }
+        ],
+        "ok": true
+      }
+    },
+    {
+      "argv": [
+        "propose",
+        "--request-id",
+        "r4"
+      ],
+      "exit_code": 0,
+      "response": {
+        "api": "operator-api/0",
+        "code": "proposal_received",
+        "head": "sha256:ea4e9e3c634071210d20bf23b3b829794ef32ff5ce759dad3e14d25bf1f56a79",
+        "lines": [
+          {
+            "kind": "code",
+            "label": "result",
+            "value": "proposal_received"
+          },
+          {
+            "kind": "id",
+            "label": "api",
+            "value": "operator-api/0"
+          },
+          {
+            "kind": "id",
+            "label": "session",
+            "value": "demo-1"
+          },
+          {
+            "kind": "text",
+            "label": "mode",
+            "value": "paper"
+          },
+          {
+            "kind": "text",
+            "label": "state",
+            "value": "running"
+          },
+          {
+            "kind": "digest",
+            "label": "chain head",
+            "value": "sha256:ea4e9e3c634071210d20bf23b3b829794ef32ff5ce759dad3e14d25bf1f56a79"
+          },
+          {
+            "kind": "text",
+            "label": "label",
+            "value": "live route integration deferred; route contract plumbing only"
+          },
+          {
+            "kind": "figure",
+            "label": "Plumbing cells accepted (route plumbing record, not a result)",
+            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:04664e66cb4ed8c6bb520c6d5e8fd39447a64f4ccf2427a499a712e5722107ab]"
+          },
+          {
+            "kind": "figure",
+            "label": "Plumbing cells in that record",
+            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:789f8e01b4d1aa7592236387044d6b82da3f02ae632a50ed700aab00dd02f41d]"
+          },
+          {
+            "kind": "id",
+            "label": "proposal",
+            "value": "prop-r1"
+          },
+          {
+            "kind": "text",
+            "label": "proposal state",
+            "value": "approved"
+          },
+          {
+            "kind": "term",
+            "label": "symbol",
+            "value": "AAA"
+          },
+          {
+            "kind": "term",
+            "label": "side",
+            "value": "buy"
+          },
+          {
+            "kind": "term",
+            "label": "asset_type",
+            "value": "equity"
+          },
+          {
+            "kind": "term",
+            "label": "order_type",
+            "value": "limit"
+          },
+          {
+            "kind": "term",
+            "label": "quantity",
+            "value": "5"
+          },
+          {
+            "kind": "term",
+            "label": "notional",
+            "value": "none"
+          },
+          {
+            "kind": "term",
+            "label": "time_horizon",
+            "value": "short"
+          },
+          {
+            "kind": "quoted",
+            "label": "thesis (model text, unverified)",
+            "value": "Synthetic fixture thesis; expects a [n] percent move. Not analysis."
+          },
+          {
+            "kind": "quoted",
+            "label": "invalidation (model text, unverified)",
+            "value": "Synthetic fixture invalidation below [n] percent."
+          },
+          {
+            "kind": "id",
+            "label": "source refs",
+            "value": "parquet://2026-10-26/events-1#0"
+          },
+          {
+            "kind": "digest",
+            "label": "confirm digest",
+            "value": "sha256:b5cd5e952ab2445c205e71c28e5ef71a5d19ec496624b38276df543553c7a3f0"
+          },
+          {
+            "kind": "id",
+            "label": "decided by",
+            "value": "operator-1"
+          },
+          {
+            "kind": "id",
+            "label": "proposal",
+            "value": "prop-r2"
+          },
+          {
+            "kind": "text",
+            "label": "proposal state",
+            "value": "vetoed"
+          },
+          {
+            "kind": "term",
+            "label": "symbol",
+            "value": "BBB"
+          },
+          {
+            "kind": "term",
+            "label": "side",
+            "value": "sell"
+          },
+          {
+            "kind": "term",
+            "label": "asset_type",
+            "value": "equity"
+          },
+          {
+            "kind": "term",
+            "label": "order_type",
+            "value": "limit"
+          },
+          {
+            "kind": "term",
+            "label": "quantity",
+            "value": "3"
+          },
+          {
+            "kind": "term",
+            "label": "notional",
+            "value": "none"
+          },
+          {
+            "kind": "term",
+            "label": "time_horizon",
+            "value": "short"
+          },
+          {
+            "kind": "quoted",
+            "label": "thesis (model text, unverified)",
+            "value": "Synthetic fixture thesis; expects a [n] percent move. Not analysis."
+          },
+          {
+            "kind": "quoted",
+            "label": "invalidation (model text, unverified)",
+            "value": "Synthetic fixture invalidation below [n] percent."
+          },
+          {
+            "kind": "id",
+            "label": "source refs",
+            "value": "parquet://2026-10-26/events-1#0"
+          },
+          {
+            "kind": "digest",
+            "label": "confirm digest",
+            "value": "sha256:2e59ca76e93d1d016b0736c806bd64f3607b42fcd176a9057eeef673a081860a"
+          },
+          {
+            "kind": "id",
+            "label": "decided by",
+            "value": "operator-1"
+          },
+          {
+            "kind": "quoted",
+            "label": "reason",
+            "value": "size not justified"
+          },
+          {
+            "kind": "id",
+            "label": "proposal",
+            "value": "prop-r4"
+          },
+          {
+            "kind": "text",
+            "label": "proposal state",
+            "value": "pending"
+          },
+          {
+            "kind": "term",
+            "label": "symbol",
+            "value": "BBB"
+          },
+          {
+            "kind": "term",
+            "label": "side",
+            "value": "buy"
+          },
+          {
+            "kind": "term",
+            "label": "asset_type",
+            "value": "equity"
+          },
+          {
+            "kind": "term",
+            "label": "order_type",
+            "value": "limit"
+          },
+          {
+            "kind": "term",
+            "label": "quantity",
+            "value": "5"
+          },
+          {
+            "kind": "term",
+            "label": "notional",
+            "value": "none"
+          },
+          {
+            "kind": "term",
+            "label": "time_horizon",
+            "value": "short"
+          },
+          {
+            "kind": "quoted",
+            "label": "thesis (model text, unverified)",
+            "value": "Synthetic fixture thesis; expects a [n] percent move. Not analysis."
+          },
+          {
+            "kind": "quoted",
+            "label": "invalidation (model text, unverified)",
+            "value": "Synthetic fixture invalidation below [n] percent."
+          },
+          {
+            "kind": "id",
+            "label": "source refs",
+            "value": "parquet://2026-10-26/events-1#0"
+          },
+          {
+            "kind": "digest",
+            "label": "confirm digest",
+            "value": "sha256:c69263c84d4b869a865c7336579a9675e222ce5a3a5d1729d763cdf5aa67f5a2"
+          }
+        ],
+        "ok": true
+      }
+    },
+    {
+      "argv": [
+        "stop",
+        "--operator",
+        "operator-1",
+        "--reason",
+        "end of demo session"
+      ],
+      "exit_code": 0,
+      "response": {
+        "api": "operator-api/0",
+        "code": "stopped",
+        "head": "sha256:e0234fc5c8c27bbb6226fdce1828e18845a76509e174494a9f7525f9f22b19cf",
+        "lines": [
+          {
+            "kind": "code",
+            "label": "result",
+            "value": "stopped"
+          },
+          {
+            "kind": "id",
+            "label": "api",
+            "value": "operator-api/0"
+          },
+          {
+            "kind": "id",
+            "label": "session",
+            "value": "demo-1"
+          },
+          {
+            "kind": "text",
+            "label": "mode",
+            "value": "paper"
+          },
+          {
+            "kind": "text",
+            "label": "state",
+            "value": "stopped, watch_only"
+          },
+          {
+            "kind": "digest",
+            "label": "chain head",
+            "value": "sha256:e0234fc5c8c27bbb6226fdce1828e18845a76509e174494a9f7525f9f22b19cf"
+          },
+          {
+            "kind": "text",
+            "label": "label",
+            "value": "live route integration deferred; route contract plumbing only"
+          },
+          {
+            "kind": "figure",
+            "label": "Plumbing cells accepted (route plumbing record, not a result)",
+            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:04664e66cb4ed8c6bb520c6d5e8fd39447a64f4ccf2427a499a712e5722107ab]"
+          },
+          {
+            "kind": "figure",
+            "label": "Plumbing cells in that record",
+            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:789f8e01b4d1aa7592236387044d6b82da3f02ae632a50ed700aab00dd02f41d]"
+          },
+          {
+            "kind": "id",
+            "label": "proposal",
+            "value": "prop-r1"
+          },
+          {
+            "kind": "text",
+            "label": "proposal state",
+            "value": "approved"
+          },
+          {
+            "kind": "term",
+            "label": "symbol",
+            "value": "AAA"
+          },
+          {
+            "kind": "term",
+            "label": "side",
+            "value": "buy"
+          },
+          {
+            "kind": "term",
+            "label": "asset_type",
+            "value": "equity"
+          },
+          {
+            "kind": "term",
+            "label": "order_type",
+            "value": "limit"
+          },
+          {
+            "kind": "term",
+            "label": "quantity",
+            "value": "5"
+          },
+          {
+            "kind": "term",
+            "label": "notional",
+            "value": "none"
+          },
+          {
+            "kind": "term",
+            "label": "time_horizon",
+            "value": "short"
+          },
+          {
+            "kind": "quoted",
+            "label": "thesis (model text, unverified)",
+            "value": "Synthetic fixture thesis; expects a [n] percent move. Not analysis."
+          },
+          {
+            "kind": "quoted",
+            "label": "invalidation (model text, unverified)",
+            "value": "Synthetic fixture invalidation below [n] percent."
+          },
+          {
+            "kind": "id",
+            "label": "source refs",
+            "value": "parquet://2026-10-26/events-1#0"
+          },
+          {
+            "kind": "digest",
+            "label": "confirm digest",
+            "value": "sha256:b5cd5e952ab2445c205e71c28e5ef71a5d19ec496624b38276df543553c7a3f0"
+          },
+          {
+            "kind": "id",
+            "label": "decided by",
+            "value": "operator-1"
+          },
+          {
+            "kind": "id",
+            "label": "proposal",
+            "value": "prop-r2"
+          },
+          {
+            "kind": "text",
+            "label": "proposal state",
+            "value": "vetoed"
+          },
+          {
+            "kind": "term",
+            "label": "symbol",
+            "value": "BBB"
+          },
+          {
+            "kind": "term",
+            "label": "side",
+            "value": "sell"
+          },
+          {
+            "kind": "term",
+            "label": "asset_type",
+            "value": "equity"
+          },
+          {
+            "kind": "term",
+            "label": "order_type",
+            "value": "limit"
+          },
+          {
+            "kind": "term",
+            "label": "quantity",
+            "value": "3"
+          },
+          {
+            "kind": "term",
+            "label": "notional",
+            "value": "none"
+          },
+          {
+            "kind": "term",
+            "label": "time_horizon",
+            "value": "short"
+          },
+          {
+            "kind": "quoted",
+            "label": "thesis (model text, unverified)",
+            "value": "Synthetic fixture thesis; expects a [n] percent move. Not analysis."
+          },
+          {
+            "kind": "quoted",
+            "label": "invalidation (model text, unverified)",
+            "value": "Synthetic fixture invalidation below [n] percent."
+          },
+          {
+            "kind": "id",
+            "label": "source refs",
+            "value": "parquet://2026-10-26/events-1#0"
+          },
+          {
+            "kind": "digest",
+            "label": "confirm digest",
+            "value": "sha256:2e59ca76e93d1d016b0736c806bd64f3607b42fcd176a9057eeef673a081860a"
+          },
+          {
+            "kind": "id",
+            "label": "decided by",
+            "value": "operator-1"
+          },
+          {
+            "kind": "quoted",
+            "label": "reason",
+            "value": "size not justified"
+          },
+          {
+            "kind": "id",
+            "label": "proposal",
+            "value": "prop-r4"
+          },
+          {
+            "kind": "text",
+            "label": "proposal state",
+            "value": "abandoned"
+          },
+          {
+            "kind": "term",
+            "label": "symbol",
+            "value": "BBB"
+          },
+          {
+            "kind": "term",
+            "label": "side",
+            "value": "buy"
+          },
+          {
+            "kind": "term",
+            "label": "asset_type",
+            "value": "equity"
+          },
+          {
+            "kind": "term",
+            "label": "order_type",
+            "value": "limit"
+          },
+          {
+            "kind": "term",
+            "label": "quantity",
+            "value": "5"
+          },
+          {
+            "kind": "term",
+            "label": "notional",
+            "value": "none"
+          },
+          {
+            "kind": "term",
+            "label": "time_horizon",
+            "value": "short"
+          },
+          {
+            "kind": "quoted",
+            "label": "thesis (model text, unverified)",
+            "value": "Synthetic fixture thesis; expects a [n] percent move. Not analysis."
+          },
+          {
+            "kind": "quoted",
+            "label": "invalidation (model text, unverified)",
+            "value": "Synthetic fixture invalidation below [n] percent."
+          },
+          {
+            "kind": "id",
+            "label": "source refs",
+            "value": "parquet://2026-10-26/events-1#0"
+          },
+          {
+            "kind": "digest",
+            "label": "confirm digest",
+            "value": "sha256:c69263c84d4b869a865c7336579a9675e222ce5a3a5d1729d763cdf5aa67f5a2"
+          }
+        ],
+        "ok": true
+      }
+    },
+    {
+      "argv": [
+        "propose",
+        "--request-id",
+        "r5"
+      ],
+      "exit_code": 2,
+      "response": {
+        "api": "operator-api/0",
+        "code": "session_stopped",
+        "head": "sha256:189e6f6cfa7c45d0981e4cd67fad668e1f92e7efdc9bf8730a078fb02055e769",
+        "lines": [
+          {
+            "kind": "code",
+            "label": "result",
+            "value": "session_stopped"
+          },
+          {
+            "kind": "id",
+            "label": "api",
+            "value": "operator-api/0"
+          },
+          {
+            "kind": "id",
+            "label": "session",
+            "value": "demo-1"
+          },
+          {
+            "kind": "text",
+            "label": "mode",
+            "value": "paper"
+          },
+          {
+            "kind": "text",
+            "label": "state",
+            "value": "stopped, watch_only"
+          },
+          {
+            "kind": "digest",
+            "label": "chain head",
+            "value": "sha256:189e6f6cfa7c45d0981e4cd67fad668e1f92e7efdc9bf8730a078fb02055e769"
+          },
+          {
+            "kind": "text",
+            "label": "label",
+            "value": "live route integration deferred; route contract plumbing only"
+          },
+          {
+            "kind": "figure",
+            "label": "Plumbing cells accepted (route plumbing record, not a result)",
+            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:04664e66cb4ed8c6bb520c6d5e8fd39447a64f4ccf2427a499a712e5722107ab]"
+          },
+          {
+            "kind": "figure",
+            "label": "Plumbing cells in that record",
+            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:789f8e01b4d1aa7592236387044d6b82da3f02ae632a50ed700aab00dd02f41d]"
+          },
+          {
+            "kind": "id",
+            "label": "proposal",
+            "value": "prop-r1"
+          },
+          {
+            "kind": "text",
+            "label": "proposal state",
+            "value": "approved"
+          },
+          {
+            "kind": "term",
+            "label": "symbol",
+            "value": "AAA"
+          },
+          {
+            "kind": "term",
+            "label": "side",
+            "value": "buy"
+          },
+          {
+            "kind": "term",
+            "label": "asset_type",
+            "value": "equity"
+          },
+          {
+            "kind": "term",
+            "label": "order_type",
+            "value": "limit"
+          },
+          {
+            "kind": "term",
+            "label": "quantity",
+            "value": "5"
+          },
+          {
+            "kind": "term",
+            "label": "notional",
+            "value": "none"
+          },
+          {
+            "kind": "term",
+            "label": "time_horizon",
+            "value": "short"
+          },
+          {
+            "kind": "quoted",
+            "label": "thesis (model text, unverified)",
+            "value": "Synthetic fixture thesis; expects a [n] percent move. Not analysis."
+          },
+          {
+            "kind": "quoted",
+            "label": "invalidation (model text, unverified)",
+            "value": "Synthetic fixture invalidation below [n] percent."
+          },
+          {
+            "kind": "id",
+            "label": "source refs",
+            "value": "parquet://2026-10-26/events-1#0"
+          },
+          {
+            "kind": "digest",
+            "label": "confirm digest",
+            "value": "sha256:b5cd5e952ab2445c205e71c28e5ef71a5d19ec496624b38276df543553c7a3f0"
+          },
+          {
+            "kind": "id",
+            "label": "decided by",
+            "value": "operator-1"
+          },
+          {
+            "kind": "id",
+            "label": "proposal",
+            "value": "prop-r2"
+          },
+          {
+            "kind": "text",
+            "label": "proposal state",
+            "value": "vetoed"
+          },
+          {
+            "kind": "term",
+            "label": "symbol",
+            "value": "BBB"
+          },
+          {
+            "kind": "term",
+            "label": "side",
+            "value": "sell"
+          },
+          {
+            "kind": "term",
+            "label": "asset_type",
+            "value": "equity"
+          },
+          {
+            "kind": "term",
+            "label": "order_type",
+            "value": "limit"
+          },
+          {
+            "kind": "term",
+            "label": "quantity",
+            "value": "3"
+          },
+          {
+            "kind": "term",
+            "label": "notional",
+            "value": "none"
+          },
+          {
+            "kind": "term",
+            "label": "time_horizon",
+            "value": "short"
+          },
+          {
+            "kind": "quoted",
+            "label": "thesis (model text, unverified)",
+            "value": "Synthetic fixture thesis; expects a [n] percent move. Not analysis."
+          },
+          {
+            "kind": "quoted",
+            "label": "invalidation (model text, unverified)",
+            "value": "Synthetic fixture invalidation below [n] percent."
+          },
+          {
+            "kind": "id",
+            "label": "source refs",
+            "value": "parquet://2026-10-26/events-1#0"
+          },
+          {
+            "kind": "digest",
+            "label": "confirm digest",
+            "value": "sha256:2e59ca76e93d1d016b0736c806bd64f3607b42fcd176a9057eeef673a081860a"
+          },
+          {
+            "kind": "id",
+            "label": "decided by",
+            "value": "operator-1"
+          },
+          {
+            "kind": "quoted",
+            "label": "reason",
+            "value": "size not justified"
+          },
+          {
+            "kind": "id",
+            "label": "proposal",
+            "value": "prop-r4"
+          },
+          {
+            "kind": "text",
+            "label": "proposal state",
+            "value": "abandoned"
+          },
+          {
+            "kind": "term",
+            "label": "symbol",
+            "value": "BBB"
+          },
+          {
+            "kind": "term",
+            "label": "side",
+            "value": "buy"
+          },
+          {
+            "kind": "term",
+            "label": "asset_type",
+            "value": "equity"
+          },
+          {
+            "kind": "term",
+            "label": "order_type",
+            "value": "limit"
+          },
+          {
+            "kind": "term",
+            "label": "quantity",
+            "value": "5"
+          },
+          {
+            "kind": "term",
+            "label": "notional",
+            "value": "none"
+          },
+          {
+            "kind": "term",
+            "label": "time_horizon",
+            "value": "short"
+          },
+          {
+            "kind": "quoted",
+            "label": "thesis (model text, unverified)",
+            "value": "Synthetic fixture thesis; expects a [n] percent move. Not analysis."
+          },
+          {
+            "kind": "quoted",
+            "label": "invalidation (model text, unverified)",
+            "value": "Synthetic fixture invalidation below [n] percent."
+          },
+          {
+            "kind": "id",
+            "label": "source refs",
+            "value": "parquet://2026-10-26/events-1#0"
+          },
+          {
+            "kind": "digest",
+            "label": "confirm digest",
+            "value": "sha256:c69263c84d4b869a865c7336579a9675e222ce5a3a5d1729d763cdf5aa67f5a2"
+          }
+        ],
+        "ok": false
+      }
+    },
+    {
+      "argv": [
+        "approve",
+        "--proposal-id",
+        "prop-r4",
+        "--operator",
+        "operator-1",
+        "--confirm-digest",
+        "sha256:c69263c84d4b869a865c7336579a9675e222ce5a3a5d1729d763cdf5aa67f5a2"
+      ],
+      "exit_code": 2,
+      "response": {
+        "api": "operator-api/0",
+        "code": "session_stopped",
+        "head": "sha256:fe705048145b73e66ddefce915b96052bba35a8d259f28f30a9c0de54a3b259e",
+        "lines": [
+          {
+            "kind": "code",
+            "label": "result",
+            "value": "session_stopped"
+          },
+          {
+            "kind": "id",
+            "label": "api",
+            "value": "operator-api/0"
+          },
+          {
+            "kind": "id",
+            "label": "session",
+            "value": "demo-1"
+          },
+          {
+            "kind": "text",
+            "label": "mode",
+            "value": "paper"
+          },
+          {
+            "kind": "text",
+            "label": "state",
+            "value": "stopped, watch_only"
+          },
+          {
+            "kind": "digest",
+            "label": "chain head",
+            "value": "sha256:fe705048145b73e66ddefce915b96052bba35a8d259f28f30a9c0de54a3b259e"
+          },
+          {
+            "kind": "text",
+            "label": "label",
+            "value": "live route integration deferred; route contract plumbing only"
+          },
+          {
+            "kind": "figure",
+            "label": "Plumbing cells accepted (route plumbing record, not a result)",
+            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:04664e66cb4ed8c6bb520c6d5e8fd39447a64f4ccf2427a499a712e5722107ab]"
+          },
+          {
+            "kind": "figure",
+            "label": "Plumbing cells in that record",
+            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:789f8e01b4d1aa7592236387044d6b82da3f02ae632a50ed700aab00dd02f41d]"
+          },
+          {
+            "kind": "id",
+            "label": "proposal",
+            "value": "prop-r1"
+          },
+          {
+            "kind": "text",
+            "label": "proposal state",
+            "value": "approved"
+          },
+          {
+            "kind": "term",
+            "label": "symbol",
+            "value": "AAA"
+          },
+          {
+            "kind": "term",
+            "label": "side",
+            "value": "buy"
+          },
+          {
+            "kind": "term",
+            "label": "asset_type",
+            "value": "equity"
+          },
+          {
+            "kind": "term",
+            "label": "order_type",
+            "value": "limit"
+          },
+          {
+            "kind": "term",
+            "label": "quantity",
+            "value": "5"
+          },
+          {
+            "kind": "term",
+            "label": "notional",
+            "value": "none"
+          },
+          {
+            "kind": "term",
+            "label": "time_horizon",
+            "value": "short"
+          },
+          {
+            "kind": "quoted",
+            "label": "thesis (model text, unverified)",
+            "value": "Synthetic fixture thesis; expects a [n] percent move. Not analysis."
+          },
+          {
+            "kind": "quoted",
+            "label": "invalidation (model text, unverified)",
+            "value": "Synthetic fixture invalidation below [n] percent."
+          },
+          {
+            "kind": "id",
+            "label": "source refs",
+            "value": "parquet://2026-10-26/events-1#0"
+          },
+          {
+            "kind": "digest",
+            "label": "confirm digest",
+            "value": "sha256:b5cd5e952ab2445c205e71c28e5ef71a5d19ec496624b38276df543553c7a3f0"
+          },
+          {
+            "kind": "id",
+            "label": "decided by",
+            "value": "operator-1"
+          },
+          {
+            "kind": "id",
+            "label": "proposal",
+            "value": "prop-r2"
+          },
+          {
+            "kind": "text",
+            "label": "proposal state",
+            "value": "vetoed"
+          },
+          {
+            "kind": "term",
+            "label": "symbol",
+            "value": "BBB"
+          },
+          {
+            "kind": "term",
+            "label": "side",
+            "value": "sell"
+          },
+          {
+            "kind": "term",
+            "label": "asset_type",
+            "value": "equity"
+          },
+          {
+            "kind": "term",
+            "label": "order_type",
+            "value": "limit"
+          },
+          {
+            "kind": "term",
+            "label": "quantity",
+            "value": "3"
+          },
+          {
+            "kind": "term",
+            "label": "notional",
+            "value": "none"
+          },
+          {
+            "kind": "term",
+            "label": "time_horizon",
+            "value": "short"
+          },
+          {
+            "kind": "quoted",
+            "label": "thesis (model text, unverified)",
+            "value": "Synthetic fixture thesis; expects a [n] percent move. Not analysis."
+          },
+          {
+            "kind": "quoted",
+            "label": "invalidation (model text, unverified)",
+            "value": "Synthetic fixture invalidation below [n] percent."
+          },
+          {
+            "kind": "id",
+            "label": "source refs",
+            "value": "parquet://2026-10-26/events-1#0"
+          },
+          {
+            "kind": "digest",
+            "label": "confirm digest",
+            "value": "sha256:2e59ca76e93d1d016b0736c806bd64f3607b42fcd176a9057eeef673a081860a"
+          },
+          {
+            "kind": "id",
+            "label": "decided by",
+            "value": "operator-1"
+          },
+          {
+            "kind": "quoted",
+            "label": "reason",
+            "value": "size not justified"
+          },
+          {
+            "kind": "id",
+            "label": "proposal",
+            "value": "prop-r4"
+          },
+          {
+            "kind": "text",
+            "label": "proposal state",
+            "value": "abandoned"
+          },
+          {
+            "kind": "term",
+            "label": "symbol",
+            "value": "BBB"
+          },
+          {
+            "kind": "term",
+            "label": "side",
+            "value": "buy"
+          },
+          {
+            "kind": "term",
+            "label": "asset_type",
+            "value": "equity"
+          },
+          {
+            "kind": "term",
+            "label": "order_type",
+            "value": "limit"
+          },
+          {
+            "kind": "term",
+            "label": "quantity",
+            "value": "5"
+          },
+          {
+            "kind": "term",
+            "label": "notional",
+            "value": "none"
+          },
+          {
+            "kind": "term",
+            "label": "time_horizon",
+            "value": "short"
+          },
+          {
+            "kind": "quoted",
+            "label": "thesis (model text, unverified)",
+            "value": "Synthetic fixture thesis; expects a [n] percent move. Not analysis."
+          },
+          {
+            "kind": "quoted",
+            "label": "invalidation (model text, unverified)",
+            "value": "Synthetic fixture invalidation below [n] percent."
+          },
+          {
+            "kind": "id",
+            "label": "source refs",
+            "value": "parquet://2026-10-26/events-1#0"
+          },
+          {
+            "kind": "digest",
+            "label": "confirm digest",
+            "value": "sha256:c69263c84d4b869a865c7336579a9675e222ce5a3a5d1729d763cdf5aa67f5a2"
+          }
+        ],
+        "ok": false
+      }
+    },
+    {
+      "argv": [
+        "audit"
+      ],
+      "exit_code": 0,
+      "response": {
+        "api": "operator-api/0",
+        "code": "audit",
+        "head": "sha256:fe705048145b73e66ddefce915b96052bba35a8d259f28f30a9c0de54a3b259e",
+        "lines": [
+          {
+            "kind": "id",
+            "label": "record",
+            "value": "1:session_opened"
+          },
+          {
+            "kind": "time",
+            "label": "at",
+            "value": "2026-10-26T20:00:01Z"
+          },
+          {
+            "kind": "digest",
+            "label": "hash",
+            "value": "sha256:0577e2d06e0cb16da819af670c62db26e44e96c5837d31b5a97b80a4d9f7f0a6"
+          },
+          {
+            "kind": "id",
+            "label": "record",
+            "value": "2:proposal_requested"
+          },
+          {
+            "kind": "time",
+            "label": "at",
+            "value": "2026-10-26T20:00:02Z"
+          },
+          {
+            "kind": "digest",
+            "label": "hash",
+            "value": "sha256:ee84bffea279770807a52eea0829afde9dcf62f9ece2a49e56f2e447406fcbad"
+          },
+          {
+            "kind": "id",
+            "label": "record",
+            "value": "3:proposal_received"
+          },
+          {
+            "kind": "time",
+            "label": "at",
+            "value": "2026-10-26T20:00:03Z"
+          },
+          {
+            "kind": "digest",
+            "label": "hash",
+            "value": "sha256:2b5a421e5e805470d77f6ea06cae7eb4b1afde4de4f3e896f82a0fc06ecd7421"
+          },
+          {
+            "kind": "id",
+            "label": "record",
+            "value": "4:proposal_requested"
+          },
+          {
+            "kind": "time",
+            "label": "at",
+            "value": "2026-10-26T20:00:04Z"
+          },
+          {
+            "kind": "digest",
+            "label": "hash",
+            "value": "sha256:5cd42079fb6d918d8c0576388bce3505ee637d8f9ab5a8a39e3a397c5c05610f"
+          },
+          {
+            "kind": "id",
+            "label": "record",
+            "value": "5:proposal_received"
+          },
+          {
+            "kind": "time",
+            "label": "at",
+            "value": "2026-10-26T20:00:05Z"
+          },
+          {
+            "kind": "digest",
+            "label": "hash",
+            "value": "sha256:e63d2f213d52650fe4f195ec2ce707d885721155c243e97e167ab66a8d844bcc"
+          },
+          {
+            "kind": "id",
+            "label": "record",
+            "value": "6:proposal_requested"
+          },
+          {
+            "kind": "time",
+            "label": "at",
+            "value": "2026-10-26T20:00:06Z"
+          },
+          {
+            "kind": "digest",
+            "label": "hash",
+            "value": "sha256:4c7d5b22a1b0b69f93a451f741e3283339859df85a81e068de393994870cbae9"
+          },
+          {
+            "kind": "id",
+            "label": "record",
+            "value": "7:proposal_refused"
+          },
+          {
+            "kind": "time",
+            "label": "at",
+            "value": "2026-10-26T20:00:07Z"
+          },
+          {
+            "kind": "digest",
+            "label": "hash",
+            "value": "sha256:55c22f4e84debc6a166a9f5861a8cb3600fe31a666398f4224a731769d0228a8"
+          },
+          {
+            "kind": "id",
+            "label": "record",
+            "value": "8:command_refused"
+          },
+          {
+            "kind": "time",
+            "label": "at",
+            "value": "2026-10-26T20:00:08Z"
+          },
+          {
+            "kind": "digest",
+            "label": "hash",
+            "value": "sha256:aa69acf781c44a90beca668ffc1b56af0dea5351d8b3bbc6c9455741bed0de9c"
+          },
+          {
+            "kind": "id",
+            "label": "record",
+            "value": "9:proposal_approved"
+          },
+          {
+            "kind": "time",
+            "label": "at",
+            "value": "2026-10-26T20:00:09Z"
+          },
+          {
+            "kind": "digest",
+            "label": "hash",
+            "value": "sha256:794a9035336f30b0faaffdc229b0cd0e4cfaca2fa536c2b58ec1d5705bb370f6"
+          },
+          {
+            "kind": "id",
+            "label": "record",
+            "value": "10:proposal_vetoed"
+          },
+          {
+            "kind": "time",
+            "label": "at",
+            "value": "2026-10-26T20:00:10Z"
+          },
+          {
+            "kind": "digest",
+            "label": "hash",
+            "value": "sha256:7779d8452a5f0e66ed1d48d06618ba7fb09e0a73c5db6728c7ed73731b9a4d99"
+          },
+          {
+            "kind": "id",
+            "label": "record",
+            "value": "11:proposal_requested"
+          },
+          {
+            "kind": "time",
+            "label": "at",
+            "value": "2026-10-26T20:00:11Z"
+          },
+          {
+            "kind": "digest",
+            "label": "hash",
+            "value": "sha256:1075fcb3c68de0002b8b94c667427262a88b623655844a0e6b721cf8cc4db6d8"
+          },
+          {
+            "kind": "id",
+            "label": "record",
+            "value": "12:proposal_received"
+          },
+          {
+            "kind": "time",
+            "label": "at",
+            "value": "2026-10-26T20:00:12Z"
+          },
+          {
+            "kind": "digest",
+            "label": "hash",
+            "value": "sha256:ea4e9e3c634071210d20bf23b3b829794ef32ff5ce759dad3e14d25bf1f56a79"
+          },
+          {
+            "kind": "id",
+            "label": "record",
+            "value": "13:session_stopped"
+          },
+          {
+            "kind": "time",
+            "label": "at",
+            "value": "2026-10-26T20:00:13Z"
+          },
+          {
+            "kind": "digest",
+            "label": "hash",
+            "value": "sha256:e0234fc5c8c27bbb6226fdce1828e18845a76509e174494a9f7525f9f22b19cf"
+          },
+          {
+            "kind": "id",
+            "label": "record",
+            "value": "14:command_refused"
+          },
+          {
+            "kind": "time",
+            "label": "at",
+            "value": "2026-10-26T20:00:14Z"
+          },
+          {
+            "kind": "digest",
+            "label": "hash",
+            "value": "sha256:189e6f6cfa7c45d0981e4cd67fad668e1f92e7efdc9bf8730a078fb02055e769"
+          },
+          {
+            "kind": "id",
+            "label": "record",
+            "value": "15:command_refused"
+          },
+          {
+            "kind": "time",
+            "label": "at",
+            "value": "2026-10-26T20:00:15Z"
+          },
+          {
+            "kind": "digest",
+            "label": "hash",
+            "value": "sha256:fe705048145b73e66ddefce915b96052bba35a8d259f28f30a9c0de54a3b259e"
+          }
+        ],
+        "ok": true
+      }
+    }
+  ]
+}
