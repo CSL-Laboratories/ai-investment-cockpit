@@ -99,11 +99,12 @@ class OperatorSession:
     ) -> OperatorSession:
         if mode not in SESSION_MODES:
             raise ValueError(f"mode must be one of {SESSION_MODES}; auto rungs are not expressible")
-        if _clean(session_id, limit=64) is None:
+        cleaned_id = _clean(session_id, limit=64)
+        if cleaned_id is None:
             raise ValueError("session_id must be short printable text")
         session = cls(source=source, clock=clock)
         session._emit("session_opened", {
-            "session_id": session_id, "mode": mode, "adapter_kind": source.adapter_kind,
+            "session_id": cleaned_id, "mode": mode, "adapter_kind": source.adapter_kind,
         })
         return session
 
@@ -291,10 +292,16 @@ class OperatorSession:
             )
         except Exception:  # noqa: BLE001 - any source failure must fail closed, not dangle
             return self._refusal_record(request_id, SOURCE_ERROR, quarantined=False)
+        raw_reason = getattr(outcome, "reason", None)
+        reason = raw_reason if isinstance(raw_reason, str) else SOURCE_ERROR
         if outcome.disposition == NEEDS_HUMAN_REVIEW:
-            return self._refusal_record(request_id, outcome.reason, quarantined=True)
+            return self._refusal_record(request_id, reason, quarantined=True)
         if outcome.disposition != ACCEPTED or not outcome.usable:
-            return self._refusal_record(request_id, outcome.reason, quarantined=False)
+            return self._refusal_record(request_id, reason, quarantined=False)
+        reply = outcome.reply_record if isinstance(outcome.reply_record, dict) else None
+        reply_digest = None if reply is None else reply.get("output_digest")
+        if reply_digest is not None and not isinstance(reply_digest, str):
+            return self._refusal_record(request_id, SOURCE_ERROR, quarantined=False)
         payload = copy.deepcopy(outcome.payload)
         validator = jsonschema.Draft202012Validator(
             self._schema, format_checker=jsonschema.FormatChecker()
@@ -307,7 +314,7 @@ class OperatorSession:
         record = self._emit("proposal_received", {
             "request_id": request_id, "proposal_id": proposal_id, "payload": payload,
             "payload_digest": canonical_digest(payload),
-            "reply_output_digest": (outcome.reply_record or {}).get("output_digest"),
+            "reply_output_digest": reply_digest,
         })
         return CommandResult(True, "proposal_received", record)
 
