@@ -10,7 +10,7 @@ Prepared Mon Oct 26 2026 (PT) against Cockpit `main` `3122cac4780d776cbd487dd2a6
 - Lucas's decision, relayed in the task for this PR (Mon Oct 26, 11:59 AM PT, not independently verified against Linear): "Decision 3: approve keep-paths and boundary, push pre-x1 tags, delete after the Nov 10 rehearsal".
 - Cockpit checker promotion is WP4, a separate PR (#283, draft at the time of writing). It pins three files (`test_replacement_program_registry.py`, `test_o7_operator_contract.py`, `tools/test_replacement_program.py`) with its own floor. This inventory classifies the first two as `keep` and does not duplicate that floor or edit `.github/workflows/**`.
 - Scope of "legacy tree": every `test_*.py`, `*_test.py` and `conftest.py` under `app/` (223 files at `main`), plus this PR's own guard wrapper (1 file) = 224 rows.
-- **Cockpit keep-paths are not enumerated in the step-4 synthesis** (it names only Recursion's). The `keep` rows below are this agent's proposal, derived from the nine invariants, the escalate list in AGENTS.md and `docs/replacement/SCOPE-AUDIT.md` section 2. Samir (or Lucas) must confirm them before they are treated as the approved keep-path list. Unverified.
+- The step-4 synthesis does not enumerate Cockpit keep-paths (it names only Recursion's). The `keep` rows were proposed by this agent from the nine invariants, the escalate list in AGENTS.md and `docs/replacement/SCOPE-AUDIT.md` section 2. **Samir confirmed the Cockpit keep list (the `K-*` classes and `SUPPORT-K`) and the drop rows on PR #287**: https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/287#issuecomment-6425530222. Any change to the keep list goes through a reviewed change to this table. Two drop rows are conditional (section 3).
 
 ## 2. Pre-X1 tag
 
@@ -27,10 +27,10 @@ Cockpit had no tags before this one. Recursion's precedent is `pre-v3-clean-cut-
 
 - `keep`: the file and the code it guards stay in the Cockpit tree after X1. Order-path, risk, audit, gate, human-gate, secrets, schema and untrusted-input oracles are `keep` because the nine invariants stay binding until a separately reviewed amendment. A `keep` file may be edited only through the normal escalation rules.
 - `port`: the oracle is re-expressed at a successor location (new-tree location set by WP7) and must run red-to-green under unchanged job names **before** the legacy file may be deleted. Until then the legacy file stays and keeps running.
-- `drop`: superseded scope with no successor oracle. Deletable only in the WP19 deletion PR, after the Nov 10 rehearsal, and only after the source couplings in section 7 are resolved.
+- `drop`: superseded scope with no successor oracle. Deletable only in the WP19 deletion PR, after the Nov 10 rehearsal, and only after the source couplings in section 7 are resolved. Samir confirmed 9 of the 11 drop rows (the 5 `feasibility/*` rows, `strategies/test_merger_edge.py`, `strategies/test_merger_semantics.py`, `test_rw22_semantics.py`, `test_rw22_semantics_independent.py`). **Two are conditional**: `strategies/test_rw21_real_filing_grammar.py` and `strategies/test_rw23_semantic_boundaries.py` (RW-21, BUG-146) drop only if the WP19 PR shows the same fail-closed behaviour is covered by a `K-UNTRUSTED` or `P-EVIDENCE` file; otherwise they become `port` to `P-EVIDENCE`. Their rows say so.
 - Nothing is deleted by this PR. WP19 preconditions per the synthesis: WP4 merged, WP14 merged, operator-surface parity (A6). Lucas decides any pull-forward to Nov 9.
 
-Totals: 136 `keep` rows (1509 test functions), 77 `port` rows (1202), 11 `drop` rows (168). Test functions are a static AST count; a parametrized function counts once.
+Totals: 136 `keep` rows (1509 test functions), 77 `port` rows (1210), 11 `drop` rows (168). Test functions are a static AST count; a parametrized function counts once.
 
 ## 4. Oracle catalog
 
@@ -74,9 +74,9 @@ The oracle column of every row must name one of these. A `port` oracle names the
 | Rows (one per legacy test file) | 224 |
 | `keep` rows | 136 |
 | `port` rows | 77 |
-| Test functions across `keep` and `port` rows | 2711 |
+| Test functions across `keep` and `port` rows | 2719 |
 
-Red conditions, each covered by a negative control in the wrapper test: a legacy test file with no row; a row with no file (deleting a file before the rehearsal); a duplicate row; an unknown disposition or oracle; a disposition that conflicts with its oracle's class; an empty reason; a `keep` or `port` file collecting fewer test functions than its row; any floor above; a non-`drop` file importing a `drop` file; a malformed table.
+Red conditions, each covered by a negative control in the wrapper test: a legacy test file with no row; a row with no file (deleting a file before the rehearsal); a duplicate row; an unknown disposition or oracle; a disposition that conflicts with its oracle's class; an empty reason; a `keep` or `port` file collecting fewer test functions than its row; any floor above; a non-`drop` file importing a `drop` file; a `keep` file importing a `port` file that is not acknowledged in the coupling block (section 7); a stale or non-keep-to-port acknowledgement; a malformed table. Import detection covers absolute (`from tests.x import y`, `import tests.x`) and relative (`from .x import y`, `from . import x`, `from ..pkg import x`) forms.
 
 A deliberate move or deletion must edit the table row and the floors in the same reviewed change. The checker does not prove that a ported oracle exists at its successor location yet: no successor location exists until WP7 and the route contract (WP6) land. That red-to-green evidence is a WP19 precondition, not claimed here.
 
@@ -93,7 +93,8 @@ It uses no network, no new `uses:`, no new permissions and no new triggers. Job 
 
 ## 6. Assumptions and unverified items
 
-- Unverified: the Cockpit keep-path list (section 1) and every `drop` row. Both are proposals for Samir.
+- The `Subject` column is informational only: copied from each module's docstring, not validated by the checker. The `Reason` and `Oracle` columns are validated for presence and class.
+- Discovery covers every `test_*.py`, `*_test.py` and `conftest.py` under all of `app/`, and row paths may be any `app/**.py` path, so a test file outside `app/tests/` would be reported as unlisted rather than as a malformed table. None exists today.
 - Static test counts do not expand parametrization; the real collected count is higher. The floor is deliberately a floor on functions.
 - Not verified: Windows and macOS behaviour of the checker (it uses `pathlib` and the stdlib only, run locally on Linux with Python 3.12 only).
 - Non-test support files under `app/tests/` (`__init__.py`, JSON and filing fixtures under `app/tests/filings/fixtures/` and `app/tests/strategies/fixtures/`) are not rows; they follow the tests that read them.
@@ -106,32 +107,42 @@ Source code outside the tests still imports code that the `drop` rows would remo
 - `app/main.py` lines 843 to 844 and 879 to 884 import and construct `CashMergerSemanticVerifier` and `CashMergerEdgeProvider` from `app/strategies/` (tests: `tests/strategies/*`, `tests/test_rw22_semantics*.py`).
 - `app/research/empty_run.py` lines 13 to 15 import `app/feasibility/` (tests: `tests/feasibility/*`). `tests/workflows/test_research_update.py` (`port`) exercises `empty_run`.
 
-Cross-disposition test imports (the importer and the imported file have different dispositions). Move or hoist the shared helper first; the checker only forbids a non-`drop` file importing a `drop` file, and none does today:
+Cross-disposition test imports, resolved for absolute and relative forms. A `drop` file may import anything. A non-`drop` file importing a `drop` file is red. A `keep` file importing a `port` file is red unless acknowledged in the block below; porting such a file would break the kept oracle, so each acknowledgement must be resolved (helper hoisted into a kept module, which edits kept tests and therefore needs a reviewed change) before the imported file moves. The four known cases Samir listed are acknowledged here rather than hoisted in this PR, because hoisting edits order-path-adjacent kept tests. Stale acknowledgements are red.
+
+<!-- x1-inventory:couplings:begin -->
+| Importer | Imports |
+|---|---|
+| `app/tests/ingest/test_rw23_bar_publication.py` | `app/tests/ingest/test_market_data.py` |
+| `app/tests/ingest/test_rw23_bar_publication_adversarial.py` | `app/tests/ingest/test_market_data.py` |
+| `app/tests/orchestrator/test_rw23_stream_health.py` | `app/tests/orchestrator/test_ingest_runner.py` |
+| `app/tests/system/test_watchonly_durability.py` | `app/tests/orchestrator/test_ingest_runner.py` |
+| `app/tests/system/test_watchonly_durability.py` | `app/tests/workflows/test_agent_calls.py` |
+| `app/tests/workflows/test_execution_verification.py` | `app/tests/workflows/test_proposals.py` |
+| `app/tests/workflows/test_rw22_risk_persistence.py` | `app/tests/workflows/test_proposals.py` |
+| `app/tests/workflows/test_rw23_health_durability.py` | `app/tests/workflows/test_agent_calls.py` |
+| `app/tests/workflows/test_rw23_scrub_sizing.py` | `app/tests/workflows/test_proposals.py` |
+<!-- x1-inventory:couplings:end -->
+
+Other cross-disposition imports (informational, not red): a `port` file importing kept fixtures, and a `drop` file importing kept fixtures.
 
 | Importer | Disposition | Imports | Disposition |
 |---|---|---|---|
-| `ingest/test_rw23_bar_publication.py` | keep | `ingest/test_market_data.py` | port |
-| `ingest/test_rw23_bar_publication_adversarial.py` | keep | `ingest/test_market_data.py` | port |
-| `orchestrator/test_rw23_stream_health.py` | keep | `orchestrator/test_ingest_runner.py` | port |
+| `bridge/test_bot.py` | port | `bridge/conftest.py` | keep |
+| `bridge/test_embeds.py` | port | `bridge/conftest.py` | keep |
+| `bridge/test_fallback.py` | port | `bridge/conftest.py` | keep |
 | `strategies/test_merger_edge.py` | drop | `brokers/conftest.py` | keep |
 | `strategies/test_merger_edge.py` | drop | `workflows/conftest.py` | keep |
 | `strategies/test_merger_semantics.py` | drop | `workflows/conftest.py` | keep |
-| `system/test_watchonly_durability.py` | keep | `orchestrator/test_ingest_runner.py` | port |
-| `system/test_watchonly_durability.py` | keep | `workflows/test_agent_calls.py` | port |
 | `workflows/test_agent_calls.py` | port | `workflows/conftest.py` | keep |
 | `workflows/test_budget.py` | port | `workflows/conftest.py` | keep |
 | `workflows/test_context_limit.py` | port | `workflows/conftest.py` | keep |
 | `workflows/test_events.py` | port | `workflows/conftest.py` | keep |
-| `workflows/test_execution_verification.py` | keep | `workflows/test_proposals.py` | port |
 | `workflows/test_grounding.py` | port | `workflows/conftest.py` | keep |
 | `workflows/test_interrogation.py` | port | `workflows/conftest.py` | keep |
 | `workflows/test_jev.py` | port | `workflows/conftest.py` | keep |
 | `workflows/test_morning_brew.py` | port | `workflows/conftest.py` | keep |
 | `workflows/test_proposals.py` | port | `workflows/conftest.py` | keep |
-| `workflows/test_rw22_risk_persistence.py` | keep | `workflows/test_proposals.py` | port |
 | `workflows/test_rw23_budget_snapshot.py` | port | `workflows/conftest.py` | keep |
-| `workflows/test_rw23_health_durability.py` | keep | `workflows/test_agent_calls.py` | port |
-| `workflows/test_rw23_scrub_sizing.py` | keep | `workflows/test_proposals.py` | port |
 | `workflows/test_rw24_event_authority_adversarial.py` | port | `workflows/conftest.py` | keep |
 | `workflows/test_rw24_event_verifier.py` | port | `workflows/conftest.py` | keep |
 | `workflows/test_rw24_resume_adversarial.py` | port | `workflows/conftest.py` | keep |
@@ -298,8 +309,8 @@ Columns: path, static test-function count, disposition, oracle, reason, and the 
 | `app/tests/storage/test_sec11_seq_monotonic.py` | 6 | keep | `K-AUDIT` | Audit chain is a core engine under AGENTS.md; SEC-11 is the chief pre-live gate. | W10 SEC-11 (b) REGRESSION — monotonic, NON-REUSABLE seq closes the WP8 delete-then-heal hole. |
 | `app/tests/strategies/test_merger_edge.py` | 25 | drop | `NONE` | Cash-merger strategy is no longer the product's defining path; negative results stay in docs/evidence. | W-23 cash-merger evidence, deterministic math, and fail-closed attacks. |
 | `app/tests/strategies/test_merger_semantics.py` | 36 | drop | `NONE` | Cash-merger strategy is no longer the product's defining path; negative results stay in docs/evidence. | W-24 prospective semantic authority and composed-path reachability. |
-| `app/tests/strategies/test_rw21_real_filing_grammar.py` | 15 | drop | `NONE` | Cash-merger strategy is no longer the product's defining path; negative results stay in docs/evidence. | Independent RW-21 refuse regressions and pinned-source replays. |
-| `app/tests/strategies/test_rw23_semantic_boundaries.py` | 8 | drop | `NONE` | Cash-merger strategy is no longer the product's defining path; negative results stay in docs/evidence. | BUG-146: markup boundaries cannot end the scope of a source qualification. |
+| `app/tests/strategies/test_rw21_real_filing_grammar.py` | 15 | drop | `NONE` | CONDITIONAL drop (Samir, PR #287 comment 6425530222): refusal regressions on untrusted filing text (RW-21, BUG-146). Drops only if the WP19 PR shows the same fail-closed behaviour covered by a K-UNTRUSTED or P-EVIDENCE file; otherwise reclassify as port to P-EVIDENCE. | Independent RW-21 refuse regressions and pinned-source replays. |
+| `app/tests/strategies/test_rw23_semantic_boundaries.py` | 8 | drop | `NONE` | CONDITIONAL drop (Samir, PR #287 comment 6425530222): refusal regressions on untrusted filing text (RW-21, BUG-146). Drops only if the WP19 PR shows the same fail-closed behaviour covered by a K-UNTRUSTED or P-EVIDENCE file; otherwise reclassify as port to P-EVIDENCE. | BUG-146: markup boundaries cannot end the scope of a source qualification. |
 | `app/tests/swarm/test_bounded_job.py` | 22 | port | `P-REHOME` | Tests docs/research/swarm-tools helpers (preview-only scoped spawn, bounded job); frozen Devin helper stays for audit. | RW-34 bounded-job controller. Fake children first; one real admitted fixture. |
 | `app/tests/swarm/test_scoped_spawn.py` | 11 | port | `P-REHOME` | Tests docs/research/swarm-tools helpers (preview-only scoped spawn, bounded job); frozen Devin helper stays for audit. | RW-33 offline previews and filing admission. No model job is dispatched. |
 | `app/tests/swarm/test_swarm_tools.py` | 7 | port | `P-REHOME` | Tests docs/research/swarm-tools helpers (preview-only scoped spawn, bounded job); frozen Devin helper stays for audit. | Deterministic tests for Cloud swarm spawn/intake helpers. No Devin spawn. |
@@ -329,7 +340,7 @@ Columns: path, static test-function count, disposition, oracle, reason, and the 
 | `app/tests/test_rw22_semantics_independent.py` | 4 | drop | `NONE` | Cash-settlement exception review for the merger candidate. | Independent RW-22 adversarial review of the cash-settlement exception. |
 | `app/tests/test_stuck_thread_watch.py` | 48 | port | `P-REHOME` | Guards .github/scripts/stuck_thread_watch.py and its workflow wiring. | Unit tests for the in-repo stuck-thread watcher / Codex mediator. |
 | `app/tests/test_wp0.py` | 6 | keep | `K-INV` | App imports cleanly, settings default read_only, secrets round-trip. | WP0 acceptance — app imports cleanly; settings default read_only; secrets round-trip |
-| `app/tests/test_x1_cockpit_inventory.py` | 13 | port | `P-X1GUARD` | Runs red under unchanged job names today; the WP19 PR moves it to a direct CI step before app/ files go (see wiring note). | WP14 X1 inventory guard: every legacy test file has exactly one disposition row. |
+| `app/tests/test_x1_cockpit_inventory.py` | 21 | port | `P-X1GUARD` | Runs red under unchanged job names today; the WP19 PR moves it to a direct CI step before app/ files go (see wiring note). | WP14 X1 inventory guard: every legacy test file has exactly one disposition row. |
 | `app/tests/tools/test_provision_merger_edge.py` | 4 | port | `P-REHOME` | Tests a script under tools/, outside the app/ tree; the script's own disposition is a separate decision. | Regression tests for W-23 operator-tool reporting. |
 | `app/tests/tools/test_rw11_companyfacts.py` | 13 | port | `P-REHOME` | Tests a script under tools/, outside the app/ tree; the script's own disposition is a separate decision. | Hermetic tests for the RW-11 prospective Company Facts capture. |
 | `app/tests/tools/test_rw11_precision.py` | 15 | port | `P-REHOME` | Tests a script under tools/, outside the app/ tree; the script's own disposition is a separate decision. | Hermetic tests for the RW-11 filing-precision evidence tool. |

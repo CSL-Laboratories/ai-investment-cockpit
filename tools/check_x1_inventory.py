@@ -25,7 +25,7 @@ DEFAULT_TABLE = ROOT / "docs" / "evidence" / "x1-cockpit-legacy-test-inventory-2
 X1_MIN_ROWS = 224
 X1_MIN_KEEP_ROWS = 136
 X1_MIN_PORT_ROWS = 77
-X1_MIN_ORACLE_TESTS = 2711
+X1_MIN_ORACLE_TESTS = 2719
 
 X1_TAG = "pre-x1-cockpit-20261026"
 X1_TAG_COMMIT = "3122cac4780d776cbd487dd2a671466151a465ba"
@@ -35,7 +35,9 @@ ROWS_BEGIN = "<!-- x1-inventory:rows:begin -->"
 ROWS_END = "<!-- x1-inventory:rows:end -->"
 ORACLES_BEGIN = "<!-- x1-inventory:oracles:begin -->"
 ORACLES_END = "<!-- x1-inventory:oracles:end -->"
-PATH_RE = re.compile(r"^app/tests/[A-Za-z0-9_./-]+\.py$")
+COUPLINGS_BEGIN = "<!-- x1-inventory:couplings:begin -->"
+COUPLINGS_END = "<!-- x1-inventory:couplings:end -->"
+PATH_RE = re.compile(r"^app/[A-Za-z0-9_./-]+\.py$")
 ORACLE_ID_RE = re.compile(r"^[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*$")
 
 
@@ -79,6 +81,24 @@ def parse_oracles(text: str) -> dict[str, str]:
             raise ValueError(f"oracle {oid} has an empty successor oracle or rationale")
         oracles[oid] = cells[1]
     return oracles
+
+
+def parse_couplings(text: str) -> set[tuple[str, str]]:
+    """Return the acknowledged (keep importer, port target) test imports."""
+    pairs: set[tuple[str, str]] = set()
+    for line in _block(text, COUPLINGS_BEGIN, COUPLINGS_END):
+        cells = _cells(line)
+        if cells is None or cells[0].lower() == "importer":
+            continue
+        if len(cells) != 2:
+            raise ValueError(f"coupling row has {len(cells)} cells, expected 2: {line[:80]}")
+        pair = (cells[0].strip("`"), cells[1].strip("`"))
+        if not all(PATH_RE.match(p) for p in pair):
+            raise ValueError(f"bad coupling path in {line[:80]}")
+        if pair in pairs:
+            raise ValueError(f"duplicate coupling {pair[0]} -> {pair[1]}")
+        pairs.add(pair)
+    return pairs
 
 
 def parse_rows(text: str) -> list[dict[str, object]]:
@@ -139,8 +159,40 @@ def discover(app: Path = APP) -> tuple[dict[str, int], list[str]]:
     return found, errors
 
 
+def _imported_files(rel: str, tree: ast.AST) -> set[str]:
+    """Return repo-relative ``.py`` paths that ``rel`` may import from the tests package.
+
+    ``from pkg.mod import name`` names ``pkg/mod.py``; ``from pkg import mod`` names
+    ``pkg/mod.py``. Relative forms resolve against the
+    importer's own package.
+    """
+    package = Path(rel).parent.parts
+    files: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.level == 0:
+                if not node.module or not (node.module == "tests" or node.module.startswith("tests.")):
+                    continue
+                head = ["app", *node.module.split(".")]
+            else:
+                keep = len(package) - (node.level - 1)
+                if keep < 1:
+                    continue
+                head = [*package[:keep], *(node.module.split(".") if node.module else [])]
+            if node.module:
+                base = "/".join(head)
+                files.add(base + ".py")
+            files.update("/".join([*head, alias.name]) + ".py" for alias in node.names if alias.name != "*")
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.startswith("tests."):
+                    base = "/".join(["app", *alias.name.split(".")])
+                    files.add(base + ".py")
+    return files
+
+
 def test_imports(app: Path = APP) -> dict[str, set[str]]:
-    """Return {test file: legacy test files it imports through the tests package}."""
+    """Return {test file: legacy test files it imports}, absolute and relative forms."""
     root = app.parent
     known = {
         path.relative_to(root).as_posix()
@@ -156,20 +208,7 @@ def test_imports(app: Path = APP) -> dict[str, set[str]]:
             tree = ast.parse((root / rel).read_text(encoding="utf-8"))
         except (SyntaxError, UnicodeDecodeError, ValueError):
             continue
-        modules: set[str] = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-                if node.module == "tests" or node.module.startswith("tests."):
-                    modules.add(node.module)
-                    modules.update(f"{node.module}.{alias.name}" for alias in node.names)
-            elif isinstance(node, ast.Import):
-                modules.update(a.name for a in node.names if a.name.startswith("tests."))
-        hits = set()
-        for module in modules:
-            base = "app/" + module.replace(".", "/")
-            for candidate in (base + ".py", base + "/conftest.py"):
-                if candidate in known and candidate != rel:
-                    hits.add(candidate)
+        hits = {c for c in _imported_files(rel, tree) if c in known and c != rel}
         if hits:
             result[rel] = hits
     return result
@@ -189,6 +228,7 @@ def check(
     try:
         oracles = parse_oracles(table_text)
         rows = parse_rows(table_text)
+        acknowledged = parse_couplings(table_text)
     except ValueError as exc:
         return [f"inventory table is malformed: {exc}"]
 
@@ -237,6 +277,19 @@ def check(
         for target in sorted(targets):
             if by_path.get(target) == "drop":
                 errors.append(f"{importer} imports {target}, which is marked drop")
+            elif by_path.get(importer) == "keep" and by_path.get(target) == "port" and (
+                importer,
+                target,
+            ) not in acknowledged:
+                errors.append(
+                    f"{importer} (keep) imports {target} (port); hoist the helper into a kept "
+                    "module or acknowledge the coupling in the table"
+                )
+    for importer, target in sorted(acknowledged):
+        if by_path.get(importer) != "keep" or by_path.get(target) != "port":
+            errors.append(f"acknowledged coupling {importer} -> {target} is not a keep-to-port pair")
+        elif imports is not None and target not in imports.get(importer, set()):
+            errors.append(f"acknowledged coupling {importer} -> {target} is stale; remove it")
 
     if len(rows) < min_rows:
         errors.append(f"inventory has {len(rows)} rows, floor {min_rows}")

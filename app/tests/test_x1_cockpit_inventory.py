@@ -103,6 +103,105 @@ def test_a_kept_file_importing_a_drop_file_is_red() -> None:
     assert x1.check(TABLE_TEXT, _actual(), imports=x1.test_imports()) == []
 
 
+def _tree(tmp_path: Path, importer_source: str) -> dict[str, set[str]]:
+    package = tmp_path / "app" / "tests" / "strategies"
+    package.mkdir(parents=True)
+    (package / "test_merger_edge.py").write_text("def test_a():\n    pass\n", encoding="utf-8")
+    (package / "conftest.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (package / "test_kept.py").write_text(importer_source, encoding="utf-8")
+    return x1.test_imports(tmp_path / "app")
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from .test_merger_edge import test_a\n",
+        "from . import test_merger_edge\n",
+        "from tests.strategies.test_merger_edge import test_a\n",
+        "from tests.strategies import test_merger_edge\n",
+        "import tests.strategies.test_merger_edge\n",
+    ],
+)
+def test_imports_resolve_absolute_and_relative_forms(tmp_path: Path, source: str) -> None:
+    found = _tree(tmp_path, source)
+    assert found == {"app/tests/strategies/test_kept.py": {"app/tests/strategies/test_merger_edge.py"}}
+
+
+def test_relative_parent_package_and_conftest_imports_resolve(tmp_path: Path) -> None:
+    sibling = tmp_path / "app" / "tests" / "other"
+    sibling.mkdir(parents=True)
+    _tree(tmp_path, "")
+    (sibling / "test_up.py").write_text(
+        "from ..strategies import test_merger_edge\nfrom ..strategies.conftest import VALUE\n",
+        encoding="utf-8",
+    )
+    found = x1.test_imports(tmp_path / "app")
+    assert found["app/tests/other/test_up.py"] == {
+        "app/tests/strategies/test_merger_edge.py",
+        "app/tests/strategies/conftest.py",
+    }
+
+
+def test_a_package_import_does_not_pull_in_the_sibling_conftest(tmp_path: Path) -> None:
+    assert "app/tests/strategies/conftest.py" not in _tree(tmp_path, "from . import test_merger_edge\n").get(
+        "app/tests/strategies/test_kept.py", set()
+    )
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["from .test_merger_edge import test_a\n", "from . import test_merger_edge\n"],
+)
+def test_a_kept_file_importing_a_drop_sibling_by_relative_import_is_red(tmp_path: Path, source: str) -> None:
+    imports = _tree(tmp_path, source)
+    kept = "app/tests/strategies/test_kept.py"
+    dropped = "app/tests/strategies/test_merger_edge.py"
+    keep_line = _row_for(_keep_path())
+    drop_line = _row_for(next(r["path"] for r in x1.parse_rows(TABLE_TEXT) if r["disposition"] == "drop"))
+    table = TABLE_TEXT.replace(keep_line, keep_line.replace(_keep_path(), kept, 1), 1)
+    table = table.replace(drop_line, drop_line.replace(drop_line.split("`")[1], dropped, 1), 1)
+    actual = {r["path"]: int(r["tests"]) for r in x1.parse_rows(table)}
+    errors = x1.check(table, actual, imports=imports, min_rows=0, min_keep_rows=0, min_port_rows=0, min_oracle_tests=0)
+    assert any(kept in e and dropped in e and "marked drop" in e for e in errors)
+
+
+def test_every_acknowledged_keep_to_port_coupling_is_a_real_import() -> None:
+    acknowledged = x1.parse_couplings(TABLE_TEXT)
+    assert acknowledged
+    imports = x1.test_imports()
+    for importer, target in acknowledged:
+        assert target in imports[importer]
+
+
+def test_a_new_keep_to_port_import_is_red() -> None:
+    rows = x1.parse_rows(TABLE_TEXT)
+    ack = x1.parse_couplings(TABLE_TEXT)
+    port = next(r["path"] for r in rows if r["disposition"] == "port")
+    keep = next(r["path"] for r in rows if r["disposition"] == "keep" and (r["path"], port) not in ack)
+    errors = x1.check(TABLE_TEXT, _actual(), imports={keep: {port}})
+    assert any(keep in e and port in e and "hoist the helper" in e for e in errors)
+
+
+def test_a_stale_or_misclassified_acknowledgement_is_red() -> None:
+    imports = x1.test_imports()
+    ack = sorted(x1.parse_couplings(TABLE_TEXT))
+    importer, target = ack[0]
+    pruned = {k: set(v) for k, v in imports.items()}
+    pruned[importer].discard(target)
+    assert any("is stale" in e for e in x1.check(TABLE_TEXT, _actual(), imports=pruned))
+    line = f"| `{importer}` | `{target}` |"
+    swapped = TABLE_TEXT.replace(line, f"| `{target}` | `{importer}` |", 1)
+    assert any("not a keep-to-port pair" in e for e in x1.check(swapped, _actual(), imports=imports))
+
+
+def test_a_test_file_outside_app_tests_is_reported_as_unlisted_not_malformed() -> None:
+    actual = _actual()
+    actual["app/extra/test_outside.py"] = 1
+    errors = x1.check(TABLE_TEXT, actual)
+    assert any("app/extra/test_outside.py has no disposition row" in e for e in errors)
+    assert not any("malformed" in e for e in errors)
+
+
 def test_a_dropped_row_is_red() -> None:
     line = _row_for(_keep_path())
     errors = x1.check(TABLE_TEXT.replace(line + "\n", "", 1), _actual())
@@ -129,9 +228,9 @@ def test_an_unknown_oracle_and_empty_reason_are_red() -> None:
     assert any("empty reason" in e for e in x1.check(TABLE_TEXT.replace(line, blank, 1), _actual()))
 
 
-@pytest.mark.parametrize("drop", ["rows", "oracles"])
+@pytest.mark.parametrize("drop", ["rows", "oracles", "couplings"])
 def test_missing_markers_are_red(drop: str) -> None:
-    marker = x1.ROWS_BEGIN if drop == "rows" else x1.ORACLES_BEGIN
+    marker = {"rows": x1.ROWS_BEGIN, "oracles": x1.ORACLES_BEGIN, "couplings": x1.COUPLINGS_BEGIN}[drop]
     errors = x1.check(TABLE_TEXT.replace(marker, ""), _actual())
     assert errors and "malformed" in errors[0]
 
