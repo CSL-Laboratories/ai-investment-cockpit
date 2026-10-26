@@ -1,0 +1,46 @@
+{
+  "pin_version": 1,
+  "contract": "Route Contract v0 (draft, CSL-496, not accepted)",
+  "source": {
+    "repository": "CSL-Laboratories/recursion",
+    "pull_request": 302,
+    "head_sha": "baf6fdc2e1d29592721c8dbaac65878b12ec4a98",
+    "stacked_on": {
+      "pull_request": 301,
+      "head_sha": "b625072ae24c4334236f3c5f0919f1d7375fbee0"
+    },
+    "read_only": true
+  },
+  "vendored": {
+    "contract/route-contract-v0.schema.json": {
+      "source_path": "schemas/control-plane/v3/route-contract/schema.json",
+      "sha256": "22a85ce775c51934569ad3a1f253472e06e695e46962f46b40f0848178a19016"
+    },
+    "contract/oracle_vectors.json": {
+      "source_path": "scripts/tests/v3/route_contract/oracle_vectors.json",
+      "sha256": "0b28cab72659d10acb21621a1abb1f3da4a6da4772061cbb3946f25f33b49100"
+    }
+  },
+  "subject_manifest": {
+    "scripts/__init__.py": "65523d019d1435f794075394796037bc48923b73c65cbb3149b30f7d8fdeef83",
+    "scripts/v3/__init__.py": "23d094f4fc440a62a782a04e06bdebc3d44aefa349ca7aa3c846954c99a3421e",
+    "scripts/v3/route_adapter/__init__.py": "13ca0346dce3091d56b28bb3ba2c2b8fc27a657147d5b31ea900e51ef739528f",
+    "scripts/v3/route_adapter/credentials.py": "d21d88bec18d638930f9c93208f906e067caf5abdb0ccb5b6e593f29c76bbc51",
+    "scripts/v3/route_adapter/descriptor.py": "e65eb9ec210f31b0a6b1303cb6facd3095c59b12e1f07ed413d2b59d23134918",
+    "scripts/v3/route_adapter/errors.py": "99ed2d579737b42f667a974037245bf21c06666abb0e2f9ff2e34885a4b10637",
+    "scripts/v3/route_adapter/fake.py": "e668fd8f1eba0351744f28646b5ccb81b1207d80d1fa60de27e30eb876beee53",
+    "scripts/v3/route_adapter/session.py": "1cf8e86aac21e7b6ca64072774c6eb6122d9f117e97fe97b2445d9b00084469b",
+    "scripts/v3/route_adapter/session_key.py": "d73ea0068f22e08cdd33c59effa95f3c26b1a2665c416a410d88305c35e8daa0",
+    "scripts/v3/route_contract/__init__.py": "d9a653d1c2bc29f6da85e7feb9ed7fdc6133b41f381ba4adbbeda1598cc06e43",
+    "scripts/v3/route_contract/argv.py": "94867a44067cfb40ef34f4fe872c222e7874762725cffab8fefbb20809519570",
+    "scripts/v3/route_contract/errors.py": "453b4b49105d9165f8238d743b7baf4cb6ae4d590b02dc5319ef7d04032f3a91",
+    "scripts/v3/route_contract/executor.py": "c7e272bdab36eb8c5c9b06541ff0fbd53bf58a0b59f85a5e3493f60f5db50fde",
+    "scripts/v3/route_contract/health.py": "5c62e7a579cf9fa64e1f7ebf3346af62a7f4ded54459400df7e467ded6c8c266",
+    "scripts/v3/route_contract/live.py": "d363119be6557c99915a083800adf8d2a31276c36c1226e20c0ce1649cd4fc67",
+    "scripts/v3/route_contract/model.py": "61cfbbe15bb4a9e7c4798fc2a6b35e352acefcb6d2638b88f6993e6762b315c3",
+    "scripts/v3/route_contract/schema.py": "c16ce9005242c5e52a00d6f3ddd89adeaba2d11a428e10a394c33dc6db339bf7",
+    "scripts/v3/route_contract/transport.py": "8135f28d9173832871240f1bdfe85d57dcb7939840a6661d7894133a70eda6b5"
+  },
+  "why_vendored": "The schema and oracle vectors are small data files, so they are copied byte for byte and verified against the sha256 above on every load. A reference-only pin would need network or a sibling checkout for every validation, and a draft-PR head can disappear if the branch is rewritten. The Recursion Python modules are NOT copied: copying the fake driver would put session and ownership code into this tree. They are reached only through a read-only checkout whose files must match subject_manifest.",
+  "refresh": "After PR 302 merges, re-pin to the merge commit on Recursion master, recompute every sha256 here, and re-run the suite. Never edit the vendored files by hand."
+}

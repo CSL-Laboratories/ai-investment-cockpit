@@ -1,0 +1,1442 @@
+{
+ "_provenance": {
+  "captured": "2026-10-26 PT, read-only, by running the oracle with scripted transports",
+  "max_turns": 6,
+  "model_id": "model-x",
+  "oracle": "production runner of the sibling program, build_argv / inspect_argv / run_agent",
+  "refresh": "see the csl-research route-contract spec record; do not hand-edit",
+  "source_commit": "3122cac4780d776cbd487dd2a671466151a465ba",
+  "source_paths": [
+   "app/agent_runner/runner.py",
+   "app/agent_runner/tool_inspector.py",
+   "app/agent_runner/detect.py",
+   "app/agent_runner/transport.py"
+  ]
+ },
+ "argv": {
+  "claude": [
+   "claude",
+   "-p",
+   "--output-format",
+   "json",
+   "--model",
+   "model-x",
+   "--max-turns",
+   "6",
+   "--tools",
+   "",
+   "--disallowedTools",
+   "*",
+   "--strict-mcp-config",
+   "--safe-mode",
+   "--restricted",
+   "--setting-sources",
+   "",
+   "--disable-slash-commands",
+   "--no-session-persistence",
+   "--no-chrome",
+   "--allowedTools",
+   "none"
+  ],
+  "codex_no_schema_path": [
+   "codex",
+   "exec",
+   "--sandbox",
+   "read-only",
+   "--ignore-user-config",
+   "--ignore-rules",
+   "--ephemeral",
+   "--strict-config",
+   "-c",
+   "web_search=\"disabled\"",
+   "--disable",
+   "shell_tool",
+   "--disable",
+   "apps",
+   "--disable",
+   "browser_use",
+   "--disable",
+   "browser_use_external",
+   "--disable",
+   "browser_use_full_cdp_access",
+   "--disable",
+   "computer_use",
+   "--disable",
+   "image_generation",
+   "--disable",
+   "multi_agent",
+   "--disable",
+   "multi_agent_v2",
+   "--disable",
+   "standalone_web_search",
+   "--disable",
+   "tool_call_mcp_elicitation",
+   "--disable",
+   "skill_search",
+   "--disable",
+   "skill_mcp_dependency_install",
+   "--disable",
+   "code_mode_host",
+   "--disable",
+   "unified_exec",
+   "--model",
+   "model-x",
+   "--json",
+   "-"
+  ],
+  "codex_schema_path": [
+   "codex",
+   "exec",
+   "--sandbox",
+   "read-only",
+   "--ignore-user-config",
+   "--ignore-rules",
+   "--ephemeral",
+   "--strict-config",
+   "-c",
+   "web_search=\"disabled\"",
+   "--disable",
+   "shell_tool",
+   "--disable",
+   "apps",
+   "--disable",
+   "browser_use",
+   "--disable",
+   "browser_use_external",
+   "--disable",
+   "browser_use_full_cdp_access",
+   "--disable",
+   "computer_use",
+   "--disable",
+   "image_generation",
+   "--disable",
+   "multi_agent",
+   "--disable",
+   "multi_agent_v2",
+   "--disable",
+   "standalone_web_search",
+   "--disable",
+   "tool_call_mcp_elicitation",
+   "--disable",
+   "skill_search",
+   "--disable",
+   "skill_mcp_dependency_install",
+   "--disable",
+   "code_mode_host",
+   "--disable",
+   "unified_exec",
+   "--model",
+   "model-x",
+   "--output-schema",
+   "schema.json",
+   "--json",
+   "-"
+  ]
+ },
+ "breaker_open": {
+  "dispatched": false,
+  "error": "breaker_open",
+  "faults": [
+   [
+    "claude",
+    "exhausted",
+    "limit_or_error"
+   ]
+  ],
+  "status": "limit_hit",
+  "transport_calls": 0,
+  "usage_state": "exhausted"
+ },
+ "good": {
+  "label": "a",
+  "score": 1
+ },
+ "health": {
+  "claude_ok": {
+   "expect": {
+    "dispatched": true,
+    "error": null,
+    "faults": [],
+    "repaired": false,
+    "session_id": "s1",
+    "status": "ok",
+    "transport_calls": 1,
+    "usage_state": "ok",
+    "used": 1,
+    "validated": {
+     "label": "a",
+     "score": 1
+    }
+   },
+   "prompt": "PROMPT",
+   "runtime": "claude",
+   "script": [
+    {
+     "returncode": 0,
+     "stderr": "",
+     "stdout": "{\"session_id\": \"s1\", \"result\": \"{\\\"label\\\": \\\"a\\\", \\\"score\\\": 1}\"}",
+     "timed_out": false
+    }
+   ]
+  },
+  "codex_error_event": {
+   "expect": {
+    "dispatched": true,
+    "error": "vendor_error_envelope",
+    "faults": [
+     [
+      "codex",
+      "degraded",
+      "vendor_error_envelope"
+     ]
+    ],
+    "repaired": false,
+    "session_id": null,
+    "status": "limit_hit",
+    "transport_calls": 1,
+    "usage_state": "degraded",
+    "used": 0,
+    "validated": null
+   },
+   "prompt": "PROMPT",
+   "runtime": "codex",
+   "script": [
+    {
+     "returncode": 0,
+     "stderr": "",
+     "stdout": "{\"type\": \"thread.started\", \"thread_id\": \"t1\"}\n{\"type\": \"item.completed\", \"item\": {\"id\": \"i\", \"type\": \"agent_message\", \"text\": \"{\\\"label\\\": \\\"a\\\", \\\"score\\\": 1}\"}}\n{\"type\": \"turn.completed\"}\n{\"type\": \"turn.failed\"}",
+     "timed_out": false
+    }
+   ]
+  },
+  "codex_malformed_line_then_valid": {
+   "expect": {
+    "dispatched": true,
+    "error": null,
+    "faults": [],
+    "repaired": true,
+    "session_id": "t1",
+    "status": "ok",
+    "transport_calls": 2,
+    "usage_state": "ok",
+    "used": 2,
+    "validated": {
+     "label": "a",
+     "score": 1
+    }
+   },
+   "prompt": "PROMPT",
+   "runtime": "codex",
+   "script": [
+    {
+     "returncode": 0,
+     "stderr": "",
+     "stdout": "{bad\n{\"type\": \"thread.started\", \"thread_id\": \"t1\"}\n{\"type\": \"item.completed\", \"item\": {\"id\": \"i\", \"type\": \"agent_message\", \"text\": \"{\\\"label\\\": \\\"a\\\", \\\"score\\\": 1}\"}}\n{\"type\": \"turn.completed\"}",
+     "timed_out": false
+    },
+    {
+     "returncode": 0,
+     "stderr": "",
+     "stdout": "{\"type\": \"thread.started\", \"thread_id\": \"t1\"}\n{\"type\": \"item.completed\", \"item\": {\"id\": \"i\", \"type\": \"agent_message\", \"text\": \"{\\\"label\\\": \\\"a\\\", \\\"score\\\": 1}\"}}\n{\"type\": \"turn.completed\"}",
+     "timed_out": false
+    }
+   ]
+  },
+  "codex_ok": {
+   "expect": {
+    "dispatched": true,
+    "error": null,
+    "faults": [],
+    "repaired": false,
+    "session_id": "t1",
+    "status": "ok",
+    "transport_calls": 1,
+    "usage_state": "ok",
+    "used": 1,
+    "validated": {
+     "label": "a",
+     "score": 1
+    }
+   },
+   "prompt": "PROMPT",
+   "runtime": "codex",
+   "script": [
+    {
+     "returncode": 0,
+     "stderr": "",
+     "stdout": "{\"type\": \"thread.started\", \"thread_id\": \"t1\"}\n{\"type\": \"item.completed\", \"item\": {\"id\": \"i\", \"type\": \"agent_message\", \"text\": \"{\\\"label\\\": \\\"a\\\", \\\"score\\\": 1}\"}}\n{\"type\": \"turn.completed\"}",
+     "timed_out": false
+    }
+   ]
+  },
+  "empty_stdout": {
+   "expect": {
+    "dispatched": true,
+    "error": "empty_output",
+    "faults": [
+     [
+      "claude",
+      "degraded",
+      "empty_output"
+     ]
+    ],
+    "repaired": false,
+    "session_id": null,
+    "status": "limit_hit",
+    "transport_calls": 1,
+    "usage_state": "degraded",
+    "used": 0,
+    "validated": null
+   },
+   "prompt": "PROMPT",
+   "runtime": "claude",
+   "script": [
+    {
+     "returncode": 0,
+     "stderr": "",
+     "stdout": "",
+     "timed_out": false
+    }
+   ]
+  },
+  "error_envelope": {
+   "expect": {
+    "dispatched": true,
+    "error": "vendor_error_envelope",
+    "faults": [
+     [
+      "claude",
+      "degraded",
+      "vendor_error_envelope"
+     ]
+    ],
+    "repaired": false,
+    "session_id": null,
+    "status": "limit_hit",
+    "transport_calls": 1,
+    "usage_state": "degraded",
+    "used": 0,
+    "validated": null
+   },
+   "prompt": "PROMPT",
+   "runtime": "claude",
+   "script": [
+    {
+     "returncode": 0,
+     "stderr": "",
+     "stdout": "{\"is_error\": true, \"subtype\": \"error_during_execution\", \"result\": \"x\"}",
+     "timed_out": false
+    }
+   ]
+  },
+  "fenced_json": {
+   "expect": {
+    "dispatched": true,
+    "error": null,
+    "faults": [],
+    "repaired": false,
+    "session_id": "s9",
+    "status": "ok",
+    "transport_calls": 1,
+    "usage_state": "ok",
+    "used": 1,
+    "validated": {
+     "label": "a",
+     "score": 1
+    }
+   },
+   "prompt": "PROMPT",
+   "runtime": "claude",
+   "script": [
+    {
+     "returncode": 0,
+     "stderr": "",
+     "stdout": "{\"session_id\": \"s9\", \"result\": \"```json\\n{\\\"label\\\": \\\"a\\\", \\\"score\\\": 1}\\n```\"}",
+     "timed_out": false
+    }
+   ]
+  },
+  "invalid_then_valid_repair": {
+   "expect": {
+    "dispatched": true,
+    "error": null,
+    "faults": [],
+    "repaired": true,
+    "session_id": "s1",
+    "status": "ok",
+    "transport_calls": 2,
+    "usage_state": "ok",
+    "used": 2,
+    "validated": {
+     "label": "a",
+     "score": 1
+    }
+   },
+   "prompt": "PROMPT",
+   "runtime": "claude",
+   "script": [
+    {
+     "returncode": 0,
+     "stderr": "",
+     "stdout": "{\"session_id\": \"s1\", \"result\": \"{\\\"label\\\": \\\"zzz\\\", \\\"score\\\": 1}\"}",
+     "timed_out": false
+    },
+    {
+     "returncode": 0,
+     "stderr": "",
+     "stdout": "{\"session_id\": \"s1\", \"result\": \"{\\\"label\\\": \\\"a\\\", \\\"score\\\": 1}\"}",
+     "timed_out": false
+    }
+   ]
+  },
+  "invalid_twice": {
+   "expect": {
+    "dispatched": true,
+    "error": "repair_still_invalid",
+    "faults": [],
+    "repaired": true,
+    "session_id": "s1",
+    "status": "needs_human_review",
+    "transport_calls": 2,
+    "usage_state": "ok",
+    "used": 2,
+    "validated": null
+   },
+   "prompt": "PROMPT",
+   "runtime": "claude",
+   "script": [
+    {
+     "returncode": 0,
+     "stderr": "",
+     "stdout": "{\"session_id\": \"s1\", \"result\": \"{\\\"label\\\": \\\"zzz\\\", \\\"score\\\": 1}\"}",
+     "timed_out": false
+    },
+    {
+     "returncode": 0,
+     "stderr": "",
+     "stdout": "{\"session_id\": \"s1\", \"result\": \"{\\\"label\\\": \\\"zzz\\\", \\\"score\\\": 1}\"}",
+     "timed_out": false
+    }
+   ]
+  },
+  "model_text_mentions_limit_words": {
+   "expect": {
+    "dispatched": true,
+    "error": null,
+    "faults": [],
+    "repaired": false,
+    "session_id": "s1",
+    "status": "ok",
+    "transport_calls": 1,
+    "usage_state": "ok",
+    "used": 1,
+    "validated": {
+     "label": "a",
+     "note": "capacity quota usage limit 429 too long",
+     "score": 2
+    }
+   },
+   "prompt": "PROMPT",
+   "runtime": "claude",
+   "script": [
+    {
+     "returncode": 0,
+     "stderr": "",
+     "stdout": "{\"session_id\": \"s1\", \"result\": \"{\\\"label\\\": \\\"a\\\", \\\"score\\\": 2, \\\"note\\\": \\\"capacity quota usage limit 429 too long\\\"}\"}",
+     "timed_out": false
+    }
+   ]
+  },
+  "nan_rejected": {
+   "expect": {
+    "dispatched": true,
+    "error": null,
+    "faults": [],
+    "repaired": true,
+    "session_id": "s1",
+    "status": "ok",
+    "transport_calls": 2,
+    "usage_state": "ok",
+    "used": 2,
+    "validated": {
+     "label": "a",
+     "score": 1
+    }
+   },
+   "prompt": "PROMPT",
+   "runtime": "claude",
+   "script": [
+    {
+     "returncode": 0,
+     "stderr": "",
+     "stdout": "{\"result\": \"{\\\"label\\\": \\\"a\\\", \\\"score\\\": NaN}\"}",
+     "timed_out": false
+    },
+    {
+     "returncode": 0,
+     "stderr": "",
+     "stdout": "{\"session_id\": \"s1\", \"result\": \"{\\\"label\\\": \\\"a\\\", \\\"score\\\": 1}\"}",
+     "timed_out": false
+    }
+   ]
+  },
+  "nonzero_exit": {
+   "expect": {
+    "dispatched": true,
+    "error": "limit_or_error",
+    "faults": [
+     [
+      "claude",
+      "exhausted",
+      "limit_or_error"
+     ]
+    ],
+    "repaired": false,
+    "session_id": null,
+    "status": "limit_hit",
+    "transport_calls": 1,
+    "usage_state": "exhausted",
+    "used": 0,
+    "validated": null
+   },
+   "prompt": "PROMPT",
+   "runtime": "claude",
+   "script": [
+    {
+     "returncode": 1,
+     "stderr": "boom",
+     "stdout": "",
+     "timed_out": false
+    }
+   ]
+  },
+  "repair_call_empty": {
+   "expect": {
+    "dispatched": true,
+    "error": "repair_empty_output",
+    "faults": [
+     [
+      "claude",
+      "degraded",
+      "repair_empty_output"
+     ]
+    ],
+    "repaired": true,
+    "session_id": null,
+    "status": "limit_hit",
+    "transport_calls": 2,
+    "usage_state": "degraded",
+    "used": 1,
+    "validated": null
+   },
+   "prompt": "PROMPT",
+   "runtime": "claude",
+   "script": [
+    {
+     "returncode": 0,
+     "stderr": "",
+     "stdout": "{\"session_id\": \"s1\", \"result\": \"{\\\"label\\\": \\\"zzz\\\", \\\"score\\\": 1}\"}",
+     "timed_out": false
+    },
+    {
+     "returncode": 0,
+     "stderr": "",
+     "stdout": "",
+     "timed_out": false
+    }
+   ]
+  },
+  "repair_call_error_envelope": {
+   "expect": {
+    "dispatched": true,
+    "error": "repair_vendor_error",
+    "faults": [
+     [
+      "claude",
+      "degraded",
+      "repair_vendor_error"
+     ]
+    ],
+    "repaired": true,
+    "session_id": null,
+    "status": "limit_hit",
+    "transport_calls": 2,
+    "usage_state": "degraded",
+    "used": 1,
+    "validated": null
+   },
+   "prompt": "PROMPT",
+   "runtime": "claude",
+   "script": [
+    {
+     "returncode": 0,
+     "stderr": "",
+     "stdout": "{\"session_id\": \"s1\", \"result\": \"{\\\"label\\\": \\\"zzz\\\", \\\"score\\\": 1}\"}",
+     "timed_out": false
+    },
+    {
+     "returncode": 0,
+     "stderr": "",
+     "stdout": "{\"is_error\": true}",
+     "timed_out": false
+    }
+   ]
+  },
+  "repair_call_timeout": {
+   "expect": {
+    "dispatched": true,
+    "error": "repair_timeout",
+    "faults": [
+     [
+      "claude",
+      "exhausted",
+      "repair_timeout"
+     ]
+    ],
+    "repaired": true,
+    "session_id": null,
+    "status": "timeout",
+    "transport_calls": 2,
+    "usage_state": "exhausted",
+    "used": 1,
+    "validated": null
+   },
+   "prompt": "PROMPT",
+   "runtime": "claude",
+   "script": [
+    {
+     "returncode": 0,
+     "stderr": "",
+     "stdout": "{\"session_id\": \"s1\", \"result\": \"{\\\"label\\\": \\\"zzz\\\", \\\"score\\\": 1}\"}",
+     "timed_out": false
+    },
+    {
+     "returncode": 124,
+     "stderr": "\n[timeout]",
+     "stdout": "",
+     "timed_out": true
+    }
+   ]
+  },
+  "stderr_prompt_echo_not_limit": {
+   "expect": {
+    "dispatched": true,
+    "error": null,
+    "faults": [],
+    "repaired": false,
+    "session_id": null,
+    "status": "ok",
+    "transport_calls": 1,
+    "usage_state": "ok",
+    "used": 1,
+    "validated": {
+     "label": "a",
+     "score": 1
+    }
+   },
+   "prompt": "line one\nthe quota is too long to echo\nline three",
+   "runtime": "claude",
+   "script": [
+    {
+     "returncode": 0,
+     "stderr": "line one\nthe quota is too long to echo\nline three",
+     "stdout": "{\"result\": \"{\\\"label\\\": \\\"a\\\", \\\"score\\\": 1}\"}",
+     "timed_out": false
+    }
+   ]
+  },
+  "stderr_rate_limit": {
+   "expect": {
+    "dispatched": true,
+    "error": "limit_or_error",
+    "faults": [
+     [
+      "claude",
+      "exhausted",
+      "limit_or_error"
+     ]
+    ],
+    "repaired": false,
+    "session_id": null,
+    "status": "limit_hit",
+    "transport_calls": 1,
+    "usage_state": "exhausted",
+    "used": 0,
+    "validated": null
+   },
+   "prompt": "PROMPT",
+   "runtime": "claude",
+   "script": [
+    {
+     "returncode": 0,
+     "stderr": "429 Too Many Requests",
+     "stdout": "{\"result\": \"{\\\"label\\\": \\\"a\\\", \\\"score\\\": 1}\"}",
+     "timed_out": false
+    }
+   ]
+  },
+  "stdout_raw_limit_text": {
+   "expect": {
+    "dispatched": true,
+    "error": "limit_or_error",
+    "faults": [
+     [
+      "claude",
+      "exhausted",
+      "limit_or_error"
+     ]
+    ],
+    "repaired": false,
+    "session_id": null,
+    "status": "limit_hit",
+    "transport_calls": 1,
+    "usage_state": "exhausted",
+    "used": 0,
+    "validated": null
+   },
+   "prompt": "PROMPT",
+   "runtime": "claude",
+   "script": [
+    {
+     "returncode": 0,
+     "stderr": "",
+     "stdout": "usage limit reached",
+     "timed_out": false
+    }
+   ]
+  },
+  "timeout": {
+   "expect": {
+    "dispatched": true,
+    "error": "timeout",
+    "faults": [
+     [
+      "claude",
+      "exhausted",
+      "timeout"
+     ]
+    ],
+    "repaired": false,
+    "session_id": null,
+    "status": "timeout",
+    "transport_calls": 1,
+    "usage_state": "exhausted",
+    "used": 0,
+    "validated": null
+   },
+   "prompt": "PROMPT",
+   "runtime": "claude",
+   "script": [
+    {
+     "returncode": 124,
+     "stderr": "\n[timeout]",
+     "stdout": "",
+     "timed_out": true
+    }
+   ]
+  },
+  "unparseable_then_valid": {
+   "expect": {
+    "dispatched": true,
+    "error": null,
+    "faults": [],
+    "repaired": true,
+    "session_id": "s1",
+    "status": "ok",
+    "transport_calls": 2,
+    "usage_state": "ok",
+    "used": 2,
+    "validated": {
+     "label": "a",
+     "score": 1
+    }
+   },
+   "prompt": "PROMPT",
+   "runtime": "claude",
+   "script": [
+    {
+     "returncode": 0,
+     "stderr": "",
+     "stdout": "not json at all",
+     "timed_out": false
+    },
+    {
+     "returncode": 0,
+     "stderr": "",
+     "stdout": "{\"session_id\": \"s1\", \"result\": \"{\\\"label\\\": \\\"a\\\", \\\"score\\\": 1}\"}",
+     "timed_out": false
+    }
+   ]
+  }
+ },
+ "inspect": {
+  "claude_add_dir": {
+   "argv": [
+    "claude",
+    "-p",
+    "--output-format",
+    "json",
+    "--model",
+    "model-x",
+    "--max-turns",
+    "6",
+    "--tools",
+    "",
+    "--disallowedTools",
+    "*",
+    "--strict-mcp-config",
+    "--safe-mode",
+    "--restricted",
+    "--setting-sources",
+    "",
+    "--disable-slash-commands",
+    "--no-session-persistence",
+    "--no-chrome",
+    "--allowedTools",
+    "none",
+    "--add-dir",
+    "/tmp"
+   ],
+   "refused": true
+  },
+  "claude_duplicate_flag": {
+   "argv": [
+    "claude",
+    "-p",
+    "--output-format",
+    "json",
+    "--model",
+    "model-x",
+    "--max-turns",
+    "6",
+    "--tools",
+    "",
+    "--disallowedTools",
+    "*",
+    "--strict-mcp-config",
+    "--safe-mode",
+    "--restricted",
+    "--setting-sources",
+    "",
+    "--disable-slash-commands",
+    "--no-session-persistence",
+    "--no-chrome",
+    "--allowedTools",
+    "none",
+    "--model",
+    "other"
+   ],
+   "refused": true
+  },
+  "claude_grant_bash": {
+   "argv": [
+    "claude",
+    "-p",
+    "--output-format",
+    "json",
+    "--model",
+    "model-x",
+    "--max-turns",
+    "6",
+    "--tools",
+    "",
+    "--disallowedTools",
+    "*",
+    "--strict-mcp-config",
+    "--safe-mode",
+    "--restricted",
+    "--setting-sources",
+    "",
+    "--disable-slash-commands",
+    "--no-session-persistence",
+    "--no-chrome",
+    "--allowedTools",
+    "Bash"
+   ],
+   "refused": true
+  },
+  "claude_mcp_config": {
+   "argv": [
+    "claude",
+    "-p",
+    "--output-format",
+    "json",
+    "--model",
+    "model-x",
+    "--max-turns",
+    "6",
+    "--tools",
+    "",
+    "--disallowedTools",
+    "*",
+    "--strict-mcp-config",
+    "--safe-mode",
+    "--restricted",
+    "--setting-sources",
+    "",
+    "--disable-slash-commands",
+    "--no-session-persistence",
+    "--no-chrome",
+    "--allowedTools",
+    "none",
+    "--mcp-config",
+    "x.json"
+   ],
+   "refused": true
+  },
+  "claude_missing_restricted": {
+   "argv": [
+    "claude",
+    "-p",
+    "--output-format",
+    "json",
+    "--model",
+    "model-x",
+    "--max-turns",
+    "6",
+    "--tools",
+    "",
+    "--disallowedTools",
+    "*",
+    "--strict-mcp-config",
+    "--safe-mode",
+    "--setting-sources",
+    "",
+    "--disable-slash-commands",
+    "--no-session-persistence",
+    "--no-chrome",
+    "--allowedTools",
+    "none"
+   ],
+   "refused": true
+  },
+  "claude_reordered": {
+   "argv": [
+    "claude",
+    "-p",
+    "--allowedTools",
+    "none",
+    "--output-format",
+    "json",
+    "--model",
+    "model-x",
+    "--max-turns",
+    "6",
+    "--tools",
+    "",
+    "--disallowedTools",
+    "*",
+    "--strict-mcp-config",
+    "--safe-mode",
+    "--restricted",
+    "--setting-sources",
+    "",
+    "--disable-slash-commands",
+    "--no-session-persistence",
+    "--no-chrome"
+   ],
+   "refused": false
+  },
+  "claude_resume": {
+   "argv": [
+    "claude",
+    "-p",
+    "--output-format",
+    "json",
+    "--model",
+    "model-x",
+    "--max-turns",
+    "6",
+    "--tools",
+    "",
+    "--disallowedTools",
+    "*",
+    "--strict-mcp-config",
+    "--safe-mode",
+    "--restricted",
+    "--setting-sources",
+    "",
+    "--disable-slash-commands",
+    "--no-session-persistence",
+    "--no-chrome",
+    "--allowedTools",
+    "none",
+    "--resume",
+    "s1"
+   ],
+   "refused": true
+  },
+  "claude_skip_permissions": {
+   "argv": [
+    "claude",
+    "-p",
+    "--output-format",
+    "json",
+    "--model",
+    "model-x",
+    "--max-turns",
+    "6",
+    "--tools",
+    "",
+    "--disallowedTools",
+    "*",
+    "--strict-mcp-config",
+    "--safe-mode",
+    "--restricted",
+    "--setting-sources",
+    "",
+    "--disable-slash-commands",
+    "--no-session-persistence",
+    "--no-chrome",
+    "--allowedTools",
+    "none",
+    "--dangerously-skip-permissions"
+   ],
+   "refused": true
+  },
+  "claude_system_prompt": {
+   "argv": [
+    "claude",
+    "-p",
+    "--output-format",
+    "json",
+    "--model",
+    "model-x",
+    "--max-turns",
+    "6",
+    "--tools",
+    "",
+    "--disallowedTools",
+    "*",
+    "--strict-mcp-config",
+    "--safe-mode",
+    "--restricted",
+    "--setting-sources",
+    "",
+    "--disable-slash-commands",
+    "--no-session-persistence",
+    "--no-chrome",
+    "--allowedTools",
+    "none",
+    "--append-system-prompt",
+    "x"
+   ],
+   "refused": true
+  },
+  "claude_unknown_flag": {
+   "argv": [
+    "claude",
+    "-p",
+    "--output-format",
+    "json",
+    "--model",
+    "model-x",
+    "--max-turns",
+    "6",
+    "--tools",
+    "",
+    "--disallowedTools",
+    "*",
+    "--strict-mcp-config",
+    "--safe-mode",
+    "--restricted",
+    "--setting-sources",
+    "",
+    "--disable-slash-commands",
+    "--no-session-persistence",
+    "--no-chrome",
+    "--allowedTools",
+    "none",
+    "--future-flag"
+   ],
+   "refused": true
+  },
+  "claude_valid": {
+   "argv": [
+    "claude",
+    "-p",
+    "--output-format",
+    "json",
+    "--model",
+    "model-x",
+    "--max-turns",
+    "6",
+    "--tools",
+    "",
+    "--disallowedTools",
+    "*",
+    "--strict-mcp-config",
+    "--safe-mode",
+    "--restricted",
+    "--setting-sources",
+    "",
+    "--disable-slash-commands",
+    "--no-session-persistence",
+    "--no-chrome",
+    "--allowedTools",
+    "none"
+   ],
+   "refused": false
+  },
+  "codex_enable_feature": {
+   "argv": [
+    "codex",
+    "exec",
+    "--sandbox",
+    "read-only",
+    "--ignore-user-config",
+    "--ignore-rules",
+    "--ephemeral",
+    "--strict-config",
+    "-c",
+    "web_search=\"disabled\"",
+    "--disable",
+    "shell_tool",
+    "--disable",
+    "apps",
+    "--disable",
+    "browser_use",
+    "--disable",
+    "browser_use_external",
+    "--disable",
+    "browser_use_full_cdp_access",
+    "--disable",
+    "computer_use",
+    "--disable",
+    "image_generation",
+    "--disable",
+    "multi_agent",
+    "--disable",
+    "multi_agent_v2",
+    "--disable",
+    "standalone_web_search",
+    "--disable",
+    "tool_call_mcp_elicitation",
+    "--disable",
+    "skill_search",
+    "--disable",
+    "skill_mcp_dependency_install",
+    "--disable",
+    "code_mode_host",
+    "--disable",
+    "unified_exec",
+    "--model",
+    "model-x",
+    "--output-schema",
+    "schema.json",
+    "--json",
+    "-",
+    "--enable",
+    "shell_tool"
+   ],
+   "refused": true
+  },
+  "codex_full_sandbox": {
+   "argv": [
+    "codex",
+    "exec",
+    "--sandbox",
+    "workspace-write",
+    "--ignore-user-config",
+    "--ignore-rules",
+    "--ephemeral",
+    "--strict-config",
+    "-c",
+    "web_search=\"disabled\"",
+    "--disable",
+    "shell_tool",
+    "--disable",
+    "apps",
+    "--disable",
+    "browser_use",
+    "--disable",
+    "browser_use_external",
+    "--disable",
+    "browser_use_full_cdp_access",
+    "--disable",
+    "computer_use",
+    "--disable",
+    "image_generation",
+    "--disable",
+    "multi_agent",
+    "--disable",
+    "multi_agent_v2",
+    "--disable",
+    "standalone_web_search",
+    "--disable",
+    "tool_call_mcp_elicitation",
+    "--disable",
+    "skill_search",
+    "--disable",
+    "skill_mcp_dependency_install",
+    "--disable",
+    "code_mode_host",
+    "--disable",
+    "unified_exec",
+    "--model",
+    "model-x",
+    "--output-schema",
+    "schema.json",
+    "--json",
+    "-"
+   ],
+   "refused": true
+  },
+  "codex_mcp": {
+   "argv": [
+    "codex",
+    "exec",
+    "--sandbox",
+    "read-only",
+    "--ignore-user-config",
+    "--ignore-rules",
+    "--ephemeral",
+    "--strict-config",
+    "-c",
+    "web_search=\"disabled\"",
+    "--disable",
+    "shell_tool",
+    "--disable",
+    "apps",
+    "--disable",
+    "browser_use",
+    "--disable",
+    "browser_use_external",
+    "--disable",
+    "browser_use_full_cdp_access",
+    "--disable",
+    "computer_use",
+    "--disable",
+    "image_generation",
+    "--disable",
+    "multi_agent",
+    "--disable",
+    "multi_agent_v2",
+    "--disable",
+    "standalone_web_search",
+    "--disable",
+    "tool_call_mcp_elicitation",
+    "--disable",
+    "skill_search",
+    "--disable",
+    "skill_mcp_dependency_install",
+    "--disable",
+    "code_mode_host",
+    "--disable",
+    "unified_exec",
+    "--model",
+    "model-x",
+    "--output-schema",
+    "schema.json",
+    "--json",
+    "-",
+    "--mcp-config",
+    "x"
+   ],
+   "refused": true
+  },
+  "codex_missing_disable": {
+   "argv": [
+    "codex",
+    "exec",
+    "--sandbox",
+    "read-only",
+    "--ignore-user-config",
+    "--ignore-rules",
+    "--ephemeral",
+    "--strict-config",
+    "-c",
+    "web_search=\"disabled\"",
+    "--disable",
+    "shell_tool",
+    "--disable",
+    "apps",
+    "--disable",
+    "browser_use",
+    "--disable",
+    "browser_use_external",
+    "--disable",
+    "browser_use_full_cdp_access",
+    "--disable",
+    "computer_use",
+    "--disable",
+    "image_generation",
+    "--disable",
+    "multi_agent",
+    "--disable",
+    "multi_agent_v2",
+    "--disable",
+    "standalone_web_search",
+    "--disable",
+    "tool_call_mcp_elicitation",
+    "--disable",
+    "skill_search",
+    "--disable",
+    "skill_mcp_dependency_install",
+    "--disable",
+    "code_mode_host",
+    "--model",
+    "model-x",
+    "--output-schema",
+    "schema.json",
+    "--json",
+    "-"
+   ],
+   "refused": true
+  },
+  "codex_resume": {
+   "argv": [
+    "codex",
+    "exec",
+    "resume",
+    "s1",
+    "--sandbox",
+    "read-only",
+    "--ignore-user-config",
+    "--ignore-rules",
+    "--ephemeral",
+    "--strict-config",
+    "-c",
+    "web_search=\"disabled\"",
+    "--disable",
+    "shell_tool",
+    "--disable",
+    "apps",
+    "--disable",
+    "browser_use",
+    "--disable",
+    "browser_use_external",
+    "--disable",
+    "browser_use_full_cdp_access",
+    "--disable",
+    "computer_use",
+    "--disable",
+    "image_generation",
+    "--disable",
+    "multi_agent",
+    "--disable",
+    "multi_agent_v2",
+    "--disable",
+    "standalone_web_search",
+    "--disable",
+    "tool_call_mcp_elicitation",
+    "--disable",
+    "skill_search",
+    "--disable",
+    "skill_mcp_dependency_install",
+    "--disable",
+    "code_mode_host",
+    "--disable",
+    "unified_exec",
+    "--model",
+    "model-x",
+    "--output-schema",
+    "schema.json",
+    "--json",
+    "-"
+   ],
+   "refused": true
+  },
+  "codex_valid": {
+   "argv": [
+    "codex",
+    "exec",
+    "--sandbox",
+    "read-only",
+    "--ignore-user-config",
+    "--ignore-rules",
+    "--ephemeral",
+    "--strict-config",
+    "-c",
+    "web_search=\"disabled\"",
+    "--disable",
+    "shell_tool",
+    "--disable",
+    "apps",
+    "--disable",
+    "browser_use",
+    "--disable",
+    "browser_use_external",
+    "--disable",
+    "browser_use_full_cdp_access",
+    "--disable",
+    "computer_use",
+    "--disable",
+    "image_generation",
+    "--disable",
+    "multi_agent",
+    "--disable",
+    "multi_agent_v2",
+    "--disable",
+    "standalone_web_search",
+    "--disable",
+    "tool_call_mcp_elicitation",
+    "--disable",
+    "skill_search",
+    "--disable",
+    "skill_mcp_dependency_install",
+    "--disable",
+    "code_mode_host",
+    "--disable",
+    "unified_exec",
+    "--model",
+    "model-x",
+    "--output-schema",
+    "schema.json",
+    "--json",
+    "-"
+   ],
+   "refused": false
+  },
+  "unknown_runtime": {
+   "argv": [
+    "other",
+    "-p"
+   ],
+   "refused": true
+  }
+ },
+ "schema": {
+  "additionalProperties": false,
+  "properties": {
+   "label": {
+    "enum": [
+     "a",
+     "b",
+     "c"
+    ],
+    "type": "string"
+   },
+   "note": {
+    "type": "string"
+   },
+   "score": {
+    "type": "integer"
+   }
+  },
+  "required": [
+   "label",
+   "score"
+  ],
+  "type": "object"
+ },
+ "secret": {
+  "absent": {
+   "refused": false,
+   "transport_calls": 1
+  },
+  "empty_secret_ignored": {
+   "refused": false,
+   "transport_calls": 1
+  },
+  "in_prompt": {
+   "message": "Inv 4: a secret value appeared in the agent argv/prompt",
+   "refused": true,
+   "transport_calls": 0
+  },
+  "no_secrets": {
+   "refused": false,
+   "transport_calls": 1
+  }
+ }
+}

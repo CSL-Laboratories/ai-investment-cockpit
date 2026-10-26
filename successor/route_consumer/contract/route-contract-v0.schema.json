@@ -1,0 +1,1391 @@
+{
+  "$defs": {
+    "AdapterSupport": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "properties": {
+              "reason": {
+                "const": "fake-driver"
+              },
+              "state": {
+                "const": "supported"
+              }
+            }
+          },
+          "if": {
+            "properties": {
+              "adapter_kind": {
+                "const": "live"
+              }
+            },
+            "required": [
+              "adapter_kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "const": "awaiting-csl-460"
+              },
+              "state": {
+                "const": "unsupported"
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "adapter_kind": {
+          "enum": [
+            "fake",
+            "live"
+          ]
+        },
+        "engine_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "live_calls": {
+          "const": false
+        },
+        "reason": {
+          "enum": [
+            "awaiting-csl-460",
+            "fake-driver"
+          ]
+        },
+        "state": {
+          "enum": [
+            "supported",
+            "unsupported"
+          ]
+        },
+        "type": {
+          "const": "AdapterSupport@0"
+        }
+      },
+      "required": [
+        "type",
+        "engine_id",
+        "adapter_kind",
+        "state",
+        "reason",
+        "live_calls"
+      ],
+      "type": "object"
+    },
+    "BillingBasis": {
+      "enum": [
+        "subscription",
+        "metered",
+        "local",
+        "unknown"
+      ]
+    },
+    "BillingBasisSet": {
+      "items": {
+        "$ref": "#/$defs/BillingBasis"
+      },
+      "maxItems": 128,
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true,
+      "x-strictlySorted": true
+    },
+    "Capability": {
+      "$ref": "#/$defs/Id"
+    },
+    "CapabilityState": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/Capability"
+        },
+        "state": {
+          "$ref": "#/$defs/TriState"
+        },
+        "type": {
+          "const": "CapabilityState@1"
+        }
+      },
+      "required": [
+        "type",
+        "name",
+        "state"
+      ],
+      "type": "object"
+    },
+    "Count": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "CredentialRef": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/Token"
+        },
+        "provider": {
+          "$ref": "#/$defs/Token"
+        },
+        "tenant_id": {
+          "$ref": "#/$defs/Token"
+        },
+        "type": {
+          "const": "CredentialRef@0"
+        }
+      },
+      "required": [
+        "type",
+        "tenant_id",
+        "provider",
+        "name"
+      ],
+      "type": "object"
+    },
+    "Digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "EngineProfile": {
+      "enum": [
+        "claude",
+        "codex"
+      ]
+    },
+    "ErrorToken": {
+      "enum": [
+        "breaker_open",
+        "empty_output",
+        "limit_or_error",
+        "repair_empty_output",
+        "repair_limit_or_error",
+        "repair_still_invalid",
+        "repair_timeout",
+        "repair_vendor_error",
+        "timeout",
+        "unparseable_output",
+        "vendor_error_envelope"
+      ]
+    },
+    "EvidenceBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_digest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "observed_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "source_ids": {
+          "$ref": "#/$defs/NonEmptyIdSet"
+        },
+        "type": {
+          "const": "EvidenceBinding@1"
+        }
+      },
+      "required": [
+        "type",
+        "source_ids",
+        "observed_at",
+        "expires_at",
+        "evidence_digest"
+      ],
+      "type": "object"
+    },
+    "Id": {
+      "maxLength": 96,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+      "type": "string",
+      "x-utf8MaxBytes": 96
+    },
+    "IdSet": {
+      "items": {
+        "$ref": "#/$defs/Id"
+      },
+      "maxItems": 128,
+      "minItems": 0,
+      "type": "array",
+      "uniqueItems": true,
+      "x-strictlySorted": true
+    },
+    "Microunits": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "NonEmptyIdSet": {
+      "items": {
+        "$ref": "#/$defs/Id"
+      },
+      "maxItems": 128,
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true,
+      "x-strictlySorted": true
+    },
+    "OpaqueRef": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+      "type": "string",
+      "x-utf8MaxBytes": 160
+    },
+    "OpaqueRefSet": {
+      "items": {
+        "$ref": "#/$defs/OpaqueRef"
+      },
+      "maxItems": 128,
+      "minItems": 0,
+      "type": "array",
+      "uniqueItems": true,
+      "x-strictlySorted": true
+    },
+    "OutputContract": {
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "const": "json"
+        },
+        "max_output_bytes": {
+          "$ref": "#/$defs/PositiveCount"
+        },
+        "raw_output_retained": {
+          "const": false
+        },
+        "repair_attempts": {
+          "const": 1
+        },
+        "schema_digest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "schema_path_ref": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OpaqueRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "const": "OutputContract@0"
+        }
+      },
+      "required": [
+        "type",
+        "format",
+        "schema_digest",
+        "schema_path_ref",
+        "repair_attempts",
+        "max_output_bytes",
+        "raw_output_retained"
+      ],
+      "type": "object"
+    },
+    "Platform": {
+      "enum": [
+        "windows",
+        "linux",
+        "macos",
+        "unknown"
+      ]
+    },
+    "PositiveCount": {
+      "maximum": 2147483647,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "PrivacyClass": {
+      "enum": [
+        "public",
+        "internal",
+        "private",
+        "restricted"
+      ]
+    },
+    "PrivacyClassSet": {
+      "items": {
+        "$ref": "#/$defs/PrivacyClass"
+      },
+      "maxItems": 128,
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true,
+      "x-strictlySorted": true
+    },
+    "ProcessCancellationCapabilityState": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "enum": [
+            "cooperative",
+            "interrupt",
+            "tree-terminate",
+            "observe-exit"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/TriState"
+        },
+        "type": {
+          "const": "ProcessCancellationCapabilityState@1"
+        }
+      },
+      "required": [
+        "type",
+        "name",
+        "state"
+      ],
+      "type": "object"
+    },
+    "ProcessCapabilityDescriptor": {
+      "additionalProperties": false,
+      "properties": {
+        "cancellation_capabilities": {
+          "items": {
+            "$ref": "#/$defs/ProcessCancellationCapabilityState"
+          },
+          "maxItems": 256,
+          "minItems": 1,
+          "type": "array",
+          "x-strictlySortedBy": "name",
+          "x-uniqueBy": "name"
+        },
+        "containment_capabilities": {
+          "items": {
+            "$ref": "#/$defs/ProcessContainmentCapabilityState"
+          },
+          "maxItems": 256,
+          "minItems": 1,
+          "type": "array",
+          "x-strictlySortedBy": "name",
+          "x-uniqueBy": "name"
+        },
+        "descriptor_digest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "eligibility_state": {
+          "enum": [
+            "verified-current",
+            "documented",
+            "observed-uncertain",
+            "stale",
+            "unavailable"
+          ]
+        },
+        "evidence": {
+          "$ref": "#/$defs/EvidenceBinding"
+        },
+        "host_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "id": {
+          "$ref": "#/$defs/Id"
+        },
+        "platform": {
+          "$ref": "#/$defs/Platform"
+        },
+        "platform_version": {
+          "$ref": "#/$defs/Version"
+        },
+        "transport_capabilities": {
+          "items": {
+            "$ref": "#/$defs/ProcessTransportCapabilityState"
+          },
+          "maxItems": 256,
+          "minItems": 1,
+          "type": "array",
+          "x-strictlySortedBy": "name",
+          "x-uniqueBy": "name"
+        },
+        "type": {
+          "const": "ProcessCapabilityDescriptor@1"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "host_id",
+        "platform",
+        "platform_version",
+        "eligibility_state",
+        "transport_capabilities",
+        "containment_capabilities",
+        "cancellation_capabilities",
+        "evidence",
+        "descriptor_digest"
+      ],
+      "type": "object"
+    },
+    "ProcessContainmentCapabilityState": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "enum": [
+            "job-object",
+            "breakaway-prevention",
+            "process-group",
+            "session",
+            "cgroup-v2",
+            "pidfd",
+            "descendant-capture"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/TriState"
+        },
+        "type": {
+          "const": "ProcessContainmentCapabilityState@1"
+        }
+      },
+      "required": [
+        "type",
+        "name",
+        "state"
+      ],
+      "type": "object"
+    },
+    "ProcessRequirement": {
+      "additionalProperties": false,
+      "properties": {
+        "actor_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "attach_allowed": {
+          "type": "boolean"
+        },
+        "host_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "id": {
+          "$ref": "#/$defs/Id"
+        },
+        "max_buffer_bytes": {
+          "$ref": "#/$defs/PositiveCount"
+        },
+        "operative_pause_policy": {
+          "const": "current-immediate"
+        },
+        "platform": {
+          "$ref": "#/$defs/Platform"
+        },
+        "representable_future_pause_policies": {
+          "items": {
+            "enum": [
+              "checkpoint",
+              "interrupt",
+              "drain",
+              "emergency"
+            ]
+          },
+          "maxItems": 128,
+          "minItems": 0,
+          "type": "array",
+          "uniqueItems": true,
+          "x-strictlySorted": true
+        },
+        "required_cancellation": {
+          "items": {
+            "enum": [
+              "cooperative",
+              "interrupt",
+              "tree-terminate",
+              "observe-exit"
+            ]
+          },
+          "maxItems": 128,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true,
+          "x-strictlySorted": true
+        },
+        "required_containment": {
+          "items": {
+            "enum": [
+              "job-object",
+              "breakaway-prevention",
+              "process-group",
+              "session",
+              "cgroup-v2",
+              "pidfd",
+              "descendant-capture"
+            ]
+          },
+          "maxItems": 128,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true,
+          "x-strictlySorted": true
+        },
+        "required_transports": {
+          "items": {
+            "enum": [
+              "pipe",
+              "pty",
+              "conpty"
+            ]
+          },
+          "maxItems": 128,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true,
+          "x-strictlySorted": true
+        },
+        "route_descriptor_digest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "stdio_encoding": {
+          "const": "utf-8"
+        },
+        "task_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "type": {
+          "const": "ProcessRequirement@1"
+        },
+        "work_packet_digest": {
+          "$ref": "#/$defs/Digest"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "actor_id",
+        "task_id",
+        "work_packet_digest",
+        "route_descriptor_digest",
+        "host_id",
+        "platform",
+        "required_transports",
+        "required_containment",
+        "required_cancellation",
+        "stdio_encoding",
+        "max_buffer_bytes",
+        "attach_allowed",
+        "operative_pause_policy",
+        "representable_future_pause_policies"
+      ],
+      "type": "object"
+    },
+    "ProcessTerminationObservation": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "tree_status": {
+                "const": "terminated"
+              }
+            },
+            "required": [
+              "tree_status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "remaining_process_refs": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "tree_status": {
+                "const": "partial"
+              }
+            },
+            "required": [
+              "tree_status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "remaining_process_refs": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "effect_conclusion": {
+          "const": "not-evaluated"
+        },
+        "exit_evidence_digest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "process_epoch": {
+          "$ref": "#/$defs/Count"
+        },
+        "process_requirement_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "remaining_process_refs": {
+          "$ref": "#/$defs/OpaqueRefSet"
+        },
+        "tree_status": {
+          "enum": [
+            "terminated",
+            "partial",
+            "unknown"
+          ]
+        },
+        "type": {
+          "const": "ProcessTerminationObservation@1"
+        }
+      },
+      "required": [
+        "type",
+        "process_requirement_id",
+        "process_epoch",
+        "tree_status",
+        "remaining_process_refs",
+        "exit_evidence_digest",
+        "effect_conclusion"
+      ],
+      "type": "object"
+    },
+    "ProcessTransportCapabilityState": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "enum": [
+            "pipe",
+            "pty",
+            "conpty"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/TriState"
+        },
+        "type": {
+          "const": "ProcessTransportCapabilityState@1"
+        }
+      },
+      "required": [
+        "type",
+        "name",
+        "state"
+      ],
+      "type": "object"
+    },
+    "RefusalCode": {
+      "enum": [
+        "busy",
+        "custody_denied",
+        "cwd_refused",
+        "secret_refused",
+        "tool_policy_refused",
+        "unsupported"
+      ]
+    },
+    "RouteCapabilityDescriptor": {
+      "additionalProperties": false,
+      "properties": {
+        "account_ref": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OpaqueRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "billing_control": {
+          "enum": [
+            "verified",
+            "unverified",
+            "unknown"
+          ]
+        },
+        "capabilities": {
+          "items": {
+            "$ref": "#/$defs/CapabilityState"
+          },
+          "maxItems": 128,
+          "minItems": 1,
+          "type": "array",
+          "x-strictlySortedBy": "name",
+          "x-uniqueBy": "name"
+        },
+        "descriptor_digest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "egress_destinations": {
+          "$ref": "#/$defs/OpaqueRefSet"
+        },
+        "eligibility_state": {
+          "enum": [
+            "verified-current",
+            "documented",
+            "observed-uncertain",
+            "stale",
+            "unavailable"
+          ]
+        },
+        "engine_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "evidence": {
+          "$ref": "#/$defs/EvidenceBinding"
+        },
+        "host_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "id": {
+          "$ref": "#/$defs/Id"
+        },
+        "model_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "pool_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "privacy_classes": {
+          "$ref": "#/$defs/PrivacyClassSet"
+        },
+        "provider_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "sandbox_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "type": {
+          "const": "RouteCapabilityDescriptor@1"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "engine_id",
+        "provider_id",
+        "model_id",
+        "pool_id",
+        "account_ref",
+        "host_id",
+        "sandbox_id",
+        "eligibility_state",
+        "capabilities",
+        "privacy_classes",
+        "egress_destinations",
+        "billing_control",
+        "evidence",
+        "descriptor_digest"
+      ],
+      "type": "object"
+    },
+    "RouteExecutionRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_tools": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 0,
+          "type": "array"
+        },
+        "cli_model": {
+          "$ref": "#/$defs/OpaqueRef"
+        },
+        "credential_ref": {
+          "$ref": "#/$defs/CredentialRef"
+        },
+        "cwd_ref": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OpaqueRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "engine_id": {
+          "$ref": "#/$defs/EngineProfile"
+        },
+        "id": {
+          "$ref": "#/$defs/Id"
+        },
+        "max_turns": {
+          "$ref": "#/$defs/PositiveCount"
+        },
+        "output": {
+          "$ref": "#/$defs/OutputContract"
+        },
+        "privacy_class": {
+          "$ref": "#/$defs/PrivacyClass"
+        },
+        "process_requirement_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "prompt_channel": {
+          "const": "stdin"
+        },
+        "prompt_digest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "route_descriptor_digest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "route_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionRef"
+        },
+        "timeout_ms": {
+          "$ref": "#/$defs/PositiveCount"
+        },
+        "tool_profile": {
+          "const": "zero-tools"
+        },
+        "type": {
+          "const": "RouteExecutionRequest@0"
+        },
+        "workload_id": {
+          "$ref": "#/$defs/Id"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "route_id",
+        "engine_id",
+        "route_descriptor_digest",
+        "process_requirement_id",
+        "workload_id",
+        "session",
+        "credential_ref",
+        "cli_model",
+        "tool_profile",
+        "allowed_tools",
+        "prompt_channel",
+        "prompt_digest",
+        "max_turns",
+        "timeout_ms",
+        "cwd_ref",
+        "privacy_class",
+        "output"
+      ],
+      "type": "object"
+    },
+    "RouteExecutionResult": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "properties": {
+              "error": {
+                "$ref": "#/$defs/ErrorToken"
+              },
+              "validated": {
+                "type": "null"
+              }
+            }
+          },
+          "if": {
+            "properties": {
+              "status": {
+                "const": "ok"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "dispatched": {
+                "const": true
+              },
+              "error": {
+                "type": "null"
+              },
+              "health_event": {
+                "type": "null"
+              },
+              "termination": {
+                "type": "null"
+              },
+              "usage_state": {
+                "const": "ok"
+              },
+              "validated": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "timeout"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "dispatched": {
+                "const": true
+              },
+              "health_event": {
+                "$ref": "#/$defs/RouteHealthEvent"
+              },
+              "termination": {
+                "$ref": "#/$defs/ProcessTerminationObservation"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "dispatched": {
+                "const": true
+              },
+              "status": {
+                "const": "limit_hit"
+              }
+            },
+            "required": [
+              "status",
+              "dispatched"
+            ]
+          },
+          "then": {
+            "properties": {
+              "health_event": {
+                "$ref": "#/$defs/RouteHealthEvent"
+              },
+              "termination": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "dispatched": {
+                "const": false
+              },
+              "status": {
+                "const": "limit_hit"
+              }
+            },
+            "required": [
+              "status",
+              "dispatched"
+            ]
+          },
+          "then": {
+            "properties": {
+              "health_event": {
+                "type": "null"
+              },
+              "termination": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "needs_human_review"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "health_event": {
+                "type": "null"
+              },
+              "termination": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "dispatched": {
+          "type": "boolean"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ErrorToken"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "health_event": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RouteHealthEvent"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "output_digest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "repaired": {
+          "type": "boolean"
+        },
+        "request_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "status": {
+          "enum": [
+            "limit_hit",
+            "needs_human_review",
+            "ok",
+            "timeout"
+          ]
+        },
+        "termination": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProcessTerminationObservation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "const": "RouteExecutionResult@0"
+        },
+        "usage_state": {
+          "$ref": "#/$defs/UsageState"
+        },
+        "validated": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "request_id",
+        "status",
+        "error",
+        "dispatched",
+        "repaired",
+        "usage_state",
+        "output_digest",
+        "validated",
+        "health_event",
+        "termination"
+      ],
+      "type": "object"
+    },
+    "RouteHealthEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "engine_id": {
+          "$ref": "#/$defs/EngineProfile"
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorToken"
+        },
+        "state": {
+          "enum": [
+            "degraded",
+            "exhausted"
+          ]
+        },
+        "type": {
+          "const": "RouteHealthEvent@0"
+        }
+      },
+      "required": [
+        "type",
+        "engine_id",
+        "state",
+        "error"
+      ],
+      "type": "object"
+    },
+    "RouteRefusal": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/RefusalCode"
+        },
+        "dispatched": {
+          "const": false
+        },
+        "request_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "type": {
+          "const": "RouteRefusal@0"
+        }
+      },
+      "required": [
+        "type",
+        "request_id",
+        "code",
+        "dispatched"
+      ],
+      "type": "object"
+    },
+    "RouteRequirement": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_billing": {
+          "$ref": "#/$defs/BillingBasisSet"
+        },
+        "allowed_egress_destinations": {
+          "$ref": "#/$defs/OpaqueRefSet"
+        },
+        "allowed_host_ids": {
+          "$ref": "#/$defs/IdSet"
+        },
+        "allowed_route_ids": {
+          "$ref": "#/$defs/IdSet"
+        },
+        "estimated_metered_microunits": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Microunits"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/Id"
+        },
+        "max_metered_microunits": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Microunits"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "privacy_class": {
+          "$ref": "#/$defs/PrivacyClass"
+        },
+        "required_capabilities": {
+          "$ref": "#/$defs/NonEmptyIdSet"
+        },
+        "required_sandbox_capabilities": {
+          "$ref": "#/$defs/IdSet"
+        },
+        "type": {
+          "const": "RouteRequirement@1"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "required_capabilities",
+        "privacy_class",
+        "allowed_billing",
+        "allowed_route_ids",
+        "allowed_host_ids",
+        "allowed_egress_destinations",
+        "estimated_metered_microunits",
+        "max_metered_microunits",
+        "required_sandbox_capabilities"
+      ],
+      "type": "object"
+    },
+    "SandboxDescriptor": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_destinations": {
+          "$ref": "#/$defs/OpaqueRefSet"
+        },
+        "allowed_paths": {
+          "$ref": "#/$defs/OpaqueRefSet"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/IdSet"
+        },
+        "filesystem_mode": {
+          "enum": [
+            "none",
+            "read-only",
+            "workspace-write",
+            "full"
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/Id"
+        },
+        "network_mode": {
+          "enum": [
+            "denied",
+            "allowlist",
+            "full"
+          ]
+        },
+        "process_mode": {
+          "enum": [
+            "denied",
+            "isolated",
+            "full"
+          ]
+        },
+        "type": {
+          "const": "SandboxDescriptor@1"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "filesystem_mode",
+        "network_mode",
+        "process_mode",
+        "allowed_paths",
+        "allowed_destinations",
+        "capabilities"
+      ],
+      "type": "object"
+    },
+    "SessionRef": {
+      "additionalProperties": false,
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/Token"
+        },
+        "session": {
+          "$ref": "#/$defs/Token"
+        },
+        "tenant": {
+          "$ref": "#/$defs/Token"
+        },
+        "type": {
+          "const": "SessionRef@0"
+        }
+      },
+      "required": [
+        "type",
+        "tenant",
+        "route",
+        "session"
+      ],
+      "type": "object"
+    },
+    "Timestamp": {
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+      "type": "string",
+      "x-rfc3339Utc": true
+    },
+    "Token": {
+      "maxLength": 96,
+      "minLength": 1,
+      "pattern": "^[^/ ]+$",
+      "type": "string"
+    },
+    "TriState": {
+      "enum": [
+        "supported",
+        "unsupported",
+        "unknown"
+      ]
+    },
+    "UsageState": {
+      "enum": [
+        "degraded",
+        "exhausted",
+        "ok"
+      ]
+    },
+    "Version": {
+      "maxLength": 96,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/+:-]{0,95}$",
+      "type": "string",
+      "x-utf8MaxBytes": 96
+    }
+  },
+  "$id": "https://recursion.local/schemas/control-plane/v3/route-contract/schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/RouteCapabilityDescriptor"
+    },
+    {
+      "$ref": "#/$defs/RouteRequirement"
+    },
+    {
+      "$ref": "#/$defs/SandboxDescriptor"
+    },
+    {
+      "$ref": "#/$defs/ProcessRequirement"
+    },
+    {
+      "$ref": "#/$defs/ProcessCapabilityDescriptor"
+    },
+    {
+      "$ref": "#/$defs/ProcessTerminationObservation"
+    },
+    {
+      "$ref": "#/$defs/RouteExecutionRequest"
+    },
+    {
+      "$ref": "#/$defs/RouteExecutionResult"
+    },
+    {
+      "$ref": "#/$defs/RouteHealthEvent"
+    },
+    {
+      "$ref": "#/$defs/RouteRefusal"
+    },
+    {
+      "$ref": "#/$defs/AdapterSupport"
+    }
+  ],
+  "title": "Recursion v3 Route Contract v0 (draft)"
+}
