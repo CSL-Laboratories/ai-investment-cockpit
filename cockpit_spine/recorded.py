@@ -1,9 +1,13 @@
 """Check a recorded operator session without re-running it.
 
 A reviewer who has no Recursion checkout can still prove the committed record
-is whole: the chain verifies and replays under the session rules, every step's
-response head is a real chain hash, every displayed number in every step is a
-verified published-tier link, and approve, veto and stop each happened.
+is whole. The chain verifies and replays under the session rules, and the step
+transcript is bound to that chain: every step's head must be a chain hash, heads
+may only move forward, and the chain records a step added (none for status and
+audit, one or two for a command) must be exactly the event its command, arguments,
+``ok`` and ``code`` claim. The steps must cover the whole chain, every displayed
+number in every step is a verified published-tier link, and approve, veto and
+stop each happened. Malformed input is reported as a problem, never raised.
 """
 
 from __future__ import annotations
@@ -17,6 +21,9 @@ from cockpit_spine.session import OperatorSession
 from cockpit_spine.sources import ProposalSource
 
 REQUIRED_CODES = ("approved", "vetoed", "stopped")
+EXPECTED_KIND = "operator session transcript; not a model comparison; no CP7 result; no verdict"
+EXPECTED_LABEL = "live route integration deferred; recorded on the fake driver; no verdict"
+EXIT_OK, EXIT_REFUSED = 0, 2
 
 
 class _NoSource:
@@ -26,22 +33,160 @@ class _NoSource:
         raise AssertionError("a replay never contacts a source")
 
 
+def _flag(argv: list[str], name: str) -> str | None:
+    for position, item in enumerate(argv[:-1]):
+        if item == name:
+            return argv[position + 1]
+    return None
+
+
+def _expected_code(reason: object) -> str:
+    return views.code("result", reason).value
+
+
+def _check_step(
+    command: str, argv: list[str], response: dict[str, Any], segment: list[dict[str, Any]],
+) -> list[str]:
+    """What the chain says this command did, against what the step claims it did."""
+
+    found: list[str] = []
+    kinds = [r["kind"] for r in segment]
+    data = [r["data"] for r in segment]
+    ok, code = response.get("ok"), response.get("code")
+
+    def claim(expected_ok: bool, expected_code: str, why: str) -> None:
+        if ok is not expected_ok or code != expected_code:
+            found.append(f"{why}: claims ok={ok!r} code={code!r}, chain says "
+                         f"ok={expected_ok!r} code={expected_code!r}")
+
+    def refused(actor: str) -> None:
+        if data[0].get("command") != actor:
+            found.append(f"{actor}: refusal record is for {data[0].get('command')!r}")
+        claim(False, _expected_code(data[0].get("code")), f"{actor} refusal")
+
+    def same(label: str, flag: str, recorded: object, index: int = 0) -> None:
+        if _flag(argv, flag) != recorded:
+            found.append(f"{command}: {label} differs from the chain record {index}")
+
+    if command in ("status", "audit"):
+        if kinds:
+            found.append(f"{command}: wrote chain records {kinds}")
+        claim(True, command, command)
+    elif command == "open":
+        if kinds != ["session_opened"]:
+            found.append(f"open: chain shows {kinds}")
+        else:
+            same("session id", "--session-id", data[0].get("session_id"))
+            same("mode", "--mode", data[0].get("mode"))
+            claim(True, "status", "open")
+    elif command == "propose":
+        if kinds == ["command_refused"]:
+            refused("propose")
+        elif kinds in (["proposal_requested", "proposal_received"],
+                       ["proposal_requested", "proposal_refused"]):
+            same("request id", "--request-id", data[0].get("request_id"))
+            if data[1].get("request_id") != data[0].get("request_id"):
+                found.append("propose: outcome answers a different request")
+            if kinds[1] == "proposal_received":
+                claim(True, "proposal_received", "propose")
+            else:
+                claim(False, _expected_code(data[1].get("reason")), "propose refusal")
+        else:
+            found.append(f"propose: chain shows {kinds}")
+    elif command in ("approve", "veto", "stop"):
+        accepted = {"approve": "proposal_approved", "veto": "proposal_vetoed",
+                    "stop": "session_stopped"}[command]
+        done = {"approve": "approved", "veto": "vetoed", "stop": "stopped"}[command]
+        if kinds == ["command_refused"]:
+            refused(command)
+        elif kinds == [accepted]:
+            same("operator", "--operator", data[0].get("operator"))
+            if command != "stop":
+                same("proposal id", "--proposal-id", data[0].get("proposal_id"))
+            if command == "approve":
+                same("confirm digest", "--confirm-digest", data[0].get("payload_digest"))
+            else:
+                same("reason", "--reason", data[0].get("reason"))
+            claim(True, done, command)
+        else:
+            found.append(f"{command}: chain shows {kinds}")
+    else:
+        found.append(f"unknown command {command!r}")
+    return found
+
+
+def _check_steps(
+    steps: object, chain: list[dict[str, Any]], head: str, registry: Registry,
+) -> list[str]:
+    if not isinstance(steps, list) or not steps:
+        return ["steps are missing or not a list"]
+    found: list[str] = []
+    index_of = {r["hash"]: i for i, r in enumerate(chain)}
+    cursor = -1
+    codes: list[object] = []
+    refusals: list[object] = []
+    for number, step in enumerate(steps):
+        where = f"step {number}"
+        response = step.get("response") if isinstance(step, dict) else None
+        argv = step.get("argv") if isinstance(step, dict) else None
+        if (not isinstance(response, dict) or not isinstance(argv, list) or not argv
+                or not all(isinstance(a, str) for a in argv)):
+            found.append(f"{where}: argv or response is missing or malformed")
+            continue
+        ok, step_head = response.get("ok"), response.get("head")
+        if not isinstance(ok, bool):
+            found.append(f"{where}: ok is not a boolean")
+            continue
+        if step.get("exit_code") != (EXIT_OK if ok else EXIT_REFUSED):
+            found.append(f"{where}: exit code does not match the response")
+        lines = response.get("lines")
+        try:
+            views.validate_lines([views.Line(**i) for i in lines], registry)
+        except (views.ViewError, TypeError):
+            found.append(f"{where}: lines are malformed or carry an unlinked number")
+        else:
+            shown = [i["value"] for i in lines if i.get("label") == "chain head"]
+            if any(value != step_head for value in shown):
+                found.append(f"{where}: chain head line differs from the response head")
+        if not isinstance(step_head, str) or step_head not in index_of:
+            found.append(f"{where}: head is not in the chain")
+            continue
+        end = index_of[step_head]
+        if end < cursor:
+            found.append(f"{where}: head moves backwards in the chain")
+            continue
+        segment = chain[cursor + 1:end + 1]
+        cursor = end
+        found += [f"{where}: {m}" for m in _check_step(argv[0], argv, response, segment)]
+        (codes if ok else refusals).append(response.get("code"))
+    if cursor != len(chain) - 1 or head != chain[-1]["hash"]:
+        found.append("the steps do not cover the whole chain")
+    for needed in REQUIRED_CODES:
+        if needed not in codes:
+            found.append(f"no successful {needed} step")
+    if "session_stopped" not in refusals:
+        found.append("no refusal after stop was recorded")
+    return found
+
+
 def problems(record: dict[str, Any], registry: Registry) -> list[str]:
+    if not isinstance(record, dict):
+        return ["record is not an object"]
     found: list[str] = []
     if record.get("platform") != "linux":
         found.append("not recorded as a linux session")
     if record.get("live_calls") is not False:
         found.append("live_calls is not false")
-    if "no verdict" not in str(record.get("kind", "")):
-        found.append("record does not say it carries no verdict")
-    if "deferred" not in str(record.get("label", "")):
-        found.append("record does not carry the deferral label")
+    if record.get("kind") != EXPECTED_KIND:
+        found.append("record kind is not the expected no-verdict kind")
+    if record.get("label") != EXPECTED_LABEL:
+        found.append("record does not carry the expected deferral label")
     if record.get("projection_registry_digest") != registry.digest:
         found.append("projection registry digest differs from the committed registry")
     chain = record.get("chain")
     try:
         head = verify_chain(chain)
-    except AuditError as error:
+    except (AuditError, TypeError, KeyError, AttributeError) as error:
         return found + [f"chain: {error}"]
     if record.get("head") != head:
         found.append("recorded head is not the chain head")
@@ -53,25 +198,8 @@ def problems(record: dict[str, Any], registry: Registry) -> list[str]:
     states = {p["proposal_id"]: p["state"] for p in session.proposals()}
     if not {"approved", "vetoed", "abandoned"} <= set(states.values()):
         found.append("final states do not include approved, vetoed and abandoned")
-    hashes = {r["hash"] for r in chain}
-    codes = []
-    for index, step in enumerate(record.get("steps", [])):
-        response = step.get("response", {})
-        ok = response.get("ok")
-        if step.get("exit_code") != (0 if ok else 2):
-            found.append(f"step {index}: exit code does not match the response")
-        if response.get("head") not in hashes:
-            found.append(f"step {index}: head is not in the chain")
-        try:
-            views.validate_lines([views.Line(**i) for i in response.get("lines", [])], registry)
-        except (views.ViewError, TypeError) as error:
-            found.append(f"step {index}: {error}")
-        if ok:
-            codes.append(response.get("code"))
-    for needed in REQUIRED_CODES:
-        if needed not in codes:
-            found.append(f"no successful {needed} step")
-    refusals = [s["response"]["code"] for s in record.get("steps", []) if not s["response"]["ok"]]
-    if "session_stopped" not in refusals:
-        found.append("no refusal after stop was recorded")
+    try:
+        found += _check_steps(record.get("steps"), chain, head, registry)
+    except (TypeError, KeyError, AttributeError, ValueError) as error:
+        found.append(f"steps: malformed ({type(error).__name__})")
     return found

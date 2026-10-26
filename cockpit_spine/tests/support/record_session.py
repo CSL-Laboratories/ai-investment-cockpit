@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from cockpit_spine import cli
+from cockpit_spine.recorded import EXPECTED_KIND, EXPECTED_LABEL
 from cockpit_spine.fake_source import FAIL_PROMPT, inline_payload
 from cockpit_spine.projections import REPO_ROOT, load_registry
 from cockpit_spine.sources import RouteProposalSource
@@ -33,7 +34,6 @@ from successor.route_consumer.tests.support.bakeoff import _script
 from successor.route_consumer.tests.support.recursion_bridge import recursion
 
 RECORD_PATH = REPO_ROOT / "cockpit_spine" / "records" / "linux-operator-session-fake-driver.json"
-LABEL = "live route integration deferred; recorded on the fake driver; no verdict"
 OPERATOR = "operator-1"
 LOG_NAME = "<transcript>"
 
@@ -111,8 +111,8 @@ def run() -> dict[str, Any]:
         chain = cli.read_log(log)
     pinned = pin.load_pin()
     return {
-        "label": LABEL,
-        "kind": "operator session transcript; not a model comparison; no CP7 result; no verdict",
+        "label": EXPECTED_LABEL,
+        "kind": EXPECTED_KIND,
         "platform": "linux",
         "adapter_kind": source.adapter_kind,
         "live_calls": False,

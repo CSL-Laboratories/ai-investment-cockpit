@@ -300,7 +300,8 @@
             "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:789f8e01b4d1aa7592236387044d6b82da3f02ae632a50ed700aab00dd02f41d]"
           }
         ],
-        "ok": true
+        "ok": true,
+        "withheld": 0
       }
     },
     {
@@ -417,7 +418,7 @@
           },
           {
             "kind": "id",
-            "label": "source refs",
+            "label": "source ref",
             "value": "parquet://2026-10-26/events-1#0"
           },
           {
@@ -426,7 +427,8 @@
             "value": "sha256:b5cd5e952ab2445c205e71c28e5ef71a5d19ec496624b38276df543553c7a3f0"
           }
         ],
-        "ok": true
+        "ok": true,
+        "withheld": 0
       }
     },
     {
@@ -543,7 +545,7 @@
           },
           {
             "kind": "id",
-            "label": "source refs",
+            "label": "source ref",
             "value": "parquet://2026-10-26/events-1#0"
           },
           {
@@ -608,7 +610,7 @@
           },
           {
             "kind": "id",
-            "label": "source refs",
+            "label": "source ref",
             "value": "parquet://2026-10-26/events-1#0"
           },
           {
@@ -617,7 +619,8 @@
             "value": "sha256:2e59ca76e93d1d016b0736c806bd64f3607b42fcd176a9057eeef673a081860a"
           }
         ],
-        "ok": true
+        "ok": true,
+        "withheld": 0
       }
     },
     {
@@ -736,7 +739,7 @@
           },
           {
             "kind": "id",
-            "label": "source refs",
+            "label": "source ref",
             "value": "parquet://2026-10-26/events-1#0"
           },
           {
@@ -801,7 +804,7 @@
           },
           {
             "kind": "id",
-            "label": "source refs",
+            "label": "source ref",
             "value": "parquet://2026-10-26/events-1#0"
           },
           {
@@ -810,7 +813,8 @@
             "value": "sha256:2e59ca76e93d1d016b0736c806bd64f3607b42fcd176a9057eeef673a081860a"
           }
         ],
-        "ok": false
+        "ok": false,
+        "withheld": 0
       }
     },
     {
@@ -931,7 +935,7 @@
           },
           {
             "kind": "id",
-            "label": "source refs",
+            "label": "source ref",
             "value": "parquet://2026-10-26/events-1#0"
           },
           {
@@ -996,7 +1000,7 @@
           },
           {
             "kind": "id",
-            "label": "source refs",
+            "label": "source ref",
             "value": "parquet://2026-10-26/events-1#0"
           },
           {
@@ -1005,7 +1009,8 @@
             "value": "sha256:2e59ca76e93d1d016b0736c806bd64f3607b42fcd176a9057eeef673a081860a"
           }
         ],
-        "ok": false
+        "ok": false,
+        "withheld": 0
       }
     },
     {
@@ -1141,7 +1146,7 @@
           },
           {
             "kind": "id",
-            "label": "source refs",
+            "label": "source ref",
             "value": "parquet://2026-10-26/events-1#0"
           },
           {
@@ -1211,7 +1216,7 @@
           },
           {
             "kind": "id",
-            "label": "source refs",
+            "label": "source ref",
             "value": "parquet://2026-10-26/events-1#0"
           },
           {
@@ -1220,7 +1225,8 @@
             "value": "sha256:2e59ca76e93d1d016b0736c806bd64f3607b42fcd176a9057eeef673a081860a"
           }
         ],
-        "ok": true
+        "ok": true,
+        "withheld": 0
       }
     },
     {
@@ -1341,7 +1347,7 @@
           },
           {
             "kind": "id",
-            "label": "source refs",
+            "label": "source ref",
             "value": "parquet://2026-10-26/events-1#0"
           },
           {
@@ -1411,7 +1417,7 @@
           },
           {
             "kind": "id",
-            "label": "source refs",
+            "label": "source ref",
             "value": "parquet://2026-10-26/events-1#0"
           },
           {
@@ -1430,7 +1436,8 @@
             "value": "size not justified"
           }
         ],
-        "ok": true
+        "ok": true,
+        "withheld": 0
       }
     },
     {
@@ -1547,7 +1554,7 @@
           },
           {
             "kind": "id",
-            "label": "source refs",
+            "label": "source ref",
             "value": "parquet://2026-10-26/events-1#0"
           },
           {
@@ -1617,7 +1624,7 @@
           },
           {
             "kind": "id",
-            "label": "source refs",
+            "label": "source ref",
             "value": "parquet://2026-10-26/events-1#0"
           },
           {
@@ -1692,7 +1699,7 @@
           },
           {
             "kind": "id",
-            "label": "source refs",
+            "label": "source ref",
             "value": "parquet://2026-10-26/events-1#0"
           },
           {
@@ -1701,7 +1708,8 @@
             "value": "sha256:c69263c84d4b869a865c7336579a9675e222ce5a3a5d1729d763cdf5aa67f5a2"
           }
         ],
-        "ok": true
+        "ok": true,
+        "withheld": 0
       }
     },
     {
@@ -1820,7 +1828,7 @@
           },
           {
             "kind": "id",
-            "label": "source refs",
+            "label": "source ref",
             "value": "parquet://2026-10-26/events-1#0"
           },
           {
@@ -1890,7 +1898,7 @@
           },
           {
             "kind": "id",
-            "label": "source refs",
+            "label": "source ref",
             "value": "parquet://2026-10-26/events-1#0"
           },
           {
@@ -1965,7 +1973,7 @@
           },
           {
             "kind": "id",
-            "label": "source refs",
+            "label": "source ref",
             "value": "parquet://2026-10-26/events-1#0"
           },
           {
@@ -1974,7 +1982,8 @@
             "value": "sha256:c69263c84d4b869a865c7336579a9675e222ce5a3a5d1729d763cdf5aa67f5a2"
           }
         ],
-        "ok": true
+        "ok": true,
+        "withheld": 0
       }
     },
     {
@@ -2091,7 +2100,7 @@
           },
           {
             "kind": "id",
-            "label": "source refs",
+            "label": "source ref",
             "value": "parquet://2026-10-26/events-1#0"
           },
           {
@@ -2161,7 +2170,7 @@
           },
           {
             "kind": "id",
-            "label": "source refs",
+            "label": "source ref",
             "value": "parquet://2026-10-26/events-1#0"
           },
           {
@@ -2236,7 +2245,7 @@
           },
           {
             "kind": "id",
-            "label": "source refs",
+            "label": "source ref",
             "value": "parquet://2026-10-26/events-1#0"
           },
           {
@@ -2245,7 +2254,8 @@
             "value": "sha256:c69263c84d4b869a865c7336579a9675e222ce5a3a5d1729d763cdf5aa67f5a2"
           }
         ],
-        "ok": false
+        "ok": false,
+        "withheld": 0
       }
     },
     {
@@ -2366,7 +2376,7 @@
           },
           {
             "kind": "id",
-            "label": "source refs",
+            "label": "source ref",
             "value": "parquet://2026-10-26/events-1#0"
           },
           {
@@ -2436,7 +2446,7 @@
           },
           {
             "kind": "id",
-            "label": "source refs",
+            "label": "source ref",
             "value": "parquet://2026-10-26/events-1#0"
           },
           {
@@ -2511,7 +2521,7 @@
           },
           {
             "kind": "id",
-            "label": "source refs",
+            "label": "source ref",
             "value": "parquet://2026-10-26/events-1#0"
           },
           {
@@ -2520,7 +2530,8 @@
             "value": "sha256:c69263c84d4b869a865c7336579a9675e222ce5a3a5d1729d763cdf5aa67f5a2"
           }
         ],
-        "ok": false
+        "ok": false,
+        "withheld": 0
       }
     },
     {
@@ -2759,7 +2770,8 @@
             "value": "sha256:fe705048145b73e66ddefce915b96052bba35a8d259f28f30a9c0de54a3b259e"
           }
         ],
-        "ok": true
+        "ok": true,
+        "withheld": 0
       }
     }
   ]
