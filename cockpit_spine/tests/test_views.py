@@ -76,7 +76,12 @@ class MaskTests(unittest.TestCase):
         text = "expects 3 percent, then 1,000.50 and 10% or 2026-10-26 and v2"
         line = views.quoted("thesis", text)
         self.assertNotRegex(line.value, r"[0-9]")
+        self.assertFalse(any(ch.isdecimal() for ch in line.value))
         check(line)
+        arabic = views.quoted("thesis", "gain ١٢ percent")
+        self.assertEqual("gain [n] percent", arabic.value)
+        self.assertFalse(any(ch.isdecimal() for ch in arabic.value))
+        check(arabic)
 
     def test_quoted_flattens_control_characters_and_survives_non_strings(self) -> None:
         self.assertEqual("a b", views.quoted("t", "a\n\x1b\tb").value)

@@ -36,9 +36,37 @@ _LINK = re.compile(
     r"^(?P<value>\S+) (?P<unit>[a-z]+) "
     r"\[projection:(?P<pid>[a-z0-9._-]+)@(?P<digest>sha256:[0-9a-f]{64})\]$"
 )
-_DIGIT = re.compile(r"[0-9]")
-_NUMERAL = re.compile(r"[0-9]+(?:[.,][0-9]+)*")
 UNRECOGNIZED = "unrecognized_code"
+
+
+def _has_digit(text: str) -> bool:
+    """ASCII and other decimal digits. A number in any script is still a number."""
+
+    return any(ch.isdecimal() for ch in text)
+
+
+def mask_numerals(text: str) -> str:
+    """Replace each numeral run, including non-ASCII decimal digits, with ``[n]``."""
+
+    out: list[str] = []
+    index = 0
+    while index < len(text):
+        if text[index].isdecimal():
+            index += 1
+            while index < len(text) and (
+                text[index].isdecimal()
+                or (
+                    text[index] in ".,"
+                    and index + 1 < len(text)
+                    and text[index + 1].isdecimal()
+                )
+            ):
+                index += 1
+            out.append("[n]")
+        else:
+            out.append(text[index])
+            index += 1
+    return "".join(out)
 
 
 class ViewError(Exception):
@@ -53,10 +81,6 @@ class Line:
 
     def as_dict(self) -> dict[str, str]:
         return {"kind": self.kind, "label": self.label, "value": self.value}
-
-
-def mask_numerals(text: str) -> str:
-    return _NUMERAL.sub("[n]", text)
 
 
 def quoted(label: str, text: object) -> Line:
@@ -84,13 +108,13 @@ def validate_lines(lines: list[Line], registry: Registry) -> None:
         where = f"{item.kind}/{item.label}"
         if item.kind not in KINDS or not isinstance(item.value, str):
             raise ViewError(f"{where}: bad kind or value")
-        if not item.label or _DIGIT.search(item.label):
+        if not item.label or _has_digit(item.label):
             raise ViewError(f"{where}: label must be words without digits")
         value = item.value
-        if item.kind == "text" and _DIGIT.search(value):
+        if item.kind == "text" and _has_digit(value):
             raise ViewError(f"{where}: fixed text carries a digit")
         elif item.kind == "quoted":
-            if _DIGIT.search(value) or len(value) > MAX_QUOTED:
+            if _has_digit(value) or len(value) > MAX_QUOTED:
                 raise ViewError(f"{where}: quoted text carries an unmasked numeral")
         elif item.kind == "id":
             if not is_id(value):

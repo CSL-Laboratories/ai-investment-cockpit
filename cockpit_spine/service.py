@@ -82,8 +82,10 @@ class OperatorService:
                 views.term("side", payload["side"]),
                 views.term("asset_type", payload["asset_type"]),
                 views.term("order_type", payload["order_type"]),
-                views.term("quantity", payload["quantity"]),
-                views.term("notional", payload["notional"]),
+                # quantity and notional are optional on TradeProposal; a missing
+                # key is "none", not a crash. The other fields below are required.
+                views.term("quantity", payload.get("quantity")),
+                views.term("notional", payload.get("notional")),
                 views.term("time_horizon", payload["time_horizon"]),
                 views.quoted("thesis (model text, unverified)", payload["thesis"]),
                 views.quoted("invalidation (model text, unverified)", payload["invalidation"]),

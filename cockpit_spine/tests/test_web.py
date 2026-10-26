@@ -173,10 +173,13 @@ class FlowTests(ViewCase):
         reply = self.api(view, "status")
         allowed = {f"{i['label']}: {i['value']}" for i in reply["lines"]
                    if i["kind"] in ("id", "time", "digest", "term", "figure")}
+        proposal_ids = {i["value"] for i in reply["lines"] if i["label"] == "proposal"}
         parser = Texts()
         parser.feed(self.request(view, "GET", "/")[2])
         for node in parser.nodes:
             if any(c.isdigit() for c in node):
+                if any(node.endswith(" " + pid) for pid in proposal_ids):
+                    continue
                 self.assertIn(node, allowed, node)
         self.assertTrue(any("[projection:" in n for n in parser.nodes))
 
@@ -315,8 +318,20 @@ class PageStateTests(ViewCase):
         self.assertEqual(1, page.count('value="approve"'))
         self.assertEqual(1, page.count('value="veto"'))
         self.assertIn('name="proposal_id" value="prop-3"', page)
+        self.assertIn(">approve prop-3<", page)
+        self.assertIn(">veto prop-3<", page)
         self.assertNotIn('name="proposal_id" value="prop-1"', page)
         self.assertNotIn('name="proposal_id" value="prop-2"', page)
+        self.assertNotIn(">approve prop-1<", page)
+
+    def test_a_non_ascii_token_is_forbidden(self) -> None:
+        view = self.start()
+        status, _, _ = self.request(view, "POST", "/act", "token=%C3%A9&command=stop")
+        self.assertEqual(403, status)
+        header = self.request(
+            view, "POST", "/api", "{}",
+            {"Content-Type": "application/json", "X-Operator-Token": "é"})
+        self.assertEqual(403, header[0])
 
     def test_labels_and_values_are_escaped(self) -> None:
         view = self.start(ScriptedSource(accepted(proposal_payload(

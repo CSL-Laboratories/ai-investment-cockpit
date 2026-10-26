@@ -119,6 +119,16 @@ class RefusalTests(unittest.TestCase):
         with self.assertRaisesRegex(proj.ProjectionError, "stated 3 but the source gives 2"):
             self.load(path)
 
+    def test_stated_value_must_match_the_recomputed_type(self) -> None:
+        path = _registry_for(self.root)
+        doc = json.loads(path.read_text())
+        entry = doc["projections"][0]
+        entry["value"] = 2.0
+        entry["digest"] = proj._entry_digest(entry)
+        path.write_text(json.dumps(proj.registry_document(doc["projections"])))
+        with self.assertRaisesRegex(proj.ProjectionError, "stated 2.0 but the source gives 2"):
+            self.load(path)
+
     def test_entry_edited_without_its_digest_is_refused(self) -> None:
         path = _registry_for(self.root)
         doc = json.loads(path.read_text())
@@ -238,6 +248,48 @@ class UnlinkedNumberTests(unittest.TestCase):
         self.assertEqual(proj.WITHHELD, bad.render(figure))
         with self.assertRaises(proj.UnlinkedNumberError):
             bad.figure(pid)
+
+    def test_recomputed_digests_do_not_let_a_hand_built_registry_render(self) -> None:
+        pid = "x2-fake-driver-cells-accepted"
+        real = self.registry.get(pid)
+        forged_entry = real.entry()
+        forged_entry["value"] = 99
+        forged_entry["digest"] = proj._entry_digest(forged_entry)
+        forged = dataclasses.replace(real, value=99, digest=forged_entry["digest"])
+        projections = {
+            name: forged if name == pid else self.registry.get(name)
+            for name in self.registry.ids()
+        }
+        digest = proj.registry_document(
+            [projections[name].entry() for name in sorted(projections)]
+        )["registry_digest"]
+        bad = proj.Registry(projections, digest)
+        shown = bad.render_id(pid)
+        self.assertEqual(proj.WITHHELD, shown)
+        self.assertNotIn("99", shown)
+        self.assertNotIn("15", shown)
+
+    def test_mutating_the_caller_dict_after_construction_stays_withheld(self) -> None:
+        pid = "x2-fake-driver-cells-accepted"
+        caller = dict(self.registry._projections)
+        built = proj.Registry(caller, self.registry.digest)
+        caller[pid] = dataclasses.replace(self.registry.get(pid), value=77)
+        shown = built.render_id(pid)
+        self.assertEqual(proj.WITHHELD, shown)
+        self.assertNotIn("77", shown)
+
+    def test_a_loaded_registry_keeps_a_private_immutable_copy(self) -> None:
+        pid = "x2-fake-driver-cells-accepted"
+        caller = dict(self.registry._projections)
+        loaded = proj.Registry(caller, self.registry.digest, _from_loader=proj._LOAD_TOKEN)
+        self.assertIn("15 cells", loaded.render_id(pid))
+        caller[pid] = dataclasses.replace(caller[pid], value=99)
+        shown = loaded.render_id(pid)
+        self.assertTrue(shown.startswith("15 cells "))
+        self.assertNotIn("99 cells", shown)
+        with self.assertRaises(TypeError):
+            loaded._projections[pid] = caller[pid]
+        self.assertIn("15 cells", self.registry.render_id(pid))
 
     def test_a_hand_built_figure_does_not_render(self) -> None:
         forged = proj.Figure("x2-fake-driver-cells-accepted", 99, "cells", "forged",
