@@ -445,24 +445,27 @@ jobs:
           python -X utf8 -B tools/test_sandbox_e3.py
       # CSL-515 WP12: the successor/ route-consumer tests replay Recursion's Route
       # Contract v0 conformance cases against a read-only checkout of the public
-      # CSL-Laboratories/recursion repository at the exact commit pinned in
-      # successor/route_consumer/contract/PIN.json. A plain anonymous git fetch
-      # (no token, no credential helper, no extra action) keeps this out of the
-      # actions/checkout set whose merge-context contract tools/test_ci_dispatch_scope.py
-      # pins. The tests verify every imported file's sha256 against that pin and
-      # fail closed if the checkout is absent or altered.
+      # CSL-Laboratories/recursion repository at the commit pinned in
+      # successor/route_consumer/contract/PIN.json (source.head_sha), which is the
+      # only place the SHA is written. A plain anonymous git fetch (no token, no
+      # credential helper, no extra action) keeps this out of the actions/checkout
+      # set whose merge-context contract tools/test_ci_dispatch_scope.py pins. The
+      # tests verify every imported file's sha256 against that pin and fail closed
+      # if the checkout is absent or altered.
       - name: Fetch the pinned Recursion route contract (read-only, outside the workspace)
-        env:
-          RECURSION_ROUTE_CONTRACT_SHA: baf6fdc2e1d29592721c8dbaac65878b12ec4a98
         shell: bash
         run: |
           set -euo pipefail
+          pin="$(python -P -c "import json; print(json.load(open('successor/route_consumer/contract/PIN.json', encoding='utf-8'))['source']['head_sha'])")"
           dest="$RUNNER_TEMP/recursion-route-contract"
           rm -rf "$dest"
           git init -q "$dest"
-          git -C "$dest" fetch -q --depth 1 https://github.com/CSL-Laboratories/recursion.git "$RECURSION_ROUTE_CONTRACT_SHA"
-          git -C "$dest" checkout -q --detach FETCH_HEAD
-          [ "$(git -C "$dest" rev-parse HEAD)" = "$RECURSION_ROUTE_CONTRACT_SHA" ]
+          if ! git -C "$dest" fetch -q --depth 1 https://github.com/CSL-Laboratories/recursion.git "$pin" \
+            || ! git -C "$dest" checkout -q --detach FETCH_HEAD \
+            || [ "$(git -C "$dest" rev-parse HEAD)" != "$pin" ]; then
+            echo "::error::Cannot fetch the pinned Recursion route contract commit $pin (successor/route_consumer/contract/PIN.json, source.head_sha). The pin must be reachable from CSL-Laboratories/recursion main or a protected tag; a draft PR head can disappear after a push, rebase or squash-merge. Re-pin PIN.json to a commit on recursion main."
+            exit 1
+          fi
           echo "RECURSION_ROUTE_CONTRACT_CHECKOUT=$dest" >> "$GITHUB_ENV"
       - name: successor route-consumer tests against the pinned Recursion checkout
         run: python -X utf8 -B -m unittest discover -s successor -t . -p 'test_*.py'
