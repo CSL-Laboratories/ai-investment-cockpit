@@ -414,6 +414,19 @@ class NodeModulesDigestTests(unittest.TestCase):
             )
 
     @unittest.skipIf(os.name == "nt", "POSIX symlink fixture")
+    def test_dotdot_after_in_tree_symlink_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            nm = Path(tmp) / "node_modules"
+            sub = nm / "sub"
+            sub.mkdir(parents=True)
+            os.symlink("..", sub / "a")
+            os.symlink("sub/a/../../outside.js", nm / "cli")
+            (Path(tmp) / "outside.js").write_text("pwned\n", encoding="utf-8")
+            with self.assertRaises(bind.BindError) as ctx:
+                bind.tree_digest(str(nm))
+            self.assertEqual(str(ctx.exception), "symlink_escape")
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink fixture")
     def test_dotbin_through_in_tree_dir_symlink_is_hashed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             nm = Path(tmp) / "node_modules"

@@ -245,23 +245,8 @@ def _rel_posix(root: Path, path: Path) -> str:
     return str(path.relative_to(root)).replace("\\", "/")
 
 
-def lexical_in_tree_dest(root: str, link_path: str, target: str) -> str:
-    """Join ``target`` onto the link without following any symlink.
-
-    ``Path.resolve()`` follows intermediates, so a relative link that
-    lexically leaves ``root`` and re-enters through an outside symlink
-    would pass today and later redirect without changing the hashed
-    text (Devin SEC on #281). ``abspath``+``normpath`` stay lexical.
-    Returns the posix path of the dest relative to ``root``.
-    """
-    if not target or "\0" in target or "\n" in target or "\r" in target:
-        raise BindError("symlink")
-    if os.path.isabs(target):
-        raise BindError("symlink_abs")
-    root_abs = os.path.normpath(os.path.abspath(root))
-    dest = os.path.normpath(
-        os.path.join(os.path.dirname(os.path.abspath(link_path)), target)
-    )
+def _rel_under_root(root_abs: str, dest: str) -> str:
+    dest = os.path.normpath(dest)
     try:
         common = os.path.commonpath([root_abs, dest])
     except ValueError as exc:
@@ -274,14 +259,42 @@ def lexical_in_tree_dest(root: str, link_path: str, target: str) -> str:
     return rel
 
 
+def lexical_in_tree_dest(root: str, link_path: str, target: str) -> str:
+    """Join ``target`` onto the link without following any symlink.
+
+    ``Path.resolve()`` follows intermediates, so a relative link that
+    lexically leaves ``root`` and re-enters through an outside symlink
+    would pass and later redirect without changing the hashed text.
+    ``abspath``+``normpath`` stay lexical.
+    """
+    if not target or "\0" in target or "\n" in target or "\r" in target:
+        raise BindError("symlink")
+    if os.path.isabs(target):
+        raise BindError("symlink_abs")
+    root_abs = os.path.normpath(os.path.abspath(root))
+    dest = os.path.normpath(
+        os.path.join(os.path.dirname(os.path.abspath(link_path)), target)
+    )
+    return _rel_under_root(root_abs, dest)
+
+
 def require_in_tree_symlink(root: str, link_path: str, target: str) -> str:
     """Allow bun's in-tree ``node_modules/.bin`` links; refuse abs/escape.
 
-    Hosted run 40262408416 failed at ``hash-node-modules`` with
-    ``BindError: symlink`` because ``walk_files`` treated those relative
-    links as hostile. Callers must not put the path into the public log.
+    Lexical containment and followed resolution must both stay under
+    ``root``. Lexical-only missed ``sub/a -> ..`` plus ``cli ->
+    sub/a/../../outside`` (Devin SEC / Codex P1 on #281). Returns
+    ``lexical\\0resolved`` relative paths for the digest. Callers must
+    not put the path into the public log.
     """
-    return lexical_in_tree_dest(root, link_path, target)
+    lexical = lexical_in_tree_dest(root, link_path, target)
+    root_abs = os.path.normpath(os.path.abspath(root))
+    try:
+        resolved = str((Path(os.path.abspath(link_path)).parent / target).resolve())
+    except OSError as exc:
+        raise BindError("symlink") from exc
+    resolved_rel = _rel_under_root(root_abs, resolved)
+    return lexical + "\0" + resolved_rel
 
 
 def walk_files(root: str, *, skip_dirs: Sequence[str] = ()) -> List[str]:
@@ -352,7 +365,7 @@ def tree_digest(root: str) -> str:
 
     File records stay ``rel\\0sha256\\n`` so a symlink-free tree matches the
     pre-40262408416 hasher. Symlinks append
-    ``rel\\0symlink\\0target\\0lexical_rel\\n``.
+    ``rel\\0symlink\\0target\\0lexical_rel\\0resolved_rel\\n``.
     """
     digest = hashlib.sha256()
     base = Path(root)
