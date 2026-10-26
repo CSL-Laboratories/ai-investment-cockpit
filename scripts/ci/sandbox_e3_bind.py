@@ -288,12 +288,15 @@ def require_in_tree_symlink(root: str, link_path: str, target: str) -> str:
     not put the path into the public log.
     """
     lexical = lexical_in_tree_dest(root, link_path, target)
-    root_abs = os.path.normpath(os.path.abspath(root))
+    # Followed dest uses realpath(root): abspath leaves a symlinked ancestor
+    # unresolved (macOS /var → /private/var, or a linked work dir), so every
+    # in-tree link compared as symlink_escape (Devin BUG on #281).
+    root_real = os.path.realpath(root)
     try:
         resolved = str((Path(os.path.abspath(link_path)).parent / target).resolve())
     except OSError as exc:
         raise BindError("symlink") from exc
-    resolved_rel = _rel_under_root(root_abs, resolved)
+    resolved_rel = _rel_under_root(root_real, resolved)
     return lexical + "\0" + resolved_rel
 
 

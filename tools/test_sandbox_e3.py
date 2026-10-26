@@ -427,6 +427,23 @@ class NodeModulesDigestTests(unittest.TestCase):
             self.assertEqual(str(ctx.exception), "symlink_escape")
 
     @unittest.skipIf(os.name == "nt", "POSIX symlink fixture")
+    def test_symlinked_ancestor_of_root_still_hashes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            real = Path(tmp) / "real"
+            nm = real / "nm"
+            pkg = nm / "pkg"
+            pkg.mkdir(parents=True)
+            (pkg / "cli.js").write_text("console.log(1)\n", encoding="utf-8")
+            (nm / ".bin").mkdir()
+            os.symlink("../pkg/cli.js", nm / ".bin" / "cli")
+            alias = Path(tmp) / "alias"
+            os.symlink(real, alias)
+            via_alias = alias / "nm"
+            digest = bind.tree_digest(str(nm))
+            self.assertEqual(digest, bind.tree_digest(str(via_alias)))
+            self.assertEqual(len(digest), 64)
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink fixture")
     def test_dotbin_through_in_tree_dir_symlink_is_hashed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             nm = Path(tmp) / "node_modules"
