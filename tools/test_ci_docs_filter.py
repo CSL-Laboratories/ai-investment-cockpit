@@ -32,6 +32,8 @@ SELF = Path(__file__).resolve().relative_to(ROOT).as_posix()
 # Tracked files the CSL-392 audit saw tests open while the old filter skipped them.
 AUDITED = (
     '.gitignore',
+    '.claude/skills/proceed-or-escalate/SKILL.md',
+    'AGENTS.md',
     'app/filings/PROVENANCE.md',
     'app/workflows/prompts/grounding_check.v1.md',
     'app/workflows/prompts/interrogation_fresh.v1.md',
@@ -58,8 +60,6 @@ STILL_SKIPPED = ('docs/example.md', 'README.md', 'docs/research/notes.md', 'LICE
 # Reviewed references to skipped files that are not reads of the checked-in file.
 # A new reference fails the guard until it is added to the run-tests pattern or here.
 ALLOWED_REFERENCES = {
-    ('app/tests/test_linear_pr_sync.py', 'AGENTS.md'): 'fixture file name in a fake PR listing',
-    ('app/tests/test_stuck_thread_watch.py', 'AGENTS.md'): 'fixture review-thread path',
     ('tools/test_ci_dispatch_scope.py', 'README.md'): 'file created in a temporary git repo',
     ('tools/test_ci_dispatch_scope.py', 'docs/ci-queue-rollout.md'): 'path string fed to the Rust selector',
 }
@@ -186,6 +186,38 @@ class DecideScriptTests(unittest.TestCase):
         # The match is case-sensitive, like the decide step's grep -E.
         self.assertEqual(self.run_tests_for(['claude.md']), 'false')
 
+    def test_agents_md_alone_runs_tests(self):
+        self.assertEqual(self.run_tests_for(['AGENTS.md']), 'true')
+
+    def test_nested_agents_md_alone_still_skips(self):
+        # The selector is anchored to the root file; docs/ keeps the docs-only skip.
+        self.assertEqual(self.run_tests_for(['docs/AGENTS.md']), 'false')
+
+    def test_lowercase_agents_md_alone_still_skips(self):
+        # The match is case-sensitive, like the decide step's grep -E.
+        self.assertEqual(self.run_tests_for(['agents.md']), 'false')
+
+    def test_proceed_or_escalate_skill_alone_runs_tests(self):
+        self.assertEqual(
+            self.run_tests_for(['.claude/skills/proceed-or-escalate/SKILL.md']),
+            'true',
+        )
+
+    def test_other_claude_skill_alone_still_skips(self):
+        # Exact skill path only; sibling skills keep the docs-only skip.
+        self.assertEqual(
+            self.run_tests_for(['.claude/skills/other/SKILL.md']),
+            'false',
+        )
+
+    def test_nested_proceed_or_escalate_skill_alone_still_skips(self):
+        self.assertEqual(
+            self.run_tests_for(
+                ['docs/.claude/skills/proceed-or-escalate/SKILL.md']
+            ),
+            'false',
+        )
+
     def test_plain_documentation_still_skips(self):
         self.assertEqual(self.run_tests_for(list(STILL_SKIPPED)), 'false')
 
@@ -209,6 +241,8 @@ class TestSourceGuardTests(unittest.TestCase):
         for name in ('tools/test_ci_dispatch_scope.py', 'tools/test_ci_settle.py',
                      'tools/test_review_gate.py', 'tools/test_queue_gates.py',
                      'tools/test_ci_cancel_controller.py', 'tools/test_candidate_workflows.py',
+                     'tools/test_workflow_size.py',
+                     'tools/test_sandbox_e3.py',
                      'tools/test_run_gates_action.py', 'app/tests/test_o7_operator_contract.py'):
             self.assertIn(name, sources)
         self.assertNotIn(SELF, sources)

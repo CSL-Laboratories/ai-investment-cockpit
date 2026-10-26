@@ -610,6 +610,9 @@ class DispatchScopeTests(unittest.TestCase):
 # eight-commit guard, the one-attempt publish guard and the pause. Retry behaviour itself is
 # exercised by tools/test_claude_fixer_*.py and tools/test_claude_pr_fixer.py.
 WRITER_FILES = ('claude.yml', 'claude-conflict-writer.yml', 'conflict-scan.yml')
+# CSL-474 P9: dispatch-only measurement. Not a writer. Optional OAuth is an
+# explicit workflow_dispatch input defaulting off; Lucas dispatches.
+P9_PROBE_FILE = 'csl-474-p9-probes.yml'
 # Roles: prep, model, publish. No job has the credential-free 'verify' role yet; CSL-409 adds one,
 # and the 'verify' branches below are ready for it.
 WRITER_JOBS = {
@@ -659,6 +662,22 @@ def job_text(job):
         parts.append(str(step.get('run', '')))
         parts.extend(str(v) for v in (step.get('with') or {}).values())
     return '\n'.join(parts)
+
+
+def claude_trusted_sources(role):
+    """scripts/ci files claude.yml copies from github.workflow_sha for that role."""
+    names = {
+        'prep': ('claude_fixer_preflight.py', 'claude_fixer_receipts.py'),
+        'publish': ('claude_fixer_publish.py', 'claude_fixer_receipts.py'),
+    }.get(role, ())
+    return '\n'.join((ROOT / 'scripts' / 'ci' / name).read_text(encoding='utf-8') for name in names)
+
+
+def writer_contract_text(name, job, role):
+    text = job_text(job)
+    if name == 'claude.yml':
+        text = text + '\n' + claude_trusted_sources(role)
+    return text
 
 
 def command_span(text, pos):
@@ -712,7 +731,7 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         # A new Claude workflow must be added here (and to the contract) before it can merge.
         found = {p.name for p in WORKFLOWS.glob('*.y*ml')
                  if re.search(r'anthropics/claude-code|ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN', p.read_text())}
-        self.assertEqual(found, set(WRITER_FILES))
+        self.assertEqual(found, set(WRITER_FILES) | {P9_PROBE_FILE})
         for name, jobs in WRITER_JOBS.items():
             self.assertEqual(set(workflow(name)['jobs']), set(jobs) | NON_WRITER_JOBS[name])
         self.assertEqual(set(workflow('conflict-scan.yml')['jobs']), set(SCAN_JOBS))
@@ -834,7 +853,7 @@ class CrossLaneAdmissionTests(unittest.TestCase):
             doc = workflow(name)
             for job_name, role in jobs.items():
                 job = doc['jobs'][job_name]
-                text = job_text(job)
+                text = writer_contract_text(name, job, role)
                 perms = job.get('permissions') or {}
                 with self.subTest(workflow=name, job=job_name, role=role):
                     self.assertEqual(bool(PUSH.search(granted(text))), role == 'publish')
@@ -873,24 +892,29 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         claude = (WORKFLOWS / 'claude.yml').read_text()
         writer = (WORKFLOWS / 'claude-conflict-writer.yml').read_text()
         scan = (WORKFLOWS / 'conflict-scan.yml').read_text()
-        # Eight-commit guard: one constant per claude.yml prepare job, compared in the @claude path,
-        # and the Devin path's `cap` step; no other cap value anywhere.
-        self.assertEqual(re.findall(r'^\s*LOOP_CAP = (\d+)$', claude, re.MULTILINE), ['8', '8'])
+        preflight = (ROOT / 'scripts' / 'ci' / 'claude_fixer_preflight.py').read_text()
+        receipts = (ROOT / 'scripts' / 'ci' / 'claude_fixer_receipts.py').read_text()
+        # Eight-commit guard lives in the trusted preflight source copied twice.
+        self.assertEqual(re.findall(r'^\s*LOOP_CAP = (\d+)$', preflight, re.MULTILINE), ['8'])
+        self.assertEqual(claude.count('python3 -I "$TRUSTED/claude_fixer_preflight.py"'), 2)
         # A conflict-writer guard (CSL-419) may add one, but only at the same cap.
         self.assertTrue(set(re.findall(r'^\s*LOOP_CAP = (\d+)$', writer + scan, re.MULTILINE)) <= {'8'})
-        self.assertIn('if streak >= LOOP_CAP:', job_text(workflow('claude.yml')['jobs']['mention-prepare']))
+        self.assertIn('if streak >= LOOP_CAP:', preflight)
         cap = job_text(workflow('claude.yml')['jobs']['fixer-prepare'])
         self.assertRegex(cap, r'if \[ "\$total" -ge 250 \] && \[ "\$count" -lt 8 \]')
         self.assertIn('echo "loop_commit_count=$count"', cap)
         # The Devin path reserves bounded attempts; every publisher allows one publish per prepared run.
-        self.assertEqual(set(re.findall(r'^\s*MAX_ATTEMPTS = (\d+)$', claude, re.MULTILINE)), {'3'})
+        self.assertEqual(set(re.findall(r'^\s*MAX_ATTEMPTS = (\d+)$', receipts, re.MULTILINE)), {'3'})
         self.assertIn('Select pending findings and reserve bounded attempt', claude)
         for name, jobs in WRITER_JOBS.items():
             doc = workflow(name)
             for job_name, role in jobs.items():
                 if role == 'publish':
                     with self.subTest(publisher=f'{name}:{job_name}'):
-                        self.assertIn('publish attempt already used; nothing published', job_text(doc['jobs'][job_name]))
+                        self.assertIn(
+                            'publish attempt already used; nothing published',
+                            writer_contract_text(name, doc['jobs'][job_name], role),
+                        )
         # The human pause, per job: every prepare and publish job reads both labels and the repository
         # variable, every publisher refuses on them before pushing, and the scan skips paused PRs.
         pause_py = 'PAUSE_LABELS = frozenset({"claude:pause", "hold"})'
@@ -901,7 +925,7 @@ class CrossLaneAdmissionTests(unittest.TestCase):
                 if role not in ('prep', 'publish'):
                     continue
                 job = doc['jobs'][job_name]
-                text = job_text(job)
+                text = writer_contract_text(name, job, role)
                 with self.subTest(pause=f'{name}:{job_name}'):
                     self.assertTrue(pause_py in text or pause_jq in text)
                     self.assertIn('${{ vars.CLAUDE_FIXER_PAUSE }}', str(job))
@@ -911,5 +935,171 @@ class CrossLaneAdmissionTests(unittest.TestCase):
         self.assertIn(pause_py, job_text(scan_job))
         self.assertIn('${{ vars.CLAUDE_FIXER_PAUSE }}', str(scan_job))
 
+
+class P9ProbeWorkflowTests(unittest.TestCase):
+    """CSL-474 P9 Probes 0/2: dispatch-only measurement, not a writer."""
+
+    def setUp(self):
+        self.path = WORKFLOWS / P9_PROBE_FILE
+        self.text = self.path.read_text(encoding='utf-8')
+        self.doc = workflow(P9_PROBE_FILE)
+
+    def test_dispatch_only_least_privilege(self):
+        header = self.text.split('\njobs:', 1)[0]
+        self.assertIn('workflow_dispatch:', header)
+        self.assertIn(
+            'With enable_probe2_oauth=false (the intended unattended dispatch), Probe 2 is',
+            header,
+        )
+        self.assertIn('INCONCLUSIVE/non-green', header)
+        self.assertIn('That is not a CLI isolation finding', header)
+        self.assertIn('P9 in this form rests on Probe 0', header)
+        self.assertNotIn('\npull_request:', header)
+        self.assertNotIn('\npush:', header)
+        self.assertNotIn('\nschedule:', header)
+        self.assertNotIn('\nissue_comment:', header)
+        self.assertNotIn('\nrepository_dispatch:', header)
+        self.assertNotIn('\nworkflow_call:', header)
+        self.assertNotIn('\nworkflow_run:', header)
+        self.assertEqual(self.doc.get('permissions'), {'contents': 'read'})
+        self.assertEqual(set(self.doc['jobs']), {'probe-0', 'probe-2'})
+        for name, job in self.doc['jobs'].items():
+            with self.subTest(job=name):
+                self.assertEqual(job['runs-on'], 'ubuntu-24.04')
+                self.assertEqual(job.get('permissions'), {'contents': 'read'})
+                self.assertNotIn('id-token', job.get('permissions') or {})
+                self.assertFalse(PUSH.search(job_text(job)))
+                uses = [str(s.get('uses') or '') for s in job.get('steps') or []]
+                self.assertFalse(any(u.startswith('anthropics/claude-code-action') for u in uses))
+
+    def test_oauth_input_defaults_off_and_gates_the_secret(self):
+        spec = self.doc['on']['workflow_dispatch']['inputs']['enable_probe2_oauth']
+        self.assertEqual(spec['type'], 'boolean')
+        self.assertIn(spec['default'], (False, 'false'))
+        oauth_steps = [s for s in self.doc['jobs']['probe-2']['steps']
+                       if 'secrets.CLAUDE_CODE_OAUTH_TOKEN' in str(s)]
+        self.assertEqual(len(oauth_steps), 2)
+        for step in oauth_steps:
+            with self.subTest(step=step.get('name')):
+                self.assertIn('enable_probe2_oauth', str(step.get('if')))
+                self.assertIn('success()', str(step.get('if')))
+                self.assertNotIn('always()', str(step.get('if')))
+        self.assertNotIn('secrets.CLAUDE_CODE_OAUTH_TOKEN', str(self.doc['jobs']['probe-0']))
+        self.assertNotIn('secrets: inherit', self.text)
+        hooked = [s for s in self.doc['jobs']['probe-2']['steps']
+                  if s.get('name') == 'Probe 2 OAuth hooked trials (token in CLI env, subprocess-scrubbed)']
+        self.assertEqual(len(hooked), 1)
+        self.assertIn('secrets.CLAUDE_CODE_OAUTH_TOKEN', str(hooked[0]))
+        self.assertIn('env -u CLAUDE_CODE_OAUTH_TOKEN', job_text(self.doc['jobs']['probe-2']))
+        self.assertEqual(
+            self.doc['jobs']['probe-2']['env'].get('CLAUDE_CODE_SUBPROCESS_ENV_SCRUB'),
+            '1',
+        )
+
+    def test_same_cli_pin_as_e3(self):
+        pin = (ROOT / 'scripts' / 'ci' / 'claude-code-2.1.306-linux-x64.pin').read_text(encoding='utf-8')
+        sha = [line.split('=', 1)[1].strip() for line in pin.splitlines() if line.startswith('sha256=')][0]
+        self.assertIn('2.1.306', self.text)
+        self.assertIn(sha, self.text)
+        self.assertIn('a5a423f75c251dcbff8a74e99f83b2cb03c72bfa', self.text)
+        self.assertIn('https://downloads.claude.ai/claude-code-releases', self.text)
+        self.assertIn('${RELEASE_BASE}/${CLAUDE_VERSION}/${PLATFORM}/claude', self.text)
+        self.assertNotIn('claude.ai/install', self.text)
+        self.assertNotIn('anthropics/claude-code', self.text)
+
+    def test_probe_bodies_record_host_and_p1_facts(self):
+        p0 = job_text(self.doc['jobs']['probe-0'])
+        self.assertIn('cgroup.controllers', p0)
+        self.assertIn('cgroup.kill', p0)
+        self.assertIn('cgroup.procs', p0)
+        self.assertIn('apparmor_restrict_unprivileged_userns', p0)
+        self.assertIn('unshare --user --pid', p0)
+        self.assertIn('HOSTED_ONLY', p0)
+        self.assertIn('CLASS_CGROUP_PROCS observational', p0)
+        self.assertIn('} 2>/tmp/csl-p9-cgroup-procs.err', p0)
+        p2 = job_text(self.doc['jobs']['probe-2'])
+        self.assertIn('settings.local.json', p2)
+        self.assertIn('$WORK/AGENTS.md', p2)
+        self.assertIn('instructionFiles', p2)
+        self.assertIn('CSL474_AGENTS_CANARY', p2)
+        self.assertIn('--setting-sources user', p2)
+        self.assertIn('mcp.empty', p2)
+
+    def test_probe2_oracle_forces_tool_and_positive_control(self):
+        jobs = self.doc['jobs']
+        self.assertEqual(jobs['probe-0']['timeout-minutes'], '10')
+        self.assertEqual(jobs['probe-2']['timeout-minutes'], '20')
+        p2 = job_text(jobs['probe-2'])
+        self.assertIn('--allowedTools "Bash(true)"', p2)
+        self.assertIn('--max-turns 4', p2)
+        self.assertIn('CSL474_AGENTS_LOADED', p2)
+        self.assertIn('HOOK_CONTROL', p2)
+        self.assertIn('INCONCLUSIVE', p2)
+        self.assertIn('EVIDENCE_EXIT non-green', p2)
+        self.assertIn('Positive control omits --setting-sources user', p2)
+        self.assertIn('CONTROL: instructionFiles=claude-md-or-agents-md', p2)
+        self.assertIn('IFISO: same sources as CONTROL', p2)
+        self.assertIn('ISOLATION: restore CONTROL instructionFiles', p2)
+        self.assertIn('instructionFiles toggled between CONTROL', p2)
+        self.assertIn('claude-md-or-agents-md', p2)
+        self.assertIn('run_probe_invoke CONTROL ""', p2)
+        self.assertIn('run_probe_invoke IFISO ""', p2)
+        self.assertIn('run_probe_invoke ISOLATION user', p2)
+        self.assertIn('run_probe_invoke MCPRO user "$MCP_RO"', p2)
+        self.assertIn('} 2>/tmp/csl-p9-mcp-write.err', p2)
+        self.assertNotIn('refused-unverified-isolation', p2)
+        self.assertNotIn('hooks-stripped', p2)
+        self.assertIn('TOKEN_EXPOSURE cli-env-subprocess-scrubbed', p2)
+        self.assertIn('TOKEN_EXPOSURE', p2)
+        self.assertIn('CLAUDE_CODE_SUBPROCESS_ENV_SCRUB', p2)
+        self.assertIn('bubblewrap', p2)
+        self.assertIn('kernel.apparmor_restrict_unprivileged_userns=0', p2)
+        self.assertIn('bwrap --unshare-user --ro-bind / / -- /bin/true', p2)
+        self.assertNotIn('always() && inputs.enable_probe2_oauth', self.text)
+        self.assertIn('success() && inputs.enable_probe2_oauth', self.text)
+        self.assertIn('https://code.claude.com/docs/en/memory', p2)
+        self.assertNotIn("absent = pass", p2)
+        self.assertIn('AUTH_BOOTSTRAP FAIL', p2)
+        self.assertIn('not recording DONE', p2)
+        self.assertIn('Hook-marker alone or timeout is not a completed session', p2)
+        self.assertIn('CANARY_ISOLATION PASS requires completed P9PROBE2OK', p2)
+        self.assertIn('[ "$MCPRO" = PASS ]', p2)
+        self.assertIn('MCPRO=INCONCLUSIVE', p2)
+        self.assertIn('MCPRO PASS requires user hook marker', p2)
+        self.assertIn('skipping hooked OAuth trials; bootstrap did not PASS', p2)
+        self.assertNotIn('session_ok', p2)
+        self.assertIn('Probe 2 OAuth bootstrap in clean cwd', self.text)
+        self.assertIn('Probe 2 OAuth hooked trials (token in CLI env, subprocess-scrubbed)', self.text)
+        self.assertIn('deferred-to-oauth', p2)
+        self.assertIn('env -u CLAUDE_CODE_OAUTH_TOKEN', p2)
+        self.assertIn('not the isolation claim', p2)
+
+    def test_probe2_fail_is_not_deferred_to_oauth(self):
+        """Samir #278: FAIL still exits non-zero when OAuth is enabled."""
+        p2 = job_text(self.doc['jobs']['probe-2'])
+        fail_idx = p2.find('EVIDENCE_EXIT fail')
+        defer_idx = p2.find('deferred-to-oauth')
+        self.assertGreaterEqual(fail_idx, 0)
+        self.assertGreaterEqual(defer_idx, 0)
+        self.assertLess(fail_idx, defer_idx)
+        self.assertIn(
+            '[ "$HOOK_CONTROL" = FAIL ] || [ "$HOOK_ISOLATION" = FAIL ] || [ "$CANARY_CONTROL" = FAIL ] || [ "$CANARY_ISOLATION" = FAIL ] || [ "$MCPRO" = FAIL ]',
+            p2,
+        )
+        self.assertIn('EVIDENCE_EXIT fail', p2)
+        noauth = [s for s in self.doc['jobs']['probe-2']['steps']
+                  if s.get('name') == 'Probe 2 without OAuth']
+        self.assertEqual(len(noauth), 1)
+        body = noauth[0]['run']
+        after_fail = body.split('rec EVIDENCE_EXIT fail', 1)[1]
+        before_defer = after_fail.split('deferred-to-oauth', 1)[0]
+        self.assertIn('exit 1', before_defer)
+        oauth_steps = [s for s in self.doc['jobs']['probe-2']['steps']
+                       if 'secrets.CLAUDE_CODE_OAUTH_TOKEN' in str(s)]
+        self.assertEqual(len(oauth_steps), 2)
+        for step in oauth_steps:
+            self.assertIn('success()', str(step.get('if')))
+
 if __name__ == '__main__':
     unittest.main()
+
