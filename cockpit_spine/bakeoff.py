@@ -22,8 +22,8 @@ from typing import Any, Protocol
 from successor.route_consumer import DECISION_PROFILE, DecisionOutcome
 from successor.route_consumer.profile import canonical_digest
 
-# TODO(WP8): None until the CP7 protocol (csl-research#47, CSL-518) has merged. Only a human sets this,
-# from a merged record's exact digest.
+# TODO(WP8): None until the CP7 protocol (csl-research#47, CSL-518) has merged. Only a human
+# sets this, from a merged record's exact digest.
 WP8_PROTOCOL: dict[str, str] | None = None
 
 BATCH_KIND = "raw trial batch; plumbing only; not a result record; no verdict"
@@ -59,6 +59,8 @@ class Plan:
             raise ValueError(f"engines must be a non-empty subset of {ENGINES}")
         if len(set(self.engines)) != len(self.engines):
             raise ValueError("an engine may appear once")
+        if not isinstance(self.trials, int) or isinstance(self.trials, bool):
+            raise ValueError("trials must be an integer")
         if not 1 <= self.trials <= MAX_TRIALS:
             raise ValueError(f"trials must be 1 to {MAX_TRIALS}")
 
@@ -108,7 +110,9 @@ def record_step_status() -> dict[str, Any]:
         "step": "result record",
         "state": "blocked" if WP8_PROTOCOL is None else "protocol pinned, writer not implemented",
         "blocked_on": BLOCKED_ON,
-        "todo": "TODO(WP8): pin the merged CP7 protocol digest, then add the writer in its own change",
+        "todo": (
+            "TODO(WP8): pin the merged CP7 protocol digest, then add the writer in its own change"
+        ),
         "result_records_written": 0,
     }
 
