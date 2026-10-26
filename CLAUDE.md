@@ -18,7 +18,12 @@ record in [program.json](docs/replacement/program.json). Accepted bytes and scop
 gates remain controlling. Until the ISSUE-CONTRACT amendment of 2026-10-25 is accepted
 and promoted, only the Lucas Linear digest receipt recorded in `program.json` is exact
 acceptance; once it is, a checker-pinned founder GitHub PR approval will also count, as
-defined in [AGENTS.md](AGENTS.md#founder-decisions-and-integration). Follow [AGENTS.md's founder decision and integration rules](AGENTS.md#founder-decisions-and-integration)
+defined in [AGENTS.md](AGENTS.md#founder-decisions-and-integration). That amendment is
+proposed, not accepted, in `CSL-Laboratories/csl-research` commit
+`d885c2de7228ab4e886b93165d30013e4c8bc5fd`, path
+`contracts/ai-investment-cockpit/amendments/ISSUE-CONTRACT-2026-10-25.md`, SHA-256
+`0b756e0777520f7b8a83d518b6b5887e96ed98eb8481d9d3840ddf4418c9b345`, via
+[csl-research #58](https://github.com/CSL-Laboratories/csl-research/pull/58) (not merged). Follow [AGENTS.md's founder decision and integration rules](AGENTS.md#founder-decisions-and-integration)
 for operational authority; they do not amend accepted contracts, activate R2a or
 unlock live capital. Founders merge after the required current-head reviews and checks;
 agents never merge. A founder's own PR requires another founder's approval before merge,

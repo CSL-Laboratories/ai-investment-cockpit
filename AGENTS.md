@@ -40,7 +40,12 @@ Protected-path amendments require a separately recorded founder-approved
 authoring session; this paragraph grants no blanket editing permission.
 Accepted contracts require their own versioned amendment, exact acceptance and reviewed
 promotion. Until the ISSUE-CONTRACT amendment of 2026-10-25 is accepted and promoted,
-only the recorded Lucas Linear digest receipt is exact acceptance. Once it is accepted and
+only the recorded Lucas Linear digest receipt is exact acceptance. That amendment is
+proposed, not accepted, in `CSL-Laboratories/csl-research` at commit
+`d885c2de7228ab4e886b93165d30013e4c8bc5fd`, path
+`contracts/ai-investment-cockpit/amendments/ISSUE-CONTRACT-2026-10-25.md`, SHA-256
+`0b756e0777520f7b8a83d518b6b5887e96ed98eb8481d9d3840ddf4418c9b345`, via
+https://github.com/CSL-Laboratories/csl-research/pull/58 (not merged). Once it is accepted and
 promoted, a checker-pinned founder GitHub PR approval recorded in
 `docs/replacement/program.json` will also count (approving founder login on the checker
 allowlist `CDanTheMan` / `NotSkittlz` / `samir-shah-ahmed`, exact-case match, approver

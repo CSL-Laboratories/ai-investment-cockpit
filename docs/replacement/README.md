@@ -51,10 +51,14 @@ stays pinned. The offline checker does not call GitHub. Founder identity is
 that allowlist, not any non-author approver. Merge, labels, status, generic PR
 approval, and agent comments are not receipts.
 
-Proposed ISSUE-CONTRACT dual-path wording lives in
-[amendments/ISSUE-CONTRACT-2026-10-25.md](amendments/ISSUE-CONTRACT-2026-10-25.md).
-It is not governing. `ISSUE-CONTRACT.md` remains the CSL-212 bytes until an
-accepted amendment is promoted.
+Proposed ISSUE-CONTRACT dual-path wording is not in this repository. It is a
+proposed amendment, not accepted, in `CSL-Laboratories/csl-research` at commit
+`d885c2de7228ab4e886b93165d30013e4c8bc5fd`, path
+`contracts/ai-investment-cockpit/amendments/ISSUE-CONTRACT-2026-10-25.md`,
+SHA-256 `0b756e0777520f7b8a83d518b6b5887e96ed98eb8481d9d3840ddf4418c9b345`,
+via [csl-research #58](https://github.com/CSL-Laboratories/csl-research/pull/58)
+(not merged). It is not governing. `ISSUE-CONTRACT.md` remains the CSL-212
+bytes until an accepted amendment is promoted.
 
 The current rules in `AGENTS.md`, `CLAUDE.md`, the nine implementation
 invariants, the order path, and all pre-live controls remain authoritative until
