@@ -1,0 +1,8 @@
+# CSL-473 interim E3-1. Matches anthropics/claude-code-action@a5a423f75c251dcbff8a74e99f83b2cb03c72bfa (v1.0.256).
+# Workflows inline these values so a PR checkout cannot swap the pin.
+version=2.1.306
+platform=linux-x64
+sha256=520bc6c1f40af466bd03a278b5ae1af1a2938bc7de5b9e5cb15526da20d71cfe
+bytes=290532720
+url=https://downloads.claude.ai/claude-code-releases/2.1.306/linux-x64/claude
+install_path=/opt/csl-claude/2.1.306/claude

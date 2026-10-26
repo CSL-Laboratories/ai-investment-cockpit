@@ -2,9 +2,10 @@
 
 > **How CSL works:** start with the Linear doc [How CSL works](https://linear.app/csl-laboratories/document/how-csl-works-922e0df6026f).
 
-This project is a solo-developer, subscription-powered, human-gated investing
-copilot. It is paper-first: no live capital moves until the pre-live gates in
-`docs/security-hardening-backlog.md` are satisfied.
+This project is a three-founder, subscription-powered, human-gated investing
+copilot. The three founders are Lucas (NotSkittlz), Chaandan (CDanTheMan), and
+Samir (samir-shah-ahmed). It is paper-first: no live capital moves until the
+pre-live gates in `docs/security-hardening-backlog.md` are satisfied.
 
 The ratified [PRODUCT.md](PRODUCT.md) owns the autonomous paper-product target and
 acceptance; [docs/PLAN.md](docs/PLAN.md) owns delivery order. The current human-gated
@@ -70,13 +71,13 @@ Scope is exactly `whole issue` or `sub-issue CSL-M`, where CSL-M is a sub-issue 
 
 **Session start or resume (CSL-379).** Before any write, check each claim you hold. If its lease plus grace has passed, release it with reason `lease expiry`; never renew it. Re-read the issue, then take a fresh claim. `heartbeat-at` is always the actual edit time from a fresh clock read, never a copied or estimated time.
 
-**Takeover and re-claim.** Another agent's claim is replaced, by takeover or re-claim, only after an explicit release and the ownership coordinator's acknowledgement, posted unprefixed as `ACK TAKEOVER <old uuid>`. Lease expiry alone never lets another agent take over; the CSL-357 automatic takeover conditions do not apply in this repository. Once a claim's lease plus grace has passed, the coordinator may release an abandoned claim by posting an unprefixed `REVOKE CLAIM <uuid>`; a new claim that replaces it still needs `ACK TAKEOVER <old uuid>`. A different agent that claims an issue after another agent's claim on it was released or revoked is taking it over and needs `ACK TAKEOVER <old uuid>`, even though no claim is live. Only two claims are normal claims that need no acknowledgement: a first claim on an issue that no other agent has claimed, and an agent re-claiming when the most recent claim on the issue is its own released claim, such as its own lapsed claim. If any other agent claimed the issue after that, the re-claim needs `ACK TAKEOVER` against the most recent other agent's claim (Lucas's decision, CSL-357 comment 1c643648). A re-claim after a decision reads the decision, the last release record, the remote head and base, and open findings first; earlier claimants get no priority.
+**Takeover and re-claim.** Another agent's claim is replaced, by takeover or re-claim, only after an explicit release and the ownership coordinator's acknowledgement, posted unprefixed as `ACK TAKEOVER <old uuid>`. Lease expiry alone never lets another agent take over; the CSL-357 automatic takeover conditions do not apply in this repository. Once a claim's lease plus grace has passed, the coordinator may release an abandoned claim by posting an unprefixed `REVOKE CLAIM <uuid>`; a new claim that replaces it still needs `ACK TAKEOVER <old uuid>`. A different agent that claims an issue after another agent's claim on it was released or revoked is taking it over and needs `ACK TAKEOVER <old uuid>`, even though no claim is live. Only two claims are normal claims that need no acknowledgement: a first claim on an issue that no other agent has claimed, and an agent re-claiming when the most recent claim on the issue is its own released claim, such as its own lapsed claim. If any other agent claimed the issue after that, the re-claim needs `ACK TAKEOVER` against the most recent other agent's claim (Lucas's decision, CSL-357 comment 1c643648). A re-claim after a decision reads the decision, the last release record, the remote head and base, and open findings first; earlier claimants get no priority. Cross-repo: recursion allows takeover after lease plus grace; this cockpit forbids it without `ACK TAKEOVER`. An agent working in both repos follows each repo's own rule. This note changes neither rule.
 
 **Release.** Release a claim only after its writers have stopped: nothing left to push under that claim and no job you started for it still running. Work under your other non-overlapping claims does not block the release. Edit the claim to `released`, then post an agent-prefixed `release v1` comment with `claim: <uuid>`, `reason: done | decision needed (CSL-M) | handoff | lease expiry | abandoned`, and `done`, `evidence`, `open`, `next` and `files` lines. Releasing never releases a hold or closes a finding.
 
 This guide sets no numeric project WIP cap; any new cap is a separate founder decision. RW-33 swarm depth and leaf limits are unaffected. Claim records are conventions, not locks: a comment is not atomic, and a misbehaving agent is made auditable, not prevented. Atomic compare-and-set claims, machine-enforced leases, fencing, a transactional cost ledger and WIP enforcement are proposed and unimplemented; do not treat them as current machine guarantees. This section changes no platform state, status or REGISTER claim schema and does not rewrite REGISTER policy.
 
-Shared research lives in the private repository [CSL-Laboratories/csl-research](https://github.com/CSL-Laboratories/csl-research). Do not assume published records, a record schema or a validator exist until they are actually present there. A research record should carry sanitized prompt and result hashes; provider, model and processor; run ID or the reason no paid run was made; retrieval date; estimated, reserved and actual costs and any unknowns; a mapping from sources to claims; limitations; what it supersedes; and an artifact manifest. An exact evidence reference requires the repository, the full 40-hex commit, the record path, and the claim and its limitations. Cite the owning product's authenticated exact-digest human receipt when the consumed fragment requires acceptance; otherwise label the material candidate-only and cite its authorized research scope. A receipt identifier alone does not verify identity, digest, scope, conditions or revocation; the responsible reviewer checks those at the source. A bootstrap commit alone proves no research finding. Keep submissions, reviewed knowledge and human decision pointers separate; agents do not promote their own submissions.
+Shared research lives in the private repository [CSL-Laboratories/csl-research](https://github.com/CSL-Laboratories/csl-research). A research body produced under an admitted issue is published there as `submissions/<record_id>/` as part of that issue; no separate admission is needed. This guide grants no extra write route, access or spend. All research output (notes, briefs, findings, source tables, competitor or frontier writeups, research registers or indexes) goes to CSL-Laboratories/csl-research as `submissions/<record_id>/`, through a PR in that repo, with a digest on the Linear issue. Never commit research content to this repo; specs, amendments and code only link to the vault record (repo, 40-hex commit, path, claim, limitations). If csl-research is not accessible, stop and post a blocker on the Linear issue; do not fall back to this repo. Follow that repository's README, AGENTS.md, templates and `tools/check_submission.py`. Each run records its tool, its run id and its cost (or `unknown` plus a reason) in its csl-research record. The record also carries the sanitized report, its SHA-256, retrieval time, a source-to-claim mapping, and `issue_urls`. An exact evidence reference requires the repository, the full 40-hex commit, the record path, and the claim and its limitations. Cite the owning product's authenticated exact-digest human receipt when the consumed fragment requires acceptance; otherwise label the material candidate-only and cite its authorized research scope. A receipt identifier alone does not verify identity, digest, scope, conditions or revocation; the responsible reviewer checks those at the source. A bootstrap commit alone proves no research finding. Keep submissions, reviewed knowledge and human decision pointers separate; agents do not promote their own submissions. Every new non-public doc (research, specs, decisions, evidence and receipts, gate artifacts, and runbooks that are not public) goes to CSL-Laboratories/csl-research through a PR there; this repo only links to it. The only new docs allowed here are public knowledge-base, README, setup and implementation instructions for outside readers, plus agent instruction files. Gate and operational evidence that code or a runbook in this repo already reads stays in `docs/evidence/` until CSL-536. Contract fixtures under `docs/replacement/outcomes/**` stay. Existing files stay until CSL-536 moves them. `docs/research/**` is legacy (no new files).
 
 Never commit secrets, private account details, raw chats, signed URLs, bulk copyrighted material or large dataset dumps to Git; reference approved storage through manifests only. An access denial stops the affected transfer; do not look for alternative routes. Existing approved budgets and subscription routes remain subject to their actual authority; this section activates no API fallback, overage or new spend. New research spend follows the founder decisions section above: Lucas retains spend and new services; any founder may decide research continuation within an already approved budget.
 
@@ -165,11 +166,15 @@ meanwhile ("paused" or other proceed-list work, never the option you are asking
 about or work that presupposes one). A stuck review thread instead goes in the
 PR's roll-up, found only by its `<!-- stuck-pr-threads:owner/repo#N -->` marker,
 in your own block; product and architecture questions stay on the work issue.
-For a decision or direction issue you are assigned or have claimed, the Parallel Task API brief in
-[Linear-first workflow](#linear-first-workflow) still comes first, and Grok Bots do
-not research or resolve decision issues. Then release your claim, if you hold one, with a release
-record and take only other admitted work that is next under the human-approved
-order.
+For a decision or direction issue you are assigned or have claimed, the research requirement in
+[Linear-first workflow](#linear-first-workflow) still comes first. A Grok Bot coordinator may
+research and recommend on a decision or direction issue. Attribute the brief explicitly as
+`Grok Bot, preparing research for <owner>`; never phrase it as if the owner personally
+authored or endorsed the recommendation. Only the designated human decision-maker, or an
+explicitly authorized research team, decides. Publishing a brief never marks the issue
+decided, never clears a hold, and never authorizes implementation. Then release your claim,
+if you hold one, with a release record and take only other admitted work that is next under
+the human-approved order.
 
 **Comment labels.** Agents usually post through a developer's account, so start
 every agent comment with `Agent (<tool/session>, for <developer>):`; it carries no
@@ -233,7 +238,7 @@ research, REGISTER-claimed development and adversarial review. Codex and
 OpenCode are named for these bounded development roles off the order path.
 Naming and installation alone do not qualify a CLI or grant production authority.
 
-- No new Devin jobs. Keep `spawn_devin_leaf.py` frozen for historical audit.
+- No new Devin swarm-dispatch jobs in this cockpit. Keep `spawn_devin_leaf.py` frozen for historical audit. Devin may still post research briefs, which, like all research, land in csl-research.
 - No swarm changes to risk, OrderGateway, mode/approval, audit, eligibility or
   secrets; no broker tools/credentials, soaks or auto rungs. Current production
   Codex decision jobs still use the unchanged hardened runner above.
@@ -253,8 +258,9 @@ Naming and installation alone do not qualify a CLI or grant production authority
   commit/publication instructions and the founder integration rules above apply. Swarm tests
   and receipts never satisfy empirical, paper-day or pre-live gates.
 
-Current process: `docs/research/agent-swarm-rebase-2026-09-14.md`.
-Cloud start: `docs/research/cursor-cloud-rdt-handoff-2026-09-14.md`.
+Historical Cloud process (legacy, frozen): `docs/research/agent-swarm-rebase-2026-09-14.md`.
+Historical Cloud start (legacy, frozen): `docs/research/cursor-cloud-rdt-handoff-2026-09-14.md`.
+Current research landing: CSL-Laboratories/csl-research `submissions/<record_id>/` (see [Research](#research)).
 Market/paper soaks and DEC-09 operator cells stay on their designated hosts.
 
 ## Invariants
@@ -337,20 +343,33 @@ provisioned.
    and prefer inspecting the failure (as `orchestrator/halt.py` does) over branching on
    `os.name`. See `DEC-09` in `docs/REGISTER.md`.
 
-## Web lookups
+## Research
 
-Prefer the project `parallel-search` MCP server (`web_search` / `web_fetch`) for web lookups.
-It is declared in `.cursor/mcp.json` (Cursor) and `.mcp.json` (Claude Code); no API key is required.
-Search/Extract is for lookups. Decision/direction work by the assignee or the claimant also needs the Task API — see Linear-first.
-Use the `exa` MCP server only for substantial deep research (multi-source investigations,
-`agent_run` research tasks); Parallel stays the default for quick lookups and current web facts.
-Exa is billable and capped; see the Exa MCP entry below.
+Every issue and every execution step is grounded in research before the work.
+This applies to decision issues and implementation alike. Size the research to
+the task. No specific tool is required, and there is no separate mandatory
+research pipeline. Research may use any deep-research source the team has,
+such as Parallel, Exa, Claude Deep Research, Open Deep Research,
+ChatGPT Deep Research or the web. Current library docs (for example Context7),
+primary sources and repo evidence remain available; none of these is required.
+
+Prefer already-paid subscriptions. Keep the standing no-pay-per-token-API rule:
+only already-paid subscriptions or existing allowances are used. Metered tools
+such as Exa and Parallel stay within their existing per-person ceilings. No new
+pay-per-token spend. This section adds no spend ceiling. Scheduled routines
+never start metered or paid research on their own.
+
+Record which source or tool produced each piece of evidence, with the date and
+the key sources, so the research can be checked. New non-public docs, including
+research bodies, go to csl-research as in
+[Bounded issue execution and shared evidence](#bounded-issue-execution-and-shared-evidence).
+Existing files stay until CSL-536.
 
 ## Engineering stack (Oct 2026)
 
-- **Parallel Search MCP** — web search and fetch at https://search.parallel.ai/mcp (no key).
+- **Parallel Search MCP** — available web search and fetch at https://search.parallel.ai/mcp (no key); not a required research route.
 - **Context7 MCP** — up-to-date library docs at https://mcp.context7.com/mcp (works without a key).
-- **Exa MCP** — substantial deep research: multi-source investigations and `agent_run` research tasks. Parallel stays the default for quick lookups and current web facts. Declared in `.cursor/mcp.json` and `.mcp.json` (https://mcp.exa.ai/mcp). The key goes in the `x-api-key` header from env var `EXA_API_KEY` (Cursor `${env:EXA_API_KEY}`, Claude Code `${EXA_API_KEY:-}`, so a missing key falls back to Exa's free rate-limited mode instead of breaking the file) and lives only in each environment's secret settings, never in tracked files, prompts, chat or logs. Capped at $50 per person per month (Lucas's decision, CSL-378 comment ff7227ac). Start a billable run only when it keeps you under the cap, and record each run's cost in its research record. Same query rules as Parallel: keep queries generic, with no secrets, proprietary code or private data.
+- **Exa MCP** — available research source at https://mcp.exa.ai/mcp. Declared in `.cursor/mcp.json` and `.mcp.json`. The key goes in the `x-api-key` header from env var `EXA_API_KEY` (Cursor `${env:EXA_API_KEY}`, Claude Code `${EXA_API_KEY:-}`, so a missing key falls back to Exa's free rate-limited mode instead of breaking the file) and lives only in each environment's secret settings, never in tracked files, prompts, chat or logs. Capped at $50 per person per month (Lucas's decision, CSL-378 comment ff7227ac). Start a billable run only when it keeps you under the cap, and record each run's cost in its research record. Keep queries generic, with no secrets, proprietary code or private data.
 - **Linear MCP** — issues, comments, and status at https://mcp.linear.app/mcp (or the Devin Linear integration).
 - **Linear** — source of truth for work. Workspace **CSL laboratories**, team key **CSL**, project **ai-investment-cockpit**.
 - **GitHub** — org **CSL-Laboratories**.
@@ -377,10 +396,11 @@ Agents trigger CI and reviews via these commands/tools or the `ci:full` label.
 
 Agents must stay Linear-aware and proactive. Linear is the source of truth for execution: the assignee (the human owner), claim records, status and discussion. `docs/REGISTER.md` remains the package record: it allocates package IDs and holds package claims, scope and completion contracts. These are separate records, and neither replaces the other. An agent's execution claim is its Linear claim record; neither it nor the assignment allocates, replaces or closes a REGISTER package claim, and a runtime `claim_id` remains the existing REGISTER package ID. Process work with no package says so and does not mint an ID. Cycle decisions stay with [CSL-8](https://linear.app/csl-laboratories/issue/CSL-8); this section sets no cycle. Admission, blocker, claim-release, resume and evidence rules are in [Bounded issue execution and shared evidence](#bounded-issue-execution-and-shared-evidence). Releasing a blocked execution claim does not release the hold. After a blocker, take only a separately admitted issue that is next under an explicit human-approved order; if no such order exists or it is ambiguous, propose the next choice on Linear and wait.
 
-- **Before starting work**, find or create the Linear issue (team **CSL**, project **ai-investment-cockpit**) via the Linear MCP or the Devin Linear integration. Do not start a change without a `CSL-N`.
-- **When you are the assignee or the claimant** (developer or their coding agent working in the repo) of an issue that needs a decision or sets direction, run Parallel Task API deep research before proposing or deciding, in addition to Search/Extract. Post the cited brief (options, tradeoffs, recommendation, target metrics) on the Linear issue, then decide or @mention for approval. Grok Bots do not research or resolve decision issues.
+- **Before starting work**, find or create the Linear issue (team **CSL**, project **ai-investment-cockpit**) via the Linear MCP or the Devin Linear integration. Do not start a change without a `CSL-N`. Ground the issue and each execution step in research first; size it to the task (see [Research](#research)).
+- **When you are the assignee or the claimant** (developer or their coding agent working in the repo) of an issue that needs a decision or sets direction, post a cited brief (options, tradeoffs, recommendation, target metrics) on the Linear issue after the research that grounds the work. A Grok Bot coordinator may research and recommend on that issue. Attribute the brief explicitly as `Grok Bot, preparing research for <owner>`; never phrase it as if the owner personally authored or endorsed the recommendation. Only the designated human decision-maker, or an explicitly authorized research team, decides. Publishing a brief never marks the issue decided, never clears a hold, and never authorizes implementation. The agent @mentions the decision-maker for the decision.
 - Branch names come from Linear's copied branch name, so the PR auto-links. PR title includes `CSL-N`. One issue per PR; keep PRs small and stackable.
 - In the PR body, write `Related to CSL-N` by default; use a closing keyword (`Fixes CSL-N`) only when this PR completes the issue's acceptance criteria. Name the REGISTER package ID, or `none` for process work. Linear automation moving an issue to **Done**, a merge, or an AI PASS is not acceptance evidence.
+- **Formal review requests.** Every review ask needs both (a) an @mention on the Linear issue (`samirshahahmed`, `chaandansaini101`) and (b) a formal GitHub review request: `gh pr edit <n> --add-reviewer samir-shah-ahmed,CDanTheMan` (whichever apply). This is mandatory for agents too.
 - Comment progress on the issue. Move it to **In Progress** once your claim record is confirmed, then **In Review** when the PR is up. A hosted agent without Linear access reports its blocker on the PR to the PR author through its existing channel; the author relays it to the current Linear owner. The hosted agent does not invent API access, and this guide changes no workflow prompts.
 - Grok Bots must read the Linear PR-sync comment (`<!-- pr-sync:<repo>#<n> -->`, written by [`.github/workflows/linear-pr-sync.yml`](.github/workflows/linear-pr-sync.yml)) on the issue before touching shared files. Three people work this repo at once; that comment is the live PR link, mergeable/conflict state, head SHA, and top files.
 - When work reveals follow-ups, bugs, or next steps, create new **Triage** issues with one Type label, the repo label `ai-investment-cockpit`, the project, and a link back to the parent issue or PR — not drive-by changes.
@@ -411,7 +431,7 @@ Hosted split (PR #102):
 - **Codex** has two allowed GitHub review paths, neither a Devin substitute:
   1. **CI/fixer gate** (CSL-103/259, `.github/workflows/codex-gate.yml`) - one nonce-bound `@codex review` per exact head/base/merge/tree candidate and fixer generation; the reply echoes that identity and ends with `CODEX-GATE: READY|MEDIATE`. See Code Review Rules.
   2. **Stuck-thread watch** (CSL-86 / PR #124, `.github/workflows/stuck-thread-watch.yml`) — one advisory `@codex review` on unresolved Devin threads Claude could not settle, and **one** Linear `needs-decision` Triage roll-up per PR titled `Stuck PR threads: <repo>#<PR>`. Shared keys with the Codex CI/fixer gate: `<!-- stuck-pr-threads:owner/repo#N -->` and `<!-- codex-gate-mediate:owner/repo:N -->`; each writer owns only its fenced block. It adopts an existing roll-up only by that `stuck-pr-threads` HTML marker, never by title, and writes Linear only when at least one thread is actionable after the per-PR cap and `CODEX_TRIGGER_PAT` checks (or to create a missing roll-up after an earlier Linear outage). It skips already-approved PRs and updates that roll-up instead of filing a new issue per thread. That reply must **not** include a `CODEX-GATE:` line, and must not push, merge, resolve the thread, or open a fix PR.
-- **GitHub-hosted runners** host the test matrix. That is the GitHub test-CI path, not a revival of the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired from research/dev swarm dispatch" still apply to research/dev swarm jobs.
+- **GitHub-hosted runners** host the test matrix. That is the GitHub test-CI path, not a revival of this cockpit's retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired from this cockpit's research/dev swarm dispatch" still apply to cockpit research/dev swarm jobs. Devin may still post research briefs, which, like all research, land in csl-research.
 - Cursor, Codex (as a coding agent), Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs, except the stuck-thread watcher. A founder may have their own bot post reviews under their account when they direct it. The author agent may fix CI failures on its own PR.
 
 ## Review loop

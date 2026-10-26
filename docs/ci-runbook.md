@@ -66,9 +66,37 @@ adds `ci:full` / `enhancement` (AGENTS.md:143-144, 155-159). Escalate on the Lin
 
 ## 5. Stop or roll back automation
 
+### Confirmed writer collision on one PR
+
+Use the existing `claude:pause` label when a human/agent writer collision is confirmed and
+the applicable human authorization and ownership coordination allow it. It pauses Claude's
+automatic fixes, human-requested `@claude` writes and conflict repair on that PR; CI and
+reviews continue. It neither cancels running jobs nor undoes a push.
+
+1. Read the work issue's current human owner and agent claim, the PR head and active writer
+   runs. Stop competing authoring; do not take over another writer's work. If ownership or
+   authority is unclear, escalate to the owner and ownership coordinator before acting.
+2. Add `claude:pause` **additively to that PR only**. Preserve every other label, including
+   `ci:full`; do not replace the label set. Record the reason, owner, claim, branch/head and
+   pause time on the work issue so the writers can coordinate.
+3. Re-read the labels and head, inspect active runs and their terminal audits, and reconcile
+   any head movement with the owner before continuing. Preparation and publisher checks
+   refuse writes when they observe the pause, but the last live-state check and the push are
+   separate operations: a narrow race remains. The label is not an immediate cancellation or
+   an atomic veto. Do not cancel a workflow without the required human ask.
+4. Keep the pause until writer ownership, the current head, test evidence and review state
+   are reconciled and the applicable human resumption authority is obtained. Never unpause
+   automatically. Existing holds, receipts, attempt budgets and commit caps still apply.
+
+The checks are in `pause_reason` (`scripts/ci/claude_fixer_preflight.py`), the conflict
+writer's `prepare`, and `live_head` / `pause_refusal` before `push_candidate`
+(`scripts/ci/claude_fixer_publish.py`); the publisher also rechecks before queued writes.
+These controls grant no repository-wide pause-variable authority. Setting
+`CLAUDE_FIXER_PAUSE`, including for the rollback below, requires separate authorization.
+
 | Lever | Effect | Who |
 |---|---|---|
-| Label `claude:pause` or `hold` on a PR (any case) | The writers (`@claude`, Devin fixer, conflict writer) stop before checkout or reservation (`pause_reason` in `mention-prepare` and `fixer-prepare`; the conflict writer's `prepare`), and the publishers recheck it before pushing (`pause_refusal`). A pause during a model run makes the publisher refuse; it posts only the workflow's terminal audit. The scan never selects a paused PR. Unreadable labels count as paused | Anyone who can label PRs; agents must never remove a pause |
+| Label `claude:pause` or `hold` on a PR (any case) | The writers (`@claude`, Devin fixer, conflict writer) stop before checkout or reservation (`pause_reason` in `mention-prepare` and `fixer-prepare`; the conflict writer's `prepare`), and the publishers recheck it before pushing (`pause_refusal`). A detected pause refuses the candidate push and queued model writes; the workflow still posts its terminal audit. The check and push are separate, as described above. The scan never selects a paused PR. Unreadable labels count as paused | Anyone who can label PRs, with applicable coordination authority; agents must never remove a pause |
 | Repository variable `CLAUDE_FIXER_PAUSE` set to exactly `true` | Same for every PR, also rechecked by the publishers (`pause_refusal`) and by the scan | Admin |
 | Remove `ci:full` | Stops repeat Windows/macOS on later pushes | Human |
 | (automatic) A fixer pause while a gate-owned `ci:full` is on the PR | The writers revoke only the label event the gate itself recorded; a human-added `ci:full` is never removed (`revoke_owned_ci` in the claude.yml publishers and prepare, and in claude-conflict-writer.yml) | Automatic |
