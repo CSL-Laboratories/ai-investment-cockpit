@@ -652,3 +652,50 @@ const char *csl_env_get(const char *name)
     const char *v = getenv(name);
     return v ? v : "";
 }
+
+int csl_token_copy(const char *in, char *out, size_t cap)
+{
+    size_t n = 0;
+    const unsigned char *p;
+    if (!out || cap < 2) {
+        return -1;
+    }
+    out[0] = 0;
+    if (!in) {
+        return -1;
+    }
+    for (p = (const unsigned char *)in; *p; p++) {
+        unsigned char c = *p;
+        if (c == '\n' || c == '\r') {
+            break;
+        }
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) {
+            out[0] = 0;
+            return -1;
+        }
+        if (n >= 16 || n + 1 >= cap) {
+            out[0] = 0;
+            return -1;
+        }
+        out[n++] = (char)c;
+    }
+    if (n == 0) {
+        return -1;
+    }
+    out[n] = 0;
+    return 0;
+}
+
+int csl_token_read(const char *path, char *out, size_t cap)
+{
+    char buf[32];
+    size_t n = 0;
+    if (csl_read_file(path, buf, sizeof buf, &n) != 0) {
+        return -1;
+    }
+    if (n >= sizeof buf) {
+        n = sizeof buf - 1;
+    }
+    buf[n] = 0;
+    return csl_token_copy(buf, out, cap);
+}
