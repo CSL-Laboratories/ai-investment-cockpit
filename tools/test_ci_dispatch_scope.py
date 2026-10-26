@@ -566,7 +566,15 @@ class DispatchScopeTests(unittest.TestCase):
                 self.assertEqual(evaluate(ref), 'a' * 40)
                 self.assertEqual(evaluate(ref, **{'inputs.merge_sha': 'b' * 40}), 'b' * 40)
                 self.assertEqual(evaluate(ref, **candidate), 'c' * 40)
-                self.assertEqual(merge['with']['fetch-depth'], '2')
+                # CSL-544: linux/windows/macos run the replacement-program
+                # checker via run-gates/pytest and need full history so
+                # git show <approved_sha>:<path> can resolve. filter and
+                # rust-book do not run that checker; they stay at depth 2
+                # (label-dispatch HEAD^2 validation / rust book tests).
+                if job in ('linux', 'windows', 'macos'):
+                    self.assertEqual(merge['with']['fetch-depth'], '0')
+                else:
+                    self.assertEqual(merge['with']['fetch-depth'], '2')
         self.assertEqual(self.step['env']['PR_HEAD_SHA'], '${{ github.event.pull_request.head.sha }}')
         self.assertEqual(self.step['env']['MERGE_SHA'], '${{ github.sha }}')
 
