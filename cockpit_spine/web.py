@@ -34,6 +34,7 @@ from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
+from cockpit_spine.ids import is_id
 from cockpit_spine.service import API_VERSION, OperatorService
 from cockpit_spine.session import PENDING
 
@@ -71,8 +72,10 @@ def _form(
     fields = [f'<input type="hidden" name="token" value="{_esc(token)}">',
               f'<input type="hidden" name="command" value="{command}">']
     fields += [f'<input type="hidden" name="{k}" value="{_esc(v)}">' for k, v in hidden.items()]
-    fields += [f'<label>{name} <input type="text" name="{name}" maxlength="200"></label>'
-               for name in visible]
+    fields += [
+        f'<label>{name} <input type="text" name="{name}" maxlength="'
+        f'{"2000" if name == "prompt" else "200"}"></label>'
+        for name in visible]
     button = command if not subject else f"{command} {subject}"
     return (
         f'<form method="post" action="/act">{"".join(fields)}'
@@ -89,12 +92,14 @@ def render_page(service: OperatorService, token: str, response: dict | None = No
         forms.append(_form(token, "propose", {}, ("request_id", "prompt")))
         for item in service.session.proposals():
             if item["state"] == PENDING:
-                hidden = {"proposal_id": item["proposal_id"],
+                proposal_id = item["proposal_id"]
+                hidden = {"proposal_id": proposal_id,
                           "confirm_digest": item["payload_digest"]}
-                subject = item["proposal_id"]
-                forms.append(_form(token, "approve", hidden, ("operator",), subject))
+                caption = proposal_id if is_id(proposal_id) else "withheld id"
+                forms.append(_form(token, "approve", hidden, ("operator",), caption))
                 forms.append(_form(
-                    token, "veto", {"proposal_id": subject}, ("operator", "reason"), subject))
+                    token, "veto", {"proposal_id": proposal_id},
+                    ("operator", "reason"), caption))
         forms.append(_form(token, "stop", {}, ("operator", "reason")))
     return (
         "<!doctype html><html><head><meta charset=\"utf-8\"><title>Operator</title></head>"

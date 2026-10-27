@@ -362,5 +362,32 @@ class PageStateTests(ViewCase):
         self.assertLess(seen[0], seen[1])
 
 
+class CaptionAndFieldTests(unittest.TestCase):
+    def service(self, source=None) -> svc.OperatorService:
+        session = sess.OperatorSession.open(
+            session_id="s-1", mode="paper", source=source or FakeProposalSource(),
+            clock=counter_clock())
+        return svc.OperatorService(session, REGISTRY)
+
+    def test_a_non_identifier_proposal_id_is_withheld_on_the_button(self) -> None:
+        service = self.service(ScriptedSource(accepted(proposal_payload("1234567"))))
+        service.handle({
+            "api": svc.API_VERSION, "command": "propose", "args": {"request_id": "req-1"}})
+        page = web.render_page(service, "tok")
+        self.assertEqual(2, page.count('value="1234567"'))
+        self.assertIn(">approve withheld id<", page)
+        self.assertIn(">veto withheld id<", page)
+        self.assertNotIn("approve 1234567", page)
+        self.assertNotIn("veto 1234567", page)
+
+    def test_the_prompt_field_allows_2000_characters(self) -> None:
+        page = web.render_page(self.service(), "tok")
+        self.assertLess(2000, web.MAX_BODY)
+        self.assertIn('name="prompt" maxlength="2000"', page)
+        self.assertEqual(1, page.count('maxlength="2000"'))
+        for name in ("request_id", "operator", "reason"):
+            self.assertIn(f'name="{name}" maxlength="200"', page)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
