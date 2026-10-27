@@ -631,6 +631,79 @@ class SourceFailureTests(unittest.TestCase):
         self.assertNotIn("proposal_received", kinds(session))
         sess.OperatorSession.replay(session.records(), source=ScriptedSource())
 
+    def test_back_to_back_fetches_succeed_and_a_hung_fetch_still_refuses_the_next(self) -> None:
+        """Gate on the in-flight flag, not on whether the worker thread is alive.
+
+        The worker clears the flag before the thread exits. Two proposes with no
+        join in between both get the source's real outcome, even while the first
+        thread is still alive. A hung fetch leaves the flag set, so the next
+        propose is the same fail-closed source_timeout and starts no thread.
+        """
+
+        hold = threading.Event()
+        original_run = sess.threading.Thread.run
+
+        def lingering_run(worker: threading.Thread) -> None:
+            try:
+                original_run(worker)
+            finally:
+                if worker.name == "proposal-fetch":
+                    hold.wait(5)
+
+        sess.threading.Thread.run = lingering_run  # type: ignore[method-assign]
+        hung = _HungThenAccepted()
+
+        def release() -> None:
+            hold.set()
+            hung.release.set()
+            sess.threading.Thread.run = original_run  # type: ignore[method-assign]
+            for item in threading.enumerate():
+                if item.name == "proposal-fetch":
+                    item.join(2)
+
+        self.addCleanup(release)
+        session, source = open_session(
+            accepted(proposal_payload("prop-1")), accepted(proposal_payload("prop-2")))
+        first = session.request_proposal(request_id="r1", prompt="p")
+        self.assertEqual((True, "proposal_received"), (first.ok, first.code))
+        worker = session._fetch_worker
+        assert worker is not None
+        self.assertTrue(worker.is_alive())
+        self.assertFalse(session._fetch_in_flight)
+        second = session.request_proposal(request_id="r2", prompt="p")
+        self.assertTrue(worker.is_alive())
+        self.assertEqual((True, "proposal_received"), (second.ok, second.code))
+        self.assertEqual(["r1", "r2"], [call["request_id"] for call in source.calls])
+        self.assertEqual("pending", session.proposal("prop-1")["state"])
+        self.assertEqual("pending", session.proposal("prop-2")["state"])
+        self.assertNotIn(sess.SOURCE_TIMEOUT, [r["data"].get("reason") for r in session.records()])
+        sess.OperatorSession.replay(session.records(), source=ScriptedSource())
+
+        hung_session = sess.OperatorSession.open(
+            session_id="s-2", mode="paper", source=hung, clock=counter_clock(),
+            fetch_deadline_seconds=0.2)
+        timed_out = hung_session.request_proposal(request_id="h1", prompt="p")
+        self.assertEqual((False, sess.SOURCE_TIMEOUT), (timed_out.ok, timed_out.code))
+        self.assertTrue(hung_session._fetch_in_flight)
+        hung_worker = hung_session._fetch_worker
+        running = threading.active_count()
+        fetchers = _live_fetchers()
+        began = time.monotonic()
+        refused = hung_session.request_proposal(request_id="h2", prompt="p")
+        self.assertLess(time.monotonic() - began, 0.5)
+        self.assertEqual((False, sess.SOURCE_TIMEOUT), (refused.ok, refused.code))
+        refusal = hung_session.records()[-1]
+        self.assertEqual(
+            ("proposal_refused", "watch_only", False, sess.SOURCE_TIMEOUT),
+            (refusal["kind"], refusal["data"]["fail_closed_to"],
+             refusal["data"]["quarantined"], refusal["data"]["reason"]))
+        self.assertEqual(running, threading.active_count())
+        self.assertEqual(fetchers, _live_fetchers())
+        self.assertIs(hung_worker, hung_session._fetch_worker)
+        self.assertEqual([], hung_session.proposals())
+        self.assertNotIn("proposal_received", kinds(hung_session))
+        sess.OperatorSession.replay(hung_session.records(), source=ScriptedSource())
+
 
 def _live_fetchers() -> int:
     return sum(

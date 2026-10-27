@@ -15,9 +15,11 @@ again, and every later command is refused (Inv 7, fail closed).
 
 A proposal fetch has a deadline. Missing it records a refusal fail-closed to
 ``watch_only`` and drops the late result, so a hung source cannot approve or act.
-Only one fetch runs at a time. While its worker is still alive, another propose
-is that same refusal and starts no thread, so a hanging source cannot pile up
-workers in a long-lived service.
+Only one fetch runs at a time. While that fetch has started and not yet
+returned, another propose is that same refusal and starts no thread, so a
+hanging source cannot pile up workers in a long-lived service. The gate follows
+that in-flight flag, not whether the worker thread is still alive, so a
+finished fetch does not refuse the next propose.
 """
 
 from __future__ import annotations
@@ -128,6 +130,9 @@ class OperatorSession:
         self._clock = clock
         self._fetch_deadline_seconds = fetch_deadline_seconds
         self._fetch_gate = threading.Lock()
+        # True from worker start until fetch returns. Not thread liveness:
+        # the worker clears this before the thread exits.
+        self._fetch_in_flight = False
         self._fetch_worker: threading.Thread | None = None
         self._chain = AuditChain()
         self.session_id: str | None = None
@@ -347,8 +352,8 @@ class OperatorSession:
         if outcome is _FETCH_TIMED_OUT:
             # The worker may still be inside fetch, or an earlier one still is.
             # Neither touches this session, so a late payload cannot become a
-            # proposal or an approval. A second propose while a worker is alive
-            # is the same fail-closed refusal and starts no further thread.
+            # proposal or an approval. A second propose while a fetch is in
+            # flight is the same fail-closed refusal and starts no further thread.
             return self._refusal_record(request_id, SOURCE_TIMEOUT, quarantined=False)
         try:
             return self._from_outcome(request_id, outcome)
@@ -360,10 +365,15 @@ class OperatorSession:
     def _fetch_bounded(self, request_id: str, prompt: str) -> object:
         """Call the source, or return the timeout sentinel when the deadline passes.
 
-        At most one worker is in flight. A propose that arrives while that worker
-        is still alive returns the timeout sentinel immediately and starts nothing.
-        The worker is a daemon so a hung fetch does not keep the process alive
-        after the refusal is recorded. It only writes its own local box.
+        At most one fetch is in flight. The flag is set when the worker starts
+        and cleared under the gate when ``fetch`` returns, which is before the
+        thread exits. A propose that arrives while the flag is set returns the
+        timeout sentinel immediately and starts nothing. A caller timeout does
+        not clear the flag: the worker is still inside ``fetch``, and clearing
+        it would let the next propose start another thread. When that worker
+        later returns it clears the flag. The worker is a daemon so a hung fetch
+        does not keep the process alive after the refusal is recorded. It only
+        writes its own local box.
         """
 
         box: dict[str, object] = {}
@@ -376,11 +386,16 @@ class OperatorSession:
             except Exception as exc:  # noqa: BLE001 - handed back to the caller thread
                 box["error"] = exc
             finally:
+                # Clear before waking the caller, so a back-to-back propose sees
+                # the fetch as finished while this thread is still unwinding.
+                with self._fetch_gate:
+                    self._fetch_in_flight = False
                 finished.set()
 
         with self._fetch_gate:
-            if self._fetch_worker is not None and self._fetch_worker.is_alive():
+            if self._fetch_in_flight:
                 return _FETCH_TIMED_OUT
+            self._fetch_in_flight = True
             worker = threading.Thread(target=run, name="proposal-fetch", daemon=True)
             self._fetch_worker = worker
             worker.start()
