@@ -8,14 +8,14 @@
         },
         "pointer": "/cells"
       },
-      "digest": "sha256:04664e66cb4ed8c6bb520c6d5e8fd39447a64f4ccf2427a499a712e5722107ab",
+      "digest": "sha256:a821e0bcd75d57fa9c3873b2a3c78465046fb46e059cbbc31da2bcf698191033",
       "label": "X2 plumbing cells accepted by the consumer",
       "projection_id": "x2-fake-driver-cells-accepted",
       "source": {
-        "commit": "4433a371a9fd73801b1d9d01c740a07236d5e58e",
-        "path": "successor/route_consumer/records/x2-fake-driver-bakeoff.json",
-        "repository": "CSL-Laboratories/ai-investment-cockpit",
-        "sha256": "2c087cb1d88845524a47afe0b202f6984e06fa1d26ffc79dbb8f4e1105304f73"
+        "commit": "4aa2190d0ee198b7735d4396c0fb3e2a4763c3b2",
+        "path": "contracts/ai-investment-cockpit/evidence/x2-fake-driver-bakeoff.json",
+        "repository": "CSL-Laboratories/csl-research",
+        "sha256": "0d94f066256ded639ddae11a5122b8e88ba9f29609e6dbcebbd6a55f201619b3"
       },
       "tier": "published",
       "unit": "cells",
@@ -29,14 +29,14 @@
         },
         "pointer": "/cells"
       },
-      "digest": "sha256:aebeb01efaf00df9d13e18e7a813547d368ebe73dd7d133fdc92a2e85715e246",
+      "digest": "sha256:d55a314f1ecc1b9be4d8d35d1bf731578bb37abf9c1c850e754bd039e043961b",
       "label": "X2 plumbing cells that failed closed",
       "projection_id": "x2-fake-driver-cells-fail-closed",
       "source": {
-        "commit": "4433a371a9fd73801b1d9d01c740a07236d5e58e",
-        "path": "successor/route_consumer/records/x2-fake-driver-bakeoff.json",
-        "repository": "CSL-Laboratories/ai-investment-cockpit",
-        "sha256": "2c087cb1d88845524a47afe0b202f6984e06fa1d26ffc79dbb8f4e1105304f73"
+        "commit": "4aa2190d0ee198b7735d4396c0fb3e2a4763c3b2",
+        "path": "contracts/ai-investment-cockpit/evidence/x2-fake-driver-bakeoff.json",
+        "repository": "CSL-Laboratories/csl-research",
+        "sha256": "0d94f066256ded639ddae11a5122b8e88ba9f29609e6dbcebbd6a55f201619b3"
       },
       "tier": "published",
       "unit": "cells",
@@ -47,20 +47,20 @@
         "kind": "len_at",
         "pointer": "/cells"
       },
-      "digest": "sha256:789f8e01b4d1aa7592236387044d6b82da3f02ae632a50ed700aab00dd02f41d",
+      "digest": "sha256:835444ce09c1b9c22fc90116f37b32ed1c22bb61873580e1f87d9e285ac87095",
       "label": "Cells in the X2 plumbing record (not a result)",
       "projection_id": "x2-fake-driver-cells-total",
       "source": {
-        "commit": "4433a371a9fd73801b1d9d01c740a07236d5e58e",
-        "path": "successor/route_consumer/records/x2-fake-driver-bakeoff.json",
-        "repository": "CSL-Laboratories/ai-investment-cockpit",
-        "sha256": "2c087cb1d88845524a47afe0b202f6984e06fa1d26ffc79dbb8f4e1105304f73"
+        "commit": "4aa2190d0ee198b7735d4396c0fb3e2a4763c3b2",
+        "path": "contracts/ai-investment-cockpit/evidence/x2-fake-driver-bakeoff.json",
+        "repository": "CSL-Laboratories/csl-research",
+        "sha256": "0d94f066256ded639ddae11a5122b8e88ba9f29609e6dbcebbd6a55f201619b3"
       },
       "tier": "published",
       "unit": "cells",
       "value": 20
     }
   ],
-  "registry_digest": "sha256:51931126867f9e141bfafccb7d3fbc5923575618afc6a80c5ba5c1f9f4ab9843",
+  "registry_digest": "sha256:b08d2e8bac84caf3d8cb47af073793278e70e5fe61ebb1ce39f63e2a9b7e0f2b",
   "registry_version": 1
 }

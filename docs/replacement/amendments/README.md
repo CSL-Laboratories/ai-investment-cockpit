@@ -16,6 +16,13 @@ Lucas's exact-digest Linear receipt until a follow-up amends them.
 Research for these amendments lives in `CSL-Laboratories/csl-research`, not in
 this repository. Product files only link to vault records.
 
+The 2026-10-25 ISSUE-CONTRACT proposal is not in this folder. It is proposed,
+not accepted, in `CSL-Laboratories/csl-research` at commit
+`d885c2de7228ab4e886b93165d30013e4c8bc5fd`, path
+`contracts/ai-investment-cockpit/amendments/ISSUE-CONTRACT-2026-10-25.md`,
+SHA-256 `0b756e0777520f7b8a83d518b6b5887e96ed98eb8481d9d3840ddf4418c9b345`,
+via https://github.com/CSL-Laboratories/csl-research/pull/58 (not merged).
+
 ## Update rule
 
 Founders are Lucas, Samir (`samir-shah-ahmed`), and Dan/Chaandan

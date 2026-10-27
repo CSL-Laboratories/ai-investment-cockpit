@@ -54,9 +54,22 @@ static void wrap_print(const char *body)
 
 static void not_relayed(const char *reason)
 {
-    char buf[128];
+    char buf[160];
     snprintf(buf, sizeof buf, "%s%s", LINE_NOT_RELAYED, reason);
     wrap_print(buf);
+}
+
+static void not_relayed_no_end(void)
+{
+    char why[20], f1[20], reason[80];
+    if (csl_token_read(CSL_REFUSE_PATH, why, sizeof why) != 0) {
+        snprintf(why, sizeof why, "none");
+    }
+    if (csl_token_read(CSL_F1_MISS_PATH, f1, sizeof f1) != 0) {
+        snprintf(f1, sizeof f1, "none");
+    }
+    snprintf(reason, sizeof reason, "no_end why=%s f1=%s", why, f1);
+    not_relayed(reason);
 }
 
 static int parse_status(const char *status, int *end, int *pair, int *writers,
@@ -243,7 +256,7 @@ int main(int argc, char **argv)
         return 0;
     }
     if (!end) {
-        not_relayed("no_end");
+        not_relayed_no_end();
         return 0;
     }
     while (!pair && waited < CSL_WRITER_WAIT_MS) {
@@ -291,7 +304,7 @@ int main(int argc, char **argv)
 
     capfd = open(CSL_CAPTURE_PATH, O_RDONLY | O_CLOEXEC);
     if (capfd < 0) {
-        not_relayed("no_end");
+        not_relayed_no_end();
         return 0;
     }
     (void)csl_read_all(capfd, cap, CSL_CAP_BYTES, &n);

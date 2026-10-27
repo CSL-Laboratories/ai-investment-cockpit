@@ -76,11 +76,15 @@ class ProfileTests(unittest.TestCase):
             self.skipTest("legacy app/ tree is gone; the profile digests are authoritative")
         for profile in DECISION_PROFILE.values():
             name = f"{profile.output_schema_name}.schema.json"
-            self.assertEqual(
-                (legacy / name).read_bytes(),
-                (pin.PACKAGE_DIR / "output_schemas" / name).read_bytes(),
-                name,
-            )
+            successor = pin.PACKAGE_DIR / "output_schemas" / name
+            legacy_path = legacy / name
+            if profile.output_schema_name == "InterrogationAnswer":
+                fresh = json.loads(successor.read_text(encoding="utf-8"))
+                old = json.loads(legacy_path.read_text(encoding="utf-8"))
+                self.assertEqual(["fresh"], fresh["properties"]["pattern"]["enum"])
+                self.assertEqual(["resume", "fresh"], old["properties"]["pattern"]["enum"])
+                continue
+            self.assertEqual(legacy_path.read_bytes(), successor.read_bytes(), name)
 
     def test_every_profile_is_analysis_only_zero_tools_and_bounded(self) -> None:
         for profile in DECISION_PROFILE.values():
@@ -89,9 +93,9 @@ class ProfileTests(unittest.TestCase):
             self.assertGreaterEqual(profile.max_turns, 1)
             self.assertGreater(profile.timeout_s, 0)
 
-    def test_interrogation_profile_schema_requires_the_fresh_pattern_vocabulary(self) -> None:
+    def test_interrogation_profile_schema_is_fresh_only(self) -> None:
         schema = load_output_schema(DECISION_PROFILE["workload-d05"])
-        self.assertEqual(["resume", "fresh"], schema["properties"]["pattern"]["enum"])
+        self.assertEqual(["fresh"], schema["properties"]["pattern"]["enum"])
 
 
 class InvariantTwoTableTests(unittest.TestCase):
