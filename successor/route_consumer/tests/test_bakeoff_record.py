@@ -9,30 +9,23 @@ import unittest
 from successor.route_consumer import pin
 from successor.route_consumer.tests.support import bakeoff
 
-# Published evidence. These bytes are the record at csl-research blob 65e3673e,
-# which is the bakeoff from before 9ff16093. That commit changed the
-# interrogation schema digest and, with it, three workload-d05 request digests.
+# Published evidence. csl-research commit 4aa2190d (blob b36a5b11) stores the
+# same bytes as bakeoff.render(bakeoff.run()) on this tree. The suite locks that
+# digest offline and does not fetch the vault.
 VAULT = {
     "repository": "CSL-Laboratories/csl-research",
-    "commit": "786192e67513c13c9e70ab5628b36ad9c89f6e1d",
+    "commit": "4aa2190d0ee198b7735d4396c0fb3e2a4763c3b2",
     "path": "contracts/ai-investment-cockpit/evidence/x2-fake-driver-bakeoff.json",
-    "sha256": "44c0c40989eb0e5f3a9aefa061ef809facdad433451ed3636ce50cb15e3e0248",
-    "git_blob": "65e3673e47895cde2edcd045c39bdb86e60e94e6",
+    "sha256": "0d94f066256ded639ddae11a5122b8e88ba9f29609e6dbcebbd6a55f201619b3",
+    "git_blob": "b36a5b119d8df40fd485079d564fdc2c4cc5d2f0",
     "url": (
         "https://github.com/CSL-Laboratories/csl-research/blob/"
-        "786192e67513c13c9e70ab5628b36ad9c89f6e1d/"
+        "4aa2190d0ee198b7735d4396c0fb3e2a4763c3b2/"
         "contracts/ai-investment-cockpit/evidence/x2-fake-driver-bakeoff.json"
     ),
     "claim": "X2 live integration deferred. Plumbing record on the fake driver.",
-    "limitations": (
-        "No model comparison, no live provider call, no CP7 result, and no verdict. "
-        "These bytes are the vaulted snapshot (blob 65e3673e); a fresh run after the "
-        "interrogation schema digest change does not reproduce that file."
-    ),
+    "limitations": "No model comparison, no live provider call, no CP7 result, and no verdict.",
 }
-
-# sha256 of bakeoff.render(bakeoff.run()) on this tree. Not VAULT["sha256"].
-FRESH_RECORD_SHA256 = "0d94f066256ded639ddae11a5122b8e88ba9f29609e6dbcebbd6a55f201619b3"
 
 
 class BakeoffRecordTests(unittest.TestCase):
@@ -58,8 +51,11 @@ class BakeoffRecordTests(unittest.TestCase):
         self.assertFalse((pin.PACKAGE_DIR / "records" / "x2-fake-driver-bakeoff.json").exists())
 
     def test_fresh_run_canonical_sha256_is_stable(self) -> None:
-        digest = hashlib.sha256(self.rendered.encode("utf-8")).hexdigest()
-        self.assertEqual(FRESH_RECORD_SHA256, digest)
+        encoded = self.rendered.encode("utf-8")
+        digest = hashlib.sha256(encoded).hexdigest()
+        self.assertEqual(VAULT["sha256"], digest)
+        self.assertEqual(self.reference["sha256"], digest)
+        self.assertEqual(7478, len(encoded))
 
     def test_record_is_labeled_deferred_and_makes_no_live_claim(self) -> None:
         record = self.fresh

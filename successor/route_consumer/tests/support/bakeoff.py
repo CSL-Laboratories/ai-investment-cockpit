@@ -7,8 +7,10 @@ nothing about models, runs no provider, and carries no verdict. X2 live
 integration is deferred until CSL-460 provides a live route.
 
 The recorded bytes are not stored in this repo. ``records/x2-fake-driver-bakeoff.ref.json``
-pins the csl-research commit, path, sha256 and blob. Printing the rebuilt record
-is local only; ``--write`` refuses, so the evidence file cannot land here again.
+pins the csl-research commit, path, sha256 and blob. That pin matches
+``render(run())`` on this tree. Printing the rebuilt record is local only;
+``--write`` refuses, so the evidence file cannot land here again. The tests
+do not fetch the vault.
 """
 
 from __future__ import annotations
