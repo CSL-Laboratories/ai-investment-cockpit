@@ -1,0 +1,55 @@
+{
+  "kind": "privacy_disclosure",
+  "schema_version": "o5.candidate.v1",
+  "issue": "CSL-217",
+  "claimed_maturity": "researched",
+  "not_claimed": [
+    "human_decided",
+    "contract_frozen",
+    "prototyped",
+    "implemented",
+    "provider_free_verified",
+    "demo_or_paper_qualified",
+    "shadow_qualified",
+    "limited_live_qualified",
+    "release_qualified"
+  ],
+  "qualification_claimed": false,
+  "empirical_pass_claimed": false,
+  "contract_frozen_claimed": false,
+  "status": "proposal_only",
+  "decided": false,
+  "owner": "Lucas",
+  "classes": [
+    {
+      "id": "public_market_text",
+      "proposed_default": "needs_owner_decision",
+      "admitted": false,
+      "note": "Proposed class only. Not admitted to any provider."
+    },
+    {
+      "id": "raw_filing_text",
+      "proposed_default": "needs_owner_decision",
+      "admitted": false,
+      "note": "Licensing, retention and redistribution stay unresolved."
+    },
+    {
+      "id": "account_positions",
+      "proposed_default": "needs_owner_decision",
+      "admitted": false,
+      "note": "Account data disclosure is an owner decision."
+    },
+    {
+      "id": "credentials",
+      "proposed_default": "forbidden",
+      "admitted": false,
+      "note": "Credentials never enter a prompt or a provider payload."
+    },
+    {
+      "id": "order_instructions",
+      "proposed_default": "forbidden",
+      "admitted": false,
+      "note": "An order instruction is not a model disclosure class."
+    }
+  ]
+}
