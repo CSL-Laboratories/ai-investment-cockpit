@@ -1,0 +1,49 @@
+{
+  "api_version": "o1.product.v0",
+  "outcome": "O1",
+  "linear_issue": "CSL-213",
+  "maturity": "researched",
+  "qualification_claimed": false,
+  "live_authority_granted": false,
+  "algorithm": "files[].sha256 is sha256 of each listed file's bytes, paths relative to docs/replacement/outcomes/O1; files_bundle_sha256 is sha256 of the UTF-8 bytes of json.dumps(files, sort_keys=True, separators=(\",\", \":\"), ensure_ascii=False), files in listed order",
+  "excludes_self": true,
+  "binds_human_receipt": false,
+  "files_bundle_sha256": "271d97d72f78f2fb2e1f0d4374e10e7a2c13dd6729e59870f3f3514b46d72c4c",
+  "files": [
+    {
+      "path": "CONTRACT.md",
+      "sha256": "9f37e0af5df7508fbc6c6d884204431d3a1495fa99c4d6c58aa5661a96de1f3b",
+      "role": "pinned"
+    },
+    {
+      "path": "capability-matrix.json",
+      "sha256": "f616f7e8b9ef91fe80e491483276c2047c5dc64a2833735afbc3871bbe933777",
+      "role": "pinned"
+    },
+    {
+      "path": "economic-metrics.json",
+      "sha256": "6d49e91982812cf5611fa19993a76523469266440c6167c45c3637a7aa3c5e9c",
+      "role": "pinned"
+    },
+    {
+      "path": "non-goals.json",
+      "sha256": "8144b5166e185020e16019e20b677ca69e58b865efc7d791e04afb4be8dface9",
+      "role": "pinned"
+    },
+    {
+      "path": "unknowns.json",
+      "sha256": "b9689fa45b55f8f66ee034a12a138d2762b550cc802bc0dcc51f8018ef503ce7",
+      "role": "pinned"
+    },
+    {
+      "path": "unresolved-decisions.json",
+      "sha256": "53b5d515493ad994ffbf0d11181011d38b24fa042410a9b6ed98bd69597fc828",
+      "role": "pinned"
+    },
+    {
+      "path": "gates.json",
+      "sha256": "e1288dbea1be1680eb6cc5898389177b11ea65b099169c72aa9c7f1fca90d5e4",
+      "role": "pinned"
+    }
+  ]
+}

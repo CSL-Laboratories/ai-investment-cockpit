@@ -1,0 +1,203 @@
+{
+  "api_version": "o1.product.v0",
+  "outcome": "O1",
+  "maturity": "researched",
+  "research_input": {
+    "run_id": "trun_db705696fec649d8ad991d8f8f7b7813",
+    "claim": "research_input_only",
+    "path": "docs/replacement/AUTHORITY-COMPLIANCE-RESEARCH.md",
+    "sha256": "b023b4d7f12e6b764dd466ac61fb0de61e7ec2962670201ab98bd33fd45008d6",
+    "attribution": "Accepted CSL-212 research digest. Not legal advice and not eligibility."
+  },
+  "items": [
+    {
+      "id": "event-contract-law-and-state-restrictions",
+      "topic": "legal_eligibility",
+      "statement": "Current event-contract law, state restrictions, litigation, and participant facts.",
+      "fails_closed": true,
+      "source": {
+        "kind": "research_input_only",
+        "path": "docs/replacement/AUTHORITY-COMPLIANCE-RESEARCH.md",
+        "section": "Unresolved questions that fail closed"
+      }
+    },
+    {
+      "id": "operator-legal-role-beyond-own-account",
+      "topic": "legal_eligibility",
+      "statement": "The operator's legal role if scope expands beyond own-account use.",
+      "fails_closed": true,
+      "source": {
+        "kind": "research_input_only",
+        "path": "docs/replacement/AUTHORITY-COMPLIANCE-RESEARCH.md",
+        "section": "Unresolved questions that fail closed"
+      }
+    },
+    {
+      "id": "venue-rulebooks-and-resolution",
+      "topic": "venue",
+      "statement": "Current venue rulebooks, product restrictions, position limits, and resolution.",
+      "fails_closed": true,
+      "source": {
+        "kind": "research_input_only",
+        "path": "docs/replacement/AUTHORITY-COMPLIANCE-RESEARCH.md",
+        "section": "Unresolved questions that fail closed"
+      }
+    },
+    {
+      "id": "provider-permission",
+      "topic": "provider",
+      "statement": "Provider financial-use permission, retention, geographic availability, and required human review.",
+      "fails_closed": true,
+      "source": {
+        "kind": "research_input_only",
+        "path": "docs/replacement/AUTHORITY-COMPLIANCE-RESEARCH.md",
+        "section": "Unresolved questions that fail closed"
+      }
+    },
+    {
+      "id": "adapter-recovery",
+      "topic": "adapter",
+      "statement": "Adapter idempotency, cancellation, recovery, and test versus live differences.",
+      "fails_closed": true,
+      "source": {
+        "kind": "research_input_only",
+        "path": "docs/replacement/AUTHORITY-COMPLIANCE-RESEARCH.md",
+        "section": "Unresolved questions that fail closed"
+      }
+    },
+    {
+      "id": "tax-impact",
+      "topic": "tax",
+      "statement": "Tax impact on the first net-yield metric is unknown. Pre-tax net yield stays primary.",
+      "decision_id": "D7",
+      "value": "unknown",
+      "source": {
+        "kind": "human_linear_comment",
+        "linear_issue": "CSL-213",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "author_name": "Samir",
+        "attribution": "Samir decided the reporting posture. He did not decide a tax treatment."
+      }
+    },
+    {
+      "id": "data-entitlement",
+      "topic": "entitlement",
+      "statement": "Collection, licensing, retention, and redistribution terms for continuing acquisition are not established. Demo or read-only access is not blanket data permission.",
+      "source": {
+        "kind": "accepted_csl212_receipt",
+        "comment_id": "25c50b43-6de4-4f6d-9652-47a649ccc5ae",
+        "document": "docs/replacement/SUCCESSOR-PRODUCT.md",
+        "attribution": "Accepted successor product. No entitlement was measured in this pass."
+      }
+    },
+    {
+      "id": "capital-base-value",
+      "topic": "capital",
+      "statement": "The capital base used for evaluation is unset.",
+      "decision_id": "D4",
+      "owner": "Lucas",
+      "source": {
+        "kind": "left_open",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "attribution": "Samir left D4 to Lucas. No amount is selected."
+      }
+    },
+    {
+      "id": "equity-index-identity",
+      "topic": "benchmark",
+      "statement": "The passive equity index total-return reference has no named index.",
+      "decision_id": "D2-index",
+      "source": {
+        "kind": "left_open",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "author_name": "Samir",
+        "attribution": "Samir said which index is a later sub-decision."
+      }
+    },
+    {
+      "id": "loss-fraction-value",
+      "topic": "risk",
+      "statement": "The loss and drawdown budget is a fraction of declared notional, and that fraction is unset.",
+      "decision_id": "D5",
+      "value": "owner_unset",
+      "source": {
+        "kind": "human_linear_comment",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "author_name": "Samir",
+        "attribution": "Samir decided the definition and left the number unset."
+      }
+    },
+    {
+      "id": "statistical-bar-values",
+      "topic": "statistics",
+      "statement": "Deflated Sharpe, probability of backtest overfitting, the uncertainty estimator, and embargo length have no selected values.",
+      "decision_id": "D6",
+      "value": "owner_unset",
+      "source": {
+        "kind": "human_linear_comment",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "author_name": "Samir",
+        "attribution": "Samir kept the bars unset. Literature conventions are candidates only."
+      }
+    },
+    {
+      "id": "kalshi-demo-credential-path",
+      "topic": "credentials",
+      "statement": "Kalshi demo credentials versus a replay or fixture rescope is undecided.",
+      "decision_id": "D10",
+      "owner": "Lucas",
+      "source": {
+        "kind": "left_open",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "attribution": "Samir left D10 to Lucas. Devin comment b3a45d9e proposed the same choice and is not a receipt."
+      }
+    },
+    {
+      "id": "r1-membership",
+      "topic": "release_scope",
+      "statement": "No journey is marked in-R1, unmet, blocked, or no-claim.",
+      "decision_id": "D11",
+      "owner": "Lucas",
+      "source": {
+        "kind": "left_open",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "attribution": "Samir left the R1 boundary to Lucas. CSL-237 is related and is not decided here."
+      }
+    },
+    {
+      "id": "real-account-import",
+      "topic": "account_access",
+      "statement": "Read-only real-account import remains open.",
+      "decision_id": "D2b",
+      "owner": "Lucas",
+      "source": {
+        "kind": "attributed_relay",
+        "linear_issue": "CSL-213",
+        "comment_id": "509ec246-73de-487c-a305-163970e69da3",
+        "authored_at": "2026-10-16T22:58:22.386Z",
+        "attribution": "The comment is an attributed relay of Lucas Guerra, written by Codex and posted under Lucas's Linear identity. It leaves D2b open. It is not Lucas's own typing, and it does not accept this packet."
+      }
+    },
+    {
+      "id": "polymarket-us-retail-stability",
+      "topic": "venue",
+      "statement": "Polymarket US Retail stays a second adapter only if the Kalshi demo slice is stable. Stability is not measured.",
+      "source": {
+        "kind": "accepted_csl212_receipt",
+        "comment_id": "25c50b43-6de4-4f6d-9652-47a649ccc5ae",
+        "document": "docs/replacement/SUCCESSOR-PRODUCT.md",
+        "attribution": "Inherited condition. This packet does not find that the first slice is stable."
+      }
+    },
+    {
+      "id": "held-out-economic-viability",
+      "topic": "economics",
+      "statement": "Held-out economic viability after costs, liquidity, and capital usage is unmeasured.",
+      "source": {
+        "kind": "research_input_only",
+        "path": "docs/replacement/AUTHORITY-COMPLIANCE-RESEARCH.md",
+        "section": "Unresolved questions that fail closed"
+      }
+    }
+  ]
+}
