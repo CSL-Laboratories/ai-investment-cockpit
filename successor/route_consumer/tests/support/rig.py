@@ -49,7 +49,14 @@ class ScriptedTransport:
         self.results = list(results)
         self.calls: list[dict[str, Any]] = []
 
-    def run(self, argv: list[str], input_text: str, timeout_s: float, cwd: str | None) -> Any:
+    def run(
+        self,
+        argv: list[str],
+        input_text: str,
+        timeout_s: float,
+        cwd: str | None,
+        max_output_bytes: int | None = None,
+    ) -> Any:
         self.calls.append({"argv": list(argv), "input": input_text, "timeout_s": timeout_s})
         raw = self.results.pop(0)
         return self._rec.transport.ProcResult(
@@ -84,6 +91,7 @@ def make_rig(
     driver: Any = None,
     secret_values: Any = None,
     pinned_cwd: str | None = None,
+    output_schema: dict[str, Any] | None = None,
 ) -> Rig:
     transport = transport or ScriptedTransport(rec, script or [])
     health = health or rec.health.InMemoryHealth()
@@ -91,6 +99,7 @@ def make_rig(
     port = InProcessRoutePort(
         rec, engine, transport=transport, driver=driver, health=health,
         secret_values=secret_values, pinned_cwd=pinned_cwd,
+        output_schema=vectors()["schema"] if output_schema is None else output_schema,
     )
     return Rig(RouteConsumer(port, binding=binding(engine)), port, transport, health, driver)
 
@@ -126,6 +135,15 @@ class LocalHelperTransport:
         self.inner = rec.transport.SubprocessTransport()
         self.seen_argv: list[list[str]] = []
 
-    def run(self, argv: list[str], input_text: str, timeout_s: float, cwd: str | None) -> Any:
+    def run(
+        self,
+        argv: list[str],
+        input_text: str,
+        timeout_s: float,
+        cwd: str | None,
+        max_output_bytes: int | None = None,
+    ) -> Any:
         self.seen_argv.append(list(argv))
-        return self.inner.run([sys.executable, *self.helper_args], input_text, timeout_s, cwd)
+        return self.inner.run(
+            [sys.executable, *self.helper_args], input_text, timeout_s, cwd, max_output_bytes
+        )

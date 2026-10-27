@@ -203,10 +203,10 @@
     }
   ],
   "contract": {
-    "head_sha": "baf6fdc2e1d29592721c8dbaac65878b12ec4a98",
+    "head_sha": "aa34e9a77d91c0b7d809ebc969d8111372cf1a01",
     "pull_request": 302,
     "repository": "CSL-Laboratories/recursion",
-    "schema_sha256": "22a85ce775c51934569ad3a1f253472e06e695e46962f46b40f0848178a19016"
+    "schema_sha256": "6b3e775273b70df78f7a4ec986672191165228078dd5e493a4a4e0cb18cc4820"
   },
   "kind": "plumbing record on the fake driver; not a model comparison; no CP7 result; no verdict",
   "label": "X2 live integration deferred",

@@ -132,10 +132,11 @@ class InProcessRoutePort:
         secret_values: Any = None,
         pinned_cwd: str | None = None,
         strict_records: bool = True,
+        output_schema: dict[str, Any],
     ) -> None:
         self._rec = rec
         self._strict = strict_records
-        self._schema: dict[str, Any] = {}
+        self._schema = output_schema
         self.submitted: list[dict[str, Any]] = []
 
         def validate(body: Any) -> str | None:
@@ -145,12 +146,15 @@ class InProcessRoutePort:
             )
             return errors[0].message if errors else None
 
+        # The pinned adapter binds one object schema. submit() still passes the
+        # schema, and the adapter refuses a digest that does not match this one.
         self.adapter = rec.executor.ReferenceAdapter(
             engine_id,
             transport=transport,
             driver=driver,
             health=health,
             validate=validate,
+            output_schema=output_schema,
             secret_values=secret_values,
             pinned_cwd=pinned_cwd,
         )
