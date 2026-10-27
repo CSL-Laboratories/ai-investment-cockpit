@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
+import shutil
+import tempfile
 import unittest
+from pathlib import Path
 from typing import Any
+from unittest import mock
 
+from successor.route_consumer import pin
 from successor.route_consumer.consumer import (
     ACCEPTED,
     FAIL_CLOSED,
@@ -123,6 +129,19 @@ class DispositionTests(unittest.TestCase):
                                  (outcome.disposition, outcome.reason, outcome.fail_closed_to,
                                   outcome.payload))
 
+    def test_output_size_reason_codes_fail_closed_to_watch_only(self) -> None:
+        # Landed with the master pin: non-ok size failures, same path as other limit hits.
+        for reason, repaired in (("output_too_large", False), ("repair_output_too_large", True)):
+            event = {"type": "RouteHealthEvent@0", "engine_id": "claude", "state": "exhausted",
+                     "error": reason}
+            reply = result(status="limit_hit", error=reason, validated=None, repaired=repaired,
+                           usage_state="exhausted", health_event=event)
+            outcome = decide(FixedPort(reply))
+            with self.subTest(reason):
+                self.assertEqual((FAIL_CLOSED, reason, FAIL_CLOSED_TO, None),
+                                 (outcome.disposition, outcome.reason, outcome.fail_closed_to,
+                                  outcome.payload))
+
     def test_every_refusal_code_fails_closed_and_is_never_retried(self) -> None:
         codes = ("busy", "custody_denied", "cwd_refused", "secret_refused",
                  "tool_policy_refused", "unsupported")
@@ -133,6 +152,62 @@ class DispositionTests(unittest.TestCase):
                 self.assertEqual((FAIL_CLOSED, code, FAIL_CLOSED_TO),
                                  (outcome.disposition, outcome.reason, outcome.fail_closed_to))
                 self.assertEqual(1, len(port.calls), "no retry, no re-queue")
+
+
+class ContractDriftTests(unittest.TestCase):
+    def test_a_one_byte_schema_drift_fails_closed_instead_of_raising(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shutil.copytree(pin.PACKAGE_DIR / "contract", root / "contract")
+            target = root / pin.SCHEMA_KEY
+            data = bytearray(target.read_bytes())
+            data[len(data) // 2] ^= 1
+            target.write_bytes(bytes(data))
+            pin.load_schema.cache_clear()
+            pin._validator.cache_clear()
+            try:
+                with mock.patch.object(pin, "PACKAGE_DIR", root):
+                    port = FixedPort(result())
+                    outcome = decide(port)
+            finally:
+                pin.load_schema.cache_clear()
+                pin._validator.cache_clear()
+        self.assertEqual((FAIL_CLOSED, "contract_drift", FAIL_CLOSED_TO, None),
+                         (outcome.disposition, outcome.reason, outcome.fail_closed_to,
+                          outcome.payload))
+        self.assertFalse(outcome.usable)
+        self.assertNotIn("sha256", repr(outcome))
+        self.assertEqual([], port.calls)
+        self.assertEqual(ACCEPTED, decide(FixedPort(result())).disposition)
+
+
+class InterrogationTests(unittest.TestCase):
+    PROFILE = DECISION_PROFILE["workload-d05"]
+    FRESH = {
+        "question": "why?", "answer": "because", "pattern": "fresh",
+        "session_id": None, "generated_at": "2026-10-26T00:00:00Z",
+    }
+
+    def _decide(self, payload: dict):
+        port = FixedPort(result(validated=payload))
+        outcome = RouteConsumer(port, binding=binding()).decide(
+            request_id="req-1", profile=self.PROFILE, mode="paper", prompt="PROMPT")
+        return port, outcome
+
+    def test_a_fresh_interrogation_is_accepted(self) -> None:
+        _port, outcome = self._decide(self.FRESH)
+        self.assertEqual((ACCEPTED, "ok", self.FRESH),
+                         (outcome.disposition, outcome.reason, outcome.payload))
+        self.assertTrue(outcome.usable)
+
+    def test_a_resume_interrogation_fails_closed(self) -> None:
+        resumed = dict(self.FRESH, pattern="resume", session_id="previous-session")
+        port, outcome = self._decide(resumed)
+        self.assertEqual((FAIL_CLOSED, "interrogation_not_fresh", FAIL_CLOSED_TO, None),
+                         (outcome.disposition, outcome.reason, outcome.fail_closed_to,
+                          outcome.payload))
+        self.assertFalse(outcome.usable)
+        self.assertEqual(1, len(port.calls))
 
 
 class MalformedReplyTests(unittest.TestCase):
@@ -231,9 +306,21 @@ class ProfileGateTests(unittest.TestCase):
         port = FixedPort(result())
         outcome = RouteConsumer(port, binding=binding()).decide(
             request_id="req-1", profile=ghost, mode="paper", prompt="PROMPT")
-        self.assertEqual((FAIL_CLOSED, "output_schema_unreadable"),
+        self.assertEqual((FAIL_CLOSED, "unknown_workload"),
                          (outcome.disposition, outcome.reason))
         self.assertEqual([], port.calls)
+
+    def test_a_caller_built_profile_fails_closed_before_the_route(self) -> None:
+        # Same id as a decision workload, but not the registered profile.
+        custom = dataclasses.replace(PROFILE, cockpit_job="caller-built")
+        port = FixedPort(result(), sup=support("codex"))
+        outcome = RouteConsumer(port, binding=binding("codex")).decide(
+            request_id="req-1", profile=custom, mode="paper", prompt="PROMPT")
+        self.assertEqual((FAIL_CLOSED, "unknown_workload", FAIL_CLOSED_TO, None),
+                         (outcome.disposition, outcome.reason, outcome.fail_closed_to,
+                          outcome.payload))
+        self.assertEqual([], port.calls)
+        self.assertFalse(outcome.usable)
 
     def test_the_consumer_sends_the_request_and_prompt_once_and_only_to_its_port(self) -> None:
         port = FixedPort(result())

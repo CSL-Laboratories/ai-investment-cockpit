@@ -18,7 +18,7 @@ BASE_ALLOWED = frozenset({
     "re", "typing", "collections", "jsonschema", "successor", "cockpit_spine",
 })
 EXTRA_ALLOWED: dict[str, frozenset[str]] = {
-    "projections.py": frozenset({"types"}),
+    "projections.py": frozenset({"os", "types"}),
     "regen_projections.py": frozenset({"sys"}),
     # threading: the proposal fetch runs on a daemon so a hung source can be
     # refused at a deadline. time: the transcript lock retries only until its deadline.

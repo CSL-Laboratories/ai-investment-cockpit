@@ -39,7 +39,19 @@ ruleset enforcement. Non-author approval checks alone do not establish founder i
 Protected-path amendments require a separately recorded founder-approved
 authoring session; this paragraph grants no blanket editing permission.
 Accepted contracts require their own versioned amendment, exact acceptance and reviewed
-promotion. No person-level decision unlocks live capital or bypasses the nine invariants,
+promotion. Until the ISSUE-CONTRACT amendment of 2026-10-25 is accepted and promoted,
+only the recorded Lucas Linear digest receipt is exact acceptance. That amendment is
+proposed, not accepted, in `CSL-Laboratories/csl-research` at commit
+`d885c2de7228ab4e886b93165d30013e4c8bc5fd`, path
+`contracts/ai-investment-cockpit/amendments/ISSUE-CONTRACT-2026-10-25.md`, SHA-256
+`0b756e0777520f7b8a83d518b6b5887e96ed98eb8481d9d3840ddf4418c9b345`, via
+https://github.com/CSL-Laboratories/csl-research/pull/58 (not merged). Once it is accepted and
+promoted, a checker-pinned founder GitHub PR approval recorded in
+`docs/replacement/program.json` will also count (approving founder login on the checker
+allowlist `CDanTheMan` / `NotSkittlz` / `samir-shah-ahmed`, exact-case match, approver
+other than the PR author, approved head SHA, exact file digest map, checker-pinned receipt
+identity). Merge and non-founder review are not acceptance.
+No person-level decision unlocks live capital or bypasses the nine invariants,
 paper-only boundary or pre-live gates. Existing account, credential and runtime restrictions
 remain in force; this wording does not activate R2a or grant a live run.
 
@@ -451,6 +463,25 @@ Write Linear only when at least one thread is actionable after the per-PR cap
 and `CODEX_TRIGGER_PAT` checks, or to create a missing roll-up after an earlier
 Linear outage. Humans decide.
 The watcher never resolves threads, pushes, or merges.
+
+### Review convergence (CSL-381)
+
+Lucas's decision ([CSL-381 comment 81c9a1f7](https://linear.app/csl-laboratories/issue/CSL-381#comment-81c9a1f7-695b-4149-bd78-fc360175fafb)) bounds review rounds:
+
+- **Round 1** is the first full review round on a ready PR (Devin, Codex and
+  human reviews of that head) plus the fixes for it. Any finding can block in
+  round 1.
+- **After round 1**, only P0/P1 findings block merge or justify a fix push.
+  Record P2/P3 findings on the PR's Linear issue (one follow-up roll-up per PR, as in CSL-364) instead of pushing;
+  they do not hold the merge. This is the exception to the new-Triage-issue rule in
+  [Linear-first workflow](#linear-first-workflow), which still covers follow-ups found outside a PR's review.
+- **After three rounds**, a founder decides whether to merge. Agents do not
+  start a fourth round on their own.
+
+This changes no merge authority, founder approval rule, Devin review or
+required check on the final head. It changes no workflow: the `claude.yml`
+fixer and the Codex gate keep the behavior described above until a separate
+`.github` change.
 
 ## Code Review Rules
 

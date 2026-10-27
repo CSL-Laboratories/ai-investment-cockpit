@@ -12,9 +12,9 @@ from unittest import mock
 from successor.route_consumer import pin
 from successor.route_consumer.tests.support import recursion_bridge as bridge
 
-EXPECTED_HEAD = "baf6fdc2e1d29592721c8dbaac65878b12ec4a98"
+EXPECTED_HEAD = "aa34e9a77d91c0b7d809ebc969d8111372cf1a01"
 EXPECTED_BASE_HEAD = "b625072ae24c4334236f3c5f0919f1d7375fbee0"
-EXPECTED_SCHEMA_SHA = "22a85ce775c51934569ad3a1f253472e06e695e46962f46b40f0848178a19016"
+EXPECTED_SCHEMA_SHA = "6b3e775273b70df78f7a4ec986672191165228078dd5e493a4a4e0cb18cc4820"
 
 
 class VendoredPinTests(unittest.TestCase):
