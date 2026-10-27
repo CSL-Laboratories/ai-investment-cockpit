@@ -19,6 +19,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -112,6 +113,59 @@ class HookTests(unittest.TestCase):
 
     def test_no_log_env_records_nothing(self):
         self.assertEqual(self.run_child(with_log=False), [])
+
+
+class HookGuardTests(unittest.TestCase):
+    def test_other_thread_records_while_this_thread_is_in_the_hook(self):
+        with tempfile.TemporaryDirectory() as raw:
+            repo = Path(raw)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            (repo / "other.md").write_text("o\n", encoding="utf-8")
+            (repo / "busy.md").write_text("b\n", encoding="utf-8")
+            subprocess.run(["git", "add", "other.md", "busy.md"], cwd=repo, check=True)
+            log = repo / "opens.jsonl"
+            saved_seen = set(audit._SEEN)
+            saved_tracked = audit._TRACKED
+            saved_env = {
+                key: os.environ.get(key) for key in ("CSL392_AUDIT_LOG", "CSL392_REPO")
+            }
+            audit._SEEN.clear()
+            audit._TRACKED = None
+            os.environ["CSL392_AUDIT_LOG"] = str(log)
+            os.environ["CSL392_REPO"] = str(repo)
+            audit._hook_local.busy = True
+            try:
+                errors: list[BaseException] = []
+
+                def worker():
+                    try:
+                        audit._record(str(repo / "other.md"), "open")
+                        audit._record_exec([sys.executable, "-c", "pass"], {})
+                    except BaseException as exc:  # noqa: BLE001 - fail the test, don't hang
+                        errors.append(exc)
+
+                thread = threading.Thread(target=worker)
+                thread.start()
+                thread.join()
+                self.assertEqual(errors, [])
+                audit._record(str(repo / "busy.md"), "open")
+                rows = [
+                    json.loads(line)
+                    for line in log.read_text(encoding="utf-8").splitlines()
+                ]
+            finally:
+                audit._hook_local.busy = False
+                audit._SEEN.clear()
+                audit._SEEN.update(saved_seen)
+                audit._TRACKED = saved_tracked
+                for key, value in saved_env.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+        paths = [row["path"] for row in rows if "path" in row]
+        self.assertEqual(paths, ["other.md"])
+        self.assertTrue(any(row.get("exec") for row in rows))
 
 
 class UnittestNameTests(unittest.TestCase):
@@ -267,6 +321,56 @@ class PlanTests(unittest.TestCase):
         ]
         with self.assertRaises(SystemExit):
             self.plan(ci)
+
+
+class RelativeLogTests(unittest.TestCase):
+    def test_relative_log_path_is_shared_across_suite_directories(self):
+        previous = os.getcwd()
+        with tempfile.TemporaryDirectory() as raw:
+            os.chdir(raw)
+            try:
+                relative = Path("opens.jsonl")
+                commands = [
+                    (".", ["python", "-X", "utf8", "-B", "tools/test_ci_docs_filter.py"]),
+                    ("app", ["python", "-m", "pytest", "-q"]),
+                ]
+
+                def fake_run(command, env, cwd):
+                    target = Path(env["CSL392_AUDIT_LOG"])
+                    if not target.is_absolute():
+                        target = Path(cwd) / target
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with target.open("a", encoding="utf-8") as handle:
+                        handle.write(
+                            json.dumps(
+                                {"test": str(cwd), "path": "docs/guide.md", "op": "open"}
+                            )
+                            + "\n"
+                        )
+                    return 0
+
+                with mock.patch.object(
+                    audit, "plan_linux_commands", return_value=(commands, [])
+                ), mock.patch.object(audit, "_run", side_effect=fake_run), mock.patch.object(
+                    audit, "_python", return_value=sys.executable
+                ):
+                    codes, _excluded = audit.run_linux_suites(relative)
+                rows = [
+                    json.loads(line)
+                    for line in relative.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+            finally:
+                os.chdir(previous)
+        self.assertEqual(sorted(codes), [
+            "(.) python -X utf8 -B tools/test_ci_docs_filter.py",
+            "(app) python -m pytest -q",
+        ])
+        self.assertEqual(
+            [row["test"] for row in rows],
+            [str(audit.ROOT.resolve()), str((audit.ROOT / "app").resolve())],
+        )
+        self.assertFalse((audit.ROOT / "app" / "opens.jsonl").exists())
 
 
 class MainExitTests(unittest.TestCase):

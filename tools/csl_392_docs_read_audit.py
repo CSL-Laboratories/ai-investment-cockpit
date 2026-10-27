@@ -87,7 +87,10 @@ _ORIG_OPEN_CODE = getattr(io, "open_code", None)
 _ORIG_UNITTEST_RUN = unittest.case.TestCase.run
 _ORIG_POPEN_INIT = subprocess.Popen.__init__
 _LOCK = threading.Lock()
-_IN_HOOK = False
+# Per-thread, not process-wide. A global flag drops opens on other threads
+# while this thread is inside _record / _record_exec (the app suite runs
+# threaded tests). The lock below still covers the shared log.
+_hook_local = threading.local()
 _TRACKED: set[str] | None = None
 _SEEN: set[tuple[str, ...]] = set()
 
@@ -153,12 +156,22 @@ def _relpath(fileobj: object) -> str | None:
     return None
 
 
+def _enter_hook() -> bool:
+    """True when this thread may record. Same-thread re-entry stays skipped."""
+    if getattr(_hook_local, "busy", False):
+        return False
+    _hook_local.busy = True
+    return True
+
+
+def _leave_hook() -> None:
+    _hook_local.busy = False
+
+
 def _record(fileobj: object, op: str) -> None:
-    global _IN_HOOK
     log_path = os.environ.get("CSL392_AUDIT_LOG")
-    if not log_path or _IN_HOOK:
+    if not log_path or not _enter_hook():
         return
-    _IN_HOOK = True
     try:
         rel = _relpath(fileobj)
         if rel is None:
@@ -168,7 +181,7 @@ def _record(fileobj: object, op: str) -> None:
     except Exception:  # noqa: BLE001, S110 - the hook must never break the audited process
         pass
     finally:
-        _IN_HOOK = False
+        _leave_hook()
 
 
 def _write_row(log_path: str, key: tuple[str, ...], row: dict) -> None:
@@ -194,11 +207,9 @@ def _child_is_hooked(argv: list[str], env: object) -> bool:
 
 def _record_exec(args: object, kwargs: dict) -> None:
     """Log a child process: the open hook cannot see what it reads."""
-    global _IN_HOOK
     log_path = os.environ.get("CSL392_AUDIT_LOG")
-    if not log_path or _IN_HOOK:
+    if not log_path or not _enter_hook():
         return
-    _IN_HOOK = True
     try:
         if isinstance(args, (str, bytes, os.PathLike)):
             argv = [os.fsdecode(args)]
@@ -223,7 +234,7 @@ def _record_exec(args: object, kwargs: dict) -> None:
     except Exception:  # noqa: BLE001, S110 - the hook must never break the audited process
         pass
     finally:
-        _IN_HOOK = False
+        _leave_hook()
 
 
 def _wrapped_open(file, *args, **kwargs):
@@ -486,6 +497,9 @@ def _run(command: list[str], env: dict[str, str], cwd: Path) -> int:
 
 
 def run_linux_suites(log_path: Path) -> tuple[dict[str, int], list[dict]]:
+    # Suites run with different working directories. A relative log path would
+    # make the app suite append to app/<log> while classify reads the root file.
+    log_path = log_path.resolve()
     commands, excluded = plan_linux_commands()
     python = _python()
     env = os.environ.copy()
