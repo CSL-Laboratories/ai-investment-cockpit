@@ -709,6 +709,150 @@ class WorkflowStructureTests(unittest.TestCase):
         for filename, job_name, body in bodies[1:]:
             self.assertEqual(body, first, f"{filename}:{job_name}")
 
+    def test_hashed_lock_installs_and_pip_check_catches_missing_transitive(self) -> None:
+        # CSL-471 Devin: --no-deps plus hash syntax is not enough. Install the
+        # inline lock the way the write-token jobs do, then pip check. A
+        # missing transitive pin must fail. E3 dropped the mention-job pip
+        # step, so the lock is the conflict-writer heredoc. Runs in
+        # claude.yml / codex-gate.yml event-paths (ubuntu-latest CPython
+        # 3.12). Skip only when this interpreter cannot use the lock or
+        # PyPI is unreachable.
+        machine = os.uname().machine if hasattr(os, "uname") else ""
+        if (
+            sys.platform != "linux"
+            or sys.version_info[:2] != (3, 12)
+            or machine not in {"x86_64", "amd64"}
+        ):
+            self.skipTest(
+                "hashed lock is CPython 3.12 linux x86_64; this interpreter is "
+                f"{sys.version_info.major}.{sys.version_info.minor} {sys.platform} {machine}"
+            )
+        lock = self._inline_hashed_lock_text()
+        self.assertIn("annotated-types==", lock)
+        try:
+            import urllib.error
+            import urllib.request
+
+            urllib.request.urlopen("https://pypi.org/simple/pip/", timeout=15).close()
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            self.skipTest(
+                "PyPI unreachable; hashed lock pip check needs network "
+                f"({type(exc).__name__}: {exc})"
+            )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            venv = root / "venv"
+            lock_path = root / "csl471-pip.lock"
+            lock_path.write_text(lock + "\n", encoding="utf-8")
+            created = subprocess.run(
+                [sys.executable, "-P", "-m", "venv", "--without-pip", str(venv)],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            self.assertEqual(created.returncode, 0, created.stdout + created.stderr)
+            python = venv / "bin" / "python"
+            env = {
+                "PATH": os.environ.get("PATH", ""),
+                "HOME": str(root / "home"),
+                "PYTHONNOUSERSITE": "1",
+                "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+                "PIP_NO_INPUT": "1",
+            }
+            # Host pip targets the empty venv. The lock includes pip itself, so
+            # later `pip check` runs as the venv interpreter. --without-pip
+            # avoids a hard skip on images that lack ensurepip.
+            install = subprocess.run(
+                [
+                    sys.executable,
+                    "-P",
+                    "-m",
+                    "pip",
+                    "--python",
+                    str(python),
+                    "install",
+                    "--no-cache-dir",
+                    "--require-hashes",
+                    "--only-binary=:all:",
+                    "--no-deps",
+                    "-r",
+                    str(lock_path),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=300,
+                env=env,
+            )
+            combined = install.stdout + install.stderr
+            if install.returncode != 0 and self._pip_output_looks_like_network(combined):
+                self.skipTest(
+                    "pip install of hashed lock failed on network; "
+                    f"pip check needs PyPI ({combined[-400:]})"
+                )
+            self.assertEqual(install.returncode, 0, combined)
+            check = subprocess.run(
+                [str(python), "-P", "-m", "pip", "check"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env=env,
+            )
+            self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+            dropped = "annotated-types"
+            removed = subprocess.run(
+                [str(python), "-P", "-m", "pip", "uninstall", "-y", dropped],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env=env,
+            )
+            self.assertEqual(removed.returncode, 0, removed.stdout + removed.stderr)
+            missing = subprocess.run(
+                [str(python), "-P", "-m", "pip", "check"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env=env,
+            )
+            self.assertNotEqual(
+                missing.returncode,
+                0,
+                "pip check must fail after removing a transitive pin; "
+                f"got {missing.stdout!r}{missing.stderr!r}",
+            )
+            self.assertIn(dropped, (missing.stdout + missing.stderr).lower())
+
+    def _inline_hashed_lock_text(self) -> str:
+        # CSL-471 after E3: claude-mention no longer has this step. The only
+        # remaining hashed lock is the conflict-writer model job.
+        writer = WRITER_WORKFLOW_PATH.read_text(encoding="utf-8")
+        step = self._named_step(
+            self._job_text(writer, "model"), "Install acceptance-gate deps"
+        )
+        body = self._heredoc_body(step, "CSL_PIP_HASH_LOCK")
+        return textwrap.dedent(body.decode("utf-8")).strip()
+
+    @staticmethod
+    def _pip_output_looks_like_network(text: str) -> bool:
+        lowered = text.lower()
+        return any(
+            needle in lowered
+            for needle in (
+                "network is unreachable",
+                "temporary failure in name resolution",
+                "failed to establish a new connection",
+                "max retries exceeded",
+                "connection reset",
+                "connection timed out",
+                "timed out",
+                "timeout",
+                "sslerror",
+                "proxyerror",
+                "name or service not known",
+                "nodename nor servname",
+            )
+        )
+
     @staticmethod
     def _heredoc_body(step: str, marker: str) -> bytes:
         start_token = f"<<'{marker}'\n"
