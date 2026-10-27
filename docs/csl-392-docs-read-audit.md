@@ -2,240 +2,204 @@
 title: CSL-392 docs-read audit (G16)
 type: evidence
 status: audit
-last-verified: 2026-10-25
+last-verified: 2026-10-26
 ---
 
 # CSL-392: which docs the linux job actually opens
 
-Read-only audit. No `.github/` or filter edits. Lucas admitted “audit first”
-on 2026-10-20 (CSL-392). Any later filter change still needs its own
-human-assigned issue.
+Agent (Grok Bot Liaison, for Lucas). Read-only audit. No `.github/` or filter
+edits. Lucas admitted "audit first" on 2026-10-20 (CSL-392). Any filter change
+still needs its own human-assigned issue and Lucas's own-words OK for the
+`ci.yml` edit.
 
 ## Result
 
-**Required `linux` job: no mismatches.** At `main`
-`31cad9e5f62d74df0ec202c08bbb98a4bbb52549`, every tracked file that job
-opened is already classified `run-tests` by the current decide step
-(`.github/workflows/ci.yml`, the two `grep -Eq` run patterns then the skip
-pattern). CSL-397 (#223) closed the 21-file set from the 2026-10-20 comment
-on this issue; this re-run still opens all 21, and the filter no longer
-skips them.
+Head audited: `main` `139f255599408a553631d40ac8984bd3856a2fa6`
+(2026-10-26 16:19 PT, after #287 and #271).
 
-**Residual (not in the linux job, still skipped by the same filter):**
+**Required `linux` job: one mismatch.**
 
-| File | Evidence | Filter |
+| File | Reader | Filter |
 | --- | --- | --- |
-| `AGENTS.md` | `tools/test_codex_gate.py` `WorkflowStructureTests.setUpClass` (`AGENTS.read_text`, line 1453), consumed by `test_agents_code_review_rules` | skip (`\.md$`); not `^CLAUDE\.md$` |
-| `.claude/skills/proceed-or-escalate/SKILL.md` | `tools/test_codex_gate.py::WorkflowStructureTests.test_agents_code_review_rules` (`Path.read_text`, lines 1710–1713) | skip (`\.md$`) |
+| `docs/ci-runbook.md` | `tools/test_ci_dispatch_scope.py::CrossLaneAdmissionTests.test_runbook_names_the_github_token_dispatch_exception` (`tools/test_ci_dispatch_scope.py:1657`; CSL-428, `41f90b03`, merged in #271) | skip (`^docs/`) |
 
-Those two files are why an `AGENTS.md`-only (or skill-only) PR still takes
-the docs-only `linux-gates` green no-op, while the tests that actually read
-the file live in `claude.yml` / `codex-gate.yml`.
+A PR that only edits `docs/ci-runbook.md` takes the docs-only `linux-gates`
+no-op, but the linux job pins that file's section-4 text (`workflow_dispatch`,
+`repository_dispatch`, `forward-conflict-scan`, `github_token: ${{ github.token }}`,
+`CSL-428`). The static guard `tools/test_ci_docs_filter.py` passes because the
+test finds the file with `(ROOT / 'docs').iterdir()` and a name comparison,
+which the guard's literal-path scan does not see (its own docstring lists
+this limit).
 
-The open E-stack PRs
-[#264](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/264)
-(E3),
-[#263](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/263)
-(E2) and
-[#265](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/265)
-(E1) just hit this class: they edit `claude.yml` and fixer tests, and
-`claude.yml` runs `tools/test_codex_gate.py`, which pins live `AGENTS.md`
-and the proceed-or-escalate skill. A stacked or sibling change that only
-touches `AGENTS.md` still skips the required Python matrix. The linux-job
-static guard (`tools/test_ci_docs_filter.py`) does not scan
-`test_codex_gate.py`; it only allow-lists `AGENTS.md` *string fixtures* in
-`app/tests/test_linear_pr_sync.py` and `app/tests/test_stuck_thread_watch.py`,
-which this open-hook run confirmed do **not** open the tracked file.
+**AGENTS.md and the proceed-or-escalate skill: closed.** CSL-491 (`81c2ce9a`,
+2026-10-25) added `^AGENTS\.md$` and
+`^\.claude/skills/proceed-or-escalate/SKILL\.md$` to the second run-tests
+pattern (`.github/workflows/ci.yml:303-304`). `skipped_by_filter()` returns False
+for both at this head. The earlier report's residual and its options
+(a)/(b)/(c) are withdrawn.
 
-`CLAUDE.md` is already in the run-tests pattern (CSL-457). The linux job did
-not open it; `test_codex_gate.py` did.
+**Outside the linux job (informational):** `tools/test_codex_gate.py` (run
+by `claude.yml` and `codex-gate.yml`, not by `ci.yml`) opens
+`docs/runbooks/w25-worm-audit-witness.md` in
+`WorkflowStructureTests.test_agents_code_review_rules`
+(`tools/test_codex_gate.py:1726`). Adding that path to the run-tests pattern
+would not help: the linux job does not run `test_codex_gate.py`. Whether a
+runbook-only change should trigger those workflows is a path-trigger
+question for those workflows, not for the `ci.yml` docs filter.
+
+## Options for Lucas (`docs/ci-runbook.md` only)
+
+Neither option is admitted by CSL-392. (a) edits `.github/workflows/ci.yml`.
+
+- **(a) Add the path to the filter.** Append `|^docs/ci-runbook\.md$` to the
+  second run-tests `grep -Eq` (`ci.yml:303-304`) and add the path to `AUDITED`
+  in `tools/test_ci_docs_filter.py`, as CSL-457 did for `CLAUDE.md` and
+  CSL-491 for `AGENTS.md`. Two files. Cost: every runbook-only PR runs the
+  two-cell Python matrix.
+- **(b) Make the read visible, not the filter.** Change the test to read
+  `ROOT / 'docs' / 'ci-runbook.md'`, so `test_ci_docs_filter.py`'s static
+  guard fails until (a) lands. One test file, no workflow edit. On its own it
+  turns the guard red, so it only makes sense together with (a).
+
+Recommendation (not a decision): (a), the same move as CSL-457 and CSL-491;
+(b) in the same change is optional hardening.
 
 ## Method
 
-Head: `31cad9e5f62d74df0ec202c08bbb98a4bbb52549` (`origin/main` 2026-10-25).
-CPython 3.12.3 only (CI’s linux matrix also has 3.11; file-open set is the
-same). Pinned run-gates requirements from
-`.github/actions/run-gates/requirements.txt`. This VM has no
-`python3.12-venv` / `ensurepip`, so the venv was created with `virtualenv`
-and then the same pins; `python -P .github/actions/run-gates/install.py`
-cannot run here.
+Tool: `tools/csl_392_docs_read_audit.py`, copied onto `PYTHONPATH` as
+`sitecustomize.py`. It wraps `builtins.open`, `io.open` (needed for
+`Path.read_text` / `read_bytes`), `os.open` (without `dir_fd`) and
+`io.open_code`, and records each tracked file opened, with the current
+pytest or unittest name. It also records each child process a test starts
+and whether that child loads the hook.
 
-Hook: `tools/csl_392_docs_read_audit.py` copied onto `PYTHONPATH` as
-`sitecustomize.py`. Wraps `builtins.open`, `io.open` (required for
-`Path.read_text` / `Path.read_bytes`), `os.open`, and `io.open_code`.
-Classifies each opened *tracked* path with the decide step’s three
-`grep -Eq` patterns, same split as `tools/test_ci_docs_filter.py`.
-
-Commands (the linux job’s test steps; needles are checked against
-`ci.yml` + `run-gates/action.yml` before the runner starts):
-
-```bash
-python tools/csl_392_docs_read_audit.py
-```
-
-which runs:
+The command list is built from the parsed `linux` job in `ci.yml` and the
+`run-gates` composite action it calls; neither file is modified.
+`python tools/csl_392_docs_read_audit.py plan` prints it. Planning fails
+when a python/pytest/unittest line there is neither a runnable test/check
+(`python [flags] tools/(test|check)_*.py`, `-m pytest`, `-m unittest`,
+without `-I`/`-E`/`-s`) nor a reviewed `EXCLUDED` entry, when an `EXCLUDED`
+entry no longer matches a job line, or when the run-gates call or the app
+pytest run is missing. Ran at this head:
 
 ```text
-python -X utf8 -B tools/test_run_gates_action.py
-cd app && python -m pytest -q
-python -X utf8 -B tools/test_ci_dispatch_scope.py
-python -X utf8 -B tools/test_ci_settle.py
-python -X utf8 -B -m unittest tools.test_review_gate tools.test_queue_gates
-python -X utf8 -B tools/test_ci_cancel_controller.py
-python -X utf8 -B tools/test_candidate_workflows.py
-python -X utf8 -B tools/test_ci_docs_filter.py
+(.)   python -X utf8 -B tools/test_run_gates_action.py
+(app) python -m pytest -q
+(.)   python -X utf8 -B tools/test_ci_dispatch_scope.py
+(.)   python -X utf8 -B tools/test_ci_settle.py
+(.)   python -X utf8 -B -m unittest tools.test_review_gate tools.test_queue_gates
+(.)   python -X utf8 -B tools/test_ci_cancel_controller.py
+(.)   python -X utf8 -B tools/test_candidate_workflows.py
+(.)   python -X utf8 -B tools/test_ci_docs_filter.py
+(.)   python -X utf8 -B tools/test_workflow_size.py
+(.)   python -X utf8 -B tools/test_sandbox_e3.py
+(.)   python -X utf8 -B tools/check_replacement_program.py
+(.)   python -X utf8 -B tools/check_o7_operator_contract.py
+(.)   python -X utf8 -B -m unittest -q tools.test_replacement_program
+(.)   python -X utf8 -B tools/check_checker_test_floor.py
 ```
 
-Not run, on purpose: `ruff check .` (not a file-open suite) and the linux
-job’s later maturin/batch-parity step (re-runs
-`tests/quant/book/test_book_batch.py` after a wheel; that file is already
-in `pytest -q`).
+Excluded, with the reason recorded in `EXCLUDED`: the two candidate-policy
+`merge_candidate.py` calls (need the Actions env), the run-gates installer,
+`pip install maturin`, `maturin build`, the wheel install `python -P -c`,
+and the batch-parity re-run of `tests/quant/book/test_book_batch.py`
+(the same file runs in `python -m pytest -q`). Ruff is not a Python
+command line and is not run.
 
-Residual reader, **not** part of the linux job:
+Exit codes: 0 clean, 1 incomplete (any suite non-zero; the summary carries
+`"complete": false` and `failed_suites`), 2 mismatches.
 
-```bash
-PYTHONPATH=<audit-dir> CSL392_AUDIT_LOG=... CSL392_REPO=. \
-  python -X utf8 -B tools/test_codex_gate.py
-```
+Residual run (not the linux job), same hook:
+`tools/test_claude_pr_fixer.py`, `test_sandbox_e1/e2/native.py`,
+`test_claude_fixer_receipts/guard/publish.py`,
+`test_fixer_failure_escalation/watcher.py`, `test_codex_gate.py`,
+`test_codex_gate_identity.py`, and
+`-m unittest tools.test_merge_candidate tools.test_candidate_gate`.
 
 ## Suite results
 
 | Step | Result |
 | --- | --- |
-| `test_run_gates_action` | 18 tests, 1 skipped, OK |
-| `app` pytest | 3848 passed, 136 skipped, 272 s |
-| `test_ci_dispatch_scope` | 25 OK |
+| `test_run_gates_action` | 18, 1 skipped, OK |
+| `app` pytest | 3877 passed, 135 skipped, 449 s |
+| `test_ci_dispatch_scope` | 39 OK |
 | `test_ci_settle` | 4 OK |
 | `test_review_gate` + `test_queue_gates` | 36 OK |
-| `test_ci_cancel_controller` | 66 tests, 1 skipped, OK |
+| `test_ci_cancel_controller` | 66, **1 failure** (see below) |
 | `test_candidate_workflows` | 12 OK |
-| `test_ci_docs_filter` | 13 OK |
-| `test_codex_gate` (extra) | 94 tests, 1 skipped, OK |
+| `test_ci_docs_filter` | 19 OK |
+| `test_workflow_size` | 5 OK |
+| `test_sandbox_e3` | 45 OK |
+| `check_replacement_program` | exit 0 |
+| `check_o7_operator_contract` | exit 0 |
+| `tools.test_replacement_program` | 34 OK |
+| `check_checker_test_floor` | PASS |
 
-Opened tracked files in the linux job: 589. Mismatches: **0**.
+Tracked files opened by the linux job: 618. Mismatches: 1. Runner exit 2.
 
-## Linux-job doc-like opens (already run-tests)
+**Incomplete suite.** `test_ci_cancel_controller.py::QueuePolicyTests.test_queue_lint_exception_is_exact_and_limited_to_named_paths`
+fails the same way without the hook. It runs the VM's `actionlint` 1.7.7
+(`/usr/local/bin/actionlint`) on fixtures and skips when `actionlint` is not
+on `PATH` (`tools/test_ci_cancel_controller.py:1076-1078`). That is a
+local-environment result, not caused by the hook. Opens from the other 65
+tests in that suite are recorded. Unverified: whether hosted runners have
+`actionlint` on `PATH`.
 
-These are the skip-looking paths the linux job opened. All match a
-run-tests pattern after CSL-397 / the swarm `.py|.json|.ya?ml` rule.
+Residual suites: all exit 0 (722 tests in all). One residual mismatch,
+listed above.
 
-| File | Example test |
+## Blind spot: child processes
+
+The hook sees Python opens only. These tests start children whose reads it
+cannot see. "Hook not loaded" means a Python child started without the
+audit `PYTHONPATH` or with `-I`/`-E`/`-s`.
+
+Linux job:
+
+| Child | Test files |
 | --- | --- |
-| `.gitignore` | `tests/test_invariants.py::test_runtime_artifact_directories_are_ignored_at_any_depth` |
-| `app/filings/PROVENANCE.md` | `tests/filings/test_provenance.py::test_pins_are_wellformed` |
-| `app/workflows/prompts/grounding_check.v1.md` | `tests/system/test_paper_replay.py::test_g9_0_replay_did_real_work` |
-| `app/workflows/prompts/interrogation_fresh.v1.md` | `tests/test_bugfix_audit_2026_09_07.py::test_interrogation_wraps_unresolvable_refs` |
-| `app/workflows/prompts/morning_brief.v1.md` | `tests/system/test_one_market_day_dryrun.py::test_one_market_day_dryrun_reaches_no_broker` |
-| `app/workflows/prompts/trade_proposal.v1.md` | `tests/system/test_paper_replay.py::test_g9_0_replay_did_real_work` |
-| `app/workflows/prompts/triage_batch.v1.md` | `tests/system/test_one_market_day_dryrun.py::test_one_market_day_dryrun_reaches_no_broker` |
-| `docs/PLAN.md` | `tests/test_replacement_program_registry.py::test_replacement_program_registry` |
-| `docs/evidence/w24-natural-head-rescreen-2026-09-09.md` | `tests/feasibility/test_screens.py::test_checked_in_screens_load` |
-| `docs/evidence/w24-natural-head-rescreen-2026-09-12.md` | same |
-| `docs/evidence/w24-natural-head-rescreen-2026-09-15.md` | same |
-| `docs/evidence/w24-natural-head-rescreen-2026-09-15-tue.md` | same |
-| `docs/replacement/AUTHORITY-COMPLIANCE-RESEARCH.md` | `tests/test_replacement_program_registry.py::test_replacement_program_registry` |
-| `docs/replacement/ISSUE-CONTRACT.md` | `tests/test_o7_operator_contract.py::test_exact_candidate_command_shows_negative_controls_failing` |
-| `docs/replacement/MONTH-PROGRAM.md` | same |
-| `docs/replacement/README.md` | `tests/test_replacement_program_registry.py::test_replacement_program_registry` |
-| `docs/replacement/SCOPE-AUDIT.md` | `tests/test_o7_operator_contract.py::test_exact_candidate_command_shows_negative_controls_failing` |
-| `docs/replacement/SUCCESSOR-PRODUCT.md` | same |
-| `docs/replacement/outcomes/O7/CONTRACT.md` | same |
-| `docs/research/gate-feasibility-and-value-2026-09-06.md` | `tests/feasibility/test_protocol.py::test_checked_in_protocol_loads` |
-| `docs/research/swarm-briefs/rw34-json-child-fixture.md` | `tests/swarm/test_bounded_job.py::test_expired_admission_refuses_before_spawn` |
-| `docs/setup/accounts-and-keys.md` | `tests/system/test_rw01_market_day.py::test_discord_secret_name_matches_the_provisioning_doc` |
+| `git` | `tests/test_invariants.py`, `tests/bridge/test_witness_adapters.py`, `tools/test_candidate_workflows.py`, `tools/test_ci_dispatch_scope.py`, `tools/test_ci_docs_filter.py` |
+| `bash` | `tests/test_claude_settings.py`, `tests/test_cloud_session_hook.py`, `tools/test_candidate_workflows.py`, `tools/test_ci_cancel_controller.py`, `tools/test_ci_dispatch_scope.py`, `tools/test_ci_docs_filter.py`, `tools/test_ci_settle.py`, `tools/test_queue_gates.py`, `tools/test_sandbox_e3.py` |
+| Python, hook not loaded | `tests/benchmarks/test_perf_compare.py`, `tests/bridge/test_bot.py`, `tests/swarm/test_bounded_job.py` |
+| `actionlint` | `tools/test_ci_cancel_controller.py` |
+| `install`, `unshare`, test `wrapper` | `tools/test_sandbox_e3.py` |
+| `claude` | `tests/agent_runner/test_transport_resolve.py` |
+| `gcc`, `ld`, `ldconfig` (library lookup) | `tests/agent_runner/test_account_guard.py` |
+| `lsb_release`, `rustc`, `uname` | `tests/test_cloud_session_hook.py` |
 
-Plain docs the linux job did **not** open, and the filter still skips:
-`README.md`, `PRODUCT.md`, `CONTRIBUTING.md`, `docs/README.md`,
-`docs/ci-event-contract.md`, `LICENSE`. That skip is working as designed
-for those paths.
+Most `git` and `bash` children run the decide script or fixtures in a
+temporary repo, not this checkout. The rows to check by hand, if a later
+pass wants to close the gap, are the three "hook not loaded" Python
+children and `tests/test_invariants.py`'s `git` calls.
 
-An empty diff still takes `ci.yml` “No changed files; skip test jobs”.
-
-## Options for Lucas
-
-Any of (a) or a filter-side (c) still needs a **new** human-assigned issue
-that explicitly asks to edit `.github/workflows/ci.yml`. This issue does
-not admit that edit. Effort is in files/invasiveness, not calendar time.
-
-### (a) Narrow the filter
-
-Add `^AGENTS\.md$` and the proceed-or-escalate skill (either the exact
-path or `^\.claude/skills/`) to the second run-tests `grep -Eq`, the same
-way CSL-457 added `^CLAUDE\.md$`. Extend `tools/test_ci_docs_filter.py`
-with `test_agents_md_alone_runs_tests` (mirror `test_claude_md_alone_runs_tests`)
-and put both paths in `AUDITED`.
-
-- **Effort:** two files (`.github/workflows/ci.yml` decide step +
-  `tools/test_ci_docs_filter.py`). Same size as the CLAUDE.md follow-up.
-- **Risk:** every `AGENTS.md`-only PR runs the Python linux matrix (two
-  CPython cells). That is the intended G16 close for this residual.
-  Directory-prefix `^\.claude/` would also run tests for skill/settings
-  edits; `.claude/settings.json` already runs because of `\.json$`.
-  Does not fix G18 (`rust/*.md` / `.github/*.md` still skip Python and
-  still start Rust). Residual: a new reader of some other skipped `.md`
-  still needs a later audit.
-
-This is the same move Lucas already chose on 2026-10-20 for the first 21
-files (“Go with option B”, CSL-397).
-
-### (b) Change the tests
-
-Stop `tools/test_codex_gate.py` from reading the live files. Copy the
-pinned phrases into the test module (or a fixture under `tools/`) and
-assert against that.
-
-- **Effort:** one file (`tools/test_codex_gate.py`). No workflow edit, so
-  it can land under a test-only issue.
-- **Risk:** `AGENTS.md` can change and `linux-gates` still no-ops. The
-  E-stack tests would no longer notice a live-file drift. This removes
-  the read rather than closing G16. Worse for #264/#263/#265, whose
-  `claude.yml` path is exactly the one that currently *does* re-run
-  `test_codex_gate.py` when the workflow changes, but not when only
-  `AGENTS.md` changes.
-
-### (c) An allowlist
-
-Keep the skip regex. Replace (or feed) the decide step with an explicit
-list of paths that must run tests — the `AUDITED` tuple in
-`tools/test_ci_docs_filter.py` is already that list for the linux job.
-Promote it into the decide script (exact paths, not prefixes) and add
-`AGENTS.md` plus the skill path. Optionally point
-`linux_job_test_sources()` at the test files named in `claude.yml` /
-`codex-gate.yml` so the static guard sees `test_codex_gate.py`.
-
-- **Effort:** same two files as (a), plus a small decide-script change to
-  iterate a list instead of (or in addition to) the prefix regex. More
-  coupling: every new test-read doc is a filter edit.
-- **Risk:** more precise than directory prefixes (`docs/evidence/` today
-  runs tests for *any* evidence markdown, including ones no test reads).
-  Higher drift: a forgotten allowlist row recreates G16. The static
-  guard still cannot see `os.path.join` / f-string paths. G18 unchanged
-  unless `rust/*.md` is listed.
-
-A guard-only change that scans `test_codex_gate.py` *without* adding the
-paths to run-tests would fail until those paths are allowlisted as
-“not a real read” (they are a real read) or added to the filter (a).
-
-## Recommendation (not a decision)
-
-**(a)**, same pattern as CSL-397 and CSL-457: put `AGENTS.md` and the
-proceed-or-escalate skill on the run-tests side, and make the static
-guard see `test_codex_gate.py`. Do not treat the linux-job empty
-mismatch list as “G16 is done”; the E-stack PRs are the counterexample.
+Residual suites: `test_sandbox_native.py` and `test_sandbox_e2.py` (compiled
+helpers, `gcc`), `test_claude_pr_fixer.py` (`gh`, `jq`, `bash`,
+`actionlint`), `test_claude_fixer_publish.py` (`git`, `bash`, `env`, one
+Python child without the hook), `test_codex_gate.py` (`actionlint`).
 
 ## Limitations
 
-- Python open family only. `git show`, `cat`, and non-Python helpers are
-  not logged. unittest `setUpClass` opens can attribute to a file:line
-  instead of `Class.test_name` (the `AGENTS.md` row above).
-- One CPython. No ruff, no batch-parity wheel.
-- First hook pass wrapped only `builtins.open` and missed
-  `Path.read_text`; the committed runner wraps `io.open` as well. Figures
-  in this report are from the second pass.
+- Python open family only; child-process reads are listed above, not
+  traced. unittest `setUpClass` opens attribute to `file:line`.
+- One interpreter: this VM's venv is CPython 3.13.17, outside the DEC-09
+  3.11/3.12 matrix. The open set is not expected to differ by version
+  (unverified).
+- No ruff, no batch-parity wheel, no Windows/macOS.
+- This file is a new doc in a product repo. The current rule puts new docs
+  in CSL-Laboratories/csl-research with a link from here; moving it is left
+  to Lucas.
 
 ## Reproduce
 
 ```bash
+python tools/csl_392_docs_read_audit.py plan
 python tools/csl_392_docs_read_audit.py /tmp/csl392-opens.jsonl
 python tools/csl_392_docs_read_audit.py classify /tmp/csl392-opens.jsonl
+python -X utf8 -B tools/csl_392_docs_read_audit_test.py
 ```
+
+The tool's tests live in `tools/csl_392_docs_read_audit_test.py`, not
+`tools/test_*.py`: that name needs founder-approved allow rules in
+`.claude/settings.json` (`app/tests/test_claude_settings.py`), and a new
+`app/tests/` file needs an X1 inventory row (`tools/check_x1_inventory.py`).
+CI does not run them.
