@@ -15,6 +15,9 @@ again, and every later command is refused (Inv 7, fail closed).
 
 A proposal fetch has a deadline. Missing it records a refusal fail-closed to
 ``watch_only`` and drops the late result, so a hung source cannot approve or act.
+Only one fetch runs at a time. While its worker is still alive, another propose
+is that same refusal and starts no thread, so a hanging source cannot pile up
+workers in a long-lived service.
 """
 
 from __future__ import annotations
@@ -124,6 +127,8 @@ class OperatorSession:
         self._source = source
         self._clock = clock
         self._fetch_deadline_seconds = fetch_deadline_seconds
+        self._fetch_gate = threading.Lock()
+        self._fetch_worker: threading.Thread | None = None
         self._chain = AuditChain()
         self.session_id: str | None = None
         self.mode: str | None = None
@@ -340,8 +345,10 @@ class OperatorSession:
                 raise
             return self._refusal_record(request_id, SOURCE_ERROR, quarantined=False)
         if outcome is _FETCH_TIMED_OUT:
-            # The worker may still be inside fetch. It never touches this session,
-            # so a late payload cannot become a proposal or an approval.
+            # The worker may still be inside fetch, or an earlier one still is.
+            # Neither touches this session, so a late payload cannot become a
+            # proposal or an approval. A second propose while a worker is alive
+            # is the same fail-closed refusal and starts no further thread.
             return self._refusal_record(request_id, SOURCE_TIMEOUT, quarantined=False)
         try:
             return self._from_outcome(request_id, outcome)
@@ -353,8 +360,10 @@ class OperatorSession:
     def _fetch_bounded(self, request_id: str, prompt: str) -> object:
         """Call the source, or return the timeout sentinel when the deadline passes.
 
+        At most one worker is in flight. A propose that arrives while that worker
+        is still alive returns the timeout sentinel immediately and starts nothing.
         The worker is a daemon so a hung fetch does not keep the process alive
-        after the refusal is recorded. It only writes a local box.
+        after the refusal is recorded. It only writes its own local box.
         """
 
         box: dict[str, object] = {}
@@ -369,7 +378,12 @@ class OperatorSession:
             finally:
                 finished.set()
 
-        threading.Thread(target=run, name="proposal-fetch", daemon=True).start()
+        with self._fetch_gate:
+            if self._fetch_worker is not None and self._fetch_worker.is_alive():
+                return _FETCH_TIMED_OUT
+            worker = threading.Thread(target=run, name="proposal-fetch", daemon=True)
+            self._fetch_worker = worker
+            worker.start()
         timeout = self._fetch_deadline_seconds
         if not finished.wait(timeout if timeout > 0 else 0):
             return _FETCH_TIMED_OUT

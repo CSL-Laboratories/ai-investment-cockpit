@@ -14,6 +14,9 @@ deadline is recorded as a refusal fail-closed to ``watch_only``; the late result
 is not applied. The lock deadline is longer than one fetch deadline, so a stop
 waiting behind a hung propose still acquires the lock after that propose
 fail-closes, and a lock that never comes free does not wait forever.
+
+Stop does not need the projection registry. If that registry cannot be loaded,
+the stop record is still written and the context figures are withheld.
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ from typing import Any, TextIO
 from cockpit_spine import views
 from cockpit_spine.audit import AuditError
 from cockpit_spine.fake_source import FakeProposalSource
-from cockpit_spine.projections import ProjectionError, load_registry
+from cockpit_spine.projections import ProjectionError, Registry, load_registry
 from cockpit_spine.service import API_VERSION, OperatorService
 from cockpit_spine.session import FETCH_DEADLINE_SECONDS, OperatorSession, utc_now
 from cockpit_spine.sources import ProposalSource
@@ -46,7 +49,11 @@ EXIT_OK, EXIT_REFUSED, EXIT_UNUSABLE = 0, 2, 3
 # Outlasts one fetch deadline so stop can land after a hung propose fail-closes.
 LOCK_DEADLINE_SECONDS = FETCH_DEADLINE_SECONDS * 3
 SourceFactory = Callable[[], ProposalSource]
-_LOCK_BUSY = frozenset({errno.EACCES, errno.EAGAIN, errno.EDEADLOCK})
+# macOS publishes EDEADLK and not EDEADLOCK. Reading the missing name at import
+# crashes every command, including --help.
+_LOCK_BUSY = frozenset({
+    errno.EACCES, errno.EAGAIN, getattr(errno, "EDEADLOCK", errno.EDEADLK),
+})
 
 
 class LockTimeout(Exception):
@@ -152,6 +159,21 @@ def write_log(path: Path, records: list[dict[str, Any]]) -> None:
         raise
 
 
+def _registry_for(command: str) -> Registry:
+    """Verified registry. Stop still runs when the registry cannot be loaded.
+
+    An empty registry verifies nothing, so the view withholds its figures
+    instead of refusing the stop.
+    """
+
+    try:
+        return load_registry()
+    except ProjectionError:
+        if command != "stop":
+            raise
+        return Registry({}, "")
+
+
 def _args_for(namespace: argparse.Namespace) -> dict[str, str]:
     mapping = {
         "propose": ("request_id", "prompt"),
@@ -179,7 +201,7 @@ def main(
     lock = None
     try:
         lock = _lock(namespace.log, deadline_seconds=lock_deadline_seconds)
-        registry = load_registry()
+        registry = _registry_for(namespace.command)
         source = source_factory()
         if namespace.command == "open":
             if namespace.log.exists():

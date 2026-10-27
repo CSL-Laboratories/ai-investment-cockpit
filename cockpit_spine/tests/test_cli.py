@@ -18,6 +18,7 @@ from pathlib import Path
 
 from cockpit_spine import cli
 from cockpit_spine.audit import verify_chain
+from cockpit_spine.projections import WITHHELD
 from cockpit_spine.fake_source import (
     FAIL_PROMPT, QUARANTINE_PROMPT, FakeProposalSource, proposal_id_for,
 )
@@ -327,6 +328,61 @@ class UnusableTests(CliCase):
         self.assertEqual("unusable: lock_timeout\n", out.getvalue())
         self.assertEqual(before, self.log.read_bytes())
         self.assertNotIn("proposal_approved", [record["kind"] for record in self.records()])
+
+    def test_stop_persists_when_the_projection_registry_cannot_load(self) -> None:
+        """Codex 4384093059: stop must not exit 3 because the view's figures are unavailable."""
+
+        self.open()
+        opened = [record["kind"] for record in self.records()]
+
+        def broken(*args: object, **kwargs: object) -> object:
+            raise cli.ProjectionError("registry unreadable")
+
+        real = cli.load_registry
+        cli.load_registry = broken
+        try:
+            code, stopped = self.json_of("stop", "--operator", "op", "--reason", "end")
+            status_code, status_text = self.run_cli("status")
+            fresh = self.dir / "fresh.jsonl"
+            open_code, open_text = self._run_at(
+                fresh, "open", "--session-id", "s-2", "--mode", "paper")
+        finally:
+            cli.load_registry = real
+        self.assertEqual((0, True, "stopped"), (code, stopped["ok"], stopped["code"]))
+        figures = [item for item in stopped["lines"] if item["kind"] == "figure"]
+        self.assertGreaterEqual(len(figures), 1)
+        self.assertTrue(all(item["value"] == WITHHELD for item in figures))
+        self.assertEqual(
+            opened + ["session_stopped"], [record["kind"] for record in self.records()])
+        verify_chain(self.records())
+        self.assertEqual((3, "unusable: ProjectionError\n"), (status_code, status_text))
+        self.assertEqual(
+            opened + ["session_stopped"], [record["kind"] for record in self.records()])
+        self.assertEqual((3, "unusable: ProjectionError\n"), (open_code, open_text))
+        self.assertFalse(fresh.exists())
+
+    def test_cli_imports_when_errno_has_no_edeadlock(self) -> None:
+        """macOS has EDEADLK only. Importing with EDEADLOCK removed must succeed."""
+
+        script = textwrap.dedent("""
+            import errno, io
+            if hasattr(errno, "EDEADLOCK"):
+                delattr(errno, "EDEADLOCK")
+            assert not hasattr(errno, "EDEADLOCK")
+            from cockpit_spine import cli
+            assert errno.EACCES in cli._LOCK_BUSY
+            assert errno.EAGAIN in cli._LOCK_BUSY
+            assert errno.EDEADLK in cli._LOCK_BUSY
+            assert cli.main(["--help"], out=io.StringIO()) == 0
+            print("ok")
+        """)
+        done = subprocess.run(
+            [sys.executable, "-X", "utf8", "-B", "-c", script],
+            capture_output=True, text=True, timeout=60,
+            cwd=str(Path(cli.__file__).resolve().parents[1]),
+        )
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn("ok", done.stdout)
 
     def test_without_fcntl_the_cli_imports_and_locks_through_msvcrt(self) -> None:
         """Native Windows has no ``fcntl``: the CLI must still import, help and lock."""

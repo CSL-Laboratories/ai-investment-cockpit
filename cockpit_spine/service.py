@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from cockpit_spine import views
-from cockpit_spine.projections import Registry
+from cockpit_spine.projections import ProjectionError, Registry, WITHHELD
 from cockpit_spine.session import OperatorSession
 from cockpit_spine.views import Line
 
@@ -72,7 +72,14 @@ class OperatorService:
             Line("text", "label", LABEL_DEFERRED),
         ]
         for label, projection_id in CONTEXT_FIGURES:
-            lines.append(views.figure(label, self._registry.figure(projection_id), self._registry))
+            try:
+                shown = views.figure(
+                    label, self._registry.figure(projection_id), self._registry)
+            except ProjectionError:
+                # Stop (and status) must still render when a figure has no
+                # verified projection. The number is withheld; the command stands.
+                shown = Line("figure", label, WITHHELD)
+            lines.append(shown)
         for item in session.proposals():
             payload = item["payload"]
             lines += [

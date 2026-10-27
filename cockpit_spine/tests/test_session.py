@@ -589,6 +589,55 @@ class SourceFailureTests(unittest.TestCase):
         self.assertFalse(session.stopped)
         sess.OperatorSession.replay(session.records(), source=ScriptedSource())
 
+    def test_repeated_hangs_do_not_grow_the_live_thread_count(self) -> None:
+        """A hung source leaves one worker. Later proposes refuse and start none.
+
+        The operator service is long-lived, so each timed-out fetch must not add
+        another thread. The refusal is the same fail-closed source_timeout.
+        """
+
+        source = _HungThenAccepted()
+        session = sess.OperatorSession.open(
+            session_id="s-1", mode="paper", source=source, clock=counter_clock(),
+            fetch_deadline_seconds=0.2)
+        self.addCleanup(source.release.set)
+        already = _live_fetchers()
+        first = session.request_proposal(request_id="r1", prompt="p")
+        self.assertEqual((False, sess.SOURCE_TIMEOUT), (first.ok, first.code))
+        running = threading.active_count()
+        self.assertEqual(already + 1, _live_fetchers())
+        worker = session._fetch_worker
+        self.assertIsNotNone(worker)
+        began = time.monotonic()
+        for number in range(2, 6):
+            result = session.request_proposal(request_id=f"r{number}", prompt="p")
+            self.assertEqual((False, sess.SOURCE_TIMEOUT), (result.ok, result.code))
+            refusal = session.records()[-1]
+            self.assertEqual(
+                ("proposal_refused", "watch_only", False, sess.SOURCE_TIMEOUT),
+                (refusal["kind"], refusal["data"]["fail_closed_to"],
+                 refusal["data"]["quarantined"], refusal["data"]["reason"]))
+        self.assertEqual(running, threading.active_count())
+        self.assertEqual(already + 1, _live_fetchers())
+        self.assertIs(worker, session._fetch_worker)
+        self.assertLess(time.monotonic() - began, 0.5)
+        self.assertEqual([], session.proposals())
+        source.release.set()
+        self.assertTrue(source.returned.wait(2))
+        worker = session._fetch_worker
+        assert worker is not None
+        worker.join(2)
+        self.assertFalse(worker.is_alive())
+        self.assertNotIn("proposal_received", kinds(session))
+        sess.OperatorSession.replay(session.records(), source=ScriptedSource())
+
+
+def _live_fetchers() -> int:
+    return sum(
+        1 for item in threading.enumerate()
+        if item.name == "proposal-fetch" and item.is_alive()
+    )
+
 
 class _HungThenAccepted:
     """Blocks in fetch, then returns an accepted proposal once released."""
