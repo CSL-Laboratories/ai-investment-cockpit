@@ -16,15 +16,30 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 from cockpit_spine import cli, web
-from cockpit_spine import projections as proj
 from cockpit_spine import service as svc
 from cockpit_spine import session as sess
 from cockpit_spine.fake_source import FakeProposalSource
+from cockpit_spine.projections import Registry
 from cockpit_spine.tests.support.scripted import (
     ScriptedSource, accepted, counter_clock, proposal_payload,
 )
+from cockpit_spine.tests.support.vault import (
+    build_synthetic_registry, discard_synthetic_registry,
+)
 
-REGISTRY = proj.load_registry()
+_VAULT: Path | None = None
+_REGISTRY_PATH: Path | None = None
+REGISTRY: Registry
+
+
+def setUpModule() -> None:
+    global REGISTRY, _VAULT, _REGISTRY_PATH
+    _VAULT, _REGISTRY_PATH, REGISTRY = build_synthetic_registry()
+
+
+def tearDownModule() -> None:
+    if _VAULT is not None and _REGISTRY_PATH is not None:
+        discard_synthetic_registry(_VAULT, _REGISTRY_PATH)
 
 
 class Texts(HTMLParser):
@@ -192,9 +207,20 @@ class ParityTests(ViewCase):
         log = tmp / "t.jsonl"
         clock = counter_clock()
 
+        vault, registry_path = _VAULT, _REGISTRY_PATH
+        self.assertIsNotNone(vault)
+        self.assertIsNotNone(registry_path)
+        assert vault is not None and registry_path is not None
+
         def run(*args: str) -> dict:
             out = io.StringIO()
-            cli.main(["--log", str(log), "--json", *args], out=out, clock=clock)
+            # Same synthetic vault the view's registry was loaded from. The
+            # registry file is the one that cites that vault; --vault-root
+            # alone would point the packaged registry at it.
+            cli.main(
+                ["--log", str(log), "--vault-root", str(vault), "--json", *args],
+                out=out, clock=clock, registry_path=registry_path,
+            )
             return json.loads(out.getvalue())
 
         run("open", "--session-id", "s-1", "--mode", "paper")
@@ -422,6 +448,15 @@ class CaptionAndFieldTests(unittest.TestCase):
             self.assertEqual(1, page.count(f">veto {ref}<"))
         self.assertNotIn(">approve withheld id<", page)
         self.assertNotIn(">veto withheld id<", page)
+
+    def test_an_unpaired_withheld_id_line_fails_loudly(self) -> None:
+        lines = [
+            {"label": "withheld line", "value": "line withheld: it failed view validation"},
+            {"label": "proposal state", "value": "pending"},
+        ]
+        with self.assertRaises(RuntimeError) as caught:
+            web._render_lines(lines, {})
+        self.assertIn("paired reference", str(caught.exception))
 
     def test_the_prompt_field_allows_2000_characters(self) -> None:
         page = web.render_page(self.service(), "tok")

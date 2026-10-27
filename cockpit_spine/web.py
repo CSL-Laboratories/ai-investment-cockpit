@@ -94,7 +94,13 @@ def _withheld_references(proposals: list[dict]) -> dict[str, str]:
 
 
 def _render_lines(lines: list[dict], references: dict[str, str]) -> list[str]:
-    """Render status lines, and name each withheld proposal beside its details."""
+    """Render status lines, and name each withheld proposal beside its details.
+
+    References are paired in session order, one per withheld id line. A
+    status-line shape that asks for a reference the session did not produce
+    raises RuntimeError here. ``next`` on an empty iterator would raise
+    StopIteration instead.
+    """
 
     rendered: list[str] = []
     pending = iter(references.values())
@@ -104,7 +110,13 @@ def _render_lines(lines: list[dict], references: dict[str, str]) -> list[str]:
         # When that id is not showable, sanitize_lines replaces it with the
         # withheld marker; the same reference then heads that detail block.
         if item["label"] == "withheld line" and nxt == "proposal state":
-            rendered.append(f"<li>reference: {_esc(next(pending))}</li>")
+            reference = next(pending, None)
+            if reference is None:
+                raise RuntimeError(
+                    "withheld id line has no paired reference; "
+                    "status lines and withheld references are out of order"
+                )
+            rendered.append(f"<li>reference: {_esc(reference)}</li>")
         rendered.append(f"<li>{_esc(item['label'])}: {_esc(item['value'])}</li>")
     return rendered
 
