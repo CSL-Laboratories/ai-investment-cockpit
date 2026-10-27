@@ -1,23 +1,56 @@
 """The committed Linux operator session record.
 
+The committed file cites the synthetic projection stand-in from
+``tests/support/vault.py``, built in ``setUpModule`` and discarded in
+``tearDownModule``. It does not call ``load_registry()`` with no vault root, and
+it does not read ``CSL_RESEARCH_CHECKOUT``. A different registry, including the
+packaged csl-research registry, fails the digest check instead of passing.
+Real-vault checks live in ``test_projections.RealVaultCheckoutTests`` and skip
+when that checkout is unset.
+
 Whole-record checks run anywhere. Regeneration needs the read-only Recursion
 checkout (``RECURSION_ROUTE_CONTRACT_CHECKOUT``) and fails closed without it,
 exactly like WP12's conformance tests; ``ROUTE_CONSUMER_ALLOW_NO_RECURSION=1``
-skips them and proves nothing.
+skips them and proves nothing. The human Linux operator session is still unmet;
+Lucas records that one himself.
 """
 
 from __future__ import annotations
 
 import copy
 import json
+import os
 import unittest
+from pathlib import Path
+from unittest import mock
 
-from cockpit_spine import projections as proj
 from cockpit_spine import recorded
+from cockpit_spine.projections import VAULT_CHECKOUT_ENV, Registry
 from cockpit_spine.tests.support import record_session
+from cockpit_spine.tests.support.vault import (
+    build_synthetic_registry, discard_synthetic_registry,
+)
 from successor.route_consumer.tests.support.recursion_bridge import require_checkout
 
-REGISTRY = proj.load_registry()
+_VAULT: Path | None = None
+_REGISTRY_PATH: Path | None = None
+REGISTRY: Registry
+
+
+def setUpModule() -> None:
+    global REGISTRY, _VAULT, _REGISTRY_PATH
+    _VAULT, _REGISTRY_PATH, REGISTRY = build_synthetic_registry()
+
+
+def tearDownModule() -> None:
+    if _VAULT is not None and _REGISTRY_PATH is not None:
+        discard_synthetic_registry(_VAULT, _REGISTRY_PATH)
+
+
+def _vault() -> tuple[Path, Path]:
+    if _VAULT is None or _REGISTRY_PATH is None:
+        raise AssertionError("synthetic registry was not built")
+    return _VAULT, _REGISTRY_PATH
 
 
 def committed() -> dict:
@@ -329,12 +362,28 @@ class StepsAreBoundToTheChainTests(unittest.TestCase):
 class RegenerationTests(unittest.TestCase):
     def test_committed_record_equals_a_fresh_run_byte_for_byte(self) -> None:
         require_checkout()
-        fresh = record_session.render(record_session.run())
+        vault, registry_path = _vault()
+        fresh = record_session.render(record_session.run(
+            vault_root=vault, registry_path=registry_path))
         self.assertEqual(fresh, record_session.RECORD_PATH.read_text(encoding="utf-8"))
 
     def test_two_runs_are_identical(self) -> None:
         require_checkout()
-        self.assertEqual(record_session.run(), record_session.run())
+        vault, registry_path = _vault()
+        self.assertEqual(
+            record_session.run(vault_root=vault, registry_path=registry_path),
+            record_session.run(vault_root=vault, registry_path=registry_path),
+        )
+
+    def test_an_ambient_checkout_does_not_replace_the_explicit_vault(self) -> None:
+        """``CSL_RESEARCH_CHECKOUT`` must not change the recorded digest."""
+
+        require_checkout()
+        vault, registry_path = _vault()
+        absent = Path("/absent-csl-research-checkout")
+        with mock.patch.dict(os.environ, {VAULT_CHECKOUT_ENV: str(absent)}):
+            fresh = record_session.run(vault_root=vault, registry_path=registry_path)
+        self.assertEqual(REGISTRY.digest, fresh["projection_registry_digest"])
 
     def test_every_propose_went_through_the_consumer_and_the_fake_driver(self) -> None:
         require_checkout()
@@ -346,6 +395,13 @@ class RegenerationTests(unittest.TestCase):
         refused = [r for r in record["chain"] if r["kind"] == "proposal_refused"]
         self.assertEqual(("timeout", "watch_only"),
                          (refused[0]["data"]["reason"], refused[0]["data"]["fail_closed_to"]))
+
+
+class RecorderArgumentTests(unittest.TestCase):
+    def test_the_recorder_requires_an_explicit_vault_root(self) -> None:
+        with self.assertRaises(SystemExit) as caught:
+            record_session.main([])
+        self.assertEqual(2, caught.exception.code)
 
 
 if __name__ == "__main__":

@@ -233,17 +233,17 @@
     }
   ],
   "contract": {
-    "head_sha": "baf6fdc2e1d29592721c8dbaac65878b12ec4a98",
+    "head_sha": "aa34e9a77d91c0b7d809ebc969d8111372cf1a01",
     "pull_request": 302,
     "repository": "CSL-Laboratories/recursion",
-    "schema_sha256": "22a85ce775c51934569ad3a1f253472e06e695e46962f46b40f0848178a19016"
+    "schema_sha256": "6b3e775273b70df78f7a4ec986672191165228078dd5e493a4a4e0cb18cc4820"
   },
   "head": "sha256:fe705048145b73e66ddefce915b96052bba35a8d259f28f30a9c0de54a3b259e",
   "kind": "operator session transcript; not a model comparison; no CP7 result; no verdict",
   "label": "live route integration deferred; recorded on the fake driver; no verdict",
   "live_calls": false,
   "platform": "linux",
-  "projection_registry_digest": "sha256:51931126867f9e141bfafccb7d3fbc5923575618afc6a80c5ba5c1f9f4ab9843",
+  "projection_registry_digest": "sha256:87f9850b2a64059b7c244cb5ade8ce7b5ec601e81a003a6fdfcb5c2aa98f22a4",
   "steps": [
     {
       "argv": [
@@ -292,12 +292,12 @@
           {
             "kind": "figure",
             "label": "Plumbing cells accepted (route plumbing record, not a result)",
-            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:04664e66cb4ed8c6bb520c6d5e8fd39447a64f4ccf2427a499a712e5722107ab]"
+            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:41c76f8d0e7d53c66f8e38a061753e26cd2a83c707094cf4e404af1ff1369a5d]"
           },
           {
             "kind": "figure",
             "label": "Plumbing cells in that record",
-            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:789f8e01b4d1aa7592236387044d6b82da3f02ae632a50ed700aab00dd02f41d]"
+            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:43eb20926059bd66b57da405ff2f2adb18395d6a6229bed960a25460f95c6b36]"
           }
         ],
         "ok": true,
@@ -354,12 +354,12 @@
           {
             "kind": "figure",
             "label": "Plumbing cells accepted (route plumbing record, not a result)",
-            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:04664e66cb4ed8c6bb520c6d5e8fd39447a64f4ccf2427a499a712e5722107ab]"
+            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:41c76f8d0e7d53c66f8e38a061753e26cd2a83c707094cf4e404af1ff1369a5d]"
           },
           {
             "kind": "figure",
             "label": "Plumbing cells in that record",
-            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:789f8e01b4d1aa7592236387044d6b82da3f02ae632a50ed700aab00dd02f41d]"
+            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:43eb20926059bd66b57da405ff2f2adb18395d6a6229bed960a25460f95c6b36]"
           },
           {
             "kind": "id",
@@ -481,12 +481,12 @@
           {
             "kind": "figure",
             "label": "Plumbing cells accepted (route plumbing record, not a result)",
-            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:04664e66cb4ed8c6bb520c6d5e8fd39447a64f4ccf2427a499a712e5722107ab]"
+            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:41c76f8d0e7d53c66f8e38a061753e26cd2a83c707094cf4e404af1ff1369a5d]"
           },
           {
             "kind": "figure",
             "label": "Plumbing cells in that record",
-            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:789f8e01b4d1aa7592236387044d6b82da3f02ae632a50ed700aab00dd02f41d]"
+            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:43eb20926059bd66b57da405ff2f2adb18395d6a6229bed960a25460f95c6b36]"
           },
           {
             "kind": "id",
@@ -675,12 +675,12 @@
           {
             "kind": "figure",
             "label": "Plumbing cells accepted (route plumbing record, not a result)",
-            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:04664e66cb4ed8c6bb520c6d5e8fd39447a64f4ccf2427a499a712e5722107ab]"
+            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:41c76f8d0e7d53c66f8e38a061753e26cd2a83c707094cf4e404af1ff1369a5d]"
           },
           {
             "kind": "figure",
             "label": "Plumbing cells in that record",
-            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:789f8e01b4d1aa7592236387044d6b82da3f02ae632a50ed700aab00dd02f41d]"
+            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:43eb20926059bd66b57da405ff2f2adb18395d6a6229bed960a25460f95c6b36]"
           },
           {
             "kind": "id",
@@ -871,12 +871,12 @@
           {
             "kind": "figure",
             "label": "Plumbing cells accepted (route plumbing record, not a result)",
-            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:04664e66cb4ed8c6bb520c6d5e8fd39447a64f4ccf2427a499a712e5722107ab]"
+            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:41c76f8d0e7d53c66f8e38a061753e26cd2a83c707094cf4e404af1ff1369a5d]"
           },
           {
             "kind": "figure",
             "label": "Plumbing cells in that record",
-            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:789f8e01b4d1aa7592236387044d6b82da3f02ae632a50ed700aab00dd02f41d]"
+            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:43eb20926059bd66b57da405ff2f2adb18395d6a6229bed960a25460f95c6b36]"
           },
           {
             "kind": "id",
@@ -1082,12 +1082,12 @@
           {
             "kind": "figure",
             "label": "Plumbing cells accepted (route plumbing record, not a result)",
-            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:04664e66cb4ed8c6bb520c6d5e8fd39447a64f4ccf2427a499a712e5722107ab]"
+            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:41c76f8d0e7d53c66f8e38a061753e26cd2a83c707094cf4e404af1ff1369a5d]"
           },
           {
             "kind": "figure",
             "label": "Plumbing cells in that record",
-            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:789f8e01b4d1aa7592236387044d6b82da3f02ae632a50ed700aab00dd02f41d]"
+            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:43eb20926059bd66b57da405ff2f2adb18395d6a6229bed960a25460f95c6b36]"
           },
           {
             "kind": "id",
@@ -1283,12 +1283,12 @@
           {
             "kind": "figure",
             "label": "Plumbing cells accepted (route plumbing record, not a result)",
-            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:04664e66cb4ed8c6bb520c6d5e8fd39447a64f4ccf2427a499a712e5722107ab]"
+            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:41c76f8d0e7d53c66f8e38a061753e26cd2a83c707094cf4e404af1ff1369a5d]"
           },
           {
             "kind": "figure",
             "label": "Plumbing cells in that record",
-            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:789f8e01b4d1aa7592236387044d6b82da3f02ae632a50ed700aab00dd02f41d]"
+            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:43eb20926059bd66b57da405ff2f2adb18395d6a6229bed960a25460f95c6b36]"
           },
           {
             "kind": "id",
@@ -1490,12 +1490,12 @@
           {
             "kind": "figure",
             "label": "Plumbing cells accepted (route plumbing record, not a result)",
-            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:04664e66cb4ed8c6bb520c6d5e8fd39447a64f4ccf2427a499a712e5722107ab]"
+            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:41c76f8d0e7d53c66f8e38a061753e26cd2a83c707094cf4e404af1ff1369a5d]"
           },
           {
             "kind": "figure",
             "label": "Plumbing cells in that record",
-            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:789f8e01b4d1aa7592236387044d6b82da3f02ae632a50ed700aab00dd02f41d]"
+            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:43eb20926059bd66b57da405ff2f2adb18395d6a6229bed960a25460f95c6b36]"
           },
           {
             "kind": "id",
@@ -1764,12 +1764,12 @@
           {
             "kind": "figure",
             "label": "Plumbing cells accepted (route plumbing record, not a result)",
-            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:04664e66cb4ed8c6bb520c6d5e8fd39447a64f4ccf2427a499a712e5722107ab]"
+            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:41c76f8d0e7d53c66f8e38a061753e26cd2a83c707094cf4e404af1ff1369a5d]"
           },
           {
             "kind": "figure",
             "label": "Plumbing cells in that record",
-            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:789f8e01b4d1aa7592236387044d6b82da3f02ae632a50ed700aab00dd02f41d]"
+            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:43eb20926059bd66b57da405ff2f2adb18395d6a6229bed960a25460f95c6b36]"
           },
           {
             "kind": "id",
@@ -2036,12 +2036,12 @@
           {
             "kind": "figure",
             "label": "Plumbing cells accepted (route plumbing record, not a result)",
-            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:04664e66cb4ed8c6bb520c6d5e8fd39447a64f4ccf2427a499a712e5722107ab]"
+            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:41c76f8d0e7d53c66f8e38a061753e26cd2a83c707094cf4e404af1ff1369a5d]"
           },
           {
             "kind": "figure",
             "label": "Plumbing cells in that record",
-            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:789f8e01b4d1aa7592236387044d6b82da3f02ae632a50ed700aab00dd02f41d]"
+            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:43eb20926059bd66b57da405ff2f2adb18395d6a6229bed960a25460f95c6b36]"
           },
           {
             "kind": "id",
@@ -2312,12 +2312,12 @@
           {
             "kind": "figure",
             "label": "Plumbing cells accepted (route plumbing record, not a result)",
-            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:04664e66cb4ed8c6bb520c6d5e8fd39447a64f4ccf2427a499a712e5722107ab]"
+            "value": "15 cells [projection:x2-fake-driver-cells-accepted@sha256:41c76f8d0e7d53c66f8e38a061753e26cd2a83c707094cf4e404af1ff1369a5d]"
           },
           {
             "kind": "figure",
             "label": "Plumbing cells in that record",
-            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:789f8e01b4d1aa7592236387044d6b82da3f02ae632a50ed700aab00dd02f41d]"
+            "value": "20 cells [projection:x2-fake-driver-cells-total@sha256:43eb20926059bd66b57da405ff2f2adb18395d6a6229bed960a25460f95c6b36]"
           },
           {
             "kind": "id",
