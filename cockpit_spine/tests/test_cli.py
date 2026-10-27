@@ -18,6 +18,7 @@ from pathlib import Path
 
 from cockpit_spine import cli
 from cockpit_spine.audit import verify_chain
+from cockpit_spine.projections import WITHHELD
 from cockpit_spine.fake_source import (
     FAIL_PROMPT, QUARANTINE_PROMPT, FakeProposalSource, proposal_id_for,
 )
@@ -247,6 +248,142 @@ class UnusableTests(CliCase):
         kinds = [record["kind"] for record in self.records()]
         self.assertLess(kinds.index("proposal_received"), kinds.index("session_stopped"))
 
+    def test_a_hung_source_cannot_block_stop_and_times_out_to_watch_only(self) -> None:
+        """Codex 4383700919: a source that never returns must not hold stop off the lock.
+
+        The fetch deadline records a refusal fail-closed to watch_only. Stop, started
+        while that fetch is still blocked, persists session_stopped inside the lock
+        deadline. The source is never released.
+        """
+
+        self.open()
+        started = threading.Event()
+        fetch_deadline = 0.4
+        lock_deadline = 2.0
+
+        class Hung:
+            adapter_kind = "fake-inline"
+
+            def fetch(self, *, request_id: str, mode: str, prompt: str):
+                started.set()
+                threading.Event().wait()
+
+        codes: dict[str, int] = {}
+        propose_out = io.StringIO()
+
+        def propose() -> None:
+            codes["propose"] = cli.main(
+                ["--log", str(self.log), "--json", "propose", "--request-id", "r1",
+                 "--prompt", "p"],
+                source_factory=Hung, out=propose_out, clock=self.clock,
+                fetch_deadline_seconds=fetch_deadline,
+                lock_deadline_seconds=lock_deadline)
+
+        def stop() -> None:
+            codes["stop"] = cli.main(
+                ["--log", str(self.log), "stop", "--operator", "op", "--reason", "end"],
+                out=io.StringIO(), clock=self.clock, lock_deadline_seconds=lock_deadline)
+
+        began = time.monotonic()
+        first = threading.Thread(target=propose)
+        second = threading.Thread(target=stop)
+        first.start()
+        self.assertTrue(started.wait(2))
+        second.start()
+        first.join(5)
+        second.join(5)
+        self.assertLess(time.monotonic() - began, lock_deadline)
+        self.assertFalse(first.is_alive() or second.is_alive())
+        self.assertEqual((2, 0), (codes["propose"], codes["stop"]))
+        body = json.loads(propose_out.getvalue())
+        self.assertEqual((False, "source_timeout"), (body["ok"], body["code"]))
+        self.assertFalse([item for item in body["lines"] if item["label"] == "proposal"])
+        records = self.records()
+        refusal = next(record for record in records if record["kind"] == "proposal_refused")
+        self.assertEqual(
+            ("watch_only", False, "source_timeout"),
+            (refusal["data"]["fail_closed_to"], refusal["data"]["quarantined"],
+             refusal["data"]["reason"]))
+        kinds = [record["kind"] for record in records]
+        self.assertNotIn("proposal_received", kinds)
+        self.assertNotIn("proposal_approved", kinds)
+        self.assertLess(kinds.index("proposal_refused"), kinds.index("session_stopped"))
+        verify_chain(records)
+
+    def test_lock_acquisition_gives_up_without_writing(self) -> None:
+        # The default lock wait outlasts one fetch, so stop can land after a timeout.
+        self.assertGreater(cli.LOCK_DEADLINE_SECONDS, cli.FETCH_DEADLINE_SECONDS)
+        self.open()
+        before = self.log.read_bytes()
+        held = cli._lock(self.log)
+        self.addCleanup(cli._unlock, held)
+        out = io.StringIO()
+        began = time.monotonic()
+        code = cli.main(
+            ["--log", str(self.log), "approve", "--proposal-id", "prop-r1",
+             "--operator", "op", "--confirm-digest", "x"],
+            out=out, clock=self.clock, lock_deadline_seconds=0.25)
+        self.assertLess(time.monotonic() - began, 2.0)
+        self.assertEqual(3, code)
+        self.assertEqual("unusable: lock_timeout\n", out.getvalue())
+        self.assertEqual(before, self.log.read_bytes())
+        self.assertNotIn("proposal_approved", [record["kind"] for record in self.records()])
+
+    def test_stop_persists_when_the_projection_registry_cannot_load(self) -> None:
+        """Codex 4384093059: stop must not exit 3 because the view's figures are unavailable."""
+
+        self.open()
+        opened = [record["kind"] for record in self.records()]
+
+        def broken(*args: object, **kwargs: object) -> object:
+            raise cli.ProjectionError("registry unreadable")
+
+        real = cli.load_registry
+        cli.load_registry = broken
+        try:
+            code, stopped = self.json_of("stop", "--operator", "op", "--reason", "end")
+            status_code, status_text = self.run_cli("status")
+            fresh = self.dir / "fresh.jsonl"
+            open_code, open_text = self._run_at(
+                fresh, "open", "--session-id", "s-2", "--mode", "paper")
+        finally:
+            cli.load_registry = real
+        self.assertEqual((0, True, "stopped"), (code, stopped["ok"], stopped["code"]))
+        figures = [item for item in stopped["lines"] if item["kind"] == "figure"]
+        self.assertGreaterEqual(len(figures), 1)
+        self.assertTrue(all(item["value"] == WITHHELD for item in figures))
+        self.assertEqual(
+            opened + ["session_stopped"], [record["kind"] for record in self.records()])
+        verify_chain(self.records())
+        self.assertEqual((3, "unusable: ProjectionError\n"), (status_code, status_text))
+        self.assertEqual(
+            opened + ["session_stopped"], [record["kind"] for record in self.records()])
+        self.assertEqual((3, "unusable: ProjectionError\n"), (open_code, open_text))
+        self.assertFalse(fresh.exists())
+
+    def test_cli_imports_when_errno_has_no_edeadlock(self) -> None:
+        """macOS has EDEADLK only. Importing with EDEADLOCK removed must succeed."""
+
+        script = textwrap.dedent("""
+            import errno, io
+            if hasattr(errno, "EDEADLOCK"):
+                delattr(errno, "EDEADLOCK")
+            assert not hasattr(errno, "EDEADLOCK")
+            from cockpit_spine import cli
+            assert errno.EACCES in cli._LOCK_BUSY
+            assert errno.EAGAIN in cli._LOCK_BUSY
+            assert errno.EDEADLK in cli._LOCK_BUSY
+            assert cli.main(["--help"], out=io.StringIO()) == 0
+            print("ok")
+        """)
+        done = subprocess.run(
+            [sys.executable, "-X", "utf8", "-B", "-c", script],
+            capture_output=True, text=True, timeout=60,
+            cwd=str(Path(cli.__file__).resolve().parents[1]),
+        )
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn("ok", done.stdout)
+
     def test_without_fcntl_the_cli_imports_and_locks_through_msvcrt(self) -> None:
         """Native Windows has no ``fcntl``: the CLI must still import, help and lock."""
 
@@ -255,7 +392,7 @@ class UnusableTests(CliCase):
             sys.modules["fcntl"] = None
             calls = []
             msvcrt = types.ModuleType("msvcrt")
-            msvcrt.LK_LOCK, msvcrt.LK_UNLCK = 1, 0
+            msvcrt.LK_NBLCK, msvcrt.LK_UNLCK = 2, 0
             msvcrt.locking = lambda fd, mode, size: calls.append((mode, size))
             sys.modules["msvcrt"] = msvcrt
             from pathlib import Path
@@ -265,7 +402,7 @@ class UnusableTests(CliCase):
             handle = cli._lock(Path({str(self.log)!r}))
             cli._unlock(handle)
             assert handle.closed
-            assert calls == [(1, 1), (0, 1)], calls
+            assert calls == [(2, 1), (0, 1)], calls
             print("ok")
         """)
         done = subprocess.run(

@@ -83,6 +83,22 @@ class MaskTests(unittest.TestCase):
         self.assertFalse(any(ch.isdecimal() for ch in arabic.value))
         check(arabic)
 
+    def test_superscript_fraction_and_roman_numerals_are_masked(self) -> None:
+        """², ½ and Ⅻ are numeric, so isdecimal() would leave them on screen."""
+
+        self.assertEqual("[n]", views.mask_numerals("²½Ⅻ"))
+        for numeral in ("²", "½", "Ⅻ"):
+            line = views.quoted("thesis", f"gain {numeral} percent")
+            self.assertEqual("gain [n] percent", line.value)
+            self.assertFalse(any(ch.isnumeric() for ch in line.value))
+            check(line)
+            with self.assertRaises(ViewError):
+                check(Line("quoted", "thesis", f"gain {numeral} percent"))
+            with self.assertRaises(ViewError):
+                check(Line("text", "state", f"up {numeral}"))
+            with self.assertRaises(ViewError):
+                check(Line("text", f"lab{numeral}", "words"))
+
     def test_quoted_flattens_control_characters_and_survives_non_strings(self) -> None:
         self.assertEqual("a b", views.quoted("t", "a\n\x1b\tb").value)
         self.assertEqual("", views.quoted("t", None).value)

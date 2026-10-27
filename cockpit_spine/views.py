@@ -40,25 +40,25 @@ UNRECOGNIZED = "unrecognized_code"
 
 
 def _has_digit(text: str) -> bool:
-    """ASCII and other decimal digits. A number in any script is still a number."""
+    """Decimal digits and other numeric characters, including ², ½ and Ⅻ."""
 
-    return any(ch.isdecimal() for ch in text)
+    return any(ch.isnumeric() for ch in text)
 
 
 def mask_numerals(text: str) -> str:
-    """Replace each numeral run, including non-ASCII decimal digits, with ``[n]``."""
+    """Replace each numeric run, including ², ½ and Ⅻ, with ``[n]``."""
 
     out: list[str] = []
     index = 0
     while index < len(text):
-        if text[index].isdecimal():
+        if text[index].isnumeric():
             index += 1
             while index < len(text) and (
-                text[index].isdecimal()
+                text[index].isnumeric()
                 or (
                     text[index] in ".,"
                     and index + 1 < len(text)
-                    and text[index + 1].isdecimal()
+                    and text[index + 1].isnumeric()
                 )
             ):
                 index += 1
