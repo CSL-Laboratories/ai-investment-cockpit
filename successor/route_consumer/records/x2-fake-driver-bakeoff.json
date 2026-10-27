@@ -87,7 +87,7 @@
       "mode": "paper",
       "output_digest": "sha256:44d7c9b95d3326aa817ee1b277721ac61adee23b3d9da6943efc66238c12a8a7",
       "reason": "ok",
-      "request_digest": "sha256:1aab0f93910e7b77f3995d68800cd3205fcc566c45bcf9f4aecbbef8efee9e62",
+      "request_digest": "sha256:c99a033eae772899d260c444c35c8d0c7b5074c527cdbcac56b342eee9fa42d0",
       "route_calls": 1,
       "workload_id": "workload-d05"
     },
@@ -97,7 +97,7 @@
       "mode": "paper",
       "output_digest": "sha256:fa4a0ef8aaa5cf4836e473ed46fcd587a9e6d3b19c7aef2d9d85c4e23b8d5fee",
       "reason": "ok",
-      "request_digest": "sha256:8b4795a2d8cc2d0a53e23b0422ac057f2b46b3605f2528192efa25c72d76dc0a",
+      "request_digest": "sha256:a87e43ff6461db375cacf0cd14a8c2b9433ddba53ac4b44bdebecb0fc5aa952a",
       "route_calls": 1,
       "workload_id": "workload-d05"
     },
@@ -187,7 +187,7 @@
       "mode": "auto_full",
       "output_digest": "sha256:44d7c9b95d3326aa817ee1b277721ac61adee23b3d9da6943efc66238c12a8a7",
       "reason": "ok",
-      "request_digest": "sha256:1aab0f93910e7b77f3995d68800cd3205fcc566c45bcf9f4aecbbef8efee9e62",
+      "request_digest": "sha256:c99a033eae772899d260c444c35c8d0c7b5074c527cdbcac56b342eee9fa42d0",
       "route_calls": 1,
       "workload_id": "workload-d05"
     },

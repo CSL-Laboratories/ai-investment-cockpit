@@ -14,12 +14,12 @@
     },
     "pattern": {
       "type": "string",
-      "enum": ["resume", "fresh"],
-      "description": "Interaction pattern used. 'resume' = same-context --resume of the proposing session; 'fresh' = fresh-context call over stored raw_ref + validated output. Approve/veto-informing interrogations MUST be 'fresh' (SEC-18)."
+      "enum": ["fresh"],
+      "description": "Interaction pattern. Approve/veto interrogations are fresh-context only (SEC-18). Route Contract v0 cannot resume a session."
     },
     "session_id": {
       "type": ["string", "null"],
-      "description": "The claude -p session_id resumed for a 'resume' answer; null for 'fresh' (no proposing session is resumed)."
+      "description": "Null for a fresh answer. Route Contract v0 does not resume a proposing session."
     },
     "risk_decision_ref": {
       "type": ["string", "null"],

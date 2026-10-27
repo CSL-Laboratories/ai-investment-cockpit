@@ -22,6 +22,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from successor.route_consumer import consumer as consumer_mod
 from successor.route_consumer import pin
 from successor.route_consumer.consumer import ACCEPTED, FAIL_CLOSED, NEEDS_HUMAN_REVIEW
 from successor.route_consumer.profile import FAIL_CLOSED_TO, engines_allowed
@@ -35,13 +36,42 @@ from successor.route_consumer.tests.support.recursion_bridge import (
 REC = None
 VECTORS = None
 PROFILE = None
+_KNOWN_PROFILE = None
+
+
+def _admits_oracle_profile(profile) -> bool:
+    """Admit the contract vector fixture, plus the real decision profiles.
+
+    Product ``decide`` rejects every caller-built profile. This module's oracle
+    replay is that fixture (any timeout or output cap), not a sixth workload.
+    """
+
+    if _KNOWN_PROFILE is not None and _KNOWN_PROFILE(profile):
+        return True
+    base = rigmod.vector_profile()
+    return (
+        profile.workload_id == base.workload_id
+        and profile.cockpit_job == base.cockpit_job
+        and profile.output_schema_name == base.output_schema_name
+        and profile.output_schema_digest == base.output_schema_digest
+        and profile.max_turns == base.max_turns
+        and profile.privacy_class == base.privacy_class
+        and profile.authority == base.authority
+    )
 
 
 def setUpModule() -> None:
-    global REC, VECTORS, PROFILE
+    global REC, VECTORS, PROFILE, _KNOWN_PROFILE
     REC = recursion()
     VECTORS = vectors()
     PROFILE = rigmod.vector_profile()
+    _KNOWN_PROFILE = consumer_mod.known_decision_profile
+    consumer_mod.known_decision_profile = _admits_oracle_profile
+
+
+def tearDownModule() -> None:
+    if _KNOWN_PROFILE is not None:
+        consumer_mod.known_decision_profile = _KNOWN_PROFILE
 
 
 def decide(rig, *, request_id="req-1", prompt="PROMPT", mode="paper", profile=None):
