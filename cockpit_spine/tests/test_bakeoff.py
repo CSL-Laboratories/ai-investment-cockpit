@@ -1,0 +1,320 @@
+"""Plumbing runs; the result-record step stays blocked on WP8."""
+
+from __future__ import annotations
+
+import ast
+import builtins
+import json
+import re
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from cockpit_spine import bakeoff
+from successor.route_consumer import ACCEPTED, FAIL_CLOSED, DecisionOutcome
+from successor.route_consumer.profile import canonical_digest
+
+SOURCE = Path(bakeoff.__file__)
+
+
+ALLOWED_IMPORT_MODULES = frozenset({
+    "__future__", "collections.abc", "dataclasses", "typing",
+    "successor.route_consumer", "successor.route_consumer.profile",
+})
+# Exactly the names bakeoff.py imports from each module. A dunder or any other
+# name is refused even when the module itself is allowed, so
+# ``from typing import __builtins__ as b`` cannot bind the builtins dict.
+ALLOWED_IMPORT_NAMES = {
+    "__future__": frozenset({"annotations"}),
+    "collections.abc": frozenset({"Callable"}),
+    "dataclasses": frozenset({"dataclass"}),
+    "typing": frozenset({"Any", "Protocol"}),
+    "successor.route_consumer": frozenset({"DECISION_PROFILE", "DecisionOutcome"}),
+    "successor.route_consumer.profile": frozenset({"canonical_digest"}),
+}
+# Exactly the builtins bakeoff.py calls or names. Every other builtin, including
+# open, print, getattr, vars, globals, eval, exec, __import__, help and memoryview,
+# is refused by name, so a new dynamic accessor cannot slip past a short deny-list.
+ALLOWED_BUILTINS = frozenset({
+    "Exception", "ValueError", "bool", "dict", "int", "isinstance", "len", "list", "range",
+    "set", "str", "tuple",
+})
+# Exactly the attributes bakeoff.py uses, including list.append. Anything else,
+# including frame, code and globals attributes, is a write-capability problem.
+ALLOWED_ATTRIBUTES = frozenset({
+    "append", "check", "decide", "disposition", "engines", "prompt", "reason",
+    "reply_record", "request_record", "trials",
+})
+_BUILTIN_NAMES = frozenset(vars(builtins))
+
+
+def _is_dunder(text: object) -> bool:
+    return isinstance(text, str) and len(text) > 4 and text[:2] == text[-2:] == "__"
+
+
+def _import_from_problems(node: ast.ImportFrom) -> list[str]:
+    """Refuse a ``from`` import whose module, name or alias is not allow-listed.
+
+    The name and alias are checked for every source module, including modules
+    on ``ALLOWED_IMPORT_MODULES``. A dunder (``__builtins__``, ``__import__``,
+    ``__loader__``) is refused even if it were listed.
+    """
+
+    module = ("." * node.level) + (node.module or "")
+    problems: list[str] = []
+    if node.level or module not in ALLOWED_IMPORT_MODULES:
+        problems.append(f"from {module} import ...")
+    allowed = ALLOWED_IMPORT_NAMES.get(module, frozenset())
+    for alias in node.names:
+        if _is_dunder(alias.name) or alias.name not in allowed:
+            problems.append(f"from {module} import {alias.name}")
+        if alias.asname is not None and (
+            _is_dunder(alias.asname) or alias.asname not in allowed
+        ):
+            problems.append(f"from {module} import {alias.name} as {alias.asname}")
+    return problems
+
+
+def write_capability_problems(source: str) -> list[str]:
+    """Why a module could write, or reach something that can. Allow-lists, not deny-lists.
+
+    Imports, the names an ``ImportFrom`` binds, builtins and attribute reads are
+    each limited to what bakeoff.py uses. Imported names are checked, not only
+    the source module, so a dunder or any name bakeoff.py does not import is
+    refused from every module. Every dunder name or string is refused, and so
+    is a ``match`` class pattern, because it reads attributes without an
+    ``ast.Attribute`` node (``case object(gi_frame=f)``).
+    """
+
+    problems: list[str] = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            problems += [f"import {a.name}" for a in node.names
+                         if a.name not in ALLOWED_IMPORT_MODULES]
+        elif isinstance(node, ast.ImportFrom):
+            problems += _import_from_problems(node)
+        elif isinstance(node, ast.Name) and (
+            _is_dunder(node.id)
+            or (node.id in _BUILTIN_NAMES and node.id not in ALLOWED_BUILTINS)
+        ):
+            problems.append(f"name {node.id}")
+        elif isinstance(node, ast.Attribute) and node.attr not in ALLOWED_ATTRIBUTES:
+            problems.append(f"attribute {node.attr}")
+        elif isinstance(node, ast.MatchClass):
+            problems.append("match class pattern")
+        elif isinstance(node, ast.Constant) and _is_dunder(node.value):
+            problems.append(f"string {node.value!r}")
+    return problems
+
+
+def _outcome(disposition: str, reason: str) -> DecisionOutcome:
+    request = {"id": "r"}
+    if disposition == ACCEPTED:
+        reply = {"output_digest": "sha256:" + "2" * 64}
+        return DecisionOutcome(ACCEPTED, reason, {"proposal_id": "p"}, request, reply, None)
+    return DecisionOutcome(FAIL_CLOSED, reason, None, request, None, "watch_only")
+
+
+class StubConsumer:
+    def __init__(self, engine: str) -> None:
+        self.engine, self.calls = engine, []
+
+    def decide(self, *, request_id, profile, mode, prompt, output_schema=None):
+        self.calls.append((request_id, profile.workload_id, mode, prompt))
+        if self.engine == "codex":
+            return _outcome(FAIL_CLOSED, "engine_not_permitted_in_mode")
+        return _outcome(ACCEPTED, "ok")
+
+
+class PlanTests(unittest.TestCase):
+    def test_bad_plans_are_refused_before_any_call(self) -> None:
+        for plan in (bakeoff.Plan(engines=()), bakeoff.Plan(engines=("gpt",)),
+                     bakeoff.Plan(engines=("claude", "claude")), bakeoff.Plan(trials=0),
+                     bakeoff.Plan(trials=bakeoff.MAX_TRIALS + 1), bakeoff.Plan(trials=True),
+                     bakeoff.Plan(trials=2.0), bakeoff.Plan(trials="2")):
+            calls: list = []
+            with self.assertRaises(ValueError):
+                bakeoff.run_trials(plan, calls.append)
+            self.assertEqual([], calls)
+
+
+class RunTests(unittest.TestCase):
+    def test_every_planned_trial_goes_through_the_consumer_once(self) -> None:
+        consumers: dict[str, StubConsumer] = {}
+
+        def factory(engine: str) -> StubConsumer:
+            consumers[engine] = StubConsumer(engine)
+            return consumers[engine]
+
+        batch = bakeoff.run_trials(bakeoff.Plan(trials=3), factory)
+        self.assertEqual(6, len(batch["trials"]))
+        self.assertEqual(
+            [("bk-claude-1", "workload-d04", "paper", "synthetic prompt"),
+             ("bk-claude-2", "workload-d04", "paper", "synthetic prompt"),
+             ("bk-claude-3", "workload-d04", "paper", "synthetic prompt")],
+            consumers["claude"].calls)
+        self.assertEqual(3, len(consumers["codex"].calls))
+        self.assertEqual({FAIL_CLOSED}, {t["disposition"] for t in batch["trials"]
+                                         if t["arm"] == "codex"})
+
+    def test_the_batch_is_raw_unsealed_and_carries_no_result_vocabulary(self) -> None:
+        batch = bakeoff.run_trials(bakeoff.Plan(), StubConsumer)
+        self.assertEqual((False, None), (batch["sealed"], batch["protocol_ref"]))
+        self.assertIn("not a result record", batch["kind"])
+        blob = json.dumps(batch).lower()
+        for word in ("score", "winner", "rank", "return", "pnl", "sharpe", "beats", "verdict:"):
+            self.assertNotIn(word, blob.replace("no verdict", ""))
+        self.assertEqual({"arm", "trial", "disposition", "reason", "request_digest",
+                          "output_digest"}, set(batch["trials"][0]))
+
+
+class TrialValueTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.batch = bakeoff.run_trials(bakeoff.Plan(trials=2), StubConsumer)
+        self.by_arm = {
+            arm: [t for t in self.batch["trials"] if t["arm"] == arm] for arm in ("claude", "codex")
+        }
+
+    def test_the_accepted_arm_carries_the_output_digest_and_reason(self) -> None:
+        for trial in self.by_arm["claude"]:
+            self.assertEqual(ACCEPTED, trial["disposition"])
+            self.assertEqual("sha256:" + "2" * 64, trial["output_digest"])
+            self.assertEqual("ok", trial["reason"])
+
+    def test_the_fail_closed_arm_has_no_output_digest_and_names_the_mode_reason(self) -> None:
+        for trial in self.by_arm["codex"]:
+            self.assertIsNone(trial["output_digest"])
+            self.assertEqual("engine_not_permitted_in_mode", trial["reason"])
+
+    def test_the_request_digest_is_the_digest_of_the_request_the_route_saw(self) -> None:
+        for trial in self.batch["trials"]:
+            self.assertEqual(canonical_digest({"id": "r"}), trial["request_digest"])
+
+    def test_a_refusal_reply_without_an_output_digest_is_omitted(self) -> None:
+        class Refusal(StubConsumer):
+            def decide(self, **kwargs):
+                reply = {"type": "RouteRefusal@0", "request_id": "r", "code": "timeout",
+                         "dispatched": False}
+                return DecisionOutcome(
+                    FAIL_CLOSED, "timeout", None, {"id": "r"}, reply, "watch_only")
+
+        batch = bakeoff.run_trials(bakeoff.Plan(engines=("claude",), trials=1), Refusal)
+        self.assertIsNone(batch["trials"][0]["output_digest"])
+        self.assertEqual("timeout", batch["trials"][0]["reason"])
+
+    def test_a_missing_request_record_gives_a_null_request_digest(self) -> None:
+        class NoRequest(StubConsumer):
+            def decide(self, **kwargs):
+                return DecisionOutcome(FAIL_CLOSED, "gone", None, None, None, "watch_only")
+
+        batch = bakeoff.run_trials(bakeoff.Plan(engines=("claude",), trials=1), NoRequest)
+        self.assertEqual((None, None), (batch["trials"][0]["request_digest"],
+                                         batch["trials"][0]["output_digest"]))
+
+
+class BlockedOnWp8Tests(unittest.TestCase):
+    def test_status_says_blocked_and_names_wp8(self) -> None:
+        status = bakeoff.record_step_status()
+        self.assertEqual(("blocked", 0), (status["state"], status["result_records_written"]))
+        self.assertIn("WP8", status["blocked_on"])
+        self.assertIn("TODO(WP8)", status["todo"])
+
+    def test_sealing_is_refused_for_any_batch(self) -> None:
+        batch = bakeoff.run_trials(bakeoff.Plan(), StubConsumer)
+        for candidate in (batch, {}, {"sealed": True, "protocol_ref": "x"}):
+            with self.assertRaisesRegex(bakeoff.BlockedOnProtocol, "WP8"):
+                bakeoff.seal_result_record(candidate)
+
+    def test_pinning_a_protocol_does_not_unlock_a_writer(self) -> None:
+        with mock.patch.object(bakeoff, "WP8_PROTOCOL", {"digest": "sha256:" + "a" * 64}):
+            self.assertIn("writer not implemented", bakeoff.record_step_status()["state"])
+            with self.assertRaisesRegex(bakeoff.BlockedOnProtocol, "not implemented"):
+                bakeoff.seal_result_record({})
+
+    def test_the_protocol_pin_is_committed_as_none(self) -> None:
+        self.assertIsNone(bakeoff.WP8_PROTOCOL)
+        self.assertRegex(SOURCE.read_text(), r"TODO\(WP8\)")
+
+    def test_the_module_has_no_way_to_write_anything(self) -> None:
+        self.assertEqual([], write_capability_problems(SOURCE.read_text(encoding="utf-8")))
+
+    def test_the_write_guard_refuses_each_known_bypass(self) -> None:
+        for snippet in (
+            "from os import remove", "from os import remove as _rm", "from shutil import copyfile",
+            "from typing import __builtins__ as b", "from dataclasses import __builtins__ as b",
+            "from collections.abc import __loader__", "from typing import __import__",
+            "from typing import Any as __builtins__", "from typing import cast",
+            "from successor.route_consumer import __builtins__", "from typing import *",
+            "import builtins", "import os", "import os.path as p", "from . import sibling",
+            "from pathlib import Path", "import subprocess", "from io import open",
+            "open('x', 'w')", "__import__('os')", "exec('x')", "eval('x')",
+            "getattr(object, 'x')", "x.write_text('y')", "x.unlink()",
+            "import successor.other",
+            "__builtins__['open']", "canonical_digest.__globals__",
+            "type(x).__subclasses__()", "x.__dict__", "x.__class__",
+            "g = (i for i in ()); g.gi_frame.f_globals['__builtins__']['open']",
+            "'__builtins__'", "x = '__globals__'",
+            "match g:\n    case object(gi_frame=f): pass",
+            "match canonical_digest:\n    case Callable(__globals__=g): pass",
+            "__loader__", "__spec__", "help()", "memoryview(b'')", "vars()", "globals()",
+            "type(x)", "object",
+        ):
+            self.assertTrue(write_capability_problems(snippet), snippet)
+        for name in (
+            "gi_frame", "cr_frame", "ag_frame", "tb_frame", "f_back", "f_globals",
+            "f_builtins", "f_locals", "gi_code", "co_code", "co_names",
+        ):
+            self.assertTrue(write_capability_problems(f"x.{name}"), name)
+
+    def test_the_refused_hops_really_reach_the_builtins(self) -> None:
+        """Positive controls: each hop the guard refuses does reach ``open`` at runtime."""
+
+        hops = {
+            "attribute": "g = (i for i in ())\nfound = g.gi_frame.f_globals['__builtins__']",
+            "from-import": "from typing import __builtins__ as found",
+            # Only names and attributes the module may use: the read hides in the pattern.
+            "match": (
+                "from collections.abc import Callable\n"
+                "from successor.route_consumer.profile import canonical_digest\n"
+                "match canonical_digest:\n"
+                "    case Callable(__globals__=found): pass"
+            ),
+        }
+        for label, snippet in hops.items():
+            with self.subTest(label):
+                space: dict = {}
+                exec(snippet, space)
+                found = space["found"]
+                if "__builtins__" in found:
+                    found = found["__builtins__"]
+                found = found if isinstance(found, dict) else vars(found)
+                self.assertIs(open, found["open"])
+                self.assertTrue(write_capability_problems(snippet))
+
+    def test_the_write_guard_accepts_what_the_module_needs(self) -> None:
+        for snippet in (
+            "from __future__ import annotations",
+            "from collections.abc import Callable",
+            "from dataclasses import dataclass",
+            "from typing import Any, Protocol",
+            "from successor.route_consumer import DECISION_PROFILE",
+            "from successor.route_consumer.profile import canonical_digest",
+        ):
+            self.assertEqual([], write_capability_problems(snippet), snippet)
+
+    def test_no_result_record_exists_in_the_tree(self) -> None:
+        """A tripwire only: file names under ``cockpit_spine/`` that say result, verdict or cp3.
+
+        It does not look at other directories (``successor/route_consumer/records/
+        x2-fake-driver-bakeoff.json`` is plumbing output and sits outside its scope) and
+        it cannot see a record saved under another name.
+        """
+
+        root = Path(bakeoff.__file__).resolve().parent
+        found = [p for p in root.rglob("*.json")
+                 if re.search(r"result|verdict|cp3", p.name, re.IGNORECASE)]
+        self.assertEqual([], found)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
