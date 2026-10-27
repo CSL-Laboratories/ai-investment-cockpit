@@ -186,6 +186,17 @@ test -d "$AP" || { echo "e3-0b: pinned action dir missing" >&2; exit 1; }
 # 0b step 8: E3-1 CLI pin then E3-3 bun install, before sudoers.
 test -f "$LIB/sandbox_e3_cli_pin.sh" || { echo "e3-0b: cli_pin missing" >&2; exit 1; }
 /bin/bash --noprofile --norc -e -o pipefail "$LIB/sandbox_e3_cli_pin.sh"
+# The launcher refuses (mcp_own / claude_own) unless every ancestor is
+# root-owned and not group/other-writable. /opt comes from the runner image;
+# name the offending node here, where root stderr is readable.
+for node in / /opt /opt/csl-claude /opt/csl-claude/mcp.empty.json \
+            /opt/csl-claude/2.1.306 /opt/csl-claude/2.1.306/claude; do
+  meta="$(stat -c '%u:%a' "$node")"
+  if [ "${meta%%:*}" != 0 ] || [ $(( 8#${meta#*:} & 8#022 )) -ne 0 ]; then
+    echo "e3-0b: $node is $(stat -c '%U:%G:%a' "$node"); launcher needs root-owned, no g/o write" >&2
+    exit 1
+  fi
+done
 if [ -f "$AP/package.json" ]; then
   (cd "$AP" && "$BUN_DST" install --frozen-lockfile --production --ignore-scripts)
 fi
