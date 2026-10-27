@@ -38,11 +38,32 @@ def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def governed_git_repo(tmp, *, extra_commit=None) -> tuple[Path, str]:
-    root = replacement_root(tmp)
+def _init_git(root: Path) -> None:
+    """Init a repo whose blobs are the working-tree bytes.
+
+    GitHub Windows runners default ``core.autocrlf=true``. That cleans CRLF to
+    LF on ``git add``. A receipt hashed from ``Path.read_bytes`` then disagrees
+    with ``git show``, which is the check in ``_validate_github_founder_pr_approval``.
+    """
     _git(root, "init")
     _git(root, "config", "user.name", "replacement-tests")
     _git(root, "config", "user.email", "replacement-tests@example.com")
+    _git(root, "config", "core.autocrlf", "false")
+    _git(root, "config", "core.safecrlf", "false")
+    _git(root, "config", "core.eol", "lf")
+
+
+def _append_lf(path: Path, suffix: str) -> None:
+    """Append LF bytes. ``Path.write_text`` would translate ``\\n`` to ``os.linesep``."""
+    encoded = suffix.encode("utf-8")
+    if b"\r" in encoded or not encoded.endswith(b"\n"):
+        raise ValueError("governed suffix must be LF-only and end in a newline")
+    path.write_bytes(path.read_bytes() + encoded)
+
+
+def governed_git_repo(tmp, *, extra_commit=None) -> tuple[Path, str]:
+    root = replacement_root(tmp)
+    _init_git(root)
     _git(root, "add", "docs/replacement")
     _git(root, "commit", "-m", "approved governed bytes")
     approved = _git(root, "rev-parse", "HEAD").stdout.strip()
@@ -399,10 +420,7 @@ class ReplacementProgramTests(unittest.TestCase):
             root = replacement_root(tmp)
             program = CHECKER.load(root / "docs" / "replacement" / "program.json")
             contract = root / "docs" / "replacement" / "SUCCESSOR-PRODUCT.md"
-            contract.write_text(
-                contract.read_text(encoding="utf-8") + "\nUnaccepted mutation.\n",
-                encoding="utf-8",
-            )
+            _append_lf(contract, "\nUnaccepted mutation.\n")
             digest = hashlib.sha256(contract.read_bytes()).hexdigest()
             program["contracts"][0]["sha256"] = digest
             with self.assertRaises(CHECKER.ContractError):
@@ -413,10 +431,7 @@ class ReplacementProgramTests(unittest.TestCase):
             root = replacement_root(tmp)
             program = CHECKER.load(root / "docs" / "replacement" / "program.json")
             research = root / "docs" / "replacement" / "AUTHORITY-COMPLIANCE-RESEARCH.md"
-            research.write_text(
-                research.read_text(encoding="utf-8") + "\nUnaccepted mutation.\n",
-                encoding="utf-8",
-            )
+            _append_lf(research, "\nUnaccepted mutation.\n")
             digest = hashlib.sha256(research.read_bytes()).hexdigest()
             program["research_evidence"]["authority_compliance"]["sha256"] = digest
             with self.assertRaises(CHECKER.ContractError):
@@ -565,8 +580,7 @@ class FounderPrApprovalReceiptTests(unittest.TestCase):
 
     def test_descendant_commit_changing_governed_bytes_rejected(self) -> None:
         def mutate(root: Path) -> None:
-            path = root / ISSUE_CONTRACT
-            path.write_text(path.read_text(encoding="utf-8") + "\nchanged after approval\n")
+            _append_lf(root / ISSUE_CONTRACT, "\nchanged after approval\n")
 
         with tempfile.TemporaryDirectory() as tmp:
             root, sha = governed_git_repo(tmp, extra_commit=mutate)
@@ -578,8 +592,7 @@ class FounderPrApprovalReceiptTests(unittest.TestCase):
 
     def test_descendant_commit_without_governed_diff_accepted(self) -> None:
         def mutate(root: Path) -> None:
-            readme = root / "docs" / "replacement" / "README.md"
-            readme.write_text(readme.read_text(encoding="utf-8") + "\n# non-governing\n")
+            _append_lf(root / "docs" / "replacement" / "README.md", "\n# non-governing\n")
 
         with tempfile.TemporaryDirectory() as tmp:
             root, sha = governed_git_repo(tmp, extra_commit=mutate)
@@ -600,11 +613,9 @@ class FounderPrApprovalReceiptTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = replacement_root(tmp)
             path = root / ISSUE_CONTRACT
-            path.write_text(path.read_text(encoding="utf-8") + "\n<!-- github-receipt issue move -->\n")
+            _append_lf(path, "\n<!-- github-receipt issue move -->\n")
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
-            _git(root, "init")
-            _git(root, "config", "user.name", "replacement-tests")
-            _git(root, "config", "user.email", "replacement-tests@example.com")
+            _init_git(root)
             _git(root, "add", "docs/replacement")
             _git(root, "commit", "-m", "approved issue-contract move")
             sha = _git(root, "rev-parse", "HEAD").stdout.strip()
@@ -620,13 +631,9 @@ class FounderPrApprovalReceiptTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = replacement_root(tmp)
             path = root / MONTH_PROGRAM
-            path.write_text(
-                path.read_text(encoding="utf-8") + "\n<!-- github-receipt month move -->\n"
-            )
+            _append_lf(path, "\n<!-- github-receipt month move -->\n")
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
-            _git(root, "init")
-            _git(root, "config", "user.name", "replacement-tests")
-            _git(root, "config", "user.email", "replacement-tests@example.com")
+            _init_git(root)
             _git(root, "add", "docs/replacement")
             _git(root, "commit", "-m", "approved month-program move")
             sha = _git(root, "rev-parse", "HEAD").stdout.strip()
@@ -683,6 +690,56 @@ class FounderPrApprovalReceiptTests(unittest.TestCase):
                 approving_founder_login="CDanTheMan",
                 approved_head_sha=sha,
             )
+            with pinned_github_receipt(candidate):
+                CHECKER.validate(candidate, root)
+
+    def test_governed_repo_stores_working_tree_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root, _sha = governed_git_repo(tmp)
+            self.assertEqual(_git(root, "config", "--get", "core.autocrlf").stdout.strip(), "false")
+
+    def test_windows_text_rewrite_splits_receipt_from_approved_blob(self) -> None:
+        """Path.write_text on Windows emits CRLF. autocrlf then stores LF."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = replacement_root(tmp)
+            path = root / ISSUE_CONTRACT
+            rewritten = path.read_bytes().replace(b"\n", b"\r\n") + b"\r\n<!-- windows text rewrite -->\r\n"
+            path.write_bytes(rewritten)
+            working = hashlib.sha256(path.read_bytes()).hexdigest()
+            _init_git(root)
+            _git(root, "config", "core.autocrlf", "true")
+            _git(root, "add", "docs/replacement")
+            _git(root, "commit", "-m", "crlf rewrite")
+            sha = _git(root, "rev-parse", "HEAD").stdout.strip()
+            self.assertNotEqual(working, CHECKER._git_show_digest(root, sha, ISSUE_CONTRACT))
+            candidate = github_acceptance_program(self.program, approved_head_sha=sha)
+            candidate["authority"]["acceptance_receipt"]["accepted_contracts"][ISSUE_CONTRACT] = working
+            for contract in candidate["contracts"]:
+                if contract["path"] == ISSUE_CONTRACT:
+                    contract["sha256"] = working
+            with pinned_github_receipt(candidate), self.assertRaisesRegex(
+                CHECKER.ContractError, "github receipt digest does not match approved head"
+            ):
+                CHECKER.validate(candidate, root)
+
+    def test_lf_append_matches_blob_when_host_autocrlf_is_true(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = replacement_root(tmp)
+            path = root / ISSUE_CONTRACT
+            _append_lf(path, "\n<!-- github-receipt issue move -->\n")
+            working = hashlib.sha256(path.read_bytes()).hexdigest()
+            self.assertNotIn(b"\r", path.read_bytes())
+            _init_git(root)
+            _git(root, "config", "core.autocrlf", "true")
+            _git(root, "add", "docs/replacement")
+            _git(root, "commit", "-m", "lf append under autocrlf")
+            sha = _git(root, "rev-parse", "HEAD").stdout.strip()
+            self.assertEqual(working, CHECKER._git_show_digest(root, sha, ISSUE_CONTRACT))
+            candidate = github_acceptance_program(self.program, approved_head_sha=sha)
+            candidate["authority"]["acceptance_receipt"]["accepted_contracts"][ISSUE_CONTRACT] = working
+            for contract in candidate["contracts"]:
+                if contract["path"] == ISSUE_CONTRACT:
+                    contract["sha256"] = working
             with pinned_github_receipt(candidate):
                 CHECKER.validate(candidate, root)
 
