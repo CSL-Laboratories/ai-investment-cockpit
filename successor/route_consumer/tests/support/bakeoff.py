@@ -6,15 +6,15 @@ profile, the pinned contract and the Inv 2 pin work end to end. It compares
 nothing about models, runs no provider, and carries no verdict. X2 live
 integration is deferred until CSL-460 provides a live route.
 
-Regenerate: ``RECURSION_ROUTE_CONTRACT_CHECKOUT=<checkout> python3 -X utf8 -B -m
-successor.route_consumer.tests.support.bakeoff --write``.
+The recorded bytes are not stored in this repo. ``records/x2-fake-driver-bakeoff.ref.json``
+pins the csl-research commit, path, sha256 and blob. Printing the rebuilt record
+is local only; ``--write`` refuses, so the evidence file cannot land here again.
 """
 
 from __future__ import annotations
 
 import json
 import sys
-from pathlib import Path
 from typing import Any
 
 from successor.route_consumer import pin
@@ -23,7 +23,7 @@ from successor.route_consumer.profile import DECISION_PROFILE, canonical_digest,
 from successor.route_consumer.tests.support import rig as rigmod
 from successor.route_consumer.tests.support.recursion_bridge import recursion
 
-RECORD_PATH = PACKAGE_DIR / "records" / "x2-fake-driver-bakeoff.json"
+REF_PATH = PACKAGE_DIR / "records" / "x2-fake-driver-bakeoff.ref.json"
 LABEL = "X2 live integration deferred"
 MODES = ("paper", "auto_full")
 ENGINES = ("claude", "codex")
@@ -121,11 +121,13 @@ def render(record: dict[str, Any]) -> str:
 
 
 def main(argv: list[str]) -> int:
-    text = render(run())
     if "--write" in argv:
-        Path(RECORD_PATH).write_text(text, encoding="utf-8")
-    else:
-        sys.stdout.write(text)
+        sys.stderr.write(
+            "refusing to write the X2 record into this repo; "
+            "see records/x2-fake-driver-bakeoff.ref.json\n"
+        )
+        return 2
+    sys.stdout.write(render(run()))
     return 0
 
 
