@@ -264,6 +264,68 @@ class PlanTests(unittest.TestCase):
         self.assertIn((".", "python -X utf8 -B tools/test_run_gates_action.py"), planned)
         self.assertEqual(len(excluded), len(audit.EXCLUDED))
 
+    def test_pin_reader_is_excluded_and_a_lookalike_stays_uncovered(self):
+        # Parses the checked-in linux job. The pin assignment is classified by
+        # one exact EXCLUDED entry; a different ``$(python ...)`` assignment
+        # in the same step must still fail planning.
+        commands, excluded = self.plan()
+        step = self.linux_step(
+            self.ci,
+            "Fetch the pinned Recursion route contract (read-only, outside the workspace)",
+        )
+        pin_line = next(
+            line.strip() for line in step["run"].splitlines() if line.strip().startswith("pin=")
+        )
+        self.assertIn("successor/route_consumer/contract/PIN.json", pin_line)
+        matched = [item for item in excluded if item["command"] == pin_line]
+        self.assertEqual([item["cwd"] for item in matched], ["."])
+        self.assertIn("not a test", matched[0]["reason"])
+        planned = {" ".join(argv) for _, argv in commands}
+        self.assertIn(
+            "python -X utf8 -B -m unittest discover -s successor -t . -p test_*.py",
+            planned,
+        )
+        ci = copy.deepcopy(self.ci)
+        mutated = self.linux_step(
+            ci,
+            "Fetch the pinned Recursion route contract (read-only, outside the workspace)",
+        )
+        mutated["run"] += 'other="$(python -P -c "print(1)")"\n'
+        with self.assertRaises(SystemExit) as caught:
+            self.plan(ci)
+        message = str(caught.exception)
+        self.assertIn("uncovered", message)
+        self.assertIn('other="$(python -P -c "print(1)")"', message)
+        self.assertNotIn("stale_exclusions=['", message)
+
+    def test_hashfiles_availability_omits_an_absent_package(self):
+        # The cockpit_spine discovery is behind hashFiles(...test_*.py) != ''.
+        # When that package is absent the command is not planned; a matching
+        # glob still plans it. The successor discovery has no such gate.
+        spine = "python -X utf8 -B -m unittest discover -s cockpit_spine -t . -p test_*.py"
+        present = any(audit.ROOT.glob("cockpit_spine/tests/test_*.py"))
+        live = {" ".join(argv) for _, argv in self.plan()[0]}
+        self.assertEqual(spine in live, present)
+        self.assertIn(
+            "python -X utf8 -B -m unittest discover -s successor -t . -p test_*.py",
+            live,
+        )
+
+        ci = copy.deepcopy(self.ci)
+        step = self.linux_step(
+            ci, "cockpit_spine tests against the pinned Recursion checkout"
+        )
+        self.assertEqual(step.get("if"), "hashFiles('cockpit_spine/tests/test_*.py') != ''")
+        step["if"] = "hashFiles('no_such_package/tests/test_*.py') != ''"
+        commands, excluded = self.plan(ci)
+        planned = {" ".join(argv) for _, argv in commands}
+        self.assertNotIn(spine, planned)
+        self.assertEqual(len(excluded), len(audit.EXCLUDED))
+
+        step["if"] = "hashFiles('tools/csl_392_docs_read_audit_test.py') != ''"
+        planned = {" ".join(argv) for _, argv in self.plan(ci)[0]}
+        self.assertIn(spine, planned)
+
     def test_added_test_command_is_run(self):
         ci = copy.deepcopy(self.ci)
         step = self.linux_step(ci, "CI dispatch scope regressions")

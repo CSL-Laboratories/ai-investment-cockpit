@@ -14,10 +14,12 @@ This module is two things:
    list from the parsed ``linux`` job steps in ``ci.yml`` and the
    ``run-gates`` composite action (neither file is modified), runs every
    test/check command there under the hook, and classifies each opened path
-   with the ``filter`` job's decide patterns. A Python command in the job that
-   is neither a recognised test/check nor a reviewed ``EXCLUDED`` entry stops
-   the runner, as does an ``EXCLUDED`` entry the job no longer has. Exit codes:
-   0 clean, 1 incomplete (a suite exited non-zero), 2 mismatches.
+   with the ``filter`` job's decide patterns. A step whose ``if`` is
+   ``hashFiles('glob') != ''`` is omitted when that glob matches nothing in
+   this checkout, the same way the job skips it. A Python command in the job
+   that is neither a recognised test/check nor a reviewed ``EXCLUDED`` entry
+   stops the runner, as does an ``EXCLUDED`` entry the job no longer has.
+   Exit codes: 0 clean, 1 incomplete (a suite exited non-zero), 2 mismatches.
 
 It does not edit ``.github/`` or the filter. Any filter change still needs its
 own human-assigned issue.
@@ -64,6 +66,21 @@ EXCLUDED: dict[tuple[str, str], str] = {
     ),
     ("${{ runner.temp }}", r"python -P -m pip install -U maturin"): "package install, not a test",
     (".", r"python -P -m maturin build .*"): "Rust wheel build, not a test",
+    # Exact line, not a broad ``python`` match. The linux job reads the
+    # Recursion pin with ``pin="$(python -P -c ...)"``. Shell metacharacters
+    # stop the runnable-command parser, and a wider pattern would classify
+    # a later assignment as reviewed and let it skip this audit.
+    (
+        ".",
+        re.escape(
+            'pin="$(python -P -c "import json; print(json.load(open('
+            "'successor/route_consumer/contract/PIN.json', encoding='utf-8'))"
+            "['source']['head_sha'])\")\""
+        ),
+    ): (
+        "reads successor/route_consumer/contract/PIN.json source.head_sha for the "
+        "read-only Recursion fetch; not a test"
+    ),
     (".", r"python -P -c .*"): "installs the built wheel, not a test",
     ("app", r"python -P -m pytest -q tests/quant/book/test_book_batch\.py -ra \| tee .*"): (
         "batch parity re-run of tests/quant/book/test_book_batch.py against the "
@@ -74,6 +91,9 @@ EXCLUDED: dict[tuple[str, str], str] = {
 RUN_GATES_USES = "./.github/actions/run-gates"
 _PYTHONISH = re.compile(r"(?:^|[\s;&|(])(?:python3?|pytest)(?:\s|$)|\bunittest\b")
 _SHELL_META = re.compile(r"[|;&$<>`()]")
+# GitHub skips the step when this matches no workspace file. Other ``if``
+# expressions depend on the event or the runner, so they stay in the plan.
+_HASHFILES_PRESENT = re.compile(r"^hashFiles\('([^']*)'\) != ''$")
 _RUNNABLE_SCRIPT = re.compile(r"tools/(?:test|check)_\w+\.py")
 _RUNNABLE_MODULES = ("pytest", "unittest")
 # -I / -E / -s drop PYTHONPATH, so the sitecustomize hook would not load.
@@ -394,8 +414,34 @@ def _python_target(argv: list[str]) -> tuple[str, str | None, list[str]]:
     return "script", argv[i], flags
 
 
+def _hashfiles_present(pattern: str) -> bool:
+    """True when ``pattern`` matches at least one file under the repo root.
+
+    ``hashFiles`` globs are workspace-relative, and ``*`` does not cross ``/``.
+    ``pathlib`` matches that. A pattern that leaves the repo matches nothing.
+    """
+    if not pattern or pattern.startswith(("/", "\\")) or ".." in Path(pattern).parts:
+        return False
+    return any(ROOT.glob(pattern))
+
+
+def _step_available(step: dict) -> bool:
+    """False when ``hashFiles('glob') != ''`` matches nothing in this checkout."""
+    condition = step.get("if")
+    if not isinstance(condition, str):
+        return True
+    match = _HASHFILES_PRESENT.fullmatch(condition.strip())
+    if match is None:
+        return True
+    return _hashfiles_present(match.group(1))
+
+
 def _job_lines(ci: dict, action: dict) -> list[tuple[str, str]]:
-    """(working directory, command line) for every run line of the linux job."""
+    """(working directory, command line) for every run line of the linux job.
+
+    A step gated by ``hashFiles('glob') != ''`` contributes no lines when the
+    glob matches nothing here, so an absent package is not planned or run.
+    """
     steps: list[dict] = []
     expanded = False
     for step in ci["jobs"]["linux"]["steps"]:
@@ -405,13 +451,13 @@ def _job_lines(ci: dict, action: dict) -> list[tuple[str, str]]:
             expanded = True
         elif uses.startswith("./"):
             raise SystemExit(f"linux job uses an unaudited local action: {uses}")
-        elif "run" in step:
+        elif "run" in step and _step_available(step):
             steps.append(step)
     if not expanded:
         raise SystemExit(f"linux job no longer calls {RUN_GATES_USES}; update this audit")
     lines: list[tuple[str, str]] = []
     for step in steps:
-        if "run" not in step:
+        if "run" not in step or not _step_available(step):
             continue
         cwd = step.get("working-directory", ".")
         pending = ""
