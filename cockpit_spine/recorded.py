@@ -5,10 +5,12 @@ is whole. The chain verifies and replays under the session rules, and the step
 transcript is bound to that chain: every step's head must be a chain hash, heads
 may only move forward, and the chain records a step added (none for status and
 audit, one or two for a command) must be exactly the event its command, arguments,
-``ok`` and ``code`` claim. The response the operator got is rebuilt from the
-replayed session at that head, using the same ``OperatorService`` rendering the
-CLI uses, and must match exactly (``api``, ``ok``, ``code``, ``head``,
-``withheld``, ``lines``, and no extra keys). The steps must cover the whole
+``ok`` and ``code`` claim. A refusal is replayed at the recorded timestamp, and
+the ``command_refused`` data it writes must match the recorded event. The
+response the operator got is rebuilt from the replayed session at that head,
+using the same ``OperatorService`` rendering the CLI uses, and must match
+exactly (``api``, ``ok``, ``code``, ``head``, ``withheld``, ``lines``, and no
+extra keys). The steps must cover the whole
 chain, every displayed number in
 every step is a verified published-tier link, and approve, veto and stop each
 happened. Malformed input is reported as a problem, never raised.
@@ -191,14 +193,19 @@ def _invoke(session: OperatorSession, command: str, argv: list[str]) -> CommandR
 def _check_refusal(
     command: str, argv: list[str], prior: list[dict[str, Any]], refusal: dict[str, Any],
 ) -> list[str]:
-    """A refusal must be what these arguments do to the session before the step."""
+    """A refusal must be the ``command_refused`` event these arguments write."""
 
     if command not in ("propose", "approve", "veto", "stop"):
         return []
     if not prior:
         return [f"{command}: refusal has no session to check"]
+    stamp = refusal.get("at")
+    if not isinstance(stamp, str):
+        return [f"{command}: refusal record differs from the one these arguments write"]
     try:
-        session = OperatorSession.replay(prior, source=_NoSource())
+        session = OperatorSession.replay(
+            prior, source=_NoSource(), clock=lambda stamp=stamp: stamp)
+        before = len(session.records())
         result = _invoke(session, command, argv)
     except (AuditError, TypeError, ValueError) as error:
         return [f"{command}: cannot re-check the refusal ({type(error).__name__})"]
@@ -206,6 +213,10 @@ def _check_refusal(
         return [f"{command}: refusal arguments are incomplete"]
     if result.ok or result.code != refusal.get("code"):
         return [f"{command}: arguments would not be refused as {refusal.get('code')!r}"]
+    emitted = session.records()[before:]
+    if (len(emitted) != 1 or emitted[0].get("kind") != "command_refused"
+            or emitted[0].get("data") != refusal):
+        return [f"{command}: refusal record differs from the one these arguments write"]
     return []
 
 

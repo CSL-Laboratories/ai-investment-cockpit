@@ -217,6 +217,16 @@ class StepsAreBoundToTheChainTests(unittest.TestCase):
         found = self.damaged(swap)
         self.assertTrue(any("would not be refused" in item for item in found), found)
 
+    def test_swapping_the_refused_proposal_id_is_reported(self) -> None:
+        """prop-r2 also rejects the zero digest, so ok and code still match (Codex D17)."""
+
+        def swap(r: dict) -> None:
+            refused = self.step(r, "approve", "digest_mismatch")
+            refused["argv"][refused["argv"].index("--proposal-id") + 1] = "prop-r2"
+
+        found = self.damaged(swap)
+        self.assertTrue(any("refusal record differs" in item for item in found), found)
+
     def test_surrounding_whitespace_matches_what_the_session_stores(self) -> None:
         def pad(r: dict) -> None:
             veto = self.step(r, "veto", "vetoed")
