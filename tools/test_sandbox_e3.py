@@ -541,6 +541,25 @@ class NodeModulesDigestTests(unittest.TestCase):
             self.assertEqual(str(ctx.exception), "symlink_abs")
 
 
+def _production_macro(header: str, name: str) -> str:
+    """Quoted production value. The CSL_PREFIX branch is not a single string."""
+    values = re.findall(rf'^#define {name} "([^"]+)"', header, re.M)
+    if len(values) != 1:
+        raise AssertionError(f"{name} production define: {values!r}")
+    return values[0]
+
+
+def _path_and_ancestors(path: str) -> set[str]:
+    nodes = set()
+    cur = path
+    while True:
+        nodes.add(cur)
+        if cur == "/":
+            return nodes
+        parent = cur.rsplit("/", 1)[0]
+        cur = parent if parent else "/"
+
+
 class BootstrapContractTests(unittest.TestCase):
     def test_sudoers_and_negative_controls_are_in_0b(self) -> None:
         text = (SCRIPTS / "sandbox_e3_bootstrap.sh").read_text(encoding="utf-8")
@@ -806,6 +825,134 @@ fi
         self.assertIn("action bun wrapper collides with ELF", text)
         self.assertIn('BUN_DST=/opt/csl-bun/bun', text)
         self.assertNotIn("remount,bind,rw", text)
+
+    def test_ownership_loop_covers_launcher_ancestor_paths(self) -> None:
+        """Loop sits after the CLI pin and before bun install and sudoers.
+
+        It names every path csl_ancestors_root_owned walks for the production
+        MCP file and Claude binary, and it exits non-zero on a bad node.
+        """
+        text = (SCRIPTS / "sandbox_e3_bootstrap.sh").read_text(encoding="utf-8")
+        header = (SCRIPTS / "sandbox_common.h").read_text(encoding="utf-8")
+        pin = (SCRIPTS / "sandbox_e3_cli_pin.sh").read_text(encoding="utf-8")
+        match = re.search(
+            r"for node in (?P<nodes>.*?); do\n(?P<body>.*?)\ndone\n",
+            text,
+            re.S,
+        )
+        self.assertIsNotNone(match)
+        assert match is not None
+        nodes = [n for n in match.group("nodes").split() if n != "\\"]
+        body = match.group("body")
+        self.assertIn("exit 1", body)
+        self.assertIn("stat -c '%u:%a'", body)
+        self.assertNotIn("stat -L", body)
+        self.assertIn(
+            'if [ "${meta%%:*}" != 0 ] || [ $(( 8#${meta#*:} & 8#022 )) -ne 0 ]; then',
+            body,
+        )
+        expected = _path_and_ancestors(_production_macro(header, "CSL_MCP_EMPTY_PATH"))
+        claude = _production_macro(header, "CSL_CLAUDE_PATH")
+        expected |= _path_and_ancestors(claude)
+        self.assertEqual(set(nodes), expected)
+        version = re.search(r'^CLAUDE_VERSION="([^"]+)"', pin, re.M)
+        self.assertIsNotNone(version)
+        assert version is not None
+        self.assertEqual(Path(claude).name, "claude")
+        self.assertEqual(Path(claude).parent.name, version.group(1))
+        pin_at = text.find(
+            '/bin/bash --noprofile --norc -e -o pipefail "$LIB/sandbox_e3_cli_pin.sh"'
+        )
+        bun_at = text.find(
+            '"$BUN_DST" install --frozen-lockfile --production --ignore-scripts'
+        )
+        sudoers_at = text.find(
+            'install -m0440 -o root -g root "$SUDOERS_SRC" /etc/sudoers.new'
+        )
+        loop_at = match.start()
+        self.assertGreater(pin_at, -1)
+        self.assertGreater(loop_at, pin_at)
+        self.assertGreater(bun_at, loop_at)
+        self.assertGreater(sudoers_at, loop_at)
+
+    @unittest.skipIf(os.name == "nt", "POSIX mode bits")
+    def test_ownership_loop_rejects_mode_0775(self) -> None:
+        """The loop's octal mask fails a 0775 node and passes root-owned 0755."""
+        text = (SCRIPTS / "sandbox_e3_bootstrap.sh").read_text(encoding="utf-8")
+        predicate = (
+            'if [ "${meta%%:*}" != 0 ] || '
+            '[ $(( 8#${meta#*:} & 8#022 )) -ne 0 ]; then'
+        )
+        self.assertIn(predicate, text)
+        mode_script = r"""
+set -euo pipefail
+node="$1"
+chmod "$2" "$node"
+meta="$(stat -c '%u:%a' "$node")"
+printf '%s\n' "$(( 8#${meta#*:} & 8#022 ))"
+"""
+        full_script = """
+set -euo pipefail
+root="$1"
+mkdir -p "$root/ok" "$root/groupw" "$root/otherw"
+chmod 0755 "$root/ok"
+chmod 0775 "$root/groupw"
+chmod 0707 "$root/otherw"
+check() {
+  node="$1"
+  meta="$(stat -c '%u:%a' "$node")"
+  __PREDICATE__
+    return 1
+  fi
+  return 0
+}
+if ! check "$root/ok"; then
+  echo "0755 should pass: $(stat -c '%u:%a' "$root/ok")" >&2
+  exit 2
+fi
+if check "$root/groupw"; then
+  echo "0775 should fail: $(stat -c '%u:%a' "$root/groupw")" >&2
+  exit 3
+fi
+if check "$root/otherw"; then
+  echo "0707 should fail: $(stat -c '%u:%a' "$root/otherw")" >&2
+  exit 4
+fi
+""".replace("__PREDICATE__", predicate)
+        with tempfile.TemporaryDirectory() as tmp:
+            node = Path(tmp) / "node"
+            node.mkdir()
+            bad = subprocess.run(
+                ["bash", "-c", mode_script, "mask", str(node), "0775"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(bad.returncode, 0, bad.stderr)
+            self.assertNotEqual(bad.stdout.strip(), "0")
+            good = subprocess.run(
+                ["bash", "-c", mode_script, "mask", str(node), "0755"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(good.returncode, 0, good.stderr)
+            self.assertEqual(good.stdout.strip(), "0")
+            proc = subprocess.run(
+                ["unshare", "-rm", "bash", "-c", full_script, "own", tmp],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        # Mode bits already ran. A blocked user namespace skips only the
+        # uid-0 half; any other unshare failure still fails this test.
+        if proc.returncode != 0 and "Operation not permitted" in (proc.stderr or ""):
+            return
+        self.assertEqual(
+            proc.returncode,
+            0,
+            f"rc={proc.returncode} stderr={proc.stderr!r} stdout={proc.stdout!r}",
+        )
 
 
 class CheckNodeModulesDigestTests(unittest.TestCase):
