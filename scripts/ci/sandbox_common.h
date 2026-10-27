@@ -45,6 +45,8 @@
 #define CSL_WORKSPACE_PATH CSL_STATE_DIR "/workspace"
 #define CSL_LAUNCH_SHA_PATH CSL_STATE_DIR "/launch.sha256"
 #define CSL_BUN_TOFU_PATH CSL_STATE_DIR "/bun.tofu"
+#define CSL_REFUSE_PATH CSL_STATE_DIR "/launch.refuse"
+#define CSL_F1_MISS_PATH CSL_STATE_DIR "/f1.miss"
 #define CSL_WORKSPACE_DEFAULT "/home/runner/work/ai-investment-cockpit/ai-investment-cockpit"
 #define CSL_ACTION_DIR "/home/runner/work/_actions/anthropics/claude-code-action/a5a423f75c251dcbff8a74e99f83b2cb03c72bfa"
 #ifdef CSL_PREFIX
@@ -96,6 +98,8 @@ int csl_ancestors_root_owned(const char *path);
 int csl_truthy(const char *value);
 int csl_env_present(const char *name);
 const char *csl_env_get(const char *name);
+int csl_token_copy(const char *in, char *out, size_t cap);
+int csl_token_read(const char *path, char *out, size_t cap);
 
 typedef struct {
     uint32_t state[8];

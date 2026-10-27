@@ -13,17 +13,33 @@ import time
 import unittest
 from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import urlencode
 
 from cockpit_spine import cli, web
-from cockpit_spine import projections as proj
 from cockpit_spine import service as svc
 from cockpit_spine import session as sess
 from cockpit_spine.fake_source import FakeProposalSource
+from cockpit_spine.projections import Registry
 from cockpit_spine.tests.support.scripted import (
     ScriptedSource, accepted, counter_clock, proposal_payload,
 )
+from cockpit_spine.tests.support.vault import (
+    build_synthetic_registry, discard_synthetic_registry,
+)
 
-REGISTRY = proj.load_registry()
+_VAULT: Path | None = None
+_REGISTRY_PATH: Path | None = None
+REGISTRY: Registry
+
+
+def setUpModule() -> None:
+    global REGISTRY, _VAULT, _REGISTRY_PATH
+    _VAULT, _REGISTRY_PATH, REGISTRY = build_synthetic_registry()
+
+
+def tearDownModule() -> None:
+    if _VAULT is not None and _REGISTRY_PATH is not None:
+        discard_synthetic_registry(_VAULT, _REGISTRY_PATH)
 
 
 class Texts(HTMLParser):
@@ -191,9 +207,20 @@ class ParityTests(ViewCase):
         log = tmp / "t.jsonl"
         clock = counter_clock()
 
+        vault, registry_path = _VAULT, _REGISTRY_PATH
+        self.assertIsNotNone(vault)
+        self.assertIsNotNone(registry_path)
+        assert vault is not None and registry_path is not None
+
         def run(*args: str) -> dict:
             out = io.StringIO()
-            cli.main(["--log", str(log), "--json", *args], out=out, clock=clock)
+            # Same synthetic vault the view's registry was loaded from. The
+            # registry file is the one that cites that vault; --vault-root
+            # alone would point the packaged registry at it.
+            cli.main(
+                ["--log", str(log), "--vault-root", str(vault), "--json", *args],
+                out=out, clock=clock, registry_path=registry_path,
+            )
             return json.loads(out.getvalue())
 
         run("open", "--session-id", "s-1", "--mode", "paper")
@@ -360,6 +387,83 @@ class PageStateTests(ViewCase):
         self.request(view, "POST", "/act", f"token={view.token}&{STOP_FORM}")
         self.assertEqual(2, len(seen))
         self.assertLess(seen[0], seen[1])
+
+    def test_a_maxlength_prompt_of_three_byte_characters_is_accepted(self) -> None:
+        source = ScriptedSource(accepted(proposal_payload()))
+        view = self.start(source)
+        character = "投"
+        self.assertEqual(3, len(character.encode("utf-8")))
+        prompt = character * 2000
+        posted = urlencode({
+            "token": view.token, "command": "propose",
+            "request_id": "req-1", "prompt": prompt,
+        })
+        worst = urlencode({
+            "token": "a" * 24, "command": "propose",
+            "request_id": character * 200, "prompt": prompt,
+        })
+        self.assertGreater(len(posted.encode("ascii")), 8192)
+        self.assertLessEqual(len(worst.encode("ascii")), web.MAX_BODY)
+        status, _, page = self.request(view, "POST", "/act", posted)
+        self.assertEqual(200, status)
+        self.assertIn("result: proposal_received", page)
+        self.assertEqual(prompt, source.calls[0]["prompt"])
+
+
+class CaptionAndFieldTests(unittest.TestCase):
+    def service(self, source=None) -> svc.OperatorService:
+        session = sess.OperatorSession.open(
+            session_id="s-1", mode="paper", source=source or FakeProposalSource(),
+            clock=counter_clock())
+        return svc.OperatorService(session, REGISTRY)
+
+    def test_withheld_proposal_ids_get_distinct_digit_free_references(self) -> None:
+        service = self.service(ScriptedSource(
+            accepted(proposal_payload("1234567", symbol="AAA")),
+            accepted(proposal_payload("7654321", symbol="BBB"))))
+        for n in (1, 2):
+            service.handle({
+                "api": svc.API_VERSION, "command": "propose",
+                "args": {"request_id": f"req-{n}"}})
+        page = web.render_page(service, "tok")
+        parser = Texts()
+        parser.feed(page)
+        visible = "\n".join(parser.nodes)
+        self.assertNotIn("1234567", visible)
+        self.assertNotIn("7654321", visible)
+        self.assertEqual(2, page.count('name="proposal_id" value="1234567"'))
+        self.assertEqual(2, page.count('name="proposal_id" value="7654321"'))
+        first = visible[visible.index("reference: withheld id a"):
+                        visible.index("reference: withheld id b")]
+        second = visible[visible.index("reference: withheld id b"):
+                         visible.index("approve withheld id a")]
+        self.assertIn("symbol: AAA", first)
+        self.assertNotIn("symbol: BBB", first)
+        self.assertIn("symbol: BBB", second)
+        self.assertNotIn("symbol: AAA", second)
+        for ref in ("withheld id a", "withheld id b"):
+            self.assertFalse(any(ch.isnumeric() for ch in ref))
+            self.assertEqual(1, visible.count(f"reference: {ref}"))
+            self.assertEqual(1, page.count(f">approve {ref}<"))
+            self.assertEqual(1, page.count(f">veto {ref}<"))
+        self.assertNotIn(">approve withheld id<", page)
+        self.assertNotIn(">veto withheld id<", page)
+
+    def test_an_unpaired_withheld_id_line_fails_loudly(self) -> None:
+        lines = [
+            {"label": "withheld line", "value": "line withheld: it failed view validation"},
+            {"label": "proposal state", "value": "pending"},
+        ]
+        with self.assertRaises(RuntimeError) as caught:
+            web._render_lines(lines, {})
+        self.assertIn("paired reference", str(caught.exception))
+
+    def test_the_prompt_field_allows_2000_characters(self) -> None:
+        page = web.render_page(self.service(), "tok")
+        self.assertIn('name="prompt" maxlength="2000"', page)
+        self.assertEqual(1, page.count('maxlength="2000"'))
+        for name in ("request_id", "operator", "reason"):
+            self.assertIn(f'name="{name}" maxlength="200"', page)
 
 
 if __name__ == "__main__":

@@ -48,6 +48,8 @@
       "Bash(python3 -X utf8 -B tools/test_merge_candidate.py)",
       "Bash(python -X utf8 -B tools/test_queue_gates.py)",
       "Bash(python3 -X utf8 -B tools/test_queue_gates.py)",
+      "Bash(python -X utf8 -B tools/test_recursion_route_pin_fetch.py)",
+      "Bash(python3 -X utf8 -B tools/test_recursion_route_pin_fetch.py)",
       "Bash(python -X utf8 -B tools/test_replacement_program.py)",
       "Bash(python3 -X utf8 -B tools/test_replacement_program.py)",
       "Bash(python -X utf8 -B tools/test_review_gate.py)",

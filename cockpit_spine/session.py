@@ -12,6 +12,17 @@ later, separately reviewed wiring may require (Inv 1). ``mode`` is limited to
 
 Stop is final: pending proposals are abandoned, the source is never contacted
 again, and every later command is refused (Inv 7, fail closed).
+
+A proposal fetch has a deadline. Missing it records a refusal fail-closed to
+``watch_only`` and drops the late result, so a hung source cannot approve or act.
+Only one fetch runs at a time. While that fetch has started and not yet
+returned, another propose is that same refusal and starts no thread, so a
+hanging source cannot pile up workers in a long-lived service. The gate follows
+that in-flight flag, not whether the worker thread is still alive, so a
+finished fetch does not refuse the next propose. If the worker cannot be
+constructed or started, the flag is cleared under the gate and the error is
+re-raised, so that failure is a source error and the next propose can reach
+the source.
 """
 
 from __future__ import annotations
@@ -19,6 +30,7 @@ from __future__ import annotations
 import copy
 import datetime
 import re
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -54,8 +66,12 @@ DUPLICATE_REQUEST = "duplicate_request"
 DUPLICATE_PROPOSAL = "duplicate_proposal"
 PAYLOAD_INVALID = "payload_failed_validation"
 SOURCE_ERROR = "source_error"
+SOURCE_TIMEOUT = "source_timeout"
 UNSAFE_TEXT = "text_too_long_or_unprintable"
 MAX_REASON = 200
+# A hung source must not hold the operator. Past this, the fetch is a refusal.
+FETCH_DEADLINE_SECONDS = 5.0
+_FETCH_TIMED_OUT = object()
 
 
 def utc_now() -> str:
@@ -109,9 +125,18 @@ def _is_reply_digest(value: object) -> bool:
 
 
 class OperatorSession:
-    def __init__(self, *, source: ProposalSource, clock: Callable[[], str] = utc_now) -> None:
+    def __init__(
+        self, *, source: ProposalSource, clock: Callable[[], str] = utc_now,
+        fetch_deadline_seconds: float = FETCH_DEADLINE_SECONDS,
+    ) -> None:
         self._source = source
         self._clock = clock
+        self._fetch_deadline_seconds = fetch_deadline_seconds
+        self._fetch_gate = threading.Lock()
+        # True from worker start until fetch returns. Not thread liveness:
+        # the worker clears this before the thread exits.
+        self._fetch_in_flight = False
+        self._fetch_worker: threading.Thread | None = None
         self._chain = AuditChain()
         self.session_id: str | None = None
         self.mode: str | None = None
@@ -125,13 +150,15 @@ class OperatorSession:
     def open(
         cls, *, session_id: str, mode: str, source: ProposalSource,
         clock: Callable[[], str] = utc_now,
+        fetch_deadline_seconds: float = FETCH_DEADLINE_SECONDS,
     ) -> OperatorSession:
         if mode not in SESSION_MODES:
             raise ValueError(f"mode must be one of {SESSION_MODES}; auto rungs are not expressible")
         cleaned_id = _clean_id(session_id)
         if cleaned_id is None:
             raise ValueError("session_id must be a short identifier")
-        session = cls(source=source, clock=clock)
+        session = cls(
+            source=source, clock=clock, fetch_deadline_seconds=fetch_deadline_seconds)
         session._emit("session_opened", {
             "session_id": cleaned_id, "mode": mode, "adapter_kind": source.adapter_kind,
         })
@@ -141,9 +168,11 @@ class OperatorSession:
     def replay(
         cls, records: list[dict[str, Any]], *, source: ProposalSource,
         clock: Callable[[], str] = utc_now,
+        fetch_deadline_seconds: float = FETCH_DEADLINE_SECONDS,
     ) -> OperatorSession:
         verify_chain(records)
-        session = cls(source=source, clock=clock)
+        session = cls(
+            source=source, clock=clock, fetch_deadline_seconds=fetch_deadline_seconds)
         for record in records:
             stored = session._chain.append(record["kind"], record["data"])
             # Apply the chain's copy, not the caller's record.
@@ -318,14 +347,78 @@ class OperatorSession:
             "request_id": request_id, "prompt_digest": prompt_digest(prompt),
         })
         try:
-            outcome = self._source.fetch(
-                request_id=request_id, mode=self.mode or "", prompt=prompt
-            )
-            return self._from_outcome(request_id, outcome)
+            outcome = self._fetch_bounded(request_id, prompt)
         except Exception:  # noqa: BLE001 - any source failure must fail closed, not dangle
             if request_id in self._answered:
                 raise
             return self._refusal_record(request_id, SOURCE_ERROR, quarantined=False)
+        if outcome is _FETCH_TIMED_OUT:
+            # The worker may still be inside fetch, or an earlier one still is.
+            # Neither touches this session, so a late payload cannot become a
+            # proposal or an approval. A second propose while a fetch is in
+            # flight is the same fail-closed refusal and starts no further thread.
+            return self._refusal_record(request_id, SOURCE_TIMEOUT, quarantined=False)
+        try:
+            return self._from_outcome(request_id, outcome)
+        except Exception:  # noqa: BLE001 - a bad outcome is a source error, not a dangling request
+            if request_id in self._answered:
+                raise
+            return self._refusal_record(request_id, SOURCE_ERROR, quarantined=False)
+
+    def _fetch_bounded(self, request_id: str, prompt: str) -> object:
+        """Call the source, or return the timeout sentinel when the deadline passes.
+
+        At most one fetch is in flight. The flag is set under the gate before
+        the worker is constructed. If construction or ``start`` fails, the flag
+        and the worker are cleared under the gate and the error is re-raised:
+        no worker will run to clear them, and the caller records a source error.
+        A worker that does start clears the flag under the gate when ``fetch``
+        returns, which is before the thread exits. A propose that arrives while
+        the flag is set returns the timeout sentinel immediately and starts
+        nothing. A caller timeout does not clear the flag: the worker is still
+        inside ``fetch``, and clearing it would let the next propose start
+        another thread. When that worker later returns it clears the flag. The
+        worker is a daemon so a hung fetch does not keep the process alive after
+        the refusal is recorded. It only writes its own local box.
+        """
+
+        box: dict[str, object] = {}
+        finished = threading.Event()
+
+        def run() -> None:
+            try:
+                box["outcome"] = self._source.fetch(
+                    request_id=request_id, mode=self.mode or "", prompt=prompt)
+            except Exception as exc:  # noqa: BLE001 - handed back to the caller thread
+                box["error"] = exc
+            finally:
+                # Clear before waking the caller, so a back-to-back propose sees
+                # the fetch as finished while this thread is still unwinding.
+                with self._fetch_gate:
+                    self._fetch_in_flight = False
+                finished.set()
+
+        with self._fetch_gate:
+            if self._fetch_in_flight:
+                return _FETCH_TIMED_OUT
+            self._fetch_in_flight = True
+            try:
+                worker = threading.Thread(target=run, name="proposal-fetch", daemon=True)
+                self._fetch_worker = worker
+                worker.start()
+            except Exception:  # noqa: BLE001 - re-raised; the caller records source_error
+                # Nothing is running to clear the flag. A worker that started
+                # and then timed out leaves the flag set; this path did not start.
+                self._fetch_in_flight = False
+                self._fetch_worker = None
+                raise
+        timeout = self._fetch_deadline_seconds
+        if not finished.wait(timeout if timeout > 0 else 0):
+            return _FETCH_TIMED_OUT
+        error = box.get("error")
+        if isinstance(error, Exception):
+            raise error
+        return box.get("outcome")
 
     def _from_outcome(self, request_id: str, outcome: object) -> CommandResult:
         """Read a source result. Any failure here is a source error, not a dangling request."""

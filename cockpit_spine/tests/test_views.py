@@ -1,13 +1,30 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
-from cockpit_spine import projections as proj
 from cockpit_spine import views
+from cockpit_spine.projections import Registry
+from cockpit_spine.tests.support.vault import (
+    build_synthetic_registry, discard_synthetic_registry,
+)
 from cockpit_spine.views import Line, ViewError
 
-REGISTRY = proj.load_registry()
-GOOD_LINK = REGISTRY.render_id("x2-fake-driver-cells-accepted")
+_VAULT: Path | None = None
+_REGISTRY_PATH: Path | None = None
+REGISTRY: Registry
+GOOD_LINK: str
+
+
+def setUpModule() -> None:
+    global REGISTRY, GOOD_LINK, _VAULT, _REGISTRY_PATH
+    _VAULT, _REGISTRY_PATH, REGISTRY = build_synthetic_registry()
+    GOOD_LINK = REGISTRY.render_id("x2-fake-driver-cells-accepted")
+
+
+def tearDownModule() -> None:
+    if _VAULT is not None and _REGISTRY_PATH is not None:
+        discard_synthetic_registry(_VAULT, _REGISTRY_PATH)
 
 
 def check(*lines: Line) -> None:
@@ -82,6 +99,22 @@ class MaskTests(unittest.TestCase):
         self.assertEqual("gain [n] percent", arabic.value)
         self.assertFalse(any(ch.isdecimal() for ch in arabic.value))
         check(arabic)
+
+    def test_superscript_fraction_and_roman_numerals_are_masked(self) -> None:
+        """², ½ and Ⅻ are numeric, so isdecimal() would leave them on screen."""
+
+        self.assertEqual("[n]", views.mask_numerals("²½Ⅻ"))
+        for numeral in ("²", "½", "Ⅻ"):
+            line = views.quoted("thesis", f"gain {numeral} percent")
+            self.assertEqual("gain [n] percent", line.value)
+            self.assertFalse(any(ch.isnumeric() for ch in line.value))
+            check(line)
+            with self.assertRaises(ViewError):
+                check(Line("quoted", "thesis", f"gain {numeral} percent"))
+            with self.assertRaises(ViewError):
+                check(Line("text", "state", f"up {numeral}"))
+            with self.assertRaises(ViewError):
+                check(Line("text", f"lab{numeral}", "words"))
 
     def test_quoted_flattens_control_characters_and_survives_non_strings(self) -> None:
         self.assertEqual("a b", views.quoted("t", "a\n\x1b\tb").value)
