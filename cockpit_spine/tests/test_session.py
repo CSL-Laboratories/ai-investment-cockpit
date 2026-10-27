@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import copy
+import threading
+import time
 import unittest
 
 from cockpit_spine import session as sess
@@ -561,6 +563,48 @@ class SourceFailureTests(unittest.TestCase):
         self.assertEqual((False, sess.SOURCE_ERROR), (result.ok, result.code))
         self.assertEqual([], session.proposals())
         sess.OperatorSession.replay(session.records(), source=ScriptedSource())
+
+    def test_a_hung_fetch_fails_closed_to_watch_only_and_a_late_result_is_not_applied(self) -> None:
+        source = _HungThenAccepted()
+        session = sess.OperatorSession.open(
+            session_id="s-1", mode="paper", source=source, clock=counter_clock(),
+            fetch_deadline_seconds=0.2)
+        began = time.monotonic()
+        result = session.request_proposal(request_id="r1", prompt="p")
+        self.assertLess(time.monotonic() - began, 2.0)
+        self.assertEqual((False, sess.SOURCE_TIMEOUT), (result.ok, result.code))
+        refusal = session.records()[-1]
+        self.assertEqual(
+            ("proposal_refused", "watch_only", False, sess.SOURCE_TIMEOUT),
+            (refusal["kind"], refusal["data"]["fail_closed_to"],
+             refusal["data"]["quarantined"], refusal["data"]["reason"]))
+        self.assertEqual([], session.proposals())
+        source.release.set()
+        self.assertTrue(source.returned.wait(2))
+        self.assertEqual([], session.proposals())
+        self.assertNotIn("proposal_received", kinds(session))
+        self.assertNotIn("proposal_approved", kinds(session))
+        refused = session.approve(proposal_id="prop-1", operator=OP, confirm_digest="x")
+        self.assertEqual(sess.UNKNOWN_PROPOSAL, refused.code)
+        self.assertFalse(session.stopped)
+        sess.OperatorSession.replay(session.records(), source=ScriptedSource())
+
+
+class _HungThenAccepted:
+    """Blocks in fetch, then returns an accepted proposal once released."""
+
+    adapter_kind = "fake"
+
+    def __init__(self) -> None:
+        self.release = threading.Event()
+        self.returned = threading.Event()
+
+    def fetch(self, *, request_id: str, mode: str, prompt: str):
+        self.release.wait()
+        try:
+            return accepted(proposal_payload())
+        finally:
+            self.returned.set()
 
 
 class _Returns:
