@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import shutil
@@ -190,6 +191,21 @@ class UnusableTests(CliCase):
         self.assertNotEqual(proposal_id_for(left), proposal_id_for(right))
         self.assertLessEqual(len(proposal_id_for(left)), 64)
         self.assertEqual("prop-r1", proposal_id_for("r1"))
+
+    def test_a_short_id_equal_to_a_long_ids_digest_prefix_does_not_collide(self) -> None:
+        """Devin 4382680635: the readable and digest forms must not share a namespace."""
+
+        long = "x" * 60
+        short = hashlib.sha256(long.encode("utf-8")).hexdigest()[:59]
+        self.assertNotEqual(proposal_id_for(short), proposal_id_for(long))
+        self.open()
+        _, first = self.json_of("propose", "--request-id", short)
+        _, second = self.json_of("propose", "--request-id", long)
+        self.assertEqual(("proposal_received", "proposal_received"),
+                         (first["code"], second["code"]))
+        received = [r["data"]["payload"]["proposal_id"] for r in self.records()
+                    if r["kind"] == "proposal_received"]
+        self.assertEqual([proposal_id_for(short), proposal_id_for(long)], received)
 
     def test_an_overlapping_stop_cannot_drop_the_proposal(self) -> None:
         self.open()
