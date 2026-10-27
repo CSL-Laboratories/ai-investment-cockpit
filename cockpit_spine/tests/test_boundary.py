@@ -26,6 +26,7 @@ EXTRA_ALLOWED: dict[str, frozenset[str]] = {
     "cli.py": frozenset({"argparse", "errno", "fcntl", "msvcrt", "secrets", "sys", "time"}),
     "__main__.py": frozenset({"sys"}),
     "web.py": frozenset({"html", "http", "secrets", "threading", "urllib"}),
+    "recorded.py": frozenset({"contextlib", "io"}),
 }
 FORBIDDEN_IDENTIFIER_WORDS = ("broker", "gateway", "submit_order", "place_order", "execute_order",
                               "send_order", "killswitch", "arm_auto")
