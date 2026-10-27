@@ -19,7 +19,10 @@ Only one fetch runs at a time. While that fetch has started and not yet
 returned, another propose is that same refusal and starts no thread, so a
 hanging source cannot pile up workers in a long-lived service. The gate follows
 that in-flight flag, not whether the worker thread is still alive, so a
-finished fetch does not refuse the next propose.
+finished fetch does not refuse the next propose. If the worker cannot be
+constructed or started, the flag is cleared under the gate and the error is
+re-raised, so that failure is a source error and the next propose can reach
+the source.
 """
 
 from __future__ import annotations
@@ -365,15 +368,18 @@ class OperatorSession:
     def _fetch_bounded(self, request_id: str, prompt: str) -> object:
         """Call the source, or return the timeout sentinel when the deadline passes.
 
-        At most one fetch is in flight. The flag is set when the worker starts
-        and cleared under the gate when ``fetch`` returns, which is before the
-        thread exits. A propose that arrives while the flag is set returns the
-        timeout sentinel immediately and starts nothing. A caller timeout does
-        not clear the flag: the worker is still inside ``fetch``, and clearing
-        it would let the next propose start another thread. When that worker
-        later returns it clears the flag. The worker is a daemon so a hung fetch
-        does not keep the process alive after the refusal is recorded. It only
-        writes its own local box.
+        At most one fetch is in flight. The flag is set under the gate before
+        the worker is constructed. If construction or ``start`` fails, the flag
+        and the worker are cleared under the gate and the error is re-raised:
+        no worker will run to clear them, and the caller records a source error.
+        A worker that does start clears the flag under the gate when ``fetch``
+        returns, which is before the thread exits. A propose that arrives while
+        the flag is set returns the timeout sentinel immediately and starts
+        nothing. A caller timeout does not clear the flag: the worker is still
+        inside ``fetch``, and clearing it would let the next propose start
+        another thread. When that worker later returns it clears the flag. The
+        worker is a daemon so a hung fetch does not keep the process alive after
+        the refusal is recorded. It only writes its own local box.
         """
 
         box: dict[str, object] = {}
@@ -396,9 +402,16 @@ class OperatorSession:
             if self._fetch_in_flight:
                 return _FETCH_TIMED_OUT
             self._fetch_in_flight = True
-            worker = threading.Thread(target=run, name="proposal-fetch", daemon=True)
-            self._fetch_worker = worker
-            worker.start()
+            try:
+                worker = threading.Thread(target=run, name="proposal-fetch", daemon=True)
+                self._fetch_worker = worker
+                worker.start()
+            except Exception:  # noqa: BLE001 - re-raised; the caller records source_error
+                # Nothing is running to clear the flag. A worker that started
+                # and then timed out leaves the flag set; this path did not start.
+                self._fetch_in_flight = False
+                self._fetch_worker = None
+                raise
         timeout = self._fetch_deadline_seconds
         if not finished.wait(timeout if timeout > 0 else 0):
             return _FETCH_TIMED_OUT

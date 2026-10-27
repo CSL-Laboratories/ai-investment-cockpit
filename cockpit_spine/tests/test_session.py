@@ -704,6 +704,52 @@ class SourceFailureTests(unittest.TestCase):
         self.assertNotIn("proposal_received", kinds(hung_session))
         sess.OperatorSession.replay(hung_session.records(), source=ScriptedSource())
 
+    def test_a_failed_worker_start_is_a_source_error_and_the_next_propose_reaches_the_source(
+            self) -> None:
+        """A start() failure must not latch the in-flight flag.
+
+        The flag is set before the worker starts. If start() raises, no worker
+        runs to clear it. Clearing it under the gate makes that propose a
+        source error, and the next propose contacts the source. A started
+        worker that times out still leaves the flag set; this test only covers
+        the spawn failure.
+        """
+
+        original_start = sess.threading.Thread.start
+        calls = {"n": 0}
+
+        def start_once(worker: threading.Thread) -> None:
+            if worker.name == "proposal-fetch" and calls["n"] == 0:
+                calls["n"] += 1
+                raise RuntimeError("thread start failed")
+            original_start(worker)
+
+        sess.threading.Thread.start = start_once  # type: ignore[method-assign]
+
+        def restore() -> None:
+            sess.threading.Thread.start = original_start  # type: ignore[method-assign]
+
+        self.addCleanup(restore)
+        session, source = open_session(accepted(proposal_payload("prop-1")))
+        first = session.request_proposal(request_id="r1", prompt="p")
+        self.assertEqual((False, sess.SOURCE_ERROR), (first.ok, first.code))
+        refusal = session.records()[-1]
+        self.assertEqual(
+            ("proposal_refused", "watch_only", False, sess.SOURCE_ERROR),
+            (refusal["kind"], refusal["data"]["fail_closed_to"],
+             refusal["data"]["quarantined"], refusal["data"]["reason"]))
+        self.assertNotIn("thread start failed", str(session.records()))
+        self.assertFalse(session._fetch_in_flight)
+        self.assertIsNone(session._fetch_worker)
+        self.assertEqual([], source.calls)
+        self.assertFalse(session.stopped)
+        second = session.request_proposal(request_id="r2", prompt="p")
+        self.assertEqual((True, "proposal_received"), (second.ok, second.code))
+        self.assertEqual(["r2"], [call["request_id"] for call in source.calls])
+        self.assertEqual("pending", session.proposal("prop-1")["state"])
+        self.assertFalse(session._fetch_in_flight)
+        sess.OperatorSession.replay(session.records(), source=ScriptedSource())
+
 
 def _live_fetchers() -> int:
     return sum(
