@@ -1,13 +1,30 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
-from cockpit_spine import projections as proj
 from cockpit_spine import views
+from cockpit_spine.projections import Registry
+from cockpit_spine.tests.support.vault import (
+    build_synthetic_registry, discard_synthetic_registry,
+)
 from cockpit_spine.views import Line, ViewError
 
-REGISTRY = proj.load_registry()
-GOOD_LINK = REGISTRY.render_id("x2-fake-driver-cells-accepted")
+_VAULT: Path | None = None
+_REGISTRY_PATH: Path | None = None
+REGISTRY: Registry
+GOOD_LINK: str
+
+
+def setUpModule() -> None:
+    global REGISTRY, GOOD_LINK, _VAULT, _REGISTRY_PATH
+    _VAULT, _REGISTRY_PATH, REGISTRY = build_synthetic_registry()
+    GOOD_LINK = REGISTRY.render_id("x2-fake-driver-cells-accepted")
+
+
+def tearDownModule() -> None:
+    if _VAULT is not None and _REGISTRY_PATH is not None:
+        discard_synthetic_registry(_VAULT, _REGISTRY_PATH)
 
 
 def check(*lines: Line) -> None:

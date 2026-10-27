@@ -15,8 +15,12 @@ is not applied. The lock deadline is longer than one fetch deadline, so a stop
 waiting behind a hung propose still acquires the lock after that propose
 fail-closes, and a lock that never comes free does not wait forever.
 
-Stop does not need the projection registry. If that registry cannot be loaded,
-the stop record is still written and the context figures are withheld.
+Stop does not need the projection registry. Sources that cite csl-research are
+read from ``--vault-root`` or, when that option is omitted, from
+``CSL_RESEARCH_CHECKOUT``. The CLI never fetches. When neither is set, every
+command except stop exits 3 with the loader's configuration message (the same
+sentence ``regen_projections`` prints). Stop still writes its record and
+withholds the context figures.
 """
 
 from __future__ import annotations
@@ -64,6 +68,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cockpit_spine", description=__doc__)
     parser.add_argument("--log", required=True, type=Path, help="transcript file")
     parser.add_argument("--json", action="store_true", help="print the response as JSON")
+    parser.add_argument(
+        "--vault-root", type=Path, default=None,
+        help="csl-research checkout (default: CSL_RESEARCH_CHECKOUT)",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
     opened = commands.add_parser("open")
     opened.add_argument("--session-id", required=True)
@@ -159,19 +167,37 @@ def write_log(path: Path, records: list[dict[str, Any]]) -> None:
         raise
 
 
-def _registry_for(command: str) -> Registry:
+def _projection_failure(error: ProjectionError) -> str:
+    """Exit-3 text. A missing checkout names the same fix as regen_projections."""
+
+    text = str(error)
+    if text.startswith("csl-research checkout"):
+        return f"unusable: {text}\n"
+    return "unusable: ProjectionError\n"
+
+
+def _registry_for(
+    command: str, vault_root: Path | None, registry_path: Path | None,
+) -> Registry:
     """Verified registry. Stop still runs when the registry cannot be loaded.
 
-    An empty registry verifies nothing, so the view withholds its figures
-    instead of refusing the stop.
+    ``vault_root`` wins over ``CSL_RESEARCH_CHECKOUT``. When both are absent the
+    loader raises, and only stop continues. An empty registry verifies nothing,
+    so the view withholds its figures instead of refusing the stop.
+    ``registry_path`` defaults to the packaged registry. Tests pass a registry
+    they built for a temporary vault.
     """
 
     try:
-        return load_registry()
+        if registry_path is None:
+            loaded = load_registry(vault_root=vault_root)
+        else:
+            loaded = load_registry(registry_path, vault_root=vault_root)
     except ProjectionError:
         if command != "stop":
             raise
         return Registry({}, "")
+    return loaded
 
 
 def _args_for(namespace: argparse.Namespace) -> dict[str, str]:
@@ -192,6 +218,7 @@ def main(
     clock: Callable[[], str] = utc_now,
     fetch_deadline_seconds: float = FETCH_DEADLINE_SECONDS,
     lock_deadline_seconds: float = LOCK_DEADLINE_SECONDS,
+    registry_path: Path | None = None,
 ) -> int:
     out = out or sys.stdout
     try:
@@ -201,7 +228,7 @@ def main(
     lock = None
     try:
         lock = _lock(namespace.log, deadline_seconds=lock_deadline_seconds)
-        registry = _registry_for(namespace.command)
+        registry = _registry_for(namespace.command, namespace.vault_root, registry_path)
         source = source_factory()
         if namespace.command == "open":
             if namespace.log.exists():
@@ -222,7 +249,10 @@ def main(
     except LockTimeout:
         out.write("unusable: lock_timeout\n")
         return EXIT_UNUSABLE
-    except (AuditError, ProjectionError, ValueError) as error:
+    except ProjectionError as error:
+        out.write(_projection_failure(error))
+        return EXIT_UNUSABLE
+    except (AuditError, ValueError) as error:
         out.write(f"unusable: {type(error).__name__}\n")
         return EXIT_UNUSABLE
     except OSError:
