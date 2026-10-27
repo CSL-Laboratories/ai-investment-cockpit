@@ -264,6 +264,44 @@ class PlanTests(unittest.TestCase):
         self.assertIn((".", "python -X utf8 -B tools/test_run_gates_action.py"), planned)
         self.assertEqual(len(excluded), len(audit.EXCLUDED))
 
+    def test_pin_reader_is_excluded_and_a_lookalike_stays_uncovered(self):
+        # Parses the checked-in linux job. The pin assignment is classified by
+        # one exact EXCLUDED entry; a different ``$(python ...)`` assignment
+        # in the same step must still fail planning.
+        commands, excluded = self.plan()
+        step = self.linux_step(
+            self.ci,
+            "Fetch the pinned Recursion route contract (read-only, outside the workspace)",
+        )
+        pin_line = next(
+            line.strip() for line in step["run"].splitlines() if line.strip().startswith("pin=")
+        )
+        self.assertIn("successor/route_consumer/contract/PIN.json", pin_line)
+        matched = [item for item in excluded if item["command"] == pin_line]
+        self.assertEqual([item["cwd"] for item in matched], ["."])
+        self.assertIn("not a test", matched[0]["reason"])
+        planned = {" ".join(argv) for _, argv in commands}
+        self.assertIn(
+            "python -X utf8 -B -m unittest discover -s successor -t . -p test_*.py",
+            planned,
+        )
+        self.assertIn(
+            "python -X utf8 -B -m unittest discover -s cockpit_spine -t . -p test_*.py",
+            planned,
+        )
+        ci = copy.deepcopy(self.ci)
+        mutated = self.linux_step(
+            ci,
+            "Fetch the pinned Recursion route contract (read-only, outside the workspace)",
+        )
+        mutated["run"] += 'other="$(python -P -c "print(1)")"\n'
+        with self.assertRaises(SystemExit) as caught:
+            self.plan(ci)
+        message = str(caught.exception)
+        self.assertIn("uncovered", message)
+        self.assertIn('other="$(python -P -c "print(1)")"', message)
+        self.assertNotIn("stale_exclusions=['", message)
+
     def test_added_test_command_is_run(self):
         ci = copy.deepcopy(self.ci)
         step = self.linux_step(ci, "CI dispatch scope regressions")

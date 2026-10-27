@@ -64,6 +64,21 @@ EXCLUDED: dict[tuple[str, str], str] = {
     ),
     ("${{ runner.temp }}", r"python -P -m pip install -U maturin"): "package install, not a test",
     (".", r"python -P -m maturin build .*"): "Rust wheel build, not a test",
+    # Exact line, not a broad ``python`` match. The linux job reads the
+    # Recursion pin with ``pin="$(python -P -c ...)"``. Shell metacharacters
+    # stop the runnable-command parser, and a wider pattern would classify
+    # a later assignment as reviewed and let it skip this audit.
+    (
+        ".",
+        re.escape(
+            'pin="$(python -P -c "import json; print(json.load(open('
+            "'successor/route_consumer/contract/PIN.json', encoding='utf-8'))"
+            "['source']['head_sha'])\")\""
+        ),
+    ): (
+        "reads successor/route_consumer/contract/PIN.json source.head_sha for the "
+        "read-only Recursion fetch; not a test"
+    ),
     (".", r"python -P -c .*"): "installs the built wheel, not a test",
     ("app", r"python -P -m pytest -q tests/quant/book/test_book_batch\.py -ra \| tee .*"): (
         "batch parity re-run of tests/quant/book/test_book_batch.py against the "

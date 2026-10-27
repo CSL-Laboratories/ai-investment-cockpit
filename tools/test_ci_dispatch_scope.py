@@ -1828,6 +1828,13 @@ class P9ProbeWorkflowTests(unittest.TestCase):
         for step in oauth_steps:
             self.assertIn('success()', str(step.get('if')))
 
+# The linux job runs this file by path, not every tools/test_*.py. Importing
+# the class makes that invocation collect the pinned-checkout regression.
+_tools_dir = str(Path(__file__).resolve().parent)
+if _tools_dir not in sys.path:
+    sys.path.insert(0, _tools_dir)
+from test_recursion_route_pin_fetch import RecursionRoutePinFetchTests  # noqa: E402,F401
+
 if __name__ == '__main__':
     unittest.main()
 
