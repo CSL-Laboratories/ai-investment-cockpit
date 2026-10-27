@@ -478,7 +478,7 @@ jobs:
           if ! git -C "$dest" fetch -q --depth 1 https://github.com/CSL-Laboratories/recursion.git "$pin" \
             || ! git -C "$dest" checkout -q --detach FETCH_HEAD \
             || [ "$(git -C "$dest" rev-parse HEAD)" != "$pin" ]; then
-            echo "::error::Cannot fetch the pinned Recursion route contract commit $pin (successor/route_consumer/contract/PIN.json, source.head_sha). The pin must be reachable from CSL-Laboratories/recursion main or a protected tag; a draft PR head can disappear after a push, rebase or squash-merge. Re-pin PIN.json to a commit on recursion main."
+            echo "::error::Cannot fetch the pinned Recursion route contract commit $pin (successor/route_consumer/contract/PIN.json, source.head_sha). The pin must be reachable from CSL-Laboratories/recursion master or a protected tag; a draft PR head can disappear after a push, rebase or squash-merge. Re-pin PIN.json to a commit on recursion master."
             exit 1
           fi
           echo "RECURSION_ROUTE_CONTRACT_CHECKOUT=$dest" >> "$GITHUB_ENV"
