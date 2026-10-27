@@ -21,6 +21,17 @@ ALLOWED_IMPORT_MODULES = frozenset({
     "__future__", "collections.abc", "dataclasses", "typing",
     "successor.route_consumer", "successor.route_consumer.profile",
 })
+# Exactly the names bakeoff.py imports from each module. A dunder or any other
+# name is refused even when the module itself is allowed, so
+# ``from typing import __builtins__ as b`` cannot bind the builtins dict.
+ALLOWED_IMPORT_NAMES = {
+    "__future__": frozenset({"annotations"}),
+    "collections.abc": frozenset({"Callable"}),
+    "dataclasses": frozenset({"dataclass"}),
+    "typing": frozenset({"Any", "Protocol"}),
+    "successor.route_consumer": frozenset({"DECISION_PROFILE", "DecisionOutcome"}),
+    "successor.route_consumer.profile": frozenset({"canonical_digest"}),
+}
 # Exactly the builtins bakeoff.py calls or names. Every other builtin, including
 # open, print, getattr, vars, globals, eval, exec, __import__, help and memoryview,
 # is refused by name, so a new dynamic accessor cannot slip past a short deny-list.
@@ -41,15 +52,38 @@ def _is_dunder(text: object) -> bool:
     return isinstance(text, str) and len(text) > 4 and text[:2] == text[-2:] == "__"
 
 
+def _import_from_problems(node: ast.ImportFrom) -> list[str]:
+    """Refuse a ``from`` import whose module, name or alias is not allow-listed.
+
+    The name and alias are checked for every source module, including modules
+    on ``ALLOWED_IMPORT_MODULES``. A dunder (``__builtins__``, ``__import__``,
+    ``__loader__``) is refused even if it were listed.
+    """
+
+    module = ("." * node.level) + (node.module or "")
+    problems: list[str] = []
+    if node.level or module not in ALLOWED_IMPORT_MODULES:
+        problems.append(f"from {module} import ...")
+    allowed = ALLOWED_IMPORT_NAMES.get(module, frozenset())
+    for alias in node.names:
+        if _is_dunder(alias.name) or alias.name not in allowed:
+            problems.append(f"from {module} import {alias.name}")
+        if alias.asname is not None and (
+            _is_dunder(alias.asname) or alias.asname not in allowed
+        ):
+            problems.append(f"from {module} import {alias.name} as {alias.asname}")
+    return problems
+
+
 def write_capability_problems(source: str) -> list[str]:
     """Why a module could write, or reach something that can. Allow-lists, not deny-lists.
 
-    Imports, builtins and attribute reads are each limited to what bakeoff.py uses.
-    Every dunder name or string is refused, and so is a ``match`` class pattern,
-    because it reads attributes without an ``ast.Attribute`` node
-    (``case object(gi_frame=f)``). ``successor.route_consumer`` is trusted
-    wholesale: whatever that package exports is the dependency, so this guard
-    does not inspect it.
+    Imports, the names an ``ImportFrom`` binds, builtins and attribute reads are
+    each limited to what bakeoff.py uses. Imported names are checked, not only
+    the source module, so a dunder or any name bakeoff.py does not import is
+    refused from every module. Every dunder name or string is refused, and so
+    is a ``match`` class pattern, because it reads attributes without an
+    ``ast.Attribute`` node (``case object(gi_frame=f)``).
     """
 
     problems: list[str] = []
@@ -58,9 +92,7 @@ def write_capability_problems(source: str) -> list[str]:
             problems += [f"import {a.name}" for a in node.names
                          if a.name not in ALLOWED_IMPORT_MODULES]
         elif isinstance(node, ast.ImportFrom):
-            module = ("." * node.level) + (node.module or "")
-            if node.level or module not in ALLOWED_IMPORT_MODULES:
-                problems.append(f"from {module} import ...")
+            problems += _import_from_problems(node)
         elif isinstance(node, ast.Name) and (
             _is_dunder(node.id)
             or (node.id in _BUILTIN_NAMES and node.id not in ALLOWED_BUILTINS)
@@ -209,6 +241,10 @@ class BlockedOnWp8Tests(unittest.TestCase):
     def test_the_write_guard_refuses_each_known_bypass(self) -> None:
         for snippet in (
             "from os import remove", "from os import remove as _rm", "from shutil import copyfile",
+            "from typing import __builtins__ as b", "from dataclasses import __builtins__ as b",
+            "from collections.abc import __loader__", "from typing import __import__",
+            "from typing import Any as __builtins__", "from typing import cast",
+            "from successor.route_consumer import __builtins__", "from typing import *",
             "import builtins", "import os", "import os.path as p", "from . import sibling",
             "from pathlib import Path", "import subprocess", "from io import open",
             "open('x', 'w')", "__import__('os')", "exec('x')", "eval('x')",
@@ -235,6 +271,7 @@ class BlockedOnWp8Tests(unittest.TestCase):
 
         hops = {
             "attribute": "g = (i for i in ())\nfound = g.gi_frame.f_globals['__builtins__']",
+            "from-import": "from typing import __builtins__ as found",
             # Only names and attributes the module may use: the read hides in the pattern.
             "match": (
                 "from collections.abc import Callable\n"
