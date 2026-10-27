@@ -7,11 +7,11 @@ under [CSL-511](https://linear.app/csl-laboratories/issue/CSL-511); umbrella
 so Lucas's exact-digest receipt accepts it. Exact-digest acceptance remains a
 separate human decision.
 
-> **Superseded in part by** [SUCCESSOR-PRODUCT-2026-10-26.md](https://github.com/CSL-Laboratories/csl-research/blob/main/contracts/ai-investment-cockpit/amendments/SUCCESSOR-PRODUCT-2026-10-26.md)
-> in `CSL-Laboratories/csl-research` (path `contracts/ai-investment-cockpit/amendments/SUCCESSOR-PRODUCT-2026-10-26.md`, pull-request head `ab33419b`, SHA-256 `6179ab79c8dadcefb55cde388ce48ff8834fc47bb29a205749f5f9f50338e623`).
-> That path lands when [csl-research#62](https://github.com/CSL-Laboratories/csl-research/pull/62) merges.
+> **Superseded in part by** [SUCCESSOR-PRODUCT-2026-10-26.md](https://github.com/CSL-Laboratories/csl-research/blob/ab33419b619720e8e2a89fd3132cb34d756c10f3/contracts/ai-investment-cockpit/amendments/SUCCESSOR-PRODUCT-2026-10-26.md)
+> in `CSL-Laboratories/csl-research` (path `contracts/ai-investment-cockpit/amendments/SUCCESSOR-PRODUCT-2026-10-26.md`, commit `ab33419b619720e8e2a89fd3132cb34d756c10f3`, SHA-256 `6179ab79c8dadcefb55cde388ce48ff8834fc47bb29a205749f5f9f50338e623`).
+> The proposal bytes are pinned to that commit. [csl-research#62](https://github.com/CSL-Laboratories/csl-research/pull/62) is merged.
 > v2 is proposed and is accepted only by an exact-digest receipt from Lucas.
-> Claim: CP0-v2 successor proposal, moved out of this repository. Limitation: proposed only, not an acceptance receipt; the `main` link is that path after the pull request merges.
+> Claim: CP0-v2 successor proposal, moved out of this repository. Limitation: proposed only, not an acceptance receipt.
 > This v1 file is otherwise unchanged. The `program.json` pins stay on the 2026-10-16 accepted bytes until that receipt and a reviewed promotion.
 
 This file is a **proposed amendment**. It does not replace the last accepted
