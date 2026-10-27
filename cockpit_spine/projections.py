@@ -13,8 +13,8 @@ here means the minimal reading that can be checked offline:
 The sha256 is the only pin this module enforces. It does not run git, so it
 does not prove that the cited commit contains those bytes; the commit says where
 a reader should look. A test checks the blob at the cited commit whenever that
-commit is reachable in the clone, and fails instead of skipping when
-``COCKPIT_REQUIRE_COMMIT_PIN=1`` (use it where history is deep enough).
+commit is reachable in the checkout that holds the source, and fails instead of
+skipping when ``COCKPIT_REQUIRE_COMMIT_PIN=1`` and that checkout is a git clone.
 
 A number is displayed only through ``Registry.render`` or ``render_id``, and
 only a registry returned by ``load_registry`` can render. ``Figure`` and
@@ -29,8 +29,12 @@ The wider two-tier definition (X4) lives in the WP11 spine memo on
 csl-research, which the author of this module could not read. Treat this as
 a candidate reading for Samir and Dan to confirm or replace.
 
-The product repository never reads the vault: a projection cites a record, it
-does not fetch one.
+A projection that cites ``CSL-Laboratories/csl-research`` is read from an
+explicit local checkout: the ``vault_root`` argument, or
+``CSL_RESEARCH_CHECKOUT`` when that argument is omitted. The loader never
+fetches. A missing checkout, an unreadable file, or a digest mismatch raises
+``ProjectionError`` and nothing renders. The evidence file stays in the vault;
+this repository keeps the citation and a test fixture of those same bytes.
 """
 
 from __future__ import annotations
@@ -40,6 +44,7 @@ import dataclasses
 import hashlib
 import json
 import math
+import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -52,6 +57,8 @@ from successor.route_consumer.profile import canonical_digest
 PACKAGE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = PACKAGE_DIR.parent
 REGISTRY_PATH = PACKAGE_DIR / "projections" / "registry.json"
+VAULT_REPOSITORY = "CSL-Laboratories/csl-research"
+VAULT_CHECKOUT_ENV = "CSL_RESEARCH_CHECKOUT"
 
 PUBLISHED = "published"
 REGISTRY_VERSION = 1
@@ -78,6 +85,40 @@ class ProjectionError(Exception):
 
 class UnlinkedNumberError(ProjectionError):
     """A number was offered for display without a verified projection."""
+
+
+def require_vault_checkout(explicit: Path | None = None) -> Path:
+    """Return the configured csl-research checkout. Never fetches.
+
+    ``explicit`` wins over ``CSL_RESEARCH_CHECKOUT``. A missing setting, or a
+    path that is not a directory, raises ``ProjectionError``.
+    """
+
+    if explicit is not None:
+        root = Path(explicit)
+    else:
+        raw = os.environ.get(VAULT_CHECKOUT_ENV, "").strip()
+        if not raw:
+            raise ProjectionError(
+                "csl-research checkout is not configured; "
+                f"set {VAULT_CHECKOUT_ENV} or pass vault_root"
+            )
+        root = Path(raw)
+    if not root.is_dir():
+        raise ProjectionError("csl-research checkout is absent")
+    return root
+
+
+def read_cited_bytes(
+    repository: str, relative: str, *, root: Path, vault_root: Path | None = None,
+) -> bytes:
+    """Read one cited source from the product root, or from the vault checkout."""
+
+    if repository == VAULT_REPOSITORY:
+        base = require_vault_checkout(vault_root)
+    else:
+        base = Path(root)
+    return _read_source(base, relative)
 
 
 def _is_number(value: object) -> bool:
@@ -233,7 +274,7 @@ def _read_source(root: Path, relative: str) -> bytes:
         raise ProjectionError(f"{relative}: unreadable") from None
 
 
-def _build(raw: Any, root: Path) -> Projection:
+def _build(raw: Any, root: Path, vault_root: Path | None = None) -> Projection:
     if not isinstance(raw, dict):
         raise ProjectionError("projection entry is not an object")
     pid = raw.get("projection_id")
@@ -267,7 +308,9 @@ def _build(raw: Any, root: Path) -> Projection:
     if raw.get("digest") != _entry_digest(raw):
         raise ProjectionError(f"{pid}: entry digest does not match its content")
 
-    data = _read_source(root, source["path"])
+    data = read_cited_bytes(
+        source["repository"], source["path"], root=root, vault_root=vault_root,
+    )
     if hashlib.sha256(data).hexdigest() != sha:
         raise ProjectionError(f"{pid}: source bytes differ from the pinned sha256")
     try:
@@ -385,8 +428,14 @@ def _matches(figure: Figure, item: Projection) -> bool:
     )
 
 
-def load_registry(path: Path = REGISTRY_PATH, root: Path = REPO_ROOT) -> Registry:
-    """Load and fully verify a registry. Any defect raises; there is no partial load."""
+def load_registry(
+    path: Path = REGISTRY_PATH, root: Path = REPO_ROOT, vault_root: Path | None = None,
+) -> Registry:
+    """Load and fully verify a registry. Any defect raises; there is no partial load.
+
+    Sources in ``CSL-Laboratories/csl-research`` are read from ``vault_root`` or
+    from ``CSL_RESEARCH_CHECKOUT``. This function does not fetch.
+    """
 
     try:
         raw = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -399,7 +448,7 @@ def load_registry(path: Path = REGISTRY_PATH, root: Path = REPO_ROOT) -> Registr
         raise ProjectionError("registry has no projections")
     built: dict[str, Projection] = {}
     for entry in entries:
-        item = _build(entry, Path(root))
+        item = _build(entry, Path(root), vault_root)
         if item.projection_id in built:
             raise ProjectionError(f"{item.projection_id}: duplicate id")
         built[item.projection_id] = item
