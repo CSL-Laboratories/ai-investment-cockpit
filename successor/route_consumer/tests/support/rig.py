@@ -57,7 +57,12 @@ class ScriptedTransport:
         cwd: str | None,
         max_output_bytes: int | None = None,
     ) -> Any:
-        self.calls.append({"argv": list(argv), "input": input_text, "timeout_s": timeout_s})
+        self.calls.append({
+            "argv": list(argv),
+            "input": input_text,
+            "timeout_s": timeout_s,
+            "max_output_bytes": max_output_bytes,
+        })
         raw = self.results.pop(0)
         return self._rec.transport.ProcResult(
             raw["returncode"], raw["stdout"], raw["stderr"], raw["timed_out"]
