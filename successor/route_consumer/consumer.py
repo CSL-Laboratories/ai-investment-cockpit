@@ -31,6 +31,7 @@ from successor.route_consumer.profile import (
     WorkloadProfile,
     check_output_schema,
     engines_allowed,
+    known_decision_profile,
     load_output_schema,
 )
 from successor.route_consumer.records import RouteBinding, build_request_record
@@ -74,6 +75,15 @@ def _closed(
     return DecisionOutcome(FAIL_CLOSED, reason, None, request, reply, FAIL_CLOSED_TO)
 
 
+def _validation_errors(name: str, record: object) -> list[str] | None:
+    """Schema errors, or None when the vendored contract itself fails its pin."""
+
+    try:
+        return pin.validation_errors(name, record)
+    except pin.PinError:
+        return None
+
+
 class RouteConsumer:
     def __init__(self, port: RoutePort, *, binding: RouteBinding) -> None:
         self._port = port
@@ -88,6 +98,8 @@ class RouteConsumer:
         prompt: str,
         output_schema: dict[str, Any] | None = None,
     ) -> DecisionOutcome:
+        if not known_decision_profile(profile):
+            return _closed("unknown_workload")
         try:
             if self._binding.engine_id not in engines_allowed(mode):
                 return _closed("engine_not_permitted_in_mode")
@@ -109,7 +121,10 @@ class RouteConsumer:
             prompt=prompt,
             output_schema=output_schema,
         )
-        if pin.validation_errors("RouteExecutionRequest", request):
+        request_errors = _validation_errors("RouteExecutionRequest", request)
+        if request_errors is None:
+            return _closed("contract_drift", request)
+        if request_errors:
             return _closed("invalid_request")
 
         try:
@@ -125,7 +140,12 @@ class RouteConsumer:
             support = self._port.support()
         except Exception:
             return "route_port_error"
-        if not isinstance(support, dict) or pin.validation_errors("AdapterSupport", support):
+        if not isinstance(support, dict):
+            return "invalid_route_reply"
+        support_errors = _validation_errors("AdapterSupport", support)
+        if support_errors is None:
+            return "contract_drift"
+        if support_errors:
             return "invalid_route_reply"
         if support["engine_id"] != self._binding.engine_id:
             return "invalid_route_reply"
@@ -145,7 +165,10 @@ class RouteConsumer:
             name = "RouteExecutionResult"
         else:
             return _closed("invalid_route_reply", request)
-        if pin.validation_errors(name, reply):
+        reply_errors = _validation_errors(name, reply)
+        if reply_errors is None:
+            return _closed("contract_drift", request)
+        if reply_errors:
             return _closed("invalid_route_reply", request)
         request_ref = reply["request_id"]
         if request_ref != request["id"]:
@@ -166,6 +189,10 @@ class RouteConsumer:
         self, request: dict[str, Any], reply: dict[str, Any], output_schema: dict[str, Any]
     ) -> DecisionOutcome:
         payload = copy.deepcopy(reply["validated"])
+        if request.get("workload_id") == "workload-d05":
+            pattern = payload.get("pattern") if isinstance(payload, dict) else None
+            if pattern != "fresh":
+                return _closed("interrogation_not_fresh", request, reply)
         validator = jsonschema.Draft202012Validator(
             output_schema, format_checker=jsonschema.FormatChecker()
         )

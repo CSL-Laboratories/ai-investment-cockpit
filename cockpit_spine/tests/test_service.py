@@ -2,17 +2,33 @@ from __future__ import annotations
 
 import re
 import unittest
+from pathlib import Path
 
-from cockpit_spine import projections as proj
 from cockpit_spine import service as svc
 from cockpit_spine import session as sess
 from cockpit_spine import views
+from cockpit_spine.projections import Registry
 from cockpit_spine.tests.support.scripted import (
     ScriptedSource, accepted, counter_clock, fail_closed, proposal_payload,
 )
+from cockpit_spine.tests.support.vault import (
+    build_synthetic_registry, discard_synthetic_registry,
+)
 
-REGISTRY = proj.load_registry()
+_VAULT: Path | None = None
+_REGISTRY_PATH: Path | None = None
+REGISTRY: Registry
 OP = "operator-1"
+
+
+def setUpModule() -> None:
+    global REGISTRY, _VAULT, _REGISTRY_PATH
+    _VAULT, _REGISTRY_PATH, REGISTRY = build_synthetic_registry()
+
+
+def tearDownModule() -> None:
+    if _VAULT is not None and _REGISTRY_PATH is not None:
+        discard_synthetic_registry(_VAULT, _REGISTRY_PATH)
 
 
 def make(*outcomes, mode: str = "paper") -> svc.OperatorService:

@@ -6,6 +6,7 @@ import contextlib
 import hashlib
 import io
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -15,14 +16,23 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from cockpit_spine import cli
 from cockpit_spine.audit import verify_chain
-from cockpit_spine.projections import WITHHELD
+from cockpit_spine.projections import VAULT_CHECKOUT_ENV, WITHHELD
 from cockpit_spine.fake_source import (
     FAIL_PROMPT, QUARANTINE_PROMPT, FakeProposalSource, proposal_id_for,
 )
 from cockpit_spine.tests.support.scripted import counter_clock
+from cockpit_spine.tests.support.vault import (
+    build_synthetic_registry, discard_synthetic_registry,
+)
+
+CHECKOUT_UNUSABLE = (
+    "unusable: csl-research checkout is not configured; "
+    "set CSL_RESEARCH_CHECKOUT or pass vault_root\n"
+)
 
 
 class CliCase(unittest.TestCase):
@@ -31,16 +41,42 @@ class CliCase(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.dir, True)
         self.log = self.dir / "t.jsonl"
         self.clock = counter_clock()
+        self.vault, self.registry_path, _registry = build_synthetic_registry()
+        self.addCleanup(discard_synthetic_registry, self.vault, self.registry_path)
+        # The suite must pass with no checkout configured. A developer machine
+        # that has the env set must not hide the negative control.
+        self._env = mock.patch.dict(os.environ)
+        self._env.start()
+        os.environ.pop(VAULT_CHECKOUT_ENV, None)
+        self.addCleanup(self._env.stop)
 
-    def run_cli(self, *args: str, as_json: bool = False) -> tuple[int, str]:
+    def run_cli(
+        self, *args: str, as_json: bool = False, vault: bool = True, registry: bool | None = None,
+    ) -> tuple[int, str]:
+        use_registry = vault if registry is None else registry
         out = io.StringIO()
-        argv = ["--log", str(self.log), *(["--json"] if as_json else []), *args]
-        code = cli.main(argv, out=out, clock=self.clock)
+        argv = ["--log", str(self.log)]
+        if vault:
+            argv += ["--vault-root", str(self.vault)]
+        if as_json:
+            argv.append("--json")
+        argv.extend(args)
+        code = cli.main(
+            argv, out=out, clock=self.clock,
+            registry_path=self.registry_path if use_registry else None,
+        )
         return code, out.getvalue()
 
-    def json_of(self, *args: str) -> tuple[int, dict]:
-        code, text = self.run_cli(*args, as_json=True)
+    def json_of(self, *args: str, vault: bool = True) -> tuple[int, dict]:
+        code, text = self.run_cli(*args, as_json=True, vault=vault)
         return code, json.loads(text)
+
+    def _argv(self, log: Path, *args: str, as_json: bool = False) -> list[str]:
+        argv = ["--log", str(log), "--vault-root", str(self.vault)]
+        if as_json:
+            argv.append("--json")
+        argv.extend(args)
+        return argv
 
     def open(self, mode: str = "paper") -> None:
         self.assertEqual(0, self.run_cli("open", "--session-id", "s-1", "--mode", mode)[0])
@@ -141,6 +177,41 @@ class FlowTests(CliCase):
         self.assertFalse(self.log.exists())
 
 
+class CheckoutTests(CliCase):
+    def test_the_checkout_env_is_used_when_vault_root_is_omitted(self) -> None:
+        with mock.patch.dict(os.environ, {VAULT_CHECKOUT_ENV: str(self.vault)}):
+            code, text = self.run_cli(
+                "open", "--session-id", "s-1", "--mode", "paper", vault=False, registry=True)
+        self.assertEqual(0, code, text)
+        self.assertTrue(self.log.exists())
+
+    def test_vault_root_wins_over_an_absent_checkout_env(self) -> None:
+        with mock.patch.dict(os.environ, {VAULT_CHECKOUT_ENV: str(self.dir / "missing")}):
+            self.open()
+        self.assertTrue(self.log.exists())
+
+    def test_open_and_status_without_a_checkout_exit_3_and_stop_persists(self) -> None:
+        code, text = self.run_cli(
+            "open", "--session-id", "s-9", "--mode", "paper", vault=False)
+        self.assertEqual((3, CHECKOUT_UNUSABLE), (code, text))
+        self.assertFalse(self.log.exists())
+
+        self.open()
+        before = self.log.read_bytes()
+        code, text = self.run_cli("status", vault=False)
+        self.assertEqual((3, CHECKOUT_UNUSABLE), (code, text))
+        self.assertEqual(before, self.log.read_bytes())
+
+        code, stopped = self.json_of(
+            "stop", "--operator", "op", "--reason", "end", vault=False)
+        self.assertEqual((0, True, "stopped"), (code, stopped["ok"], stopped["code"]))
+        figures = [item for item in stopped["lines"] if item["kind"] == "figure"]
+        self.assertGreaterEqual(len(figures), 1)
+        self.assertTrue(all(item["value"] == WITHHELD for item in figures))
+        self.assertIn("session_stopped", [record["kind"] for record in self.records()])
+        verify_chain(self.records())
+
+
 class UnusableTests(CliCase):
     def test_help_exits_zero_and_bad_arguments_still_exit_three(self) -> None:
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -226,13 +297,14 @@ class UnusableTests(CliCase):
 
         def propose() -> None:
             codes["propose"] = cli.main(
-                ["--log", str(self.log), "propose", "--request-id", "r1", "--prompt", "p"],
-                source_factory=Gate, out=io.StringIO(), clock=self.clock)
+                self._argv(self.log, "propose", "--request-id", "r1", "--prompt", "p"),
+                source_factory=Gate, out=io.StringIO(), clock=self.clock,
+                registry_path=self.registry_path)
 
         def stop() -> None:
             codes["stop"] = cli.main(
-                ["--log", str(self.log), "stop", "--operator", "op", "--reason", "end"],
-                out=io.StringIO(), clock=self.clock)
+                self._argv(self.log, "stop", "--operator", "op", "--reason", "end"),
+                out=io.StringIO(), clock=self.clock, registry_path=self.registry_path)
 
         first = threading.Thread(target=propose)
         second = threading.Thread(target=stop)
@@ -273,16 +345,18 @@ class UnusableTests(CliCase):
 
         def propose() -> None:
             codes["propose"] = cli.main(
-                ["--log", str(self.log), "--json", "propose", "--request-id", "r1",
-                 "--prompt", "p"],
+                self._argv(self.log, "propose", "--request-id", "r1", "--prompt", "p",
+                           as_json=True),
                 source_factory=Hung, out=propose_out, clock=self.clock,
                 fetch_deadline_seconds=fetch_deadline,
-                lock_deadline_seconds=lock_deadline)
+                lock_deadline_seconds=lock_deadline,
+                registry_path=self.registry_path)
 
         def stop() -> None:
             codes["stop"] = cli.main(
-                ["--log", str(self.log), "stop", "--operator", "op", "--reason", "end"],
-                out=io.StringIO(), clock=self.clock, lock_deadline_seconds=lock_deadline)
+                self._argv(self.log, "stop", "--operator", "op", "--reason", "end"),
+                out=io.StringIO(), clock=self.clock, lock_deadline_seconds=lock_deadline,
+                registry_path=self.registry_path)
 
         began = time.monotonic()
         first = threading.Thread(target=propose)
@@ -413,9 +487,16 @@ class UnusableTests(CliCase):
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertIn("ok", done.stdout)
 
-    def _run_at(self, log: Path, *args: str) -> tuple[int, str]:
+    def _run_at(self, log: Path, *args: str, vault: bool = True) -> tuple[int, str]:
         out = io.StringIO()
-        code = cli.main(["--log", str(log), *args], out=out, clock=self.clock)
+        argv = ["--log", str(log)]
+        if vault:
+            argv += ["--vault-root", str(self.vault)]
+        argv.extend(args)
+        code = cli.main(
+            argv, out=out, clock=self.clock,
+            registry_path=self.registry_path if vault else None,
+        )
         return code, out.getvalue()
 
 
