@@ -1,0 +1,10 @@
+{
+  "repository": "CSL-Laboratories/csl-research",
+  "commit": "4aa2190d0ee198b7735d4396c0fb3e2a4763c3b2",
+  "path": "contracts/ai-investment-cockpit/evidence/x2-fake-driver-bakeoff.json",
+  "sha256": "0d94f066256ded639ddae11a5122b8e88ba9f29609e6dbcebbd6a55f201619b3",
+  "git_blob": "b36a5b119d8df40fd485079d564fdc2c4cc5d2f0",
+  "url": "https://github.com/CSL-Laboratories/csl-research/blob/4aa2190d0ee198b7735d4396c0fb3e2a4763c3b2/contracts/ai-investment-cockpit/evidence/x2-fake-driver-bakeoff.json",
+  "claim": "X2 live integration deferred. Plumbing record on the fake driver.",
+  "limitations": "No model comparison, no live provider call, no CP7 result, and no verdict."
+}

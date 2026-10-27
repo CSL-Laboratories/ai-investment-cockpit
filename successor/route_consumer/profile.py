@@ -88,11 +88,21 @@ _PROFILES = (
     ),
     _profile(
         "workload-d05", "interrogation", "InterrogationAnswer",
-        "sha256:35ce8cbb3b8d56b53c943321bb37eef1b8e3a0657f11ed9a0b59a8f0a14524e4",
+        "sha256:2d1d22911b9a325a42c776af61fc13206e6af1d2e318b89d1b231efdef8c73ae",
     ),
 )
 
 DECISION_PROFILE = MappingProxyType({item.workload_id: item for item in _PROFILES})
+
+
+def known_decision_profile(profile: WorkloadProfile) -> bool:
+    """True only for an exact entry of ``DECISION_PROFILE``.
+
+    A caller-built profile, including one that reuses a known id and changes
+    any other field, is not a decision workload.
+    """
+
+    return DECISION_PROFILE.get(profile.workload_id) == profile
 
 
 def load_output_schema(profile: WorkloadProfile) -> dict[str, Any]:

@@ -1,8 +1,16 @@
-"""Regenerate ``projections/registry.json`` from the pinned sources.
+"""Regenerate ``projections/registry.json`` from the pinned vault record.
 
-Run: ``python3 -X utf8 -B -m cockpit_spine.regen_projections --write``.
-The sources are WP12's recorded fake-driver run, cited at the exact commit that
-contains it. Values are derived from the file bytes, never typed in.
+Run::
+
+    python3 -X utf8 -B -m cockpit_spine.regen_projections --write --vault-root PATH
+
+``PATH`` is a local checkout of CSL-Laboratories/csl-research. When
+``--vault-root`` is omitted, ``CSL_RESEARCH_CHECKOUT`` is used. The loader
+never fetches. Values are derived from the file bytes, never typed in.
+
+The four source fields below are the full pin in
+``successor/route_consumer/records/x2-fake-driver-bakeoff.ref.json``. The
+projection test locks them to that file.
 """
 
 from __future__ import annotations
@@ -15,9 +23,11 @@ from typing import Any
 
 from cockpit_spine import projections as proj
 
-REPOSITORY = "CSL-Laboratories/ai-investment-cockpit"
-X2_COMMIT = "4433a371a9fd73801b1d9d01c740a07236d5e58e"
-X2_PATH = "successor/route_consumer/records/x2-fake-driver-bakeoff.json"
+# Full pin from the vault ref. Not the removed product-repo JSON.
+REPOSITORY = "CSL-Laboratories/csl-research"
+X2_COMMIT = "4aa2190d0ee198b7735d4396c0fb3e2a4763c3b2"
+X2_PATH = "contracts/ai-investment-cockpit/evidence/x2-fake-driver-bakeoff.json"
+X2_SHA256 = "0d94f066256ded639ddae11a5122b8e88ba9f29609e6dbcebbd6a55f201619b3"
 
 _SPECS = (
     ("x2-fake-driver-cells-total", "Cells in the X2 plumbing record (not a result)",
@@ -30,10 +40,24 @@ _SPECS = (
 )
 
 
-def build() -> dict[str, Any]:
-    data = (proj.REPO_ROOT / X2_PATH).read_bytes()
-    document = json.loads(data.decode("utf-8"))
+def _vault_arg(argv: list[str]) -> Path | None:
+    if "--vault-root" not in argv:
+        return None
+    index = argv.index("--vault-root")
+    try:
+        return Path(argv[index + 1])
+    except IndexError:
+        raise proj.ProjectionError("--vault-root needs a path") from None
+
+
+def build(vault_root: Path | None = None) -> dict[str, Any]:
+    data = proj.read_cited_bytes(
+        REPOSITORY, X2_PATH, root=proj.REPO_ROOT, vault_root=vault_root,
+    )
     sha = hashlib.sha256(data).hexdigest()
+    if sha != X2_SHA256:
+        raise proj.ProjectionError("source bytes differ from the pinned sha256")
+    document = json.loads(data.decode("utf-8"))
     entries = [
         proj.make_entry(
             projection_id=pid, label=label, value=proj.derive(document, derivation), unit=unit,
@@ -50,7 +74,11 @@ def render(document: dict[str, Any]) -> str:
 
 
 def main(argv: list[str]) -> int:
-    text = render(build())
+    try:
+        text = render(build(_vault_arg(argv)))
+    except proj.ProjectionError as exc:
+        sys.stderr.write(f"{exc}\n")
+        return 1
     if "--write" in argv:
         Path(proj.REGISTRY_PATH).write_text(text, encoding="utf-8")
     else:
