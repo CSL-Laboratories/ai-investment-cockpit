@@ -12,9 +12,8 @@ here means the minimal reading that can be checked offline:
 
 The sha256 is the only pin this module enforces. It does not run git, so it
 does not prove that the cited commit contains those bytes; the commit says where
-a reader should look. A test checks the blob at the cited commit whenever that
-commit is reachable in the checkout that holds the source, and fails instead of
-skipping when ``COCKPIT_REQUIRE_COMMIT_PIN=1`` and that checkout is a git clone.
+a reader should look. A test checks that blob when ``CSL_RESEARCH_CHECKOUT``
+is a git checkout, and skips when no checkout is configured.
 
 A number is displayed only through ``Registry.render`` or ``render_id``, and
 only a registry returned by ``load_registry`` can render. ``Figure`` and
@@ -33,8 +32,8 @@ A projection that cites ``CSL-Laboratories/csl-research`` is read from an
 explicit local checkout: the ``vault_root`` argument, or
 ``CSL_RESEARCH_CHECKOUT`` when that argument is omitted. The loader never
 fetches. A missing checkout, an unreadable file, or a digest mismatch raises
-``ProjectionError`` and nothing renders. The evidence file stays in the vault;
-this repository keeps the citation and a test fixture of those same bytes.
+``ProjectionError`` and nothing renders. The evidence file stays in the vault.
+This repository keeps the citation only.
 """
 
 from __future__ import annotations

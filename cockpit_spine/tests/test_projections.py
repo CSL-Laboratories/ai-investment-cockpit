@@ -24,29 +24,85 @@ REF_PATH = (
     proj.REPO_ROOT / "successor" / "route_consumer" / "records"
     / "x2-fake-driver-bakeoff.ref.json"
 )
-VAULT_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "csl-research"
 RECORDS_JSON = (
     proj.REPO_ROOT / "successor" / "route_consumer" / "records"
     / "x2-fake-driver-bakeoff.json"
 )
+SYNTHETIC_COMMIT = "c" * 40
+SYNTHETIC_PATH = "synthetic/cells.json"
+_SYNTHETIC_SPECS = (
+    ("x2-fake-driver-cells-total", "Cells in the synthetic record", "cells",
+     {"kind": "len_at", "pointer": "/cells"}),
+    ("x2-fake-driver-cells-accepted", "Synthetic cells accepted", "cells",
+     {"kind": "count_where", "pointer": "/cells", "match": {"disposition": "accepted"}}),
+    ("x2-fake-driver-cells-fail-closed", "Synthetic cells that failed closed", "cells",
+     {"kind": "count_where", "pointer": "/cells", "match": {"disposition": "fail_closed"}}),
+)
 
 
-class _PinnedVault:
-    """Point the loader at the committed vault fixture for one test."""
+def _synthetic_record() -> bytes:
+    """A tiny stand-in for the vault record. Not the vault bytes."""
+
+    document = {
+        "kind": "synthetic-projection-record",
+        "cells": [{"disposition": "accepted"}] * 15 + [{"disposition": "fail_closed"}] * 5,
+    }
+    return (json.dumps(document, sort_keys=True) + "\n").encode("utf-8")
+
+
+def _write_vault(data: bytes, relative: str) -> Path:
+    root = Path(tempfile.mkdtemp(prefix="vault-synth-"))
+    target = root / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
+    return root
+
+
+def _registry_from(
+    data: bytes, *, relative: str = SYNTHETIC_PATH, commit: str = SYNTHETIC_COMMIT,
+) -> Path:
+    document = json.loads(data.decode("utf-8"))
+    sha = hashlib.sha256(data).hexdigest()
+    entries = [
+        proj.make_entry(
+            projection_id=pid, label=label, value=proj.derive(document, derivation),
+            unit=unit, repository=proj.VAULT_REPOSITORY, commit=commit, path=relative,
+            sha256=sha, derivation=derivation,
+        )
+        for pid, label, unit, derivation in _SYNTHETIC_SPECS
+    ]
+    directory = Path(tempfile.mkdtemp(prefix="reg-synth-"))
+    path = directory / "registry.json"
+    path.write_text(json.dumps(proj.registry_document(entries)), encoding="utf-8")
+    return path
+
+
+def _assert_cited_blobs(test: unittest.TestCase, registry: proj.Registry, vault: Path) -> None:
+    """Fail unless each cited commit's git blob matches the pinned sha256."""
+
+    for projection_id in registry.ids():
+        entry = registry.get(projection_id)
+        pin_root = vault if entry.source_repository == proj.VAULT_REPOSITORY else proj.REPO_ROOT
+        if not (pin_root / ".git").exists():
+            test.fail(f"{projection_id}: {pin_root} is not a git checkout")
+        blob = blob_sha256_at(pin_root, entry.source_commit, entry.source_path)
+        test.assertIsNotNone(blob, f"{projection_id}: cited commit is not in this checkout")
+        test.assertEqual(entry.source_sha256, blob, projection_id)
+
+
+class _SyntheticVault:
+    """A temp vault and a temp registry built with ``make_entry``. No vault bytes."""
 
     def setUp(self) -> None:
         super().setUp()
-        self.vault = VAULT_FIXTURE
-        self.ref = json.loads(REF_PATH.read_text(encoding="utf-8"))
-        patcher = mock.patch.dict(os.environ, {proj.VAULT_CHECKOUT_ENV: str(self.vault)})
-        patcher.start()
-        self.addCleanup(patcher.stop)
-
-
-def _copy_vault(src: Path) -> Path:
-    dest = Path(tempfile.mkdtemp(prefix="vault-")) / "tree"
-    shutil.copytree(src, dest)
-    return dest
+        self.data = _synthetic_record()
+        self.sha = hashlib.sha256(self.data).hexdigest()
+        self.assertNotEqual(regen.X2_SHA256, self.sha)
+        self.assertNotEqual(7478, len(self.data))
+        self.vault = _write_vault(self.data, SYNTHETIC_PATH)
+        self.addCleanup(shutil.rmtree, self.vault, True)
+        self.registry_path = _registry_from(self.data)
+        self.addCleanup(shutil.rmtree, self.registry_path.parent, True)
 
 
 def _scratch() -> tuple[Path, Path]:
@@ -69,49 +125,92 @@ def _registry_for(root: Path, **overrides: object) -> Path:
     return path
 
 
-class CommittedRegistryTests(_PinnedVault, unittest.TestCase):
-    def test_default_registry_loads_against_the_pinned_vault_bytes(self) -> None:
-        data = (self.vault / self.ref["path"]).read_bytes()
-        self.assertEqual(self.ref["sha256"], hashlib.sha256(data).hexdigest())
-        self.assertEqual(7478, len(data))
-        self.assertEqual(regen.REPOSITORY, self.ref["repository"])
-        self.assertEqual(regen.X2_COMMIT, self.ref["commit"])
-        self.assertEqual(regen.X2_PATH, self.ref["path"])
-        self.assertEqual(regen.X2_SHA256, self.ref["sha256"])
-        self.assertEqual(40, len(self.ref["commit"]))
-        self.assertEqual(64, len(self.ref["sha256"]))
+class CitationTests(unittest.TestCase):
+    def test_committed_registry_cites_the_vault_and_stores_no_evidence_bytes(self) -> None:
+        ref = json.loads(REF_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(regen.REPOSITORY, ref["repository"])
+        self.assertEqual(regen.X2_COMMIT, ref["commit"])
+        self.assertEqual(regen.X2_PATH, ref["path"])
+        self.assertEqual(regen.X2_SHA256, ref["sha256"])
+        self.assertEqual("4aa2190d0ee198b7735d4396c0fb3e2a4763c3b2", ref["commit"])
+        self.assertEqual(
+            "0d94f066256ded639ddae11a5122b8e88ba9f29609e6dbcebbd6a55f201619b3",
+            ref["sha256"],
+        )
+        self.assertEqual(40, len(ref["commit"]))
+        self.assertEqual(64, len(ref["sha256"]))
         self.assertFalse(RECORDS_JSON.exists())
+        self.assertFalse((Path(__file__).resolve().parent / "fixtures").exists())
+        raw = json.loads(proj.REGISTRY_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(3, len(raw["projections"]))
+        for entry in raw["projections"]:
+            source = entry["source"]
+            self.assertEqual(ref["repository"], source["repository"])
+            self.assertEqual(ref["commit"], source["commit"])
+            self.assertEqual(ref["path"], source["path"])
+            self.assertEqual(ref["sha256"], source["sha256"])
+        listed = subprocess.run(
+            ["git", "ls-files", "-z"], cwd=proj.REPO_ROOT, capture_output=True, check=True,
+        )
+        suspects = [
+            text for raw_path in listed.stdout.split(b"\0")
+            if raw_path and not (text := raw_path.decode()).endswith(".ref.json")
+            and (text.endswith(".json") or "bakeoff" in text or "x2-fake" in text)
+        ]
+        if not suspects:
+            return
+        batched = subprocess.run(
+            ["git", "cat-file", "--batch"], cwd=proj.REPO_ROOT, capture_output=True, check=True,
+            input="".join(f":{path}\n" for path in suspects).encode(),
+        ).stdout
+        cursor = 0
+        for path in suspects:
+            newline = batched.index(b"\n", cursor)
+            _sha, kind, size_text = batched[cursor:newline].decode().split()
+            cursor = newline + 1
+            size = int(size_text)
+            content = batched[cursor:cursor + size]
+            cursor += size + 1
+            if kind != "blob":
+                continue
+            self.assertNotEqual(regen.X2_SHA256, hashlib.sha256(content).hexdigest(), path)
 
-        registry = proj.load_registry()
-        self.assertEqual(3, len(registry.ids()))
+
+class SyntheticLoaderTests(_SyntheticVault, unittest.TestCase):
+    def test_default_load_path_reads_the_synthetic_record(self) -> None:
+        with mock.patch.dict(os.environ, {proj.VAULT_CHECKOUT_ENV: str(self.vault)}):
+            via_env = proj.load_registry(self.registry_path)
+        with mock.patch.dict(os.environ):
+            os.environ.pop(proj.VAULT_CHECKOUT_ENV, None)
+            via_argument = proj.load_registry(self.registry_path, vault_root=self.vault)
+        self.assertEqual(via_env.ids(), via_argument.ids())
         self.assertEqual((20, 15, 5), tuple(
-            registry.get(i).value for i in (
+            via_env.get(i).value for i in (
                 "x2-fake-driver-cells-total", "x2-fake-driver-cells-accepted",
                 "x2-fake-driver-cells-fail-closed")))
-        for projection_id in registry.ids():
-            entry = registry.get(projection_id)
-            self.assertEqual(self.ref["repository"], entry.source_repository)
-            self.assertEqual(self.ref["commit"], entry.source_commit)
-            self.assertEqual(self.ref["path"], entry.source_path)
-            self.assertEqual(self.ref["sha256"], entry.source_sha256)
+        for projection_id in via_env.ids():
+            entry = via_env.get(projection_id)
+            self.assertEqual(proj.VAULT_REPOSITORY, entry.source_repository)
+            self.assertEqual(SYNTHETIC_COMMIT, entry.source_commit)
+            self.assertEqual(SYNTHETIC_PATH, entry.source_path)
+            self.assertEqual(self.sha, entry.source_sha256)
+            self.assertNotEqual(regen.X2_SHA256, entry.source_sha256)
+            self.assertEqual(entry.digest, via_argument.get(projection_id).digest)
+        figure = via_env.figure("x2-fake-driver-cells-accepted")
+        text = via_env.render(figure)
+        self.assertIn(figure.link(), text)
+        self.assertEqual(text, proj.render_figure(figure, via_env))
+        self.assertEqual(text, via_env.render_id("x2-fake-driver-cells-accepted"))
+        link = "projection:x2-fake-driver-cells-accepted@sha256:"
+        self.assertTrue(figure.link().startswith(link))
+        self.assertTrue(text.startswith("15 cells "))
 
+    def test_absent_checkout_missing_file_or_bad_digest_fails_closed(self) -> None:
+        before = proj.REGISTRY_PATH.read_bytes()
         with mock.patch.dict(os.environ):
             os.environ.pop(proj.VAULT_CHECKOUT_ENV, None)
-            by_argument = proj.load_registry(vault_root=self.vault)
-        self.assertEqual(registry.ids(), by_argument.ids())
-        self.assertEqual(
-            registry.get("x2-fake-driver-cells-accepted").digest,
-            by_argument.get("x2-fake-driver-cells-accepted").digest,
-        )
-
-    def test_committed_registry_is_exactly_what_regeneration_produces(self) -> None:
-        committed = proj.REGISTRY_PATH.read_text(encoding="utf-8")
-        self.assertEqual(regen.render(regen.build()), committed)
-        self.assertEqual(regen.render(regen.build(self.vault)), committed)
-
-    def test_absent_checkout_or_bad_digest_fails_closed(self) -> None:
-        with mock.patch.dict(os.environ):
-            os.environ.pop(proj.VAULT_CHECKOUT_ENV, None)
+            with self.assertRaisesRegex(proj.ProjectionError, "not configured"):
+                proj.load_registry(self.registry_path)
             with self.assertRaisesRegex(proj.ProjectionError, "not configured"):
                 proj.load_registry()
             with self.assertRaisesRegex(proj.ProjectionError, "not configured"):
@@ -120,66 +219,93 @@ class CommittedRegistryTests(_PinnedVault, unittest.TestCase):
             with redirect_stderr(stderr):
                 self.assertEqual(1, regen.main(["--write"]))
             self.assertIn("not configured", stderr.getvalue())
-            self.assertIn(self.ref["sha256"], proj.REGISTRY_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(before, proj.REGISTRY_PATH.read_bytes())
 
         missing = self.vault / "no-such-checkout"
         with self.assertRaisesRegex(proj.ProjectionError, "absent"):
-            proj.load_registry(vault_root=missing)
+            proj.load_registry(self.registry_path, vault_root=missing)
         with self.assertRaisesRegex(proj.ProjectionError, "absent"):
             regen.build(missing)
         empty = Path(tempfile.mkdtemp(prefix="vault-empty-"))
         self.addCleanup(shutil.rmtree, empty, True)
         with self.assertRaisesRegex(proj.ProjectionError, "unreadable"):
-            proj.load_registry(vault_root=empty)
+            proj.load_registry(self.registry_path, vault_root=empty)
 
-        copied = _copy_vault(self.vault)
-        self.addCleanup(shutil.rmtree, copied.parent, True)
-        target = copied / self.ref["path"]
-        flipped = bytearray(target.read_bytes())
+        flipped = bytearray(self.data)
         flipped[-1] ^= 0x01
-        target.write_bytes(bytes(flipped))
+        mutated = _write_vault(bytes(flipped), SYNTHETIC_PATH)
+        self.addCleanup(shutil.rmtree, mutated, True)
         with self.assertRaisesRegex(proj.ProjectionError, "pinned sha256"):
-            proj.load_registry(vault_root=copied)
+            proj.load_registry(self.registry_path, vault_root=mutated)
+
+        wrong_pin = _write_vault(self.data, regen.X2_PATH)
+        self.addCleanup(shutil.rmtree, wrong_pin, True)
         with self.assertRaisesRegex(proj.ProjectionError, "pinned sha256"):
-            regen.build(copied)
+            regen.build(wrong_pin)
 
     def test_vault_path_leaving_the_checkout_is_refused(self) -> None:
-        raw = json.loads(proj.REGISTRY_PATH.read_text(encoding="utf-8"))
-        entry = raw["projections"][0]
-        entry["source"]["path"] = "../outside.json"
-        entry["digest"] = proj._entry_digest(entry)
-        path = Path(tempfile.mkdtemp(prefix="reg-")) / "registry.json"
-        self.addCleanup(shutil.rmtree, path.parent, True)
-        path.write_text(json.dumps(proj.registry_document(raw["projections"])), encoding="utf-8")
+        document = json.loads(self.data.decode("utf-8"))
+        derivation = {"kind": "len_at", "pointer": "/cells"}
+        entry = proj.make_entry(
+            projection_id="p-escape", label="label",
+            value=proj.derive(document, derivation), unit="cells",
+            repository=proj.VAULT_REPOSITORY, commit=SYNTHETIC_COMMIT,
+            path="../outside.json", sha256=self.sha, derivation=derivation,
+        )
+        path = self.registry_path.parent / "escape.json"
+        path.write_text(json.dumps(proj.registry_document([entry])), encoding="utf-8")
         with self.assertRaisesRegex(proj.ProjectionError, "leaves the repository"):
             proj.load_registry(path, vault_root=self.vault)
 
-    def test_source_blob_at_the_cited_commit_has_the_pinned_bytes(self) -> None:
-        registry = proj.load_registry()
+
+class RealVaultCheckoutTests(unittest.TestCase):
+    """Committed registry against a real csl-research checkout.
+
+    Skips when ``CSL_RESEARCH_CHECKOUT`` is unset or not a directory. Putting
+    that checkout on CI is a workflow change and is not done here.
+    """
+
+    def setUp(self) -> None:
+        raw = os.environ.get(proj.VAULT_CHECKOUT_ENV, "").strip()
+        vault = Path(raw) if raw else None
+        if vault is None or not vault.is_dir():
+            self.skipTest("CSL_RESEARCH_CHECKOUT does not point at a checkout")
+        self.vault = vault
+        self.ref = json.loads(REF_PATH.read_text(encoding="utf-8"))
+
+    def test_committed_registry_matches_the_pinned_vault_bytes(self) -> None:
+        data = (self.vault / self.ref["path"]).read_bytes()
+        self.assertEqual(7478, len(data))
+        self.assertEqual(self.ref["sha256"], hashlib.sha256(data).hexdigest())
+        self.assertEqual(regen.X2_SHA256, hashlib.sha256(data).hexdigest())
+        self.assertEqual(regen.REPOSITORY, self.ref["repository"])
+        self.assertEqual(regen.X2_COMMIT, self.ref["commit"])
+        self.assertEqual(regen.X2_PATH, self.ref["path"])
+        registry = proj.load_registry(vault_root=self.vault)
+        self.assertEqual((20, 15, 5), tuple(
+            registry.get(i).value for i in (
+                "x2-fake-driver-cells-total", "x2-fake-driver-cells-accepted",
+                "x2-fake-driver-cells-fail-closed")))
         for projection_id in registry.ids():
             entry = registry.get(projection_id)
-            pin_root = (
-                self.vault if entry.source_repository == proj.VAULT_REPOSITORY else proj.REPO_ROOT
-            )
-            blob_sha = blob_sha256_at(pin_root, entry.source_commit, entry.source_path)
-            if blob_sha is None:
-                if (
-                    os.environ.get("COCKPIT_REQUIRE_COMMIT_PIN") == "1"
-                    and (pin_root / ".git").exists()
-                ):
-                    self.fail(f"{projection_id}: cited commit is not in this checkout")
-                self.skipTest("cited commit is not in this checkout; byte check not run")
-            self.assertEqual(entry.source_sha256, blob_sha, projection_id)
+            self.assertEqual(self.ref["sha256"], entry.source_sha256)
+            self.assertEqual(self.ref["commit"], entry.source_commit)
+            self.assertEqual(self.ref["path"], entry.source_path)
+        via_env = proj.load_registry()
+        self.assertEqual(
+            registry.get("x2-fake-driver-cells-accepted").digest,
+            via_env.get("x2-fake-driver-cells-accepted").digest,
+        )
 
-    def test_a_figure_carries_its_link_and_renders_through_the_registry(self) -> None:
-        registry = proj.load_registry()
-        figure = registry.figure("x2-fake-driver-cells-accepted")
-        text = registry.render(figure)
-        self.assertIn(figure.link(), text)
-        self.assertEqual(text, proj.render_figure(figure, registry))
-        self.assertEqual(text, registry.render_id("x2-fake-driver-cells-accepted"))
-        self.assertTrue(figure.link().startswith("projection:x2-fake-driver-cells-accepted@sha256:"))
-        self.assertTrue(text.startswith("15 cells "))
+    def test_committed_registry_is_exactly_what_regeneration_produces(self) -> None:
+        committed = proj.REGISTRY_PATH.read_text(encoding="utf-8")
+        self.assertEqual(regen.render(regen.build(self.vault)), committed)
+        self.assertEqual(regen.render(regen.build()), committed)
+
+    def test_source_blob_at_the_cited_commit_has_the_pinned_bytes(self) -> None:
+        if not (self.vault / ".git").exists():
+            self.skipTest("CSL_RESEARCH_CHECKOUT is not a git checkout")
+        _assert_cited_blobs(self, proj.load_registry(vault_root=self.vault), self.vault)
 
 
 class CommitPinHelperTests(unittest.TestCase):
@@ -198,6 +324,31 @@ class CommitPinHelperTests(unittest.TestCase):
                          blob_sha256_at(root, commit, "f.json"))
         self.assertIsNone(blob_sha256_at(root, "f" * 40, "f.json"))
         self.assertIsNone(blob_sha256_at(root, commit, "absent.json"))
+
+    def test_cited_blob_check_verifies_a_git_checkout_and_rejects_a_forged_commit(self) -> None:
+        root = Path(tempfile.mkdtemp(prefix="pin-reg-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        data = _synthetic_record()
+        target = root / SYNTHETIC_PATH
+        target.parent.mkdir(parents=True)
+        target.write_bytes(data)
+        git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+               "-c", "commit.gpgsign=false"]
+        subprocess.run([*git, "init", "-q"], cwd=root, check=True)
+        subprocess.run([*git, "add", SYNTHETIC_PATH], cwd=root, check=True)
+        subprocess.run([*git, "commit", "-q", "-m", "x"], cwd=root, check=True)
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, check=True, text=True,
+        ).stdout.strip()
+        registry_path = _registry_from(data, commit=commit)
+        self.addCleanup(shutil.rmtree, registry_path.parent, True)
+        _assert_cited_blobs(self, proj.load_registry(registry_path, vault_root=root), root)
+
+        forged = _registry_from(data, commit="f" * 40)
+        self.addCleanup(shutil.rmtree, forged.parent, True)
+        loaded = proj.load_registry(forged, vault_root=root)
+        with self.assertRaises(AssertionError):
+            _assert_cited_blobs(self, loaded, root)
 
 
 class RefusalTests(unittest.TestCase):
@@ -330,10 +481,10 @@ class DeriveTests(unittest.TestCase):
                 proj.derive(self.DOC, bad)
 
 
-class UnlinkedNumberTests(_PinnedVault, unittest.TestCase):
+class UnlinkedNumberTests(_SyntheticVault, unittest.TestCase):
     def setUp(self) -> None:
         super().setUp()
-        self.registry = proj.load_registry()
+        self.registry = proj.load_registry(self.registry_path, vault_root=self.vault)
 
     def test_unknown_projection_id_raises_unlinked(self) -> None:
         with self.assertRaises(proj.UnlinkedNumberError):
