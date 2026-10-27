@@ -213,18 +213,18 @@ class SyntheticLoaderTests(_SyntheticVault, unittest.TestCase):
                 proj.load_registry(self.registry_path)
             with self.assertRaisesRegex(proj.ProjectionError, "not configured"):
                 proj.load_registry()
-        with self.assertRaisesRegex(proj.ProjectionError, "not configured"):
-            regen.build()
+            with self.assertRaisesRegex(proj.ProjectionError, "not configured"):
+                regen.build()
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                self.assertEqual(1, regen.main(["--write"]))
+            self.assertIn("not configured", stderr.getvalue())
         with self.assertRaisesRegex(proj.ProjectionError, "empty"):
             proj.require_vault_checkout("")
         with self.assertRaisesRegex(proj.ProjectionError, "empty"):
             proj.require_vault_checkout("   ")
         with self.assertRaisesRegex(proj.ProjectionError, "empty"):
             proj.require_vault_checkout(Path(""))
-            stderr = io.StringIO()
-            with redirect_stderr(stderr):
-                self.assertEqual(1, regen.main(["--write"]))
-            self.assertIn("not configured", stderr.getvalue())
         self.assertEqual(before, proj.REGISTRY_PATH.read_bytes())
 
         missing = self.vault / "no-such-checkout"

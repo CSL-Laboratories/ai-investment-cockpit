@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -30,8 +31,63 @@ _SYNTHETIC_TEXT = (
     "\"entry_type\": {\"enum\": [\"observation_seal\"]}\n"
     "\"role\": {\"enum\": [\"pre_contract\"]}\n"
     "\"venue_class\": {\"enum\": [\"VC-EQ\"]}\n"
+    "\"status\": {\"enum\": [\"registered\", \"running\", \"completed\", "
+    "\"aborted\", \"failed\", \"invalid\"]}\n"
     "This file is not the csl-research protocol.\n"
 )
+# Section 6.5 entry schema, as Samir read it at the pinned commit: objects for
+# contract_ref and authored_by, and the status enum. The checkout test extracts
+# the schema from the pinned bytes and is the check against that file.
+_LEDGER_ENTRY_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "schema_version", "seq", "entry_id", "entry_type", "recorded_at_utc",
+        "prev_entry_sha256", "entry_sha256", "contract_ref", "trial_id", "role",
+        "venue_class", "venue_cell", "status", "authored_by",
+    ],
+    "properties": {
+        "schema_version": {"type": "integer"},
+        "seq": {"type": "integer", "minimum": 0},
+        "entry_id": {"type": "string", "minLength": 1},
+        "entry_type": {"enum": [
+            "registration", "amendment", "run_start", "run_end", "observation_seal",
+            "class_assignment", "invalidation", "note",
+        ]},
+        "recorded_at_utc": {"type": "string", "minLength": 1},
+        "prev_entry_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "entry_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "contract_ref": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["repository", "commit", "path"],
+            "properties": {
+                "repository": {"type": "string", "minLength": 1},
+                "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+                "path": {"type": "string", "minLength": 1},
+                "result_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            },
+        },
+        "trial_id": {"type": "string", "minLength": 1},
+        "role": {"type": "string", "minLength": 1},
+        "venue_class": {"type": "string", "minLength": 1},
+        "venue_cell": {"type": "string", "minLength": 1},
+        "status": {"enum": [
+            "registered", "running", "completed", "aborted", "failed", "invalid",
+        ]},
+        "authored_by": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["actor_label", "tool"],
+            "properties": {
+                "actor_label": {"type": "string", "minLength": 1},
+                "tool": {"type": "string", "minLength": 1},
+                "human_owner": {"type": "string"},
+            },
+        },
+    },
+}
 _CLOCK = "2026-10-27T00:00:00Z"
 _ENTRY_KEYS = {
     "schema_version", "seq", "entry_id", "entry_type", "recorded_at_utc",
@@ -89,6 +145,52 @@ def _bare(body: dict) -> str:
         body, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _with_defs(node: dict, root: dict) -> dict:
+    if node is root or "$defs" in node or "$defs" not in root:
+        return node
+    merged = dict(node)
+    merged["$defs"] = root["$defs"]
+    return merged
+
+
+def _entry_schemas(node: object, root: dict) -> list[dict]:
+    """Schema objects that describe a section 6.5 ledger entry."""
+
+    found: list[dict] = []
+    if isinstance(node, dict):
+        props = node.get("properties")
+        if isinstance(props, dict) and {"entry_sha256", "authored_by", "status"} <= set(props):
+            found.append(_with_defs(node, root))
+        for value in node.values():
+            found.extend(_entry_schemas(value, root))
+    elif isinstance(node, list):
+        for item in node:
+            found.extend(_entry_schemas(item, root))
+    return found
+
+
+def ledger_schemas(text: str) -> list[dict]:
+    """Pull section 6.5 entry schemas out of fenced JSON in a protocol file."""
+
+    found: list[dict] = []
+    for block in re.findall(r"```(?:json)?[^\n]*\n(.*?)```", text, re.DOTALL):
+        try:
+            document = json.loads(block)
+        except ValueError:
+            continue
+        if isinstance(document, dict):
+            found.extend(_entry_schemas(document, document))
+    return found
+
+
+def _validate(entries: list[dict], schema: dict) -> None:
+    import jsonschema
+
+    validator = jsonschema.Draft202012Validator(schema)
+    for entry in entries:
+        validator.validate(entry)
 
 
 ALLOWED_IMPORT_MODULES = frozenset({
@@ -310,12 +412,13 @@ class ProtocolPinTests(unittest.TestCase):
         ):
             self.assertNotIn(phrase, text)
         self.assertIn("Samir reviews", text)
-        self.assertIn("Lucas exact-digest receipt absent", text)
+        self.assertIn("096ad9d8", text)
+        self.assertNotIn("receipt absent", text)
         status = bakeoff.record_step_status()
         self.assertEqual(0, status["result_records_written"])
         self.assertIn("inconclusive", status["state"])
         self.assertIn("durable write blocked", status["state"])
-        self.assertIn("Lucas exact-digest receipt absent", status["acceptance"])
+        self.assertIn("096ad9d8", status["acceptance"])
         self.assertIn("Samir reviews", status["acceptance"])
         self.assertNotIn("accepted by Samir", status["acceptance"])
         self.assertEqual(bakeoff.PROTOCOL_PIN, status["protocol"])
@@ -428,8 +531,23 @@ class SealTests(unittest.TestCase):
             self.assertEqual("pre_contract", entry["role"])
             self.assertEqual("VC-EQ", entry["venue_class"])
             self.assertEqual("workload-d04", entry["venue_cell"])
-            self.assertEqual("recorded", entry["status"])
-            self.assertEqual(SYNTHETIC_PIN["sha256"], entry["contract_ref"])
+            self.assertEqual(
+                "completed" if entry["trial_id"].startswith("bk-claude-") else "failed",
+                entry["status"],
+            )
+            self.assertEqual(
+                {
+                    "repository": SYNTHETIC_PIN["repository"],
+                    "commit": SYNTHETIC_PIN["commit"],
+                    "path": SYNTHETIC_PIN["path"],
+                    "result_sha256": SYNTHETIC_PIN["sha256"],
+                },
+                entry["contract_ref"],
+            )
+            self.assertEqual(
+                {"actor_label": "cockpit_spine.bakeoff", "tool": "cockpit_spine"},
+                entry["authored_by"],
+            )
             self.assertEqual(_CLOCK, entry["recorded_at_utc"])
             body = {key: entry[key] for key in entry if key != "entry_sha256"}
             self.assertEqual(_bare(body), entry["entry_sha256"])
@@ -444,6 +562,49 @@ class SealTests(unittest.TestCase):
             [entry["trial_id"] for entry in entries],
         )
         self.assertEqual("engine_not_permitted_in_mode", sealed["trials"][-1]["reason"])
+
+    def test_entries_validate_against_the_synthetic_section_65_schema(self) -> None:
+        sealed = self._seal()
+        _validate(sealed["entries"], _LEDGER_ENTRY_SCHEMA)
+        broken = json.loads(json.dumps(sealed["entries"][0]))
+        broken["contract_ref"] = broken["contract_ref"]["result_sha256"]
+        import jsonschema
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.Draft202012Validator(_LEDGER_ENTRY_SCHEMA).validate(broken)
+        broken = json.loads(json.dumps(sealed["entries"][0]))
+        broken["status"] = "recorded"
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.Draft202012Validator(_LEDGER_ENTRY_SCHEMA).validate(broken)
+        broken = json.loads(json.dumps(sealed["entries"][0]))
+        broken["authored_by"] = "cockpit_spine.bakeoff"
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.Draft202012Validator(_LEDGER_ENTRY_SCHEMA).validate(broken)
+
+    def test_a_fenced_schema_extracts_and_validates_the_entries(self) -> None:
+        text = "section 6.5\n```json\n" + json.dumps(_LEDGER_ENTRY_SCHEMA) + "\n```\n"
+        schemas = ledger_schemas(text)
+        self.assertEqual(1, len(schemas))
+        _validate(self._seal()["entries"], schemas[0])
+
+    def test_a_different_outcome_changes_the_ledger_head(self) -> None:
+        sealed = self._seal()
+        changed = json.loads(json.dumps(self.batch))
+        changed["trials"][0]["disposition"] = "fail_closed"
+        changed["trials"][0]["reason"] = "timeout"
+        changed["trials"][0]["output_digest"] = None
+        again = self._seal(changed)
+        self.assertEqual("aborted", again["entries"][0]["status"])
+        self.assertEqual("completed", sealed["entries"][0]["status"])
+        self.assertNotEqual(
+            sealed["trial_ledger"]["ledger_head_sha256"],
+            again["trial_ledger"]["ledger_head_sha256"],
+        )
+
+    def test_an_unknown_disposition_cannot_seal(self) -> None:
+        changed = json.loads(json.dumps(self.batch))
+        changed["trials"][0]["disposition"] = "mystery"
+        with self.assertRaisesRegex(bakeoff.BlockedOnProtocol, "status"):
+            self._seal(changed)
 
     def test_the_seal_digest_covers_the_record_except_itself(self) -> None:
         sealed = self._seal()
@@ -639,6 +800,34 @@ class CommittedBlobTests(unittest.TestCase):
         sealed = bakeoff.seal_result_record(batch, vault_root=root)
         self.assertEqual("inconclusive", sealed["verdict_class"])
         self.assertFalse(sealed["persisted"])
+
+    def test_entries_validate_against_the_schema_in_the_pinned_file(self) -> None:
+        raw = os.environ.get(projections.VAULT_CHECKOUT_ENV, "").strip()
+        if not raw:
+            self.skipTest("CSL_RESEARCH_CHECKOUT is unset")
+        root = Path(raw)
+        if not root.is_dir() or not (root / ".git").exists():
+            self.skipTest("CSL_RESEARCH_CHECKOUT is not a git checkout")
+        pin = bakeoff.PROTOCOL_PIN
+        shown = subprocess.run(
+            ["git", "show", f"{pin['commit']}:{pin['path']}"],
+            cwd=root, capture_output=True, check=False,
+        )
+        self.assertEqual(0, shown.returncode)
+        self.assertEqual(pin["sha256"], hashlib.sha256(shown.stdout).hexdigest())
+        schemas = ledger_schemas(shown.stdout.decode("utf-8"))
+        self.assertTrue(schemas, "pinned result.md has no section 6.5 entry schema")
+        batch = bakeoff.run_trials(bakeoff.Plan(engines=("claude",), trials=1), StubConsumer)
+        sealed = bakeoff.seal_result_record(batch, vault_root=root)
+        failures = []
+        for schema in schemas:
+            try:
+                _validate(sealed["entries"], schema)
+            except Exception as exc:
+                failures.append(exc)
+            else:
+                return
+        self.fail(f"no extracted section 6.5 schema accepted the entries: {failures[0]}")
 
 
 class WriteGuardTests(unittest.TestCase):

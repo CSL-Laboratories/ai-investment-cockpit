@@ -5,14 +5,16 @@ returns a raw batch: no score, ranking or comparison. ``seal_result_record``
 reads the candidate CP7 revision 2 protocol from a local csl-research checkout
 and seals that batch in memory.
 
-The pin is the candidate recorded for CSL-518 (commit
+The pin is the CP7 revision 2 Lucas accepted on CSL-518 (comment
+``096ad9d8``, 2026-10-27T02:08:27Z): commit
 ``cfefc77b1c43a941ae986dca877f02c251be42e1``, ``result.md`` SHA-256
-``fa3e486cf256f485b5cf73849757df825685b56633505d842f37bc6c5bbcf2d1``).
-Acceptance of that protocol takes Lucas's own exact-digest receipt. Samir
-reviews. This module does not accept the protocol, and the pin may change.
-It does not copy the protocol. It checks the pinned sha256 of the vault file
-and the sibling ``record.json``. The loader never fetches. With no checkout
-it fails closed.
+``fa3e486cf256f485b5cf73849757df825685b56633505d842f37bc6c5bbcf2d1``.
+That receipt is the acceptance. Samir reviews. Items the receipt leaves
+``NOT_DECIDED`` or ``PENDING_OWNER`` stay open. The pinned ``record.json``
+still says ``draft_candidate_not_accepted`` because the receipt accepts
+those bytes and does not rewrite them. This module does not copy the
+protocol. It checks the pinned sha256 of the vault file and the sibling
+``record.json``. The loader never fetches. With no checkout it fails closed.
 
 The only ``verdict_class`` this module emits is ``inconclusive``. That is the
 default: there is no registration, the role is not ``confirmatory_forward``,
@@ -41,7 +43,7 @@ from cockpit_spine.projections import (
 from successor.route_consumer import DECISION_PROFILE, DecisionOutcome
 from successor.route_consumer.profile import canonical_digest
 
-# Candidate pin. Not an acceptance. A later receipt may replace it.
+# Pin Lucas accepted on CSL-518 (comment 096ad9d8). Open items stay open.
 PROTOCOL_PIN: dict[str, str] = {
     "repository": VAULT_REPOSITORY,
     "commit": "cfefc77b1c43a941ae986dca877f02c251be42e1",
@@ -51,7 +53,6 @@ PROTOCOL_PIN: dict[str, str] = {
 
 # Open items on CP7 rev 2 section 5. They are reported. They do not grant power.
 OPEN_GAPS: tuple[str, ...] = (
-    "PENDING_OWNER: Lucas exact-digest receipt",
     "proposed default, not decided: alpha 0.05 and power 0.80",
     "PENDING_OWNER: SESOI",
     "PENDING_DATA: sigma_a, rho, mbar, rho_c",
@@ -79,9 +80,11 @@ _ENTRY_KEYS = {
 _ENTRY_TYPE = "observation_seal"
 _ROLE = "pre_contract"
 _VENUE_CLASS = "VC-EQ"
-_STATUS = "recorded"
-_AUTHORED_BY = "cockpit_spine.bakeoff"
+# Section 6.5 status enum. The value on an entry comes from that trial's outcome.
+_STATUS_VALUES = ("registered", "running", "completed", "aborted", "failed", "invalid")
+_AUTHORED_BY = {"actor_label": "cockpit_spine.bakeoff", "tool": "cockpit_spine"}
 _SCHEMA_VERSION = 1
+# The pinned file still carries this status. Lucas's receipt accepts those bytes.
 _CONTRACT_STATUS = "draft_candidate_not_accepted"
 _WORDING_STATUS = "provisional, inconclusive by default"
 _PUBLICATION_LABEL = "provisional"
@@ -94,7 +97,7 @@ RECORD_KIND = (
 )
 BLOCKED_ON = (
     "CP7 rev 2 open items (wording, roll-up, SESOI, comparators, window, "
-    "ledger location); Lucas exact-digest receipt absent; Samir reviews"
+    "ledger location); Lucas receipt 096ad9d8 accepts the pin; Samir reviews"
 )
 ENGINES = ("claude", "codex")
 WORKLOAD = "workload-d04"
@@ -103,7 +106,11 @@ MAX_TRIALS = 20
 VERDICT_INCONCLUSIVE = "inconclusive"
 _VERDICT_TOKEN = '"' + VERDICT_INCONCLUSIVE + '"'
 # Quoted JSON strings the pinned schema must contain before these constants are used.
-_LEDGER_TOKENS = ('"' + _ENTRY_TYPE + '"', '"' + _ROLE + '"', '"' + _VENUE_CLASS + '"')
+_LEDGER_TOKENS = (
+    '"' + _ENTRY_TYPE + '"',
+    '"' + _ROLE + '"',
+    '"' + _VENUE_CLASS + '"',
+) + tuple('"' + status + '"' for status in _STATUS_VALUES)
 _REASON = (
     "by default: no registration, no confirmatory_forward role, no estimand measured"
 )
@@ -186,11 +193,11 @@ def record_step_status() -> dict[str, Any]:
 
     return {
         "step": "result record",
-        "state": "candidate pin; in-memory inconclusive seal; durable write blocked",
+        "state": "accepted pin; in-memory inconclusive seal; durable write blocked",
         "blocked_on": BLOCKED_ON,
         "acceptance": (
-            "draft_candidate_not_accepted: Samir reviews; "
-            "Lucas exact-digest receipt absent"
+            "Lucas CSL-518 receipt 096ad9d8 accepts this pin; Samir reviews; "
+            "NOT_DECIDED and PENDING_OWNER items remain open"
         ),
         "protocol": {
             "repository": PROTOCOL_PIN["repository"],
@@ -200,7 +207,7 @@ def record_step_status() -> dict[str, Any]:
         },
         "open_gaps": list(OPEN_GAPS),
         "todo": (
-            "TODO(WP8): a later receipt may replace the pin. "
+            "TODO(WP8): Lucas's receipt 096ad9d8 accepts this pin. "
             "A powered or non-default class stays blocked, and the ledger is not written."
         ),
         "result_records_written": 0,
@@ -399,8 +406,37 @@ def _recorded_at_utc() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _contract_ref(pin: dict[str, str]) -> dict[str, str]:
+    """Section 6.5 ``contract_ref`` object. ``result_sha256`` is optional there."""
+
+    return {
+        "repository": pin["repository"],
+        "commit": pin["commit"],
+        "path": pin["path"],
+        "result_sha256": pin["sha256"],
+    }
+
+
+def _status_for(row: dict[str, Any]) -> str:
+    """Map one finished trial onto the section 6.5 status enum.
+
+    An accepted route call completed. A timeout aborted. Any other fail-closed
+    outcome failed. The status is part of the hashed entry, so a different
+    outcome produces a different ledger head.
+    """
+
+    disposition = row["disposition"]
+    if disposition == "accepted":
+        return "completed"
+    if disposition == "fail_closed":
+        if row["reason"] == "timeout":
+            return "aborted"
+        return "failed"
+    raise BlockedOnProtocol("trial disposition has no section 6.5 status")
+
+
 def _ledger_entries(
-    rows: list[dict[str, Any]], contract_ref: str,
+    rows: list[dict[str, Any]], contract_ref: dict[str, str],
 ) -> list[dict[str, Any]]:
     """One section 6.5 entry per trial. ``seq`` starts at 0. Hashes are bare hex.
 
@@ -421,13 +457,21 @@ def _ledger_entries(
             "entry_type": _ENTRY_TYPE,
             "recorded_at_utc": recorded,
             "prev_entry_sha256": previous,
-            "contract_ref": contract_ref,
+            "contract_ref": {
+                "repository": contract_ref["repository"],
+                "commit": contract_ref["commit"],
+                "path": contract_ref["path"],
+                "result_sha256": contract_ref["result_sha256"],
+            },
             "trial_id": trial_id,
             "role": _ROLE,
             "venue_class": _VENUE_CLASS,
             "venue_cell": WORKLOAD,
-            "status": _STATUS,
-            "authored_by": _AUTHORED_BY,
+            "status": _status_for(row),
+            "authored_by": {
+                "actor_label": _AUTHORED_BY["actor_label"],
+                "tool": _AUTHORED_BY["tool"],
+            },
         }
         if set(body) != _ENTRY_KEYS - {"entry_sha256"}:
             raise BlockedOnProtocol("ledger entry does not match section 6.5")
@@ -454,7 +498,7 @@ def seal_result_record(batch: dict[str, Any], vault_root: Any = None) -> dict[st
     verdict_class, reason = verdict_for(power_established=power_established())
     if verdict_class != VERDICT_INCONCLUSIVE:
         raise BlockedOnProtocol("only the inconclusive class can be sealed")
-    entries = _ledger_entries(checked["trials"], chosen["sha256"])
+    entries = _ledger_entries(checked["trials"], _contract_ref(chosen))
     distinct: list[str] = []
     for entry in entries:
         if entry["trial_id"] not in distinct:
