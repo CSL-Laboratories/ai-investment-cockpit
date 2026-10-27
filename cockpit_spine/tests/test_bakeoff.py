@@ -1,24 +1,81 @@
-"""Plumbing runs; the result-record step stays blocked on WP8."""
+"""Plumbing runs, and an under-powered batch seals inconclusive against a synthetic protocol.
+
+The synthetic vault and its registry are built in ``setUpModule``. Nothing here
+reads ``CSL_RESEARCH_CHECKOUT`` or a real csl-research checkout.
+"""
 
 from __future__ import annotations
 
 import ast
 import builtins
+import hashlib
 import json
+import os
 import re
+import shutil
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from cockpit_spine import bakeoff
+from cockpit_spine import bakeoff, projections
 from successor.route_consumer import ACCEPTED, FAIL_CLOSED, DecisionOutcome
 from successor.route_consumer.profile import canonical_digest
 
 SOURCE = Path(bakeoff.__file__)
+SYNTHETIC_RELATIVE = "synthetic/cp7-rev2.md"
+SYNTHETIC_COMMIT = "d" * 40
+_SYNTHETIC_TEXT = (
+    "synthetic CP7 stand-in for unit tests\n"
+    "verdict class default: inconclusive\n"
+    "This file is not the csl-research protocol.\n"
+)
+
+SYNTHETIC_VAULT: Path
+SYNTHETIC_REGISTRY: Path
+
+
+def setUpModule() -> None:
+    """Build a synthetic vault and the registry that cites it. No real checkout."""
+
+    global SYNTHETIC_VAULT, SYNTHETIC_REGISTRY
+    data = _SYNTHETIC_TEXT.encode("utf-8")
+    SYNTHETIC_VAULT = Path(tempfile.mkdtemp(prefix="cp7-vault-"))
+    target = SYNTHETIC_VAULT / SYNTHETIC_RELATIVE
+    target.parent.mkdir(parents=True)
+    target.write_bytes(data)
+    pin = {
+        "repository": projections.VAULT_REPOSITORY,
+        "commit": SYNTHETIC_COMMIT,
+        "path": SYNTHETIC_RELATIVE,
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
+    directory = Path(tempfile.mkdtemp(prefix="cp7-registry-"))
+    SYNTHETIC_REGISTRY = directory / "registry.json"
+    SYNTHETIC_REGISTRY.write_text(
+        json.dumps({"registry_version": 1, "protocol": pin}, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def tearDownModule() -> None:
+    shutil.rmtree(SYNTHETIC_VAULT, ignore_errors=True)
+    shutil.rmtree(SYNTHETIC_REGISTRY.parent, ignore_errors=True)
+
+
+def synthetic_pin() -> dict[str, str]:
+    """The pin from the registry built in ``setUpModule``, not a hand-written dict."""
+
+    document = json.loads(SYNTHETIC_REGISTRY.read_text(encoding="utf-8"))
+    protocol = document["protocol"]
+    if not isinstance(protocol, dict):
+        raise AssertionError("synthetic registry has no protocol pin")
+    return protocol
 
 
 ALLOWED_IMPORT_MODULES = frozenset({
-    "__future__", "collections.abc", "dataclasses", "typing",
+    "__future__", "collections.abc", "dataclasses", "hashlib", "typing",
+    "cockpit_spine.projections",
     "successor.route_consumer", "successor.route_consumer.profile",
 })
 # Exactly the names bakeoff.py imports from each module. A dunder or any other
@@ -29,6 +86,9 @@ ALLOWED_IMPORT_NAMES = {
     "collections.abc": frozenset({"Callable"}),
     "dataclasses": frozenset({"dataclass"}),
     "typing": frozenset({"Any", "Protocol"}),
+    "cockpit_spine.projections": frozenset({
+        "REPO_ROOT", "VAULT_REPOSITORY", "ProjectionError", "read_cited_bytes",
+    }),
     "successor.route_consumer": frozenset({"DECISION_PROFILE", "DecisionOutcome"}),
     "successor.route_consumer.profile": frozenset({"canonical_digest"}),
 }
@@ -36,14 +96,17 @@ ALLOWED_IMPORT_NAMES = {
 # open, print, getattr, vars, globals, eval, exec, __import__, help and memoryview,
 # is refused by name, so a new dynamic accessor cannot slip past a short deny-list.
 ALLOWED_BUILTINS = frozenset({
-    "Exception", "ValueError", "bool", "dict", "int", "isinstance", "len", "list", "range",
-    "set", "str", "tuple",
+    "Exception", "UnicodeError", "ValueError", "any", "bool", "dict", "enumerate", "int",
+    "isinstance",
+    "len", "list", "range", "set", "str", "tuple",
 })
 # Exactly the attributes bakeoff.py uses, including list.append. Anything else,
 # including frame, code and globals attributes, is a write-capability problem.
+# hashlib.sha256().hexdigest() and str.startswith / bytes.decode are reads.
 ALLOWED_ATTRIBUTES = frozenset({
-    "append", "check", "decide", "disposition", "engines", "prompt", "reason",
-    "reply_record", "request_record", "trials",
+    "append", "check", "decide", "decode", "disposition", "engines", "hexdigest",
+    "prompt", "reason", "reply_record", "request_record", "sha256", "startswith",
+    "trials",
 })
 _BUILTIN_NAMES = frozenset(vars(builtins))
 
@@ -212,29 +275,155 @@ class TrialValueTests(unittest.TestCase):
                                          batch["trials"][0]["output_digest"]))
 
 
-class BlockedOnWp8Tests(unittest.TestCase):
-    def test_status_says_blocked_and_names_wp8(self) -> None:
+class ProtocolPinTests(unittest.TestCase):
+    def test_the_committed_pin_cites_the_candidate_rev2_record(self) -> None:
+        pin = bakeoff.PROTOCOL_PIN
+        self.assertEqual(bakeoff.WP8_PROTOCOL, pin)
+        self.assertEqual(projections.VAULT_REPOSITORY, pin["repository"])
+        self.assertEqual("cfefc77b1c43a941ae986dca877f02c251be42e1", pin["commit"])
+        self.assertEqual(
+            "submissions/20261026-csl518-cp7-prereg-power-contract-02/result.md", pin["path"],
+        )
+        self.assertEqual(
+            "fa3e486cf256f485b5cf73849757df825685b56633505d842f37bc6c5bbcf2d1", pin["sha256"],
+        )
+        self.assertRegex(SOURCE.read_text(encoding="utf-8"), r"TODO\(WP8\)")
+
+    def test_status_names_the_candidate_pin_and_writes_nothing(self) -> None:
         status = bakeoff.record_step_status()
-        self.assertEqual(("blocked", 0), (status["state"], status["result_records_written"]))
-        self.assertIn("WP8", status["blocked_on"])
+        self.assertEqual(0, status["result_records_written"])
+        self.assertIn("inconclusive", status["state"])
+        self.assertIn("durable write blocked", status["state"])
+        self.assertEqual("not accepted by Samir; pin may change", status["acceptance"])
+        self.assertEqual(bakeoff.PROTOCOL_PIN, status["protocol"])
         self.assertIn("TODO(WP8)", status["todo"])
+        self.assertIn("PENDING_OWNER: ledger location", status["open_gaps"])
+        self.assertIn("NOT_DECIDED: non-default verdict class wording", status["open_gaps"])
 
-    def test_sealing_is_refused_for_any_batch(self) -> None:
+    def test_a_missing_checkout_fails_closed(self) -> None:
         batch = bakeoff.run_trials(bakeoff.Plan(), StubConsumer)
-        for candidate in (batch, {}, {"sealed": True, "protocol_ref": "x"}):
-            with self.assertRaisesRegex(bakeoff.BlockedOnProtocol, "WP8"):
-                bakeoff.seal_result_record(candidate)
+        env = os.environ.copy()
+        env.pop(projections.VAULT_CHECKOUT_ENV, None)
+        with mock.patch.dict(os.environ, env, clear=True):
+            with self.assertRaisesRegex(bakeoff.BlockedOnProtocol, "checkout"):
+                bakeoff.seal_result_record(batch)
 
-    def test_pinning_a_protocol_does_not_unlock_a_writer(self) -> None:
-        with mock.patch.object(bakeoff, "WP8_PROTOCOL", {"digest": "sha256:" + "a" * 64}):
-            self.assertIn("writer not implemented", bakeoff.record_step_status()["state"])
-            with self.assertRaisesRegex(bakeoff.BlockedOnProtocol, "not implemented"):
-                bakeoff.seal_result_record({})
+    def test_the_checkout_env_is_used_when_vault_root_is_omitted(self) -> None:
+        batch = bakeoff.run_trials(bakeoff.Plan(engines=("claude",), trials=1), StubConsumer)
+        env = os.environ.copy()
+        env[projections.VAULT_CHECKOUT_ENV] = str(SYNTHETIC_VAULT)
+        with mock.patch.dict(os.environ, env, clear=True):
+            sealed = bakeoff.seal_result_record(batch, pin=synthetic_pin())
+        self.assertEqual("inconclusive", sealed["verdict"])
 
-    def test_the_protocol_pin_is_committed_as_none(self) -> None:
-        self.assertIsNone(bakeoff.WP8_PROTOCOL)
-        self.assertRegex(SOURCE.read_text(), r"TODO\(WP8\)")
+    def test_vault_root_wins_over_the_checkout_env(self) -> None:
+        batch = bakeoff.run_trials(bakeoff.Plan(engines=("claude",), trials=1), StubConsumer)
+        empty = Path(tempfile.mkdtemp(prefix="cp7-empty-"))
+        env = os.environ.copy()
+        env[projections.VAULT_CHECKOUT_ENV] = str(empty)
+        try:
+            with mock.patch.dict(os.environ, env, clear=True):
+                sealed = bakeoff.seal_result_record(
+                    batch, vault_root=SYNTHETIC_VAULT, pin=synthetic_pin(),
+                )
+            self.assertEqual("inconclusive", sealed["verdict"])
+            with mock.patch.dict(os.environ, env, clear=True):
+                with self.assertRaisesRegex(bakeoff.BlockedOnProtocol, "unreadable"):
+                    bakeoff.seal_result_record(batch, vault_root=empty, pin=synthetic_pin())
+        finally:
+            shutil.rmtree(empty, ignore_errors=True)
 
+
+class SealTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.pin = synthetic_pin()
+        self.batch = bakeoff.run_trials(bakeoff.Plan(trials=2), StubConsumer)
+        self.before = sorted(p.relative_to(SYNTHETIC_VAULT) for p in SYNTHETIC_VAULT.rglob("*"))
+
+    def _seal(self, batch: dict | None = None, **kwargs: object) -> dict:
+        return bakeoff.seal_result_record(
+            self.batch if batch is None else batch,
+            vault_root=kwargs.get("vault_root", SYNTHETIC_VAULT),
+            pin=kwargs.get("pin", self.pin),
+        )
+
+    def test_an_under_powered_run_seals_inconclusive_and_does_not_call_a_verdict(self) -> None:
+        sealed = self._seal()
+        self.assertEqual("inconclusive", sealed["verdict"])
+        self.assertEqual("under-powered", sealed["reason"])
+        self.assertEqual((False, False, "Provisional:"), (
+            sealed["called_verdict"], sealed["persisted"], sealed["label"],
+        ))
+        self.assertTrue(sealed["sealed"])
+        self.assertEqual(self.pin, sealed["protocol_ref"])
+        self.assertEqual(4, sealed["trial_count"])
+        self.assertEqual(bakeoff.OPEN_GAPS, tuple(sealed["open_gaps"]))
+        self.assertFalse(bakeoff.power_established())
+
+    def test_the_raw_batch_is_left_unsealed(self) -> None:
+        self._seal()
+        self.assertEqual((False, None), (self.batch["sealed"], self.batch["protocol_ref"]))
+
+    def test_every_trial_is_on_the_ledger_including_a_refusal(self) -> None:
+        sealed = self._seal()
+        self.assertEqual(4, len(sealed["ledger"]))
+        previous = "sha256:" + "0" * 64
+        for index, record in enumerate(sealed["ledger"], start=1):
+            self.assertEqual(index, record["seq"])
+            self.assertEqual(previous, record["prev"])
+            body = {key: record[key] for key in ("seq", "kind", "data", "prev")}
+            self.assertEqual(canonical_digest(body), record["hash"])
+            previous = record["hash"]
+        self.assertEqual(previous, sealed["ledger_head"])
+        arms = [record["data"]["arm"] for record in sealed["ledger"]]
+        self.assertEqual(["claude", "claude", "codex", "codex"], arms)
+        self.assertEqual(
+            "engine_not_permitted_in_mode", sealed["ledger"][-1]["data"]["reason"],
+        )
+
+    def test_the_result_digest_covers_the_record_except_itself(self) -> None:
+        sealed = self._seal()
+        material = {key: value for key, value in sealed.items() if key != "result_sha256"}
+        self.assertEqual(canonical_digest(material), sealed["result_sha256"])
+        again = self._seal()
+        self.assertEqual(sealed["result_sha256"], again["result_sha256"])
+
+    def test_sealing_does_not_write_a_record(self) -> None:
+        self._seal()
+        after = sorted(p.relative_to(SYNTHETIC_VAULT) for p in SYNTHETIC_VAULT.rglob("*"))
+        self.assertEqual(self.before, after)
+
+    def test_a_digest_mismatch_is_refused(self) -> None:
+        forged = dict(self.pin)
+        forged["sha256"] = "a" * 64
+        with self.assertRaisesRegex(bakeoff.BlockedOnProtocol, "pinned sha256"):
+            self._seal(pin=forged)
+
+    def test_a_protocol_that_does_not_name_inconclusive_is_refused(self) -> None:
+        data = b"synthetic protocol with no default class\n"
+        path = SYNTHETIC_VAULT / "synthetic" / "other.md"
+        path.write_bytes(data)
+        pin = dict(self.pin)
+        pin["path"] = "synthetic/other.md"
+        pin["sha256"] = hashlib.sha256(data).hexdigest()
+        with self.assertRaisesRegex(bakeoff.BlockedOnProtocol, "inconclusive"):
+            self._seal(pin=pin)
+
+    def test_a_malformed_batch_is_refused_after_the_protocol_loads(self) -> None:
+        for candidate in ({}, {"sealed": True, "protocol_ref": "x"}):
+            with self.assertRaises(ValueError):
+                self._seal(candidate)
+
+    def test_a_powered_claim_cannot_be_sealed(self) -> None:
+        with self.assertRaisesRegex(bakeoff.BlockedOnProtocol, "NOT_DECIDED"):
+            bakeoff.verdict_for(power_established=True)
+        self.assertEqual(
+            ("inconclusive", "under-powered"),
+            bakeoff.verdict_for(power_established=False),
+        )
+
+
+class WriteGuardTests(unittest.TestCase):
     def test_the_module_has_no_way_to_write_anything(self) -> None:
         self.assertEqual([], write_capability_problems(SOURCE.read_text(encoding="utf-8")))
 
@@ -299,6 +488,9 @@ class BlockedOnWp8Tests(unittest.TestCase):
             "from typing import Any, Protocol",
             "from successor.route_consumer import DECISION_PROFILE",
             "from successor.route_consumer.profile import canonical_digest",
+            "import hashlib",
+            "from cockpit_spine.projections import REPO_ROOT, VAULT_REPOSITORY",
+            "from cockpit_spine.projections import ProjectionError, read_cited_bytes",
         ):
             self.assertEqual([], write_capability_problems(snippet), snippet)
 
