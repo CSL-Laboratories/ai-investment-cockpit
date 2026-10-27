@@ -285,10 +285,6 @@ class PlanTests(unittest.TestCase):
             "python -X utf8 -B -m unittest discover -s successor -t . -p test_*.py",
             planned,
         )
-        self.assertIn(
-            "python -X utf8 -B -m unittest discover -s cockpit_spine -t . -p test_*.py",
-            planned,
-        )
         ci = copy.deepcopy(self.ci)
         mutated = self.linux_step(
             ci,
@@ -301,6 +297,34 @@ class PlanTests(unittest.TestCase):
         self.assertIn("uncovered", message)
         self.assertIn('other="$(python -P -c "print(1)")"', message)
         self.assertNotIn("stale_exclusions=['", message)
+
+    def test_hashfiles_availability_omits_an_absent_package(self):
+        # The cockpit_spine discovery is behind hashFiles(...test_*.py) != ''.
+        # When that package is absent the command is not planned; a matching
+        # glob still plans it. The successor discovery has no such gate.
+        spine = "python -X utf8 -B -m unittest discover -s cockpit_spine -t . -p test_*.py"
+        present = any(audit.ROOT.glob("cockpit_spine/tests/test_*.py"))
+        live = {" ".join(argv) for _, argv in self.plan()[0]}
+        self.assertEqual(spine in live, present)
+        self.assertIn(
+            "python -X utf8 -B -m unittest discover -s successor -t . -p test_*.py",
+            live,
+        )
+
+        ci = copy.deepcopy(self.ci)
+        step = self.linux_step(
+            ci, "cockpit_spine tests against the pinned Recursion checkout"
+        )
+        self.assertEqual(step.get("if"), "hashFiles('cockpit_spine/tests/test_*.py') != ''")
+        step["if"] = "hashFiles('no_such_package/tests/test_*.py') != ''"
+        commands, excluded = self.plan(ci)
+        planned = {" ".join(argv) for _, argv in commands}
+        self.assertNotIn(spine, planned)
+        self.assertEqual(len(excluded), len(audit.EXCLUDED))
+
+        step["if"] = "hashFiles('tools/csl_392_docs_read_audit_test.py') != ''"
+        planned = {" ".join(argv) for _, argv in self.plan(ci)[0]}
+        self.assertIn(spine, planned)
 
     def test_added_test_command_is_run(self):
         ci = copy.deepcopy(self.ci)
