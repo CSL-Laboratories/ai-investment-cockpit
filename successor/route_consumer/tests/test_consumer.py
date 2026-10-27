@@ -123,6 +123,19 @@ class DispositionTests(unittest.TestCase):
                                  (outcome.disposition, outcome.reason, outcome.fail_closed_to,
                                   outcome.payload))
 
+    def test_output_size_reason_codes_fail_closed_to_watch_only(self) -> None:
+        # Landed with the master pin: non-ok size failures, same path as other limit hits.
+        for reason, repaired in (("output_too_large", False), ("repair_output_too_large", True)):
+            event = {"type": "RouteHealthEvent@0", "engine_id": "claude", "state": "exhausted",
+                     "error": reason}
+            reply = result(status="limit_hit", error=reason, validated=None, repaired=repaired,
+                           usage_state="exhausted", health_event=event)
+            outcome = decide(FixedPort(reply))
+            with self.subTest(reason):
+                self.assertEqual((FAIL_CLOSED, reason, FAIL_CLOSED_TO, None),
+                                 (outcome.disposition, outcome.reason, outcome.fail_closed_to,
+                                  outcome.payload))
+
     def test_every_refusal_code_fails_closed_and_is_never_retried(self) -> None:
         codes = ("busy", "custody_denied", "cwd_refused", "secret_refused",
                  "tool_policy_refused", "unsupported")

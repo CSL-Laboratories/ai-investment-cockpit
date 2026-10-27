@@ -2,7 +2,7 @@
 
 Subject under test: ``RouteConsumer``. Counterpart: Recursion's in-process
 ``ReferenceAdapter`` over the AT1 ``FakeRouteDriver``, at the pinned head
-(CSL-496 draft, PR 302 at baf6fdc2). Cases and expected values are the pinned
+(CSL-496 draft, PR 302 merged to recursion master). Cases and expected values are the pinned
 oracle vectors plus the case classes of that PR's own conformance suite:
 schema projection, zero-tools, secret refusal, health injection, tree kill,
 session ownership, and live adapters being unsupported.
@@ -130,14 +130,19 @@ class SecretRefusalTests(unittest.TestCase):
         self.assertNotIn(rigmod.CANARY, blob)
         self.assertEqual([], rig.driver.snapshot()["sessions"])
 
-    def test_repair_prompt_is_checked_and_the_session_is_released(self) -> None:
+    def test_repair_prompt_does_not_quote_response_values_and_releases_the_session(self) -> None:
+        # The landed contract ignores validator text so a repair prompt cannot quote
+        # private response values. The canary stays out of the repair prompt and the reply.
         bad = {"returncode": 0, "stderr": "", "timed_out": False,
                "stdout": json.dumps({"result": json.dumps({"label": rigmod.CANARY, "score": 1})})}
         rig = rigmod.make_rig(REC, script=[bad, rigmod.ok_envelope()],
                               secret_values=[rigmod.CANARY])
         outcome = decide(rig)
-        self.assertEqual("secret_refused", outcome.reason)
-        self.assertEqual(1, len(rig.transport.calls), "the repair call must not spawn")
+        self.assertEqual(ACCEPTED, outcome.disposition)
+        self.assertEqual(2, len(rig.transport.calls))
+        self.assertNotIn(rigmod.CANARY, rig.transport.calls[1]["input"])
+        blob = json.dumps([outcome.request_record, outcome.reply_record, rig.driver.snapshot()])
+        self.assertNotIn(rigmod.CANARY, blob)
         self.assertFalse(self._busy(rig, "req-1"))
 
     def test_custody_refuses_unknown_and_cross_tenant_refs(self) -> None:
@@ -261,7 +266,7 @@ class ContentionTests(unittest.TestCase):
         seen: dict = {}
 
         class Reentrant:
-            def run(inner, argv, input_text, timeout_s, cwd):
+            def run(inner, argv, input_text, timeout_s, cwd, max_output_bytes=None):
                 other = rigmod.make_rig(REC, script=[], driver=driver)
                 seen["outcome"] = decide(other)
                 return REC.transport.ProcResult(0, rigmod.ok_envelope()["stdout"], "", False)

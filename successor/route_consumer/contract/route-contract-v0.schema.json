@@ -160,8 +160,10 @@
         "breaker_open",
         "empty_output",
         "limit_or_error",
+        "output_too_large",
         "repair_empty_output",
         "repair_limit_or_error",
+        "repair_output_too_large",
         "repair_still_invalid",
         "repair_timeout",
         "repair_vendor_error",
@@ -978,9 +980,6 @@
             "properties": {
               "health_event": {
                 "$ref": "#/$defs/RouteHealthEvent"
-              },
-              "termination": {
-                "type": "null"
               }
             }
           }
@@ -1350,7 +1349,7 @@
       "x-utf8MaxBytes": 96
     }
   },
-  "$id": "https://recursion.local/schemas/control-plane/v3/route-contract/schema.json",
+  "$id": "https://recursion.local/scripts/v3/route-contract/schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "oneOf": [
     {

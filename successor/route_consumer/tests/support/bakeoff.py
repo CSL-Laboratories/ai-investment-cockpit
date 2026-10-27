@@ -19,7 +19,7 @@ from typing import Any
 
 from successor.route_consumer import pin
 from successor.route_consumer.pin import PACKAGE_DIR
-from successor.route_consumer.profile import DECISION_PROFILE, canonical_digest
+from successor.route_consumer.profile import DECISION_PROFILE, canonical_digest, load_output_schema
 from successor.route_consumer.tests.support import rig as rigmod
 from successor.route_consumer.tests.support.recursion_bridge import recursion
 
@@ -77,7 +77,10 @@ def run() -> dict[str, Any]:
     for mode in MODES:
         for workload_id, profile in sorted(DECISION_PROFILE.items()):
             for engine in ENGINES:
-                rig = rigmod.make_rig(rec, engine, script=_script(engine, SAMPLES[workload_id]))
+                rig = rigmod.make_rig(
+                    rec, engine, script=_script(engine, SAMPLES[workload_id]),
+                    output_schema=load_output_schema(profile),
+                )
                 outcome = rig.consumer.decide(
                     request_id=f"req-{workload_id}-{engine}",
                     profile=profile,
