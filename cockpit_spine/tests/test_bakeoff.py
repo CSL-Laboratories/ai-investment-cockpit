@@ -1,7 +1,7 @@
-"""Plumbing runs, and an under-powered batch seals inconclusive against a synthetic protocol.
+"""Plumbing runs, and a batch seals inconclusive against a synthetic protocol.
 
-The synthetic vault and its registry are built in ``setUpModule``. Nothing here
-reads ``CSL_RESEARCH_CHECKOUT`` or a real csl-research checkout.
+The synthetic vault is built in ``setUpModule``. Tests patch ``PROTOCOL_PIN``.
+A real csl-research checkout is optional and used only by the skip-unless test.
 """
 
 from __future__ import annotations
@@ -23,58 +23,76 @@ from successor.route_consumer import ACCEPTED, FAIL_CLOSED, DecisionOutcome
 from successor.route_consumer.profile import canonical_digest
 
 SOURCE = Path(bakeoff.__file__)
-SYNTHETIC_RELATIVE = "synthetic/cp7-rev2.md"
-SYNTHETIC_COMMIT = "d" * 40
+SYNTHETIC_RELATIVE = "submissions/synthetic-cp7/result.md"
 _SYNTHETIC_TEXT = (
     "synthetic CP7 stand-in for unit tests\n"
-    "verdict class default: inconclusive\n"
+    "\"verdict_class\": {\"enum\": [\"inconclusive\"]}\n"
+    "\"entry_type\": {\"enum\": [\"observation_seal\"]}\n"
+    "\"role\": {\"enum\": [\"pre_contract\"]}\n"
+    "\"venue_class\": {\"enum\": [\"VC-EQ\"]}\n"
     "This file is not the csl-research protocol.\n"
 )
+_CLOCK = "2026-10-27T00:00:00Z"
+_ENTRY_KEYS = {
+    "schema_version", "seq", "entry_id", "entry_type", "recorded_at_utc",
+    "prev_entry_sha256", "entry_sha256", "contract_ref", "trial_id", "role",
+    "venue_class", "venue_cell", "status", "authored_by",
+}
 
 SYNTHETIC_VAULT: Path
-SYNTHETIC_REGISTRY: Path
+SYNTHETIC_PIN: dict[str, str]
+
+
+def _install(
+    vault: Path, relative: str, data: bytes, *,
+    status: str = "draft_candidate_not_accepted",
+    record_sha: str | None = None,
+    record_id: str | None = None,
+) -> dict[str, str]:
+    """Write a result.md and its sibling record.json. Return the pin for those bytes."""
+
+    target = vault / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
+    digest = hashlib.sha256(data).hexdigest()
+    parts = relative.split("/")
+    record = {
+        "record_id": parts[-2] if record_id is None else record_id,
+        "contract_status": status,
+        "result": {"sha256": digest if record_sha is None else record_sha},
+    }
+    (target.parent / "record.json").write_text(json.dumps(record), encoding="utf-8")
+    return {
+        "repository": projections.VAULT_REPOSITORY,
+        "commit": "d" * 40,
+        "path": relative,
+        "sha256": digest,
+    }
 
 
 def setUpModule() -> None:
-    """Build a synthetic vault and the registry that cites it. No real checkout."""
+    """Build a synthetic vault. No real checkout, and no registry round-trip."""
 
-    global SYNTHETIC_VAULT, SYNTHETIC_REGISTRY
-    data = _SYNTHETIC_TEXT.encode("utf-8")
+    global SYNTHETIC_VAULT, SYNTHETIC_PIN
     SYNTHETIC_VAULT = Path(tempfile.mkdtemp(prefix="cp7-vault-"))
-    target = SYNTHETIC_VAULT / SYNTHETIC_RELATIVE
-    target.parent.mkdir(parents=True)
-    target.write_bytes(data)
-    pin = {
-        "repository": projections.VAULT_REPOSITORY,
-        "commit": SYNTHETIC_COMMIT,
-        "path": SYNTHETIC_RELATIVE,
-        "sha256": hashlib.sha256(data).hexdigest(),
-    }
-    directory = Path(tempfile.mkdtemp(prefix="cp7-registry-"))
-    SYNTHETIC_REGISTRY = directory / "registry.json"
-    SYNTHETIC_REGISTRY.write_text(
-        json.dumps({"registry_version": 1, "protocol": pin}, sort_keys=True) + "\n",
-        encoding="utf-8",
+    SYNTHETIC_PIN = _install(
+        SYNTHETIC_VAULT, SYNTHETIC_RELATIVE, _SYNTHETIC_TEXT.encode("utf-8"),
     )
 
 
 def tearDownModule() -> None:
     shutil.rmtree(SYNTHETIC_VAULT, ignore_errors=True)
-    shutil.rmtree(SYNTHETIC_REGISTRY.parent, ignore_errors=True)
 
 
-def synthetic_pin() -> dict[str, str]:
-    """The pin from the registry built in ``setUpModule``, not a hand-written dict."""
-
-    document = json.loads(SYNTHETIC_REGISTRY.read_text(encoding="utf-8"))
-    protocol = document["protocol"]
-    if not isinstance(protocol, dict):
-        raise AssertionError("synthetic registry has no protocol pin")
-    return protocol
+def _bare(body: dict) -> str:
+    encoded = json.dumps(
+        body, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 ALLOWED_IMPORT_MODULES = frozenset({
-    "__future__", "collections.abc", "dataclasses", "hashlib", "typing",
+    "__future__", "collections.abc", "dataclasses", "datetime", "hashlib", "json", "typing",
     "cockpit_spine.projections",
     "successor.route_consumer", "successor.route_consumer.profile",
 })
@@ -85,6 +103,7 @@ ALLOWED_IMPORT_NAMES = {
     "__future__": frozenset({"annotations"}),
     "collections.abc": frozenset({"Callable"}),
     "dataclasses": frozenset({"dataclass"}),
+    "datetime": frozenset({"datetime", "timezone"}),
     "typing": frozenset({"Any", "Protocol"}),
     "cockpit_spine.projections": frozenset({
         "REPO_ROOT", "VAULT_REPOSITORY", "ProjectionError", "read_cited_bytes",
@@ -96,17 +115,16 @@ ALLOWED_IMPORT_NAMES = {
 # open, print, getattr, vars, globals, eval, exec, __import__, help and memoryview,
 # is refused by name, so a new dynamic accessor cannot slip past a short deny-list.
 ALLOWED_BUILTINS = frozenset({
-    "Exception", "UnicodeError", "ValueError", "any", "bool", "dict", "enumerate", "int",
-    "isinstance",
-    "len", "list", "range", "set", "str", "tuple",
+    "Exception", "TypeError", "UnicodeError", "ValueError", "bool", "bytes", "dict", "enumerate",
+    "int", "isinstance", "len", "list", "range", "set", "str", "tuple",
 })
 # Exactly the attributes bakeoff.py uses, including list.append. Anything else,
 # including frame, code and globals attributes, is a write-capability problem.
 # hashlib.sha256().hexdigest() and str.startswith / bytes.decode are reads.
 ALLOWED_ATTRIBUTES = frozenset({
-    "append", "check", "decide", "decode", "disposition", "engines", "hexdigest",
-    "prompt", "reason", "reply_record", "request_record", "sha256", "startswith",
-    "trials",
+    "append", "check", "decide", "decode", "disposition", "dumps", "encode", "engines",
+    "get", "hexdigest", "join", "loads", "now", "prompt", "reason", "reply_record",
+    "request_record", "sha256", "split", "startswith", "strftime", "trials", "utc",
 })
 _BUILTIN_NAMES = frozenset(vars(builtins))
 
@@ -276,29 +294,38 @@ class TrialValueTests(unittest.TestCase):
 
 
 class ProtocolPinTests(unittest.TestCase):
-    def test_the_committed_pin_cites_the_candidate_rev2_record(self) -> None:
+    def test_the_committed_pin_has_citation_shape(self) -> None:
         pin = bakeoff.PROTOCOL_PIN
-        self.assertEqual(bakeoff.WP8_PROTOCOL, pin)
         self.assertEqual(projections.VAULT_REPOSITORY, pin["repository"])
-        self.assertEqual("cfefc77b1c43a941ae986dca877f02c251be42e1", pin["commit"])
-        self.assertEqual(
-            "submissions/20261026-csl518-cp7-prereg-power-contract-02/result.md", pin["path"],
-        )
-        self.assertEqual(
-            "fa3e486cf256f485b5cf73849757df825685b56633505d842f37bc6c5bbcf2d1", pin["sha256"],
-        )
+        self.assertEqual(40, len(pin["commit"]))
+        self.assertEqual(64, len(pin["sha256"]))
+        self.assertTrue(pin["path"].endswith("/result.md"))
+        self.assertNotIn("..", pin["path"].split("/"))
         self.assertRegex(SOURCE.read_text(encoding="utf-8"), r"TODO\(WP8\)")
 
-    def test_status_names_the_candidate_pin_and_writes_nothing(self) -> None:
+    def test_acceptance_is_a_lucas_receipt_and_samir_only_reviews(self) -> None:
+        text = SOURCE.read_text(encoding="utf-8")
+        for phrase in (
+            "Samir accepts", "accepted by Samir", "Samir has not accepted", "Samir's acceptance",
+        ):
+            self.assertNotIn(phrase, text)
+        self.assertIn("Samir reviews", text)
+        self.assertIn("Lucas exact-digest receipt absent", text)
         status = bakeoff.record_step_status()
         self.assertEqual(0, status["result_records_written"])
         self.assertIn("inconclusive", status["state"])
         self.assertIn("durable write blocked", status["state"])
-        self.assertEqual("not accepted by Samir; pin may change", status["acceptance"])
+        self.assertIn("Lucas exact-digest receipt absent", status["acceptance"])
+        self.assertIn("Samir reviews", status["acceptance"])
+        self.assertNotIn("accepted by Samir", status["acceptance"])
         self.assertEqual(bakeoff.PROTOCOL_PIN, status["protocol"])
         self.assertIn("TODO(WP8)", status["todo"])
         self.assertIn("PENDING_OWNER: ledger location", status["open_gaps"])
+        self.assertIn("PENDING_OWNER: SESOI", status["open_gaps"])
+        self.assertIn("PENDING_DATA: sigma_a, rho, mbar, rho_c", status["open_gaps"])
         self.assertIn("NOT_DECIDED: non-default verdict class wording", status["open_gaps"])
+        self.assertIn("Hard-coded block", bakeoff.power_established.__doc__)
+        self.assertFalse(bakeoff.power_established())
 
     def test_a_missing_checkout_fails_closed(self) -> None:
         batch = bakeoff.run_trials(bakeoff.Plan(), StubConsumer)
@@ -313,8 +340,9 @@ class ProtocolPinTests(unittest.TestCase):
         env = os.environ.copy()
         env[projections.VAULT_CHECKOUT_ENV] = str(SYNTHETIC_VAULT)
         with mock.patch.dict(os.environ, env, clear=True):
-            sealed = bakeoff.seal_result_record(batch, pin=synthetic_pin())
-        self.assertEqual("inconclusive", sealed["verdict"])
+            with mock.patch.object(bakeoff, "PROTOCOL_PIN", SYNTHETIC_PIN):
+                sealed = bakeoff.seal_result_record(batch)
+        self.assertEqual("inconclusive", sealed["verdict_class"])
 
     def test_vault_root_wins_over_the_checkout_env(self) -> None:
         batch = bakeoff.run_trials(bakeoff.Plan(engines=("claude",), trials=1), StubConsumer)
@@ -322,71 +350,112 @@ class ProtocolPinTests(unittest.TestCase):
         env = os.environ.copy()
         env[projections.VAULT_CHECKOUT_ENV] = str(empty)
         try:
-            with mock.patch.dict(os.environ, env, clear=True):
-                sealed = bakeoff.seal_result_record(
-                    batch, vault_root=SYNTHETIC_VAULT, pin=synthetic_pin(),
-                )
-            self.assertEqual("inconclusive", sealed["verdict"])
-            with mock.patch.dict(os.environ, env, clear=True):
-                with self.assertRaisesRegex(bakeoff.BlockedOnProtocol, "unreadable"):
-                    bakeoff.seal_result_record(batch, vault_root=empty, pin=synthetic_pin())
+            with mock.patch.object(bakeoff, "PROTOCOL_PIN", SYNTHETIC_PIN):
+                with mock.patch.dict(os.environ, env, clear=True):
+                    sealed = bakeoff.seal_result_record(batch, vault_root=SYNTHETIC_VAULT)
+                self.assertEqual("inconclusive", sealed["verdict_class"])
+                with mock.patch.dict(os.environ, env, clear=True):
+                    with self.assertRaisesRegex(bakeoff.BlockedOnProtocol, "unreadable"):
+                        bakeoff.seal_result_record(batch, vault_root=empty)
         finally:
             shutil.rmtree(empty, ignore_errors=True)
 
 
 class SealTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.pin = synthetic_pin()
         self.batch = bakeoff.run_trials(bakeoff.Plan(trials=2), StubConsumer)
         self.before = sorted(p.relative_to(SYNTHETIC_VAULT) for p in SYNTHETIC_VAULT.rglob("*"))
+        self._pin = mock.patch.object(bakeoff, "PROTOCOL_PIN", SYNTHETIC_PIN)
+        self._clock = mock.patch.object(bakeoff, "_recorded_at_utc", return_value=_CLOCK)
+        self._pin.start()
+        self._clock.start()
+        self.addCleanup(self._pin.stop)
+        self.addCleanup(self._clock.stop)
 
-    def _seal(self, batch: dict | None = None, **kwargs: object) -> dict:
+    def _seal(self, batch: dict | None = None, vault_root: Path | None = None) -> dict:
         return bakeoff.seal_result_record(
             self.batch if batch is None else batch,
-            vault_root=kwargs.get("vault_root", SYNTHETIC_VAULT),
-            pin=kwargs.get("pin", self.pin),
+            vault_root=SYNTHETIC_VAULT if vault_root is None else vault_root,
         )
 
-    def test_an_under_powered_run_seals_inconclusive_and_does_not_call_a_verdict(self) -> None:
+    def test_the_default_class_is_inconclusive_and_nothing_is_called(self) -> None:
         sealed = self._seal()
-        self.assertEqual("inconclusive", sealed["verdict"])
-        self.assertEqual("under-powered", sealed["reason"])
-        self.assertEqual((False, False, "Provisional:"), (
-            sealed["called_verdict"], sealed["persisted"], sealed["label"],
-        ))
+        self.assertEqual("inconclusive", sealed["verdict_class"])
+        self.assertIn("no estimand measured", sealed["reason"])
+        self.assertNotIn("under-powered", sealed["reason"])
+        self.assertEqual("provisional", sealed["publication_label"])
+        self.assertEqual("Provisional: inconclusive by default", sealed["display"])
+        self.assertFalse(sealed["persisted"])
         self.assertTrue(sealed["sealed"])
-        self.assertEqual(self.pin, sealed["protocol_ref"])
-        self.assertEqual(4, sealed["trial_count"])
+        self.assertNotIn("verdict", sealed)
+        self.assertNotIn("called_verdict", sealed)
+        self.assertNotIn("label", sealed)
+        self.assertNotIn("protocol_ref", sealed)
+        self.assertNotIn("ledger", sealed)
+        self.assertNotIn("ledger_head", sealed)
+        self.assertNotIn("result_sha256", sealed)
         self.assertEqual(bakeoff.OPEN_GAPS, tuple(sealed["open_gaps"]))
-        self.assertFalse(bakeoff.power_established())
+        self.assertIn("not a CP7 section 7 result record", sealed["kind"])
+
+    def test_the_citation_matches_section_64(self) -> None:
+        sealed = self._seal()
+        contract = sealed["preregistration_contract"]
+        self.assertEqual(
+            {"repository", "commit", "path", "result_sha256", "wording_status"}, set(contract),
+        )
+        self.assertEqual(SYNTHETIC_PIN["sha256"], contract["result_sha256"])
+        self.assertNotIn("sha256:", contract["result_sha256"])
+        self.assertEqual("provisional, inconclusive by default", contract["wording_status"])
+        ledger = sealed["trial_ledger"]
+        self.assertEqual(
+            {"ledger_head_sha256", "first_seq", "last_seq", "n_trials_declared"}, set(ledger),
+        )
+        self.assertEqual(0, ledger["first_seq"])
+        self.assertEqual(3, ledger["last_seq"])
+        self.assertEqual(4, ledger["n_trials_declared"])
+        self.assertEqual(sealed["entries"][-1]["entry_sha256"], ledger["ledger_head_sha256"])
+
+    def test_the_ledger_matches_section_65_and_recomputes(self) -> None:
+        sealed = self._seal()
+        entries = sealed["entries"]
+        self.assertEqual(4, len(entries))
+        previous = None
+        for seq, entry in enumerate(entries):
+            self.assertEqual(_ENTRY_KEYS, set(entry))
+            self.assertEqual(seq, entry["seq"])
+            self.assertEqual(previous, entry["prev_entry_sha256"])
+            self.assertEqual("observation_seal", entry["entry_type"])
+            self.assertEqual("pre_contract", entry["role"])
+            self.assertEqual("VC-EQ", entry["venue_class"])
+            self.assertEqual("workload-d04", entry["venue_cell"])
+            self.assertEqual("recorded", entry["status"])
+            self.assertEqual(SYNTHETIC_PIN["sha256"], entry["contract_ref"])
+            self.assertEqual(_CLOCK, entry["recorded_at_utc"])
+            body = {key: entry[key] for key in entry if key != "entry_sha256"}
+            self.assertEqual(_bare(body), entry["entry_sha256"])
+            self.assertEqual(64, len(entry["entry_sha256"]))
+            self.assertNotIn("sha256:", entry["entry_sha256"])
+            if previous is not None:
+                self.assertNotIn("sha256:", previous)
+            previous = entry["entry_sha256"]
+        self.assertIsNone(entries[0]["prev_entry_sha256"])
+        self.assertEqual(
+            ["bk-claude-1", "bk-claude-2", "bk-codex-1", "bk-codex-2"],
+            [entry["trial_id"] for entry in entries],
+        )
+        self.assertEqual("engine_not_permitted_in_mode", sealed["trials"][-1]["reason"])
+
+    def test_the_seal_digest_covers_the_record_except_itself(self) -> None:
+        sealed = self._seal()
+        material = {key: value for key, value in sealed.items() if key != "seal_digest"}
+        self.assertEqual(_bare(material), sealed["seal_digest"])
+        self.assertNotIn("sha256:", sealed["seal_digest"])
+        again = self._seal()
+        self.assertEqual(sealed["seal_digest"], again["seal_digest"])
 
     def test_the_raw_batch_is_left_unsealed(self) -> None:
         self._seal()
         self.assertEqual((False, None), (self.batch["sealed"], self.batch["protocol_ref"]))
-
-    def test_every_trial_is_on_the_ledger_including_a_refusal(self) -> None:
-        sealed = self._seal()
-        self.assertEqual(4, len(sealed["ledger"]))
-        previous = "sha256:" + "0" * 64
-        for index, record in enumerate(sealed["ledger"], start=1):
-            self.assertEqual(index, record["seq"])
-            self.assertEqual(previous, record["prev"])
-            body = {key: record[key] for key in ("seq", "kind", "data", "prev")}
-            self.assertEqual(canonical_digest(body), record["hash"])
-            previous = record["hash"]
-        self.assertEqual(previous, sealed["ledger_head"])
-        arms = [record["data"]["arm"] for record in sealed["ledger"]]
-        self.assertEqual(["claude", "claude", "codex", "codex"], arms)
-        self.assertEqual(
-            "engine_not_permitted_in_mode", sealed["ledger"][-1]["data"]["reason"],
-        )
-
-    def test_the_result_digest_covers_the_record_except_itself(self) -> None:
-        sealed = self._seal()
-        material = {key: value for key, value in sealed.items() if key != "result_sha256"}
-        self.assertEqual(canonical_digest(material), sealed["result_sha256"])
-        again = self._seal()
-        self.assertEqual(sealed["result_sha256"], again["result_sha256"])
 
     def test_sealing_does_not_write_a_record(self) -> None:
         self._seal()
@@ -394,33 +463,182 @@ class SealTests(unittest.TestCase):
         self.assertEqual(self.before, after)
 
     def test_a_digest_mismatch_is_refused(self) -> None:
-        forged = dict(self.pin)
+        forged = dict(SYNTHETIC_PIN)
         forged["sha256"] = "a" * 64
-        with self.assertRaisesRegex(bakeoff.BlockedOnProtocol, "pinned sha256"):
-            self._seal(pin=forged)
+        with mock.patch.object(bakeoff, "PROTOCOL_PIN", forged):
+            with self.assertRaisesRegex(bakeoff.BlockedOnProtocol, "pinned sha256"):
+                bakeoff.seal_result_record(self.batch, vault_root=SYNTHETIC_VAULT)
 
-    def test_a_protocol_that_does_not_name_inconclusive_is_refused(self) -> None:
-        data = b"synthetic protocol with no default class\n"
-        path = SYNTHETIC_VAULT / "synthetic" / "other.md"
-        path.write_bytes(data)
-        pin = dict(self.pin)
-        pin["path"] = "synthetic/other.md"
-        pin["sha256"] = hashlib.sha256(data).hexdigest()
-        with self.assertRaisesRegex(bakeoff.BlockedOnProtocol, "inconclusive"):
-            self._seal(pin=pin)
+    def test_a_protocol_that_does_not_name_the_verdict_class_is_refused(self) -> None:
+        vault = Path(tempfile.mkdtemp(prefix="cp7-class-"))
+        self.addCleanup(shutil.rmtree, vault, True)
+        data = b"synthetic protocol with no default class, only inconclusiveness\n"
+        pin = _install(vault, "submissions/other-protocol/result.md", data)
+        with mock.patch.object(bakeoff, "PROTOCOL_PIN", pin):
+            with self.assertRaisesRegex(bakeoff.BlockedOnProtocol, "verdict class"):
+                bakeoff.seal_result_record(self.batch, vault_root=vault)
+
+    def test_a_non_utf8_protocol_is_refused(self) -> None:
+        vault = Path(tempfile.mkdtemp(prefix="cp7-bin-"))
+        self.addCleanup(shutil.rmtree, vault, True)
+        pin = _install(vault, "submissions/binary-protocol/result.md", b"\xff\xfe")
+        with mock.patch.object(bakeoff, "PROTOCOL_PIN", pin):
+            with self.assertRaisesRegex(bakeoff.BlockedOnProtocol, "utf-8"):
+                bakeoff.seal_result_record(self.batch, vault_root=vault)
+
+    def test_record_json_must_describe_the_unaccepted_candidate(self) -> None:
+        text = _SYNTHETIC_TEXT.encode("utf-8")
+        cases = (
+            ("status", {"status": "accepted"}),
+            ("sha", {"record_sha": "0" * 64}),
+            ("record_id", {"record_id": "someone-else"}),
+        )
+        for name, kwargs in cases:
+            with self.subTest(name):
+                vault = Path(tempfile.mkdtemp(prefix="cp7-record-"))
+                self.addCleanup(shutil.rmtree, vault, True)
+                pin = _install(vault, "submissions/synthetic-cp7/result.md", text, **kwargs)
+                with mock.patch.object(bakeoff, "PROTOCOL_PIN", pin):
+                    with self.assertRaisesRegex(bakeoff.BlockedOnProtocol, "record.json"):
+                        bakeoff.seal_result_record(self.batch, vault_root=vault)
+
+    def test_a_malformed_pin_cannot_seal(self) -> None:
+        base = dict(SYNTHETIC_PIN)
+        cases = {
+            "empty": {},
+            "extra": {**base, "extra": "x"},
+            "short commit": {**base, "commit": "abc"},
+            "bad sha": {**base, "sha256": "nope"},
+            "absolute": {**base, "path": "/abs/result.md"},
+            "dotdot": {**base, "path": "submissions/../result.md"},
+            "empty part": {**base, "path": "submissions//result.md"},
+            "other repo": {**base, "repository": "other/repo"},
+            "bare file": {**base, "path": "result.md"},
+            "missing sha": {key: base[key] for key in base if key != "sha256"},
+        }
+        for name, pin in cases.items():
+            with self.subTest(name):
+                with mock.patch.object(bakeoff, "PROTOCOL_PIN", pin):
+                    with self.assertRaisesRegex(bakeoff.BlockedOnProtocol, "protocol"):
+                        bakeoff.seal_result_record(self.batch, vault_root=SYNTHETIC_VAULT)
+
+    def test_a_path_with_a_double_dot_name_can_still_seal(self) -> None:
+        vault = Path(tempfile.mkdtemp(prefix="cp7-dots-"))
+        self.addCleanup(shutil.rmtree, vault, True)
+        pin = _install(
+            vault, "submissions/a..b/result.md", _SYNTHETIC_TEXT.encode("utf-8"),
+        )
+        with mock.patch.object(bakeoff, "PROTOCOL_PIN", pin):
+            sealed = bakeoff.seal_result_record(self.batch, vault_root=vault)
+        self.assertEqual("inconclusive", sealed["verdict_class"])
+        self.assertEqual("submissions/a..b/result.md", sealed["preregistration_contract"]["path"])
+
+    def test_a_non_committed_pin_cannot_seal(self) -> None:
+        vault = Path(tempfile.mkdtemp(prefix="cp7-forged-"))
+        self.addCleanup(shutil.rmtree, vault, True)
+        # A complete stand-in, with an all-zero commit, that the old pin argument sealed.
+        pin = _install(vault, "submissions/forged/result.md", _SYNTHETIC_TEXT.encode("utf-8"))
+        pin = dict(pin)
+        pin["commit"] = "0" * 40
+        with self.assertRaises(TypeError):
+            bakeoff.seal_result_record(self.batch, vault_root=vault, pin=pin)
+        with self.assertRaises(TypeError):
+            bakeoff.load_protocol_text(vault, pin)
+        self._pin.stop()
+        try:
+            with self.assertRaises(bakeoff.BlockedOnProtocol):
+                bakeoff.seal_result_record(self.batch, vault_root=vault)
+        finally:
+            self._pin.start()
+
+    def test_a_missing_vault_fails_before_a_bad_batch(self) -> None:
+        env = os.environ.copy()
+        env.pop(projections.VAULT_CHECKOUT_ENV, None)
+        self._pin.stop()
+        try:
+            with mock.patch.dict(os.environ, env, clear=True):
+                with self.assertRaises(bakeoff.BlockedOnProtocol):
+                    bakeoff.seal_result_record({})
+        finally:
+            self._pin.start()
+
+    def test_an_empty_or_non_directory_vault_is_refused(self) -> None:
+        with self.assertRaisesRegex(bakeoff.BlockedOnProtocol, "empty"):
+            self._seal(vault_root=Path(""))
+        file_root = Path(tempfile.mkdtemp(prefix="cp7-file-"))
+        self.addCleanup(shutil.rmtree, file_root, True)
+        not_dir = file_root / "not-a-checkout"
+        not_dir.write_text("x", encoding="utf-8")
+        with self.assertRaisesRegex(bakeoff.BlockedOnProtocol, "absent"):
+            self._seal(vault_root=not_dir)
+
+    def test_a_symlink_that_leaves_the_vault_is_refused(self) -> None:
+        vault = Path(tempfile.mkdtemp(prefix="cp7-link-"))
+        outside = Path(tempfile.mkdtemp(prefix="cp7-out-"))
+        self.addCleanup(shutil.rmtree, vault, True)
+        self.addCleanup(shutil.rmtree, outside, True)
+        data = _SYNTHETIC_TEXT.encode("utf-8")
+        (outside / "secret.md").write_bytes(data)
+        pin = _install(vault, "submissions/synthetic-cp7/result.md", data)
+        link = vault / "submissions" / "synthetic-cp7" / "result.md"
+        link.unlink()
+        link.symlink_to(outside / "secret.md")
+        with mock.patch.object(bakeoff, "PROTOCOL_PIN", pin):
+            with self.assertRaisesRegex(bakeoff.BlockedOnProtocol, "leaves the repository"):
+                bakeoff.seal_result_record(self.batch, vault_root=vault)
 
     def test_a_malformed_batch_is_refused_after_the_protocol_loads(self) -> None:
         for candidate in ({}, {"sealed": True, "protocol_ref": "x"}):
             with self.assertRaises(ValueError):
                 self._seal(candidate)
 
+    def test_trials_out_of_order_or_with_extra_keys_are_refused(self) -> None:
+        swapped = json.loads(json.dumps(self.batch))
+        swapped["trials"][0], swapped["trials"][1] = swapped["trials"][1], swapped["trials"][0]
+        with self.assertRaisesRegex(ValueError, "do not follow the plan"):
+            self._seal(swapped)
+        extra = json.loads(json.dumps(self.batch))
+        extra["trials"][0]["extra"] = 1
+        with self.assertRaisesRegex(ValueError, "extra"):
+            self._seal(extra)
+
+    def test_a_plan_outside_the_bakeoff_is_refused_before_it_is_expanded(self) -> None:
+        unknown = json.loads(json.dumps(self.batch))
+        unknown["plan"]["engines"] = ["zz"]
+        with self.assertRaises(ValueError):
+            self._seal(unknown)
+        huge = json.loads(json.dumps(self.batch))
+        huge["plan"]["trials"] = 10**9
+        with self.assertRaises(ValueError):
+            self._seal(huge)
+
     def test_a_powered_claim_cannot_be_sealed(self) -> None:
         with self.assertRaisesRegex(bakeoff.BlockedOnProtocol, "NOT_DECIDED"):
             bakeoff.verdict_for(power_established=True)
-        self.assertEqual(
-            ("inconclusive", "under-powered"),
-            bakeoff.verdict_for(power_established=False),
-        )
+        sealed_class, reason = bakeoff.verdict_for(power_established=False)
+        self.assertEqual("inconclusive", sealed_class)
+        self.assertIn("no estimand measured", reason)
+        with mock.patch.object(bakeoff, "power_established", return_value=True):
+            with self.assertRaisesRegex(bakeoff.BlockedOnProtocol, "NOT_DECIDED"):
+                self._seal()
+
+
+class CommittedBlobTests(unittest.TestCase):
+    def test_the_committed_pin_matches_the_blob_at_its_commit(self) -> None:
+        raw = os.environ.get(projections.VAULT_CHECKOUT_ENV, "").strip()
+        if not raw:
+            self.skipTest("CSL_RESEARCH_CHECKOUT is unset")
+        root = Path(raw)
+        if not root.is_dir() or not (root / ".git").exists():
+            self.skipTest("CSL_RESEARCH_CHECKOUT is not a git checkout")
+        from cockpit_spine.tests.gitpin import blob_sha256_at
+
+        pin = bakeoff.PROTOCOL_PIN
+        self.assertEqual(pin["sha256"], blob_sha256_at(root, pin["commit"], pin["path"]))
+        batch = bakeoff.run_trials(bakeoff.Plan(engines=("claude",), trials=1), StubConsumer)
+        sealed = bakeoff.seal_result_record(batch, vault_root=root)
+        self.assertEqual("inconclusive", sealed["verdict_class"])
+        self.assertFalse(sealed["persisted"])
 
 
 class WriteGuardTests(unittest.TestCase):
@@ -489,6 +707,8 @@ class WriteGuardTests(unittest.TestCase):
             "from successor.route_consumer import DECISION_PROFILE",
             "from successor.route_consumer.profile import canonical_digest",
             "import hashlib",
+            "import json",
+            "from datetime import datetime, timezone",
             "from cockpit_spine.projections import REPO_ROOT, VAULT_REPOSITORY",
             "from cockpit_spine.projections import ProjectionError, read_cited_bytes",
         ):

@@ -94,7 +94,12 @@ def require_vault_checkout(explicit: Path | None = None) -> Path:
     """
 
     if explicit is not None:
+        # Path("") is the current directory. An empty root must not read it.
+        if isinstance(explicit, str) and not explicit.strip():
+            raise ProjectionError("vault_root is empty")
         root = Path(explicit)
+        if not root.parts:
+            raise ProjectionError("vault_root is empty")
     else:
         raw = os.environ.get(VAULT_CHECKOUT_ENV, "").strip()
         if not raw:
