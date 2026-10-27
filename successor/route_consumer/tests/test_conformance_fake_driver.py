@@ -5,7 +5,7 @@ Subject under test: ``RouteConsumer``. Counterpart: Recursion's in-process
 (CSL-496 draft, PR 302 merged to recursion master). Cases and expected values are the pinned
 oracle vectors plus the case classes of that PR's own conformance suite:
 schema projection, zero-tools, secret refusal, health injection, tree kill,
-session ownership, and live adapters being unsupported.
+session ownership, output size, and live adapters being unsupported.
 
 No live provider, no network, no real credential. The only real processes are
 local helper scripts started with ``sys.executable``.
@@ -13,6 +13,7 @@ local helper scripts started with ``sys.executable``.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import subprocess
@@ -335,6 +336,73 @@ class LiveAdaptersUnsupportedTests(unittest.TestCase):
         with mock.patch.object(subprocess, "Popen", side_effect=AssertionError("spawned")):
             outcome = decide(rig)
         self.assertEqual((FAIL_CLOSED, "unsupported"), (outcome.disposition, outcome.reason))
+        key = REC.session.SessionKey(rigmod.TENANT, "route-fake", "req-1")
+        self.assertFalse(rig.driver.owner.is_busy(key))
+
+
+class OutputSizeEndToEndTests(unittest.TestCase):
+    """Oversize engine output through RouteConsumer and the pinned reference adapter.
+
+    ``test_output_size_reason_codes_fail_closed_to_watch_only`` injects a finished
+    ``limit_hit`` reply. These cases script the process result and let ``decide``
+    read the reply the adapter builds. The cap is the profile's
+    ``max_output_bytes``: the consumer puts it on the request and the port passes
+    it to the transport. Stdout over that cap is ``output_too_large`` before any
+    repair. A schema miss under the cap still gets the one repair attempt, and an
+    oversize repair is ``repair_output_too_large``.
+    """
+
+    CAP = 128
+
+    def test_oversize_stdout_fails_closed_as_output_too_large(self) -> None:
+        oversized = "x" * (self.CAP + 1)
+        rig, outcome = self._decide([{
+            "returncode": 0, "stdout": oversized, "stderr": "", "timed_out": False,
+        }])
+        self._assert_closed(rig, outcome, "output_too_large", calls=1, repaired=False)
+        self.assertEqual(0, rig.health.used("claude"))
+        self.assertNotIn(oversized, json.dumps([outcome.request_record, outcome.reply_record]))
+
+    def test_oversize_repair_fails_closed_as_repair_output_too_large(self) -> None:
+        # Valid JSON, under the cap, and not the vector schema: the adapter repairs once.
+        bad = json.dumps({"session_id": "s1", "result": "{}"})
+        self.assertLessEqual(len(bad.encode("utf-8")), self.CAP)
+        oversized = "y" * (self.CAP + 1)
+        rig, outcome = self._decide([
+            {"returncode": 0, "stdout": bad, "stderr": "", "timed_out": False},
+            {"returncode": 0, "stdout": oversized, "stderr": "", "timed_out": False},
+        ])
+        self._assert_closed(rig, outcome, "repair_output_too_large", calls=2, repaired=True)
+        self.assertEqual(1, rig.health.used("claude"))
+        self.assertNotIn(oversized, json.dumps([outcome.request_record, outcome.reply_record]))
+        self.assertNotIn(bad, rig.transport.calls[1]["input"])
+
+    def _decide(self, script):
+        profile = dataclasses.replace(PROFILE, max_output_bytes=self.CAP)
+        rig = rigmod.make_rig(REC, script=script)
+        return rig, decide(rig, profile=profile)
+
+    def _assert_closed(self, rig, outcome, reason: str, *, calls: int, repaired: bool) -> None:
+        self.assertEqual(
+            (FAIL_CLOSED, reason, FAIL_CLOSED_TO, None, False),
+            (
+                outcome.disposition, outcome.reason, outcome.fail_closed_to,
+                outcome.payload, outcome.usable,
+            ),
+        )
+        self.assertEqual(self.CAP, outcome.request_record["output"]["max_output_bytes"])
+        self.assertEqual(self.CAP, rig.port.submitted[0]["output"]["max_output_bytes"])
+        self.assertEqual(calls, len(rig.transport.calls))
+        self.assertEqual(
+            [self.CAP] * calls, [call["max_output_bytes"] for call in rig.transport.calls]
+        )
+        reply = outcome.reply_record
+        self.assertEqual(
+            ("limit_hit", reason, repaired, None),
+            (reply["status"], reply["error"], reply["repaired"], reply["validated"]),
+        )
+        self.assertEqual([("claude", "exhausted", reason)], rig.health.faults)
+        assert_records_valid(self, outcome)
         key = REC.session.SessionKey(rigmod.TENANT, "route-fake", "req-1")
         self.assertFalse(rig.driver.owner.is_busy(key))
 
