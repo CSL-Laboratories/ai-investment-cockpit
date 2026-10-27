@@ -301,7 +301,7 @@ jobs:
               break
             fi
             if printf '%s\n' "$f" | grep -Eq \
-              '^app/|^docs/replacement/|^docs/evidence/|^docs/setup/|^docs/PLAN\.md$|^CLAUDE\.md$|^AGENTS\.md$|^\.claude/skills/proceed-or-escalate/SKILL\.md$|^docs/research/gate-feasibility-|^\.gitignore$'; then
+              '^app/|^docs/replacement/|^docs/evidence/|^docs/setup/|^docs/PLAN\.md$|^CLAUDE\.md$|^AGENTS\.md$|^\.claude/skills/proceed-or-escalate/SKILL\.md$|^docs/research/gate-feasibility-|^\.gitignore$|^docs/ci-runbook\.md$'; then
               run_tests=true
               break
             fi
