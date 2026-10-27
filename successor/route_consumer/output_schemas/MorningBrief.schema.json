@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MorningBrief",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "date": {
+      "type": "string",
+      "format": "date"
+    },
+    "market_regime": {
+      "type": "string"
+    },
+    "portfolio_changes": {
+      "type": "array"
+    },
+    "watch_items": {
+      "type": "array"
+    },
+    "thesis_updates": {
+      "type": "array"
+    },
+    "risk_flags": {
+      "type": "array"
+    },
+    "proposed_actions": {
+      "type": "array"
+    },
+    "source_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "date",
+    "market_regime",
+    "portfolio_changes",
+    "watch_items",
+    "thesis_updates",
+    "risk_flags",
+    "proposed_actions",
+    "source_refs"
+  ]
+}
