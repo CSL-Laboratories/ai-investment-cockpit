@@ -1,0 +1,57 @@
+{
+  "schema_id": "cockpit.replacement.o8.benchmark-manifest.v1",
+  "tier": 2,
+  "workload_id": "ingest_to_raw_store",
+  "provider_free": true,
+  "network_calls": 0,
+  "credentials_used": false,
+  "live_orders": false,
+  "csl42_evidence": false,
+  "commit": "ebbaa34489f171e079834d02098135711e1d4755",
+  "host": {
+    "runner": "required_on_run",
+    "python": "required_on_run",
+    "status": "required_on_run"
+  },
+  "io": {
+    "included": true,
+    "kinds": [
+      "disk"
+    ],
+    "status": "required_on_run"
+  },
+  "helper_processes": [
+    {
+      "name": "arbitrary-helper",
+      "role": "odd",
+      "included": true,
+      "status": "required_on_run"
+    }
+  ],
+  "variance": {
+    "statistic": "relative_iqr",
+    "repetitions": null,
+    "relative_iqr": null,
+    "status": "required_on_run"
+  },
+  "observation": {
+    "p50": null,
+    "p95": null,
+    "p99": null,
+    "throughput": null,
+    "rss_bytes": null,
+    "cpu": null,
+    "io": null,
+    "tokens": null,
+    "cost": null,
+    "correctness": "required_on_run",
+    "failure": "required_on_run",
+    "recovery": "required_on_run",
+    "growth": "required_on_run",
+    "status": "required_on_run"
+  },
+  "provider_latency": {
+    "status": "excluded_with_reason",
+    "reason": "provider_free is true and network_calls is 0, so no provider latency exists to measure"
+  }
+}
