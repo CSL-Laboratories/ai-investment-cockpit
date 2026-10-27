@@ -155,6 +155,95 @@ class NativeArgvTests(unittest.TestCase):
             "bad_argv\n",
         )
 
+    def _scrub_env(self) -> dict[str, str]:
+        return {
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1",
+            "LANG": "C.UTF-8",
+        }
+
+    def _argv_past_allowlist(self) -> list[str]:
+        """Minimal argv that passes csl_argv_allow so mcp checks can run."""
+        workspace = "/home/runner/work/ai-investment-cockpit/ai-investment-cockpit"
+        allowed = (
+            f"Edit(/{workspace}/**),Write(/{workspace}/**),Read,Glob,Grep,"
+            f"Bash(python3 {self.prefix}/tmp/claude-fixer-guard/model-api --:*)"
+        )
+        return [
+            str(self.bins["launch"]),
+            "--max-turns", "30",
+            "--setting-sources", "user",
+            "--allowedTools", allowed,
+        ]
+
+    def _mcp_refuse(self, cwd: Path) -> str:
+        refuse_path = self.prefix / "state" / "launch.refuse"
+        if refuse_path.exists():
+            refuse_path.unlink()
+        proc = subprocess.run(
+            self._argv_past_allowlist(),
+            env=self._scrub_env(),
+            cwd=cwd,
+            capture_output=True,
+        )
+        self.assertEqual(proc.returncode, 1, proc.stderr)
+        self.assertEqual(proc.stderr, b"launcher refused\n")
+        token = refuse_path.read_text(encoding="ascii")
+        self.assertTrue(token.endswith("\n"), token)
+        return token[:-1]
+
+    def test_mcp_read_refuses_when_empty_file_missing(self) -> None:
+        mcp = self.prefix / "mcp.empty.json"
+        if mcp.exists():
+            mcp.unlink()
+        with tempfile.TemporaryDirectory() as cwd:
+            self.assertEqual(self._mcp_refuse(Path(cwd)), "mcp_read")
+
+    def test_mcp_bytes_refuses_wrong_empty_file(self) -> None:
+        mcp = self.prefix / "mcp.empty.json"
+        mcp.write_bytes(b"{}\n")
+        try:
+            with tempfile.TemporaryDirectory() as cwd:
+                self.assertEqual(self._mcp_refuse(Path(cwd)), "mcp_bytes")
+        finally:
+            mcp.unlink()
+
+    def test_mcp_local_refuses_settings_local_json(self) -> None:
+        mcp = self.prefix / "mcp.empty.json"
+        mcp.write_bytes(b'{"mcpServers":{}}\n')
+        try:
+            with tempfile.TemporaryDirectory() as cwd:
+                local = Path(cwd) / ".claude"
+                local.mkdir()
+                (local / "settings.local.json").write_text("{}\n", encoding="ascii")
+                self.assertEqual(self._mcp_refuse(Path(cwd)), "mcp_local")
+        finally:
+            mcp.unlink()
+
+    def test_valid_mcp_file_refuses_on_a_later_token(self) -> None:
+        """Correct empty MCP bytes get past the mcp checks."""
+        mcp = self.prefix / "mcp.empty.json"
+        mcp.write_bytes(b'{"mcpServers":{}}\n')
+        try:
+            with tempfile.TemporaryDirectory() as cwd:
+                token = self._mcp_refuse(Path(cwd))
+        finally:
+            mcp.unlink()
+        self.assertNotIn(token, {"mcp_local", "mcp_read", "mcp_bytes", "mcp_own"})
+        # Next checks are the caller's ~/.claude, then the handoff socket.
+        self.assertIn(token, {"claude_dir", "handoff"}, token)
+
+    def test_mcp_own_is_compiled_out_under_prefix(self) -> None:
+        src = (SRC / "sandbox_launch.c").read_text(encoding="utf-8")
+        self.assertRegex(
+            src,
+            r'#ifndef CSL_PREFIX\n'
+            r'    if \(!csl_ancestors_root_owned\(CSL_MCP_EMPTY_PATH\)\) \{\n'
+            r'        return "mcp_own";\n'
+            r"    \}\n"
+            r"#endif",
+        )
+
     def test_n1_does_not_stat_cwd_mcp_json(self) -> None:
         src = (SRC / "sandbox_launch.c").read_text(encoding="utf-8")
         self.assertNotIn('mcp_exists("/.mcp.json")', src)

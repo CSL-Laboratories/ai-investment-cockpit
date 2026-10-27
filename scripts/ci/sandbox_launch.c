@@ -168,23 +168,25 @@ static int claude_dir_ok(const char *home)
     return saw_settings;
 }
 
-static int mcp_empty_ok(void)
+/* NULL when the launcher-owned empty MCP file is usable, else the refuse
+ * token naming the failed check. */
+static const char *mcp_empty_why(void)
 {
     char buf[64];
     size_t n = 0;
     size_t want = strlen(CSL_MCP_EMPTY_BYTES);
     if (csl_read_file(CSL_MCP_EMPTY_PATH, buf, sizeof buf, &n) != 0) {
-        return 0;
+        return "mcp_read";
     }
     if (n != want || memcmp(buf, CSL_MCP_EMPTY_BYTES, want) != 0) {
-        return 0;
+        return "mcp_bytes";
     }
 #ifndef CSL_PREFIX
     if (!csl_ancestors_root_owned(CSL_MCP_EMPTY_PATH)) {
-        return 0;
+        return "mcp_own";
     }
 #endif
-    return 1;
+    return NULL;
 }
 
 static int connect_handoff(void)
@@ -413,10 +415,13 @@ int main(int argc, char **argv)
      * --strict-mcp-config --mcp-config CSL_MCP_EMPTY_PATH. Still refuse
      * settings.local.json (not covered by those flags). */
     if (mcp_exists("/.claude/settings.local.json")) {
-        refuse("mcp");
+        refuse("mcp_local");
     }
-    if (!mcp_empty_ok()) {
-        refuse("mcp");
+    {
+        const char *why = mcp_empty_why();
+        if (why) {
+            refuse(why);
+        }
     }
     if (!claude_dir_ok(home)) {
         refuse("claude_dir");
