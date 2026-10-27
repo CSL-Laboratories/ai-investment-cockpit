@@ -25,14 +25,16 @@ def proposal_id_for(request_id: str) -> str:
     """A schema-sized id. Short request ids stay readable; long ones use a digest.
 
     ``prop-`` plus a 60-character request id does not fit the 64-character
-    proposal id, and slicing the prefix would make two different requests collide.
+    proposal id. Readable ids start ``prop-`` and digest ids start ``prop:``, so
+    the two forms can never be equal: a short request id that happens to match
+    a long one's digest prefix still gets a different proposal id.
     """
 
     plain = f"prop-{request_id}"
     if len(plain) <= 64:
         return plain
     digest = hashlib.sha256(request_id.encode("utf-8")).hexdigest()
-    return f"prop-{digest}"[:64]
+    return f"prop:{digest}"[:64]
 
 
 def inline_payload(request_id: str) -> dict[str, Any]:
