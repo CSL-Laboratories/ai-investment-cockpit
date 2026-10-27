@@ -334,6 +334,27 @@ class StrictDerivationTests(unittest.TestCase):
         self.assertEqual(1, proj.derive(doc, {"kind": "count_where", "pointer": "/xs",
                                               "match": {"k": True}}))
 
+    def test_count_where_compares_nested_values_by_exact_type(self) -> None:
+        # A nested True must not match a filter containing 1 (and the reverse).
+        doc = {"rows": [{"k": {"v": True}}, {"k": {"v": 1}}, {"k": {"v": 1.0}},
+                        {"k": [True]}, {"k": [1]}, {"k": [1, True]}]}
+        spec = {"kind": "count_where", "pointer": "/rows"}
+        self.assertEqual(1, proj.derive(doc, {**spec, "match": {"k": {"v": 1}}}))
+        self.assertEqual(1, proj.derive(doc, {**spec, "match": {"k": {"v": True}}}))
+        self.assertEqual(1, proj.derive(doc, {**spec, "match": {"k": {"v": 1.0}}}))
+        self.assertEqual(1, proj.derive(doc, {**spec, "match": {"k": [1]}}))
+        self.assertEqual(1, proj.derive(doc, {**spec, "match": {"k": [True]}}))
+        self.assertEqual(1, proj.derive(doc, {**spec, "match": {"k": [1, True]}}))
+
+    def test_integer_beyond_float_range_is_a_projection_error(self) -> None:
+        huge = 10 ** 400
+        with self.assertRaisesRegex(proj.ProjectionError, "finite number"):
+            proj._is_number(huge)
+        with self.assertRaisesRegex(proj.ProjectionError, "finite number"):
+            proj.derive({"n": huge}, {"kind": "value_at", "pointer": "/n"})
+        self.assertEqual(10 ** 20, proj.derive(
+            {"n": 10 ** 20}, {"kind": "value_at", "pointer": "/n"}))
+
     def test_count_where_requires_the_key_to_exist(self) -> None:
         doc = {"xs": [{"a": 1}, {"k": None}]}
         self.assertEqual(1, proj.derive(doc, {"kind": "count_where", "pointer": "/xs",

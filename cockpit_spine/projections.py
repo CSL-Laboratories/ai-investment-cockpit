@@ -81,15 +81,34 @@ class UnlinkedNumberError(ProjectionError):
 
 
 def _is_number(value: object) -> bool:
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(value)
-    )
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    # An int past the float range makes math.isfinite raise OverflowError.
+    # Refuse it as a projection error instead of letting that escape.
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        raise ProjectionError("value is not a finite number") from None
 
 
 def _same(left: object, right: object) -> bool:
-    return type(left) is type(right) and left == right
+    """Equal values of the same type, including inside dicts and lists.
+
+    Python treats True as equal to 1. Checking only the outer type would let a
+    nested True match a filter that contains 1, so count_where would over-count.
+    """
+
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict) and isinstance(right, dict):
+        if left.keys() != right.keys():
+            return False
+        return all(_same(left[key], right[key]) for key in left)
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(
+            _same(item, other) for item, other in zip(left, right)
+        )
+    return left == right
 
 
 def _pointer_get(document: Any, pointer: str) -> Any:
