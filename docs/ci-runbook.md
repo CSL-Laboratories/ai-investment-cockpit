@@ -7,7 +7,7 @@ the code at its base commit win. Tracked under CSL-255 exit criterion 5 (CSL-416
 
 **Who acts.** Founders may do every step below. An agent may read anything, push to its own PR
 branch and comment, but needs a human ask before it dispatches, re-runs or cancels any workflow or
-adds `ci:full` / `enhancement` (AGENTS.md:143-144, 155-159). Escalate on the Linear issue with an
+adds `ci:full` / `enhancement` (AGENTS.md:156-157, 168-172). Escalate on the Linear issue with an
 @mention; a GitHub mention alone is not enough.
 
 ## 1. Reading the required checks
@@ -18,7 +18,7 @@ adds `ci:full` / `enhancement` (AGENTS.md:143-144, 155-159). Escalate on the Lin
 |---|---|---|
 | `linux-gates` green on the current head | Tests ran and passed, or the change is docs-only by the filter (contract §3, G16 fixed by CSL-397) | Nothing. |
 | `linux-gates` red | A test failed, or a dependency was cancelled, skipped unexpectedly or missing: the aggregate fails closed (contract §4) | Open the failing job. If it is `settle` or a cancelled cell, see §3 below. |
-| `linux-gates` red on a draft | Expected: drafts skip the matrix and the aggregate fails closed until `ready_for_review` (AGENTS.md:395) | Mark ready when done. |
+| `linux-gates` red on a draft | Expected: drafts skip the matrix and the aggregate fails closed until `ready_for_review` (AGENTS.md:427) | Mark ready when done. |
 | No `linux-gates` on the head | No `ci.yml` job reached that head: a run cancelled before any job started, by its concurrency group (a push, manual, label or schedule run; contract §3 row 21(a)) or by the controller (row 22(a)), a skip annotation or unresolved conflict (GitHub creates no run), or an approval-required run | §4 below. |
 | `Devin Review` missing or pending | External app; not produced by this repository's workflows (contract §1) | Ask for a review through the Discord bot or Devin; do not push to retrigger it. |
 | `cancel-ancestors` red in `ci label retrigger` | Usually a fail-closed refusal, not a CI failure. Known variants: `Unverified triggering run provenance` (CSL-388) and `Triggering run identity changed` (CSL-410), mostly during merge bursts | Not a merge blocker. Report a new refusal text on CSL-356. |
@@ -26,12 +26,12 @@ adds `ci:full` / `enhancement` (AGENTS.md:143-144, 155-159). Escalate on the Lin
 ## 2. Re-running
 
 - **Prefer "Re-run failed jobs" on the same head** over an empty push. A push starts every workflow
-  again, waits 120 s in `settle` (AGENTS.md:402), and dismisses approvals. Re-running a failed
+  again, waits 120 s in `settle` (AGENTS.md:434), and dismisses approvals. Re-running a failed
   `linux` cell also re-runs `linux-gates` (contract §3 row 20). The controller does not target manual
   re-runs (contract §6 row 20); GitHub's own re-run semantics are an accepted untested gap.
 - **Flaky test:** re-run once. If it fails again on the same head, treat it as real and file a Bug.
 - **`ci:full`:** add it when Windows and macOS evidence is needed; remove it once that full run has
-  passed on the current head and the PR needs no further automatic READY (AGENTS.md:314-329). A
+  passed on the current head and the PR needs no further automatic READY (AGENTS.md:332-347). A
   manual removal is a human hold: the Codex gate skips READY on that head, and with the candidate
   coordinator on, READY, candidate runs and `CODEX-GATE: MEDIATE` handoffs stay blocked until someone
   re-adds it. Otherwise it persists and repeats the full matrix on every qualifying push.
@@ -50,7 +50,7 @@ adds `ci:full` / `enhancement` (AGENTS.md:143-144, 155-159). Escalate on the Lin
 ## 4. A required check is stuck or missing
 
 1. Is the PR a draft, conflicted, or is its head commit marked `[skip ci]`? Fix that. A draft fails
-   `linux-gates` closed (AGENTS.md:395); GitHub creates no `pull_request` run for a conflicted head or
+   `linux-gates` closed (AGENTS.md:427); GitHub creates no `pull_request` run for a conflicted head or
    a skip-annotated commit (GitHub docs, events that trigger workflows; skipping workflow runs).
 2. Actions tab shows **"Approve workflows to run"**: usually a fork PR under the external-contributor
    approval setting (contract G14); a writer reviews the fork diff, then approves. A `pull_request`
@@ -113,7 +113,7 @@ Writers outside this guard: `codex-gate.yml` (adds the gate-owned `ci:full` on R
 `stuck-thread-watch.yml`. The watcher is advisory: it posts one `@codex review` comment on a stuck
 Devin thread with `CODEX_TRIGGER_PAT` and keeps one Linear `needs-decision` roll-up per PR
 (`Stuck PR threads: <repo>#<PR>`). It never resolves threads, pushes or merges
-(`.github/scripts/stuck_thread_watch.py` docstring; AGENTS.md:413), so a stuck thread stays open
+(`.github/scripts/stuck_thread_watch.py` docstring; AGENTS.md:445), so a stuck thread stays open
 until a human resolves it or records the decision. They are covered by
 their own tests (`tools/test_codex_gate.py`, `app/tests/test_stuck_thread_watch.py`) and by contract §7, not by
 `CrossLaneAdmissionTests`.
@@ -135,7 +135,7 @@ their own tests (`tools/test_codex_gate.py`, `app/tests/test_stuck_thread_watch.
 
 ## 7. Changing a workflow
 
-- `.github/workflows/**` changes need a Linear issue explicitly assigned by a human (AGENTS.md:311-313).
+- `.github/workflows/**` changes need a Linear issue explicitly assigned by a human (AGENTS.md:329-331).
 - **Contract rule (agreed by the CI and Reliability lanes, 2026-10-21; founders decide whether it
   becomes a repository rule):** a PR that changes a workflow, `scripts/ci/**`, a required check or
   the rulesets also updates [ci-event-contract.md](ci-event-contract.md) in the same PR, including
@@ -163,7 +163,7 @@ their own tests (`tools/test_codex_gate.py`, `app/tests/test_stuck_thread_watch.
 |---|---|
 | CI workflows, required checks, this runbook, the contract | CI lane (Lucas's session), founders approve |
 | `claude.yml`, `conflict-scan.yml`, `claude-conflict-writer.yml`, fixer scripts | Reliability lane, founders approve |
-| CI failure on `main` | Devin "Main CI failure fixer" automation (human-managed, AGENTS.md:491); a founder triages |
+| CI failure on `main` | Devin "Main CI failure fixer" automation (human-managed, AGENTS.md:523); a founder triages |
 | Rulesets and repository settings | Founders (admins) |
 
 Ownership changes over time; check the Linear assignee before acting.
