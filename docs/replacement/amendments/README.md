@@ -23,6 +23,18 @@ not accepted, in `CSL-Laboratories/csl-research` at commit
 SHA-256 `0b756e0777520f7b8a83d518b6b5887e96ed98eb8481d9d3840ddf4418c9b345`,
 via https://github.com/CSL-Laboratories/csl-research/pull/58 (not merged).
 
+The 2026-10-26 CP0-v2 successor proposal is not in this folder. It is
+proposed, not accepted, in `CSL-Laboratories/csl-research` at pull-request
+head `ab33419b`, path
+`contracts/ai-investment-cockpit/amendments/SUCCESSOR-PRODUCT-2026-10-26.md`,
+SHA-256 `6179ab79c8dadcefb55cde388ce48ff8834fc47bb29a205749f5f9f50338e623`,
+via https://github.com/CSL-Laboratories/csl-research/pull/62 (not merged).
+The bytes land at
+https://github.com/CSL-Laboratories/csl-research/blob/main/contracts/ai-investment-cockpit/amendments/SUCCESSOR-PRODUCT-2026-10-26.md
+when that pull request merges. Claim: this is the CP0-v2 proposal moved out
+of this repository. Limitation: proposed only; not an acceptance receipt, and
+the `main` link is that path after the pull request merges.
+
 ## Update rule
 
 Founders are Lucas, Samir (`samir-shah-ahmed`), and Dan/Chaandan
