@@ -41,6 +41,7 @@ AUDITED = (
     'app/workflows/prompts/trade_proposal.v1.md',
     'app/workflows/prompts/triage_batch.v1.md',
     'docs/PLAN.md',
+    'docs/ci-runbook.md',
     'docs/evidence/w24-natural-head-rescreen-2026-09-09.md',
     'docs/evidence/w24-natural-head-rescreen-2026-09-12.md',
     'docs/evidence/w24-natural-head-rescreen-2026-09-15-tue.md',
