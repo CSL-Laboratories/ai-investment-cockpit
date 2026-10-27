@@ -39,7 +39,12 @@ from cockpit_spine.service import API_VERSION, OperatorService
 from cockpit_spine.session import PENDING
 
 LOOPBACK = "127.0.0.1"
-MAX_BODY = 8192
+# Percent-encoding writes three bytes (%XX) per UTF-8 byte. A BMP character is
+# three UTF-8 bytes, so one maxlength character costs nine encoded bytes. The
+# worst propose form is a 2000-character prompt and a 200-character request_id,
+# both of that shape, plus a 24-character token_urlsafe(18) token and the field
+# names (42 bytes): 2000 * 9 + 200 * 9 + 24 + 42 = 19866, which fits in 20 KiB.
+MAX_BODY = 20 * 1024
 SOCKET_TIMEOUT = 5.0
 HEADERS = {
     "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'",
@@ -57,6 +62,51 @@ FORM_FIELDS = {
 
 def _esc(value: str) -> str:
     return html.escape(value, quote=True)
+
+
+def _letter_mark(index: int) -> str:
+    """Bijective base-26 (a, b, ..., z, aa). Letters only, so no numeral."""
+
+    number = index + 1
+    letters: list[str] = []
+    while number:
+        number, remainder = divmod(number - 1, 26)
+        letters.append(chr(ord("a") + remainder))
+    return "".join(reversed(letters))
+
+
+def _withheld_references(proposals: list[dict]) -> dict[str, str]:
+    """A distinct digit-free label for each proposal id the view cannot show.
+
+    Marks follow session order and stay put when a later proposal is decided.
+    The words contain no numeric character, matching the view numeral rule.
+    """
+
+    references: dict[str, str] = {}
+    index = 0
+    for item in proposals:
+        proposal_id = item["proposal_id"]
+        if is_id(proposal_id):
+            continue
+        references[proposal_id] = f"withheld id {_letter_mark(index)}"
+        index += 1
+    return references
+
+
+def _render_lines(lines: list[dict], references: dict[str, str]) -> list[str]:
+    """Render status lines, and name each withheld proposal beside its details."""
+
+    rendered: list[str] = []
+    pending = iter(references.values())
+    for index, item in enumerate(lines):
+        nxt = lines[index + 1]["label"] if index + 1 < len(lines) else ""
+        # The proposal id is the line immediately before "proposal state".
+        # When that id is not showable, sanitize_lines replaces it with the
+        # withheld marker; the same reference then heads that detail block.
+        if item["label"] == "withheld line" and nxt == "proposal state":
+            rendered.append(f"<li>reference: {_esc(next(pending))}</li>")
+        rendered.append(f"<li>{_esc(item['label'])}: {_esc(item['value'])}</li>")
+    return rendered
 
 
 def _tokens_match(supplied: str, expected: str) -> bool:
@@ -85,17 +135,21 @@ def _form(
 
 def render_page(service: OperatorService, token: str, response: dict | None = None) -> str:
     shown = response or service.handle({"api": API_VERSION, "command": "status", "args": {}})
-    body = [f"<li>{_esc(item['label'])}: {_esc(item['value'])}</li>" for item in shown["lines"]]
+    proposals = service.session.proposals()
+    references = _withheld_references(proposals)
+    body = _render_lines(shown["lines"], references)
     result = f"<p>result: {_esc(shown['code'])}</p>" if response else ""
     forms = []
     if not service.session.stopped:
         forms.append(_form(token, "propose", {}, ("request_id", "prompt")))
-        for item in service.session.proposals():
+        for item in proposals:
             if item["state"] == PENDING:
                 proposal_id = item["proposal_id"]
                 hidden = {"proposal_id": proposal_id,
                           "confirm_digest": item["payload_digest"]}
-                caption = proposal_id if is_id(proposal_id) else "withheld id"
+                # The real id stays in the hidden field. A rejected id is named
+                # with the same digit-free reference shown beside its details.
+                caption = proposal_id if is_id(proposal_id) else references[proposal_id]
                 forms.append(_form(token, "approve", hidden, ("operator",), caption))
                 forms.append(_form(
                     token, "veto", {"proposal_id": proposal_id},

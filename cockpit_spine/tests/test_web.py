@@ -13,6 +13,7 @@ import time
 import unittest
 from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import urlencode
 
 from cockpit_spine import cli, web
 from cockpit_spine import projections as proj
@@ -361,6 +362,27 @@ class PageStateTests(ViewCase):
         self.assertEqual(2, len(seen))
         self.assertLess(seen[0], seen[1])
 
+    def test_a_maxlength_prompt_of_three_byte_characters_is_accepted(self) -> None:
+        source = ScriptedSource(accepted(proposal_payload()))
+        view = self.start(source)
+        character = "投"
+        self.assertEqual(3, len(character.encode("utf-8")))
+        prompt = character * 2000
+        posted = urlencode({
+            "token": view.token, "command": "propose",
+            "request_id": "req-1", "prompt": prompt,
+        })
+        worst = urlencode({
+            "token": "a" * 24, "command": "propose",
+            "request_id": character * 200, "prompt": prompt,
+        })
+        self.assertGreater(len(posted.encode("ascii")), 8192)
+        self.assertLessEqual(len(worst.encode("ascii")), web.MAX_BODY)
+        status, _, page = self.request(view, "POST", "/act", posted)
+        self.assertEqual(200, status)
+        self.assertIn("result: proposal_received", page)
+        self.assertEqual(prompt, source.calls[0]["prompt"])
+
 
 class CaptionAndFieldTests(unittest.TestCase):
     def service(self, source=None) -> svc.OperatorService:
@@ -369,20 +391,40 @@ class CaptionAndFieldTests(unittest.TestCase):
             clock=counter_clock())
         return svc.OperatorService(session, REGISTRY)
 
-    def test_a_non_identifier_proposal_id_is_withheld_on_the_button(self) -> None:
-        service = self.service(ScriptedSource(accepted(proposal_payload("1234567"))))
-        service.handle({
-            "api": svc.API_VERSION, "command": "propose", "args": {"request_id": "req-1"}})
+    def test_withheld_proposal_ids_get_distinct_digit_free_references(self) -> None:
+        service = self.service(ScriptedSource(
+            accepted(proposal_payload("1234567", symbol="AAA")),
+            accepted(proposal_payload("7654321", symbol="BBB"))))
+        for n in (1, 2):
+            service.handle({
+                "api": svc.API_VERSION, "command": "propose",
+                "args": {"request_id": f"req-{n}"}})
         page = web.render_page(service, "tok")
-        self.assertEqual(2, page.count('value="1234567"'))
-        self.assertIn(">approve withheld id<", page)
-        self.assertIn(">veto withheld id<", page)
-        self.assertNotIn("approve 1234567", page)
-        self.assertNotIn("veto 1234567", page)
+        parser = Texts()
+        parser.feed(page)
+        visible = "\n".join(parser.nodes)
+        self.assertNotIn("1234567", visible)
+        self.assertNotIn("7654321", visible)
+        self.assertEqual(2, page.count('name="proposal_id" value="1234567"'))
+        self.assertEqual(2, page.count('name="proposal_id" value="7654321"'))
+        first = visible[visible.index("reference: withheld id a"):
+                        visible.index("reference: withheld id b")]
+        second = visible[visible.index("reference: withheld id b"):
+                         visible.index("approve withheld id a")]
+        self.assertIn("symbol: AAA", first)
+        self.assertNotIn("symbol: BBB", first)
+        self.assertIn("symbol: BBB", second)
+        self.assertNotIn("symbol: AAA", second)
+        for ref in ("withheld id a", "withheld id b"):
+            self.assertFalse(any(ch.isnumeric() for ch in ref))
+            self.assertEqual(1, visible.count(f"reference: {ref}"))
+            self.assertEqual(1, page.count(f">approve {ref}<"))
+            self.assertEqual(1, page.count(f">veto {ref}<"))
+        self.assertNotIn(">approve withheld id<", page)
+        self.assertNotIn(">veto withheld id<", page)
 
     def test_the_prompt_field_allows_2000_characters(self) -> None:
         page = web.render_page(self.service(), "tok")
-        self.assertLess(2000, web.MAX_BODY)
         self.assertIn('name="prompt" maxlength="2000"', page)
         self.assertEqual(1, page.count('maxlength="2000"'))
         for name in ("request_id", "operator", "reason"):
