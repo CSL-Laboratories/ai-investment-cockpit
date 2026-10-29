@@ -1,0 +1,322 @@
+{
+  "candidate_packet": "fixtures/candidate-packet.json",
+  "contract_frozen_claimed": false,
+  "empirical_pass_claimed": false,
+  "files": [
+    {
+      "path": "PROTOCOL.md",
+      "sha256": "2921e13c06285464340a6891dc167d7b90b305c05d3a3f8b9fdc6b57c1c904e0"
+    },
+    {
+      "path": "fixtures/candidate-packet.json",
+      "sha256": "60ee091293e9832d0c6e5f83643306651102fe94d542d6aaef0892a395e13ff3"
+    },
+    {
+      "path": "fixtures/negative/dropped-costs.json",
+      "sha256": "73961a04f8690d71f9f3eb2beb28edef2ba36d16f5b4eea5ca30538a66f0bd46"
+    },
+    {
+      "path": "fixtures/negative/dropped-empty-outcome.json",
+      "sha256": "50d738f1cc32ac6e89af54ef87b45ef61ce1258befafee8ea3f583d21d45ebfd"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-before-costs.json",
+      "sha256": "552062629d9b0bb50305d827c3c80d3f0a09c41016236d92ccfd8ccb11411966"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-cost-excluded.json",
+      "sha256": "7d5b41bb3d45ceb588466ce6c947d8924c862c617c2808a67871981e78a3231d"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-does-not-include-any.json",
+      "sha256": "b5d20ded2ba9555066859a61f9905b96d163c0cc310f33dabc5768165344d476"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-does-not-include-the-data.json",
+      "sha256": "c18ec2f54550014fc8008ce2b0142919879db67b6bfef3f6225d28f012419a4f"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-drops-data.json",
+      "sha256": "200c767fcf1ab02cd512345fe6ca63fa23a73e10d15dad8a6fc257f1a5471f72"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-except-after-hours.json",
+      "sha256": "31e6e76f4cbfa10fdac362b90a1b0579d1222d144eb736aa2847f372a2dca136"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-except-for-example.json",
+      "sha256": "8d6be477fb786ea7f478990d49a557ed48e9b5f8ef2b75b0e598fb775b066162"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-excludes-venue-fees.json",
+      "sha256": "fb94a59e530c91de960de4f758d5fe1d369f5b737f94db45a30786fcaa176a7e"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-excluding-notably.json",
+      "sha256": "0ca88a8f06baa57c7c80688806524865f26b7b51170b7334fd91245a2661cca8"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-ignores-model.json",
+      "sha256": "4d01b1431b1052779aa7d6d43b7153fa00579de6b3268d2027755467ba8d38b7"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-net-of-nothing.json",
+      "sha256": "aa00ea2ff0f38b11a4ba73a6c9b624134471f7e1c00c2fddfe9dc4ffa7d1ff7a"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-net-partial.json",
+      "sha256": "518ffebe130fe769243c44d427ed9f454e6e98084ccc11623bf6bf77a24c30e0"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-no-longer-includes.json",
+      "sha256": "264d1821d5c15084caebc896414ce8978fcafa15ba374c1eb8530c065d10c73e"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-not-counted-in-yield.json",
+      "sha256": "b2b7c291793cd85aa5824c02ed4cc136a67785e8754f1956975c6dd54bfdcaca"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-not-counted.json",
+      "sha256": "0e8acd77ba93625a940801822e8db3f68a80c2e557dfa5eebadf014dda8a355b"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-removes-model.json",
+      "sha256": "3a3f5985b4c1b769f46040df35f06bf0f78de4f76e3eee13fd33e91827df15ab"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-save-for-data.json",
+      "sha256": "d68c2ddd74b5b865bd0ce162c30c4ab9a1150eac6e3fef9a512bb9b91a25829c"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-set-aside.json",
+      "sha256": "979f315724e59cb097279536c926a5d76623c1304de1927ddabba42fdbe50a5f"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-waived-venue-fees.json",
+      "sha256": "9df29e34f76ac22dac648d51458fdc8768191d87d17fafa815bb74b655686886"
+    },
+    {
+      "path": "fixtures/negative/leakage-control-satisfied.json",
+      "sha256": "6f12a91ee7d806d0b9197fda2d05da14061abd47273fab40920d34a26839bfa1"
+    },
+    {
+      "path": "fixtures/negative/measured-costs.json",
+      "sha256": "c48e269443d5091179619ad2b6323508fe0e204f54c639f7ecedc909f1014a1e"
+    },
+    {
+      "path": "fixtures/negative/metric-registry-incomplete.json",
+      "sha256": "ca49b7f10ee44ffb5048c6190dca4eee1bc336adf88f0f6af938897b3e5ac6fc"
+    },
+    {
+      "path": "fixtures/negative/overlapping-populations.json",
+      "sha256": "a10b45987d59f578cd268294117249973fa56427311195dc3cc4b8e2413d891d"
+    },
+    {
+      "path": "fixtures/negative/parameter-variants.json",
+      "sha256": "62ac5445d335cdaa80afc60781b698b212dbe09f4e7604267a0c436432caefac"
+    },
+    {
+      "path": "fixtures/negative/population-members-rebound.json",
+      "sha256": "131c28da87ce4ce1c58522864466c0e5efc4e52b321cea23494cc085ee6332f6"
+    },
+    {
+      "path": "fixtures/negative/preresult-receipt-dropped.json",
+      "sha256": "ee10c59be8e2857a0eeae1f7342ebdd891f1a29adb931569416e371155483237"
+    },
+    {
+      "path": "fixtures/negative/promotion-stage-authorized.json",
+      "sha256": "6a2c256c0f770409efa3f56c090ce0fe4eae8494753e78ec73d02391d5bef000"
+    },
+    {
+      "path": "fixtures/negative/release-owner-person.json",
+      "sha256": "e32286579141cf1c0d4018aba7880cda4a824f9710f3a2b730072d57a7090b67"
+    },
+    {
+      "path": "fixtures/negative/shadow-data-scope-dropped.json",
+      "sha256": "83a3c0e7fafa3d3ccfa0c52fd4ca648b10ac6d2c681d1ce248274ec59553e86d"
+    },
+    {
+      "path": "fixtures/negative/stages-missing-rung.json",
+      "sha256": "96559be784792b72db07df12a0576d43562d5f97052c2d079ec9276234afc01e"
+    },
+    {
+      "path": "fixtures/negative/variant-configuration.json",
+      "sha256": "29d3084d1f34d087e3729c101e2175df1951711a671f9b67b9fafafb5fda3b74"
+    },
+    {
+      "path": "schemas/candidate-queue.schema.json",
+      "sha256": "09edec19aaad9b8888dbb7ba3b525abd4fa01771a071544d7bf654baf8fa109e"
+    },
+    {
+      "path": "schemas/envelope.schema.json",
+      "sha256": "b0503fa58e0880fb785ab75ca2578686819a4dc3549c70f6ecc2c1d81340eee1"
+    },
+    {
+      "path": "schemas/experiment.schema.json",
+      "sha256": "bcef0d5744094ae0c86be438f6a66111a57daf6b3b64a8070ec89d78fe4f4f6e"
+    },
+    {
+      "path": "schemas/metric-registry.schema.json",
+      "sha256": "9c3a80175d266a9c52df92c35b7aa50c3897d77a562f0411079b01296db8862a"
+    },
+    {
+      "path": "schemas/promotion-protocol.schema.json",
+      "sha256": "db7b537085cd86e372dbdcfb8db8f46a4af64b818dbcbac2e1015cec0a64ecce"
+    },
+    {
+      "path": "schemas/recorded-empty-outcome.schema.json",
+      "sha256": "cd3e5b0bdf93259cf78d6740704a29a70abd4ec342954a1c5ece13f133b4e73b"
+    },
+    {
+      "path": "schemas/research.schema.json",
+      "sha256": "cc22e0e864641fa887e3ea150b5a0f33cdd5bb878a20c0ad63db60ea56d9f1bd"
+    },
+    {
+      "path": "schemas/strategy-contract.schema.json",
+      "sha256": "b910661334b04342cfa16069c35202f142332a33d5efff29842db9ebd6f1aa9f"
+    },
+    {
+      "path": "validate.py",
+      "sha256": "40d62a9179cc4ad10c8d60c3dddd04642c4819b535662f073935dbee9f4526fd"
+    }
+  ],
+  "linear_issue": "CSL-216",
+  "maturity_claimed": "researched",
+  "negative_controls": [
+    {
+      "expect": "overlapping_populations",
+      "path": "fixtures/negative/overlapping-populations.json"
+    },
+    {
+      "expect": "dropped_costs",
+      "path": "fixtures/negative/dropped-costs.json"
+    },
+    {
+      "expect": "dropped_empty_outcome",
+      "path": "fixtures/negative/dropped-empty-outcome.json"
+    },
+    {
+      "expect": "parameter_variants_as_distinct_strategies",
+      "path": "fixtures/negative/parameter-variants.json"
+    },
+    {
+      "expect": "decision_owner_role",
+      "path": "fixtures/negative/release-owner-person.json"
+    },
+    {
+      "expect": "leakage_controls_satisfied",
+      "path": "fixtures/negative/leakage-control-satisfied.json"
+    },
+    {
+      "expect": "variant_configuration",
+      "path": "fixtures/negative/variant-configuration.json"
+    },
+    {
+      "expect": "unbound_population",
+      "path": "fixtures/negative/population-members-rebound.json"
+    },
+    {
+      "expect": "metric_registry",
+      "path": "fixtures/negative/metric-registry-incomplete.json"
+    },
+    {
+      "expect": "measured_costs_on_unrun_experiment",
+      "path": "fixtures/negative/measured-costs.json"
+    },
+    {
+      "expect": "promotion_stage_authorized",
+      "path": "fixtures/negative/promotion-stage-authorized.json"
+    },
+    {
+      "expect": "promotion_gates",
+      "path": "fixtures/negative/preresult-receipt-dropped.json"
+    },
+    {
+      "expect": "missing_promotion_rung",
+      "path": "fixtures/negative/stages-missing-rung.json"
+    },
+    {
+      "expect": "promotion_gates",
+      "path": "fixtures/negative/shadow-data-scope-dropped.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-cost-excluded.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-net-partial.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-net-of-nothing.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-before-costs.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-set-aside.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-excludes-venue-fees.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-ignores-model.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-except-after-hours.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-except-for-example.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-excluding-notably.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-no-longer-includes.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-drops-data.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-removes-model.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-waived-venue-fees.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-not-counted.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-save-for-data.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-does-not-include-any.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-does-not-include-the-data.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-not-counted-in-yield.json"
+    }
+  ],
+  "outcome": "O4",
+  "qualification_claimed": false,
+  "schema_version": "o4.fixture-manifest.v1"
+}
