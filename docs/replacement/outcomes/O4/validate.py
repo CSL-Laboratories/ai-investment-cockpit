@@ -428,54 +428,47 @@ _NET_PHRASES = (
     "after the eight retained costs",
     "after all retained costs",
 )
-# "does not / do not / never" plus an exclude/ignore/omit inflection denies
-# the exclusion. "does not include" stays an exclusion marker, not a denial.
-_NEGATED_FINITE = tuple(
-    f"{polarity} {verb}"
-    for polarity in ("does not", "do not", "never")
-    for verb in (
-        "exclude",
-        "excludes",
-        "excluding",
-        "excluded",
-        "ignore",
-        "ignores",
-        "ignoring",
-        "ignored",
-        "omit",
-        "omits",
-        "omitting",
-        "omitted",
-    )
+# One negation rule for every marker: these prefixes immediately before a
+# marker deny it. "does not include" and "not counted" stay markers because
+# the negation is part of the marker, not in front of it. A marker that
+# itself starts with a negation and is followed by a non-cost word
+# ("not counted twice") binds that negation to the following word.
+_NEGATION_PREFIXES = (
+    "does not",
+    "do not",
+    "is not",
+    "are not",
+    "is never",
+    "are never",
+    "nothing",
+    "not",
+    "never",
 )
-# These deny an exclusion. They are not themselves exclusions.
+# Denials that are not "negation + marker". "none are excluded" and
+# "without excluding" do not fit the prefix rule, so they are stripped.
 _NEGATED_EXCLUSIONS = (
     "no costs are excluded",
     "no cost is excluded",
-    "costs are not excluded",
-    "are not excluded",
-    "is not excluded",
-    "not excluded",
     "none are excluded",
     "none is excluded",
     "nothing is excluded",
     "without excluding",
     "no exclusion",
-    "not omitted",
     "nothing is omitted",
-    "not ignored",
-    *_NEGATED_FINITE,
+    "nothing is ignored",
 )
-# A marker drops only the cost phrase it governs: the words after it, up to
-# a comma or the next net-of claim. A comma-wrapped aside that names no
-# retained cost is not that stop ("except, for example, transaction").
-# "without look-ahead bias, from the historical data" governs "look-ahead
-# bias", not "data". A bare "after" does not end that phrase, so "except
-# after-hours transaction fees" still governs "transaction". Finite verbs,
-# gerunds, and "except" / "without" are forward markers. Past participles
-# ("are excluded", "are waived", "are not counted") stay predicates because
-# their subject comes first. The list is closed. Wording outside it is not
-# an exclusion.
+# A marker drops only the cost phrase it governs. The phrase ends at a comma,
+# a trailing preposition ("in the historical data"), or the next net-of claim.
+# A short comma-wrapped aside (at most two words, no cost name) is skipped
+# first ("except, for example, transaction"; "without, for example,
+# look-ahead bias in the historical data" governs "look-ahead bias").
+# A bare "after" does not end that phrase, so "except after-hours transaction
+# fees" still governs "transaction". Finite verbs, gerunds, and "except" /
+# "without" are forward markers. Past participles ("are excluded", "are
+# waived", "are not counted") stay predicates because their subject comes
+# first. The list is closed. Wording outside it is not an exclusion.
+_ASIDE_WORD_LIMIT = 2
+_TRAILING_PREPOSITIONS = frozenset({"in", "from", "using", "via", "during", "within", "through"})
 _FORWARD_MARKERS = (
     "no longer includes",
     "does not include",
@@ -593,16 +586,71 @@ def _strip_negated_exclusions(folded: str) -> str:
     return " ".join(padded.split())
 
 
+_COPULA = frozenset({"is", "are", "was", "were"})
+# A denial subject before a marker ("no costs are waived", "nothing is waived")
+# is the same negation as "not" / "never" immediately in front of it.
+_DENIAL_SUBJECTS = ("no costs", "no cost", "nothing", "none")
+
+
+def _negation_before(tokens: list[str], start: int) -> bool:
+    before = tokens[:start]
+    if before and before[-1] in _COPULA:
+        before = before[:-1]
+    for prefix in _NEGATION_PREFIXES:
+        parts = prefix.split()
+        if len(before) >= len(parts) and before[-len(parts) :] == parts:
+            return True
+    tail = " ".join(before)
+    return any(tail == subject or tail.endswith(" " + subject) for subject in _DENIAL_SUBJECTS)
+
+
+def _cost_starts(tokens: list[str], index: int) -> bool:
+    spans = _cost_spans(tokens[index:])
+    return bool(spans) and spans[0][1] == 0
+
+
+def _negation_binds_forward(tokens: list[str], start: int, width: int) -> bool:
+    """A leading negation followed by a non-cost word is not an exclusion.
+
+    "not counted twice" denies double counting. "does not include venue fees"
+    still excludes venue fees, because the next word is a cost.
+    """
+    marker = " ".join(tokens[start : start + width])
+    if not any(marker == prefix or marker.startswith(prefix + " ") for prefix in _NEGATION_PREFIXES):
+        return False
+    nxt = start + width
+    if nxt >= len(tokens) or tokens[nxt] == ",":
+        return False
+    return not _cost_starts(tokens, nxt)
+
+
+def _marker_cancelled(tokens: list[str], start: int, width: int) -> bool:
+    return _negation_before(tokens, start) or _negation_binds_forward(tokens, start, width)
+
+
 def _predicate_stem(folded: str) -> str | None:
-    stripped = _strip_negated_exclusions(folded)
-    padded = f" {stripped} "
-    for phrase, label in _PREDICATE_PHRASES:
-        if f" {phrase} " in padded:
-            return label
-    for token in stripped.split():
-        label = _PREDICATE_TOKENS.get(token)
-        if label is not None:
-            return label
+    tokens = _strip_negated_exclusions(folded).split()
+    phrases = sorted(_PREDICATE_PHRASES, key=lambda item: len(item[0]), reverse=True)
+    index = 0
+    while index < len(tokens):
+        matched: tuple[str, int] | None = None
+        for phrase, label in phrases:
+            parts = phrase.split()
+            if tokens[index : index + len(parts)] == parts:
+                matched = (label, len(parts))
+                break
+        if matched is None:
+            label = _PREDICATE_TOKENS.get(tokens[index])
+            if label is not None:
+                matched = (label, 1)
+        if matched is None:
+            index += 1
+            continue
+        label, width = matched
+        if _marker_cancelled(tokens, index, width):
+            index += width
+            continue
+        return label
     return None
 
 
@@ -622,8 +670,12 @@ def _net_claim_at(tokens: list[str], index: int) -> bool:
     return any(rest == phrase or rest.startswith(phrase + " ") for phrase in _NET_PHRASES)
 
 
+def _short_aside(span: list[str]) -> bool:
+    return bool(span) and len(span) <= _ASIDE_WORD_LIMIT and not _cost_spans(span)
+
+
 def _aside_closing(tokens: list[str], index: int) -> int | None:
-    """Comma that closes a no-cost aside opening at this comma, if there is one."""
+    """Comma that closes a short no-cost aside opening at this comma."""
     if index >= len(tokens) or tokens[index] != ",":
         return None
     end = index + 1
@@ -631,42 +683,42 @@ def _aside_closing(tokens: list[str], index: int) -> int | None:
         end += 1
     if end >= len(tokens) or tokens[end] != ",":
         return None
-    aside = tokens[index + 1 : end]
-    if not aside or _cost_spans(aside):
+    if not _short_aside(tokens[index + 1 : end]):
         return None
     return end
 
 
-def _governed_tokens(tokens: list[str]) -> list[str]:
-    """Words the marker governs, through the next comma or net-of claim.
+def _span_end(tokens: list[str], index: int) -> int:
+    end = index
+    while end < len(tokens) and tokens[end] != "," and not _net_claim_at(tokens, end):
+        end += 1
+    return end
 
-    A comma-wrapped aside that names no retained cost is skipped
-    ("except, for example, transaction", "excluding, notably, data").
-    A comma after real governed words still ends the phrase, so
-    "without look-ahead bias, from the historical data" stops at "bias".
+
+def _governed_tokens(tokens: list[str]) -> list[str]:
+    """Words the marker governs.
+
+    Skip only a short comma-wrapped aside. The next span is the phrase, and
+    it ends at a comma even when it names no cost ("look-ahead bias, from
+    the historical data"). A trailing preposition ends it too ("look-ahead
+    bias in the historical data").
     """
     index = 0
-    skipped = False
     while index < len(tokens) and tokens[index] == ",":
         closing = _aside_closing(tokens, index)
         if closing is None:
             index += 1
             break
-        skipped = True
         index = closing + 1
-    if skipped:
-        while index < len(tokens):
-            end = index
-            while end < len(tokens) and tokens[end] != "," and not _net_claim_at(tokens, end):
-                end += 1
-            span = tokens[index:end]
-            if span and not _cost_spans(span) and end < len(tokens) and tokens[end] == ",":
-                index = end + 1
-                continue
-            break
+    while index < len(tokens):
+        end = _span_end(tokens, index)
+        if _short_aside(tokens[index:end]) and end < len(tokens) and tokens[end] == ",":
+            index = end + 1
+            continue
+        break
     governed: list[str] = []
     while index < len(tokens):
-        if tokens[index] == "," or _net_claim_at(tokens, index):
+        if tokens[index] in _TRAILING_PREPOSITIONS or tokens[index] == "," or _net_claim_at(tokens, index):
             break
         governed.append(tokens[index])
         index += 1
@@ -689,6 +741,9 @@ def _forward_excluded(tokens: list[str]) -> list[tuple[str, str]]:
             index += 1
             continue
         width = len(matched.split())
+        if _marker_cancelled(scanned, index, width):
+            index += width
+            continue
         governed = _governed_tokens(scanned[index + width :])
         for key, _start, _end in _cost_spans(governed):
             found.append((key, _marker_label(matched)))

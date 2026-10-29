@@ -147,16 +147,21 @@ sentence that lists the other costs, or a "net of nothing" sentence, does not
 carry the claim. A bare "after", including "after-hours", is not a net-of
 claim. A cost is dropped when an exclusion marker governs that cost. The
 marker binds to the phrase after it and stops at a comma or the next net-of
-claim. A comma-wrapped aside that names no retained cost ("for example",
-"notably") is not that stop. Finite verbs and their inflections count: exclude, excludes,
-excluding, and excluded; ignore, ignores, ignoring, and ignored; omit,
-omits, omitting, and omitted; plus except and without. "does not", "do not",
-and "never" in front of those verbs are not exclusions. Also listed: drops,
-removes, save for, no longer includes, waived, and not counted. A non-marker
-exclusion that shares the clause ("set aside", "reported separately",
-"reported elsewhere") also drops the claim. "without look-ahead bias" and
-"no costs are excluded" do not drop a cost. The check matches only these
-listed markers, so a human must still read the cost claim.
+claim. A comma-wrapped aside of at most two words that names no retained cost
+("for example", "notably") is not that stop. The following span is the
+governed phrase, and it still ends at a comma or a trailing preposition, so
+"look-ahead bias in the historical data" governs "look-ahead bias". Finite
+verbs and their inflections count: exclude, excludes, excluding, and excluded;
+ignore, ignores, ignoring, and ignored; omit, omits, omitting, and omitted;
+plus except and without. "not" and "never", including "does not" and "do not",
+immediately before any listed marker are not exclusions. A marker that starts
+with "not" and is followed by another word ("not counted twice") is not the
+bare exclusion. Also listed: drops, removes, save for, no longer includes,
+waived, and not counted. A non-marker exclusion that shares the clause
+("set aside", "reported separately", "reported elsewhere") also drops the
+claim. "without look-ahead bias" and "no costs are excluded" do not drop a
+cost. The check matches only these listed markers, so a human must still read
+the cost claim.
 
 Alternatives: equity leg only, event leg only, and the awareness-only fallback
 that supplies no execution edge.

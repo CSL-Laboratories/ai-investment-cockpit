@@ -290,6 +290,10 @@ def test_o4_accepts_equivalent_net_cost_wording() -> None:
         " It never ignores model costs.",
         " It never excluded data.",
         " It is never excluding data.",
+        " Venue fees are not waived.",
+        " Venue fees are never waived.",
+        " It never drops data costs.",
+        " Data costs are not counted twice.",
     ):
         candidate = deepcopy(packet)
         candidate["experiment"]["hypothesis"] = _NET_CLAUSE + suffix
@@ -299,9 +303,17 @@ def test_o4_accepts_equivalent_net_cost_wording() -> None:
         _NET_CLAUSE[:-1]
         + ", without look-ahead bias, verified using dated observations from the historical data."
     )
+    aside = (
+        _NET_CLAUSE[:-1]
+        + ", without, for example, look-ahead bias in the historical data."
+    )
     candidate = deepcopy(packet)
     candidate["experiment"]["hypothesis"] = bounded
     candidate["strategy_contract"]["hypothesis"] = bounded
+    assert validate.assess(candidate) == []
+    candidate = deepcopy(packet)
+    candidate["experiment"]["hypothesis"] = aside
+    candidate["strategy_contract"]["hypothesis"] = aside
     assert validate.assess(candidate) == []
 
 
