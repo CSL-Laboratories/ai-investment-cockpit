@@ -142,6 +142,10 @@ CONTROL_ORDER = (
     "missing_promotion_rung",
     "promotion_gates",
     "hypothesis_costs",
+    "hypothesis_costs",
+    "hypothesis_costs",
+    "hypothesis_costs",
+    "hypothesis_costs",
 )
 REQUIRED_STAGE_GATES = {
     "replay": {
@@ -405,8 +409,8 @@ _COST_PHRASES: dict[str, tuple[str, ...]] = {
     "funding_collateral": ("funding and collateral", "funding collateral"),
     "tax_accounting": ("tax and accounting", "tax accounting"),
 }
-# A net-of claim. Any order of the eight names satisfies it. "after" plus every
-# cost in one clause is the other accepted form.
+# A net-of claim. The eight names must sit in that same clause, in any order.
+# "after" plus every cost in one clause is the other accepted form.
 _NET_PHRASES = (
     "net of",
     "after all eight retained costs",
@@ -453,6 +457,16 @@ _FORWARD_MARKERS = (
 # Past-participle predicates ("are excluded"). Gerunds ("excluding") stay forward markers.
 _PREDICATE_TOKENS = {"excluded": "exclud", "omitted": "omitt", "ignored": "ignor"}
 _FORWARD_WINDOW = 8
+# Exclusion wording that is not one of the markers above. It still drops the
+# net-of claim when it shares a clause with a named cost ("set aside",
+# "reported separately").
+_NON_MARKER_EXCLUSIONS = (
+    "setting aside",
+    "sets aside",
+    "set aside",
+    "reported separately",
+    "reported elsewhere",
+)
 
 
 def _fold_hypothesis(text: str) -> str:
@@ -560,39 +574,58 @@ def _forward_excluded(tokens: list[str]) -> list[tuple[str, str]]:
     return found
 
 
+def _clause_has_net_phrase(folded: str, tokens: list[str]) -> bool:
+    if any(phrase in folded for phrase in _NET_PHRASES):
+        return True
+    keys = {key for key, _start, _end in _cost_spans(tokens)}
+    return "after" in tokens and set(COST_KEYS) <= keys
+
+
+def _non_marker_hits(folded: str) -> list[str]:
+    padded = f" {_strip_negated_exclusions(folded)} "
+    hits: list[str] = []
+    for phrase in sorted(_NON_MARKER_EXCLUSIONS, key=len, reverse=True):
+        needle = f" {phrase} "
+        if needle in padded:
+            hits.append(phrase)
+            padded = padded.replace(needle, " ")
+    return hits
+
+
 def _hypothesis_defects(name: str, text: object) -> list[str]:
     if not isinstance(text, str):
         return [f"{name}.{key}" for key in COST_KEYS]
-    included: set[str] = set()
     excluded: list[tuple[str, str]] = []
-    clause_folds: list[str] = []
+    # Retained costs inside each clause that also carries the net phrase.
+    # A passing claim needs one such clause to name every cost.
+    net_retained: list[set[str]] = []
     for clause in _hypothesis_clauses(text):
         folded = _fold_hypothesis(clause)
         if not folded:
             continue
-        clause_folds.append(folded)
         tokens = folded.split()
-        spans = _cost_spans(tokens)
-        keys = {key for key, _start, _end in spans}
+        keys = {key for key, _start, _end in _cost_spans(tokens)}
         stem = _predicate_stem(folded)
         if stem is not None and keys:
-            for key in keys:
-                excluded.append((key, stem))
-            continue
-        forward = _forward_excluded(tokens)
-        excluded_keys = {key for key, _label in forward}
-        excluded.extend(forward)
-        included.update(key for key in keys if key not in excluded_keys)
-    folded_all = " ".join(clause_folds)
-    affirms = any(phrase in folded_all for phrase in _NET_PHRASES) or any(
-        "after" in clause.split() and set(COST_KEYS) <= {key for key, _start, _end in _cost_spans(clause.split())}
-        for clause in clause_folds
-    )
+            excluded.extend((key, stem) for key in keys)
+            retained: set[str] = set()
+        else:
+            forward = _forward_excluded(tokens)
+            excluded.extend(forward)
+            dropped = {key for key, _label in forward}
+            retained = {key for key in keys if key not in dropped}
+        for phrase in _non_marker_hits(folded):
+            excluded.append(("*", phrase))
+            retained = set()
+        if _clause_has_net_phrase(folded, tokens):
+            net_retained.append(retained)
+    affirms = any(set(COST_KEYS) <= held for held in net_retained)
+    credited: set[str] = set(COST_KEYS) if affirms else set().union(*net_retained)
     defects: list[str] = []
     if not affirms:
         defects.append(f"{name}.inclusion")
     for key in COST_KEYS:
-        if key not in included:
+        if key not in credited:
             defects.append(f"{name}.{key}")
     seen: set[str] = set()
     for _key, label in excluded:

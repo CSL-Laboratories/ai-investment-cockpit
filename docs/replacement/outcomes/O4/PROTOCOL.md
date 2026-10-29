@@ -50,7 +50,7 @@ Candidate command, not a completion gate:
 python -X utf8 -B docs/replacement/outcomes/O4/validate.py
 ```
 
-A clean command prints fifteen negative-control failures and one researched-maturity
+A clean command prints nineteen negative-control failures and one researched-maturity
 line. Exit 0 means those controls failed as designed and the candidate packet
 stayed internally consistent. It does not promote the outcome.
 
@@ -142,9 +142,13 @@ comparison.
 The checker accepts an equivalent net-of claim. Either hypothesis may say
 "net of" or "after all eight retained costs", name the eight costs in any
 order, repeat a name, or use the singular "venue-fee" as well as "venue fees".
-A cost is dropped only when the text excludes that cost ("excluded", "except",
-or "without" applied to the cost). "without look-ahead bias" and "no costs are
-excluded" do not drop a cost.
+All eight names have to sit in the same clause as that net phrase. A later
+sentence that lists the other costs, or a "net of nothing" sentence, does not
+carry the claim. A cost is dropped when the text excludes that cost
+("excluded", "except", or "without" applied to the cost) and also when a
+non-marker exclusion shares the clause ("set aside", "reported separately",
+"reported elsewhere"). "without look-ahead bias" and "no costs are excluded"
+do not drop a cost.
 
 Alternatives: equity leg only, event leg only, and the awareness-only fallback
 that supplies no execution edge.
@@ -266,6 +270,10 @@ two-stage ladder; the other controls preserve the complete schema shape:
 | `stages-missing-rung.json` | The former replay/demo ladder omits simulation, shadow and paper; rejected as `missing_promotion_rung`. |
 | `shadow-data-scope-dropped.json` | Shadow entry drops the acquisition-scope criterion and its required receipt; rejected as `promotion_gates`. |
 | `hypothesis-cost-excluded.json` | Both hypotheses name every cost and then exclude venue fees, spread/slippage, funding/collateral, and tax/accounting. Rejected as `hypothesis_costs`. |
+| `hypothesis-net-partial.json` | The net-of clause names only transaction and latency. The other six costs are in a later sentence. Rejected as `hypothesis_costs`. |
+| `hypothesis-net-of-nothing.json` | A gross claim, a separate list of all eight costs, then "Results are net of nothing." Rejected as `hypothesis_costs`. |
+| `hypothesis-before-costs.json` | "before" names all eight costs. A later sentence says "Net of fees reported elsewhere." Rejected as `hypothesis_costs`. |
+| `hypothesis-set-aside.json` | The net-of clause names all eight costs and then sets data costs aside. Rejected as `hypothesis_costs`. |
 
 The checker prints each rejection. A control that passes, or that fails for a
 different reason, rejects the run.

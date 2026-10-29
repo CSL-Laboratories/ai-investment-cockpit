@@ -47,6 +47,10 @@ FAILURES = (
     "O4 negative control FAIL missing_promotion_rung:",
     "O4 negative control FAIL promotion_gates:",
     "O4 negative control FAIL hypothesis_costs:",
+    "O4 negative control FAIL hypothesis_costs:",
+    "O4 negative control FAIL hypothesis_costs:",
+    "O4 negative control FAIL hypothesis_costs:",
+    "O4 negative control FAIL hypothesis_costs:",
 )
 CHECKED = (
     "O4 candidate packet checked at maturity researched; "
@@ -266,6 +270,45 @@ def test_o4_accepts_equivalent_net_cost_wording() -> None:
     unrelated["experiment"]["hypothesis"] = base + suffix
     unrelated["strategy_contract"]["hypothesis"] = base + suffix
     assert validate.assess(unrelated) == []
+
+
+_EIGHT_COSTS = (
+    "transaction, latency, data, model, venue fees, spread/slippage, "
+    "funding/collateral, and tax/accounting"
+)
+SPLIT_NET_CASES = (
+    (
+        "hypothesis-net-partial.json",
+        "Beats cash net of transaction and latency. Model, data, venue fees, "
+        "spread/slippage, funding/collateral, tax/accounting are reported separately.",
+    ),
+    (
+        "hypothesis-net-of-nothing.json",
+        f"Beats cash gross. We also list {_EIGHT_COSTS}. Results are net of nothing.",
+    ),
+    (
+        "hypothesis-before-costs.json",
+        f"Beats cash before {_EIGHT_COSTS}. Net of fees reported elsewhere.",
+    ),
+    (
+        "hypothesis-set-aside.json",
+        f"Beats cash net of {_EIGHT_COSTS}, with data costs set aside.",
+    ),
+)
+
+
+def test_o4_rejects_a_net_claim_split_from_its_costs() -> None:
+    validate = _load_o4_validate()
+    packet = json.loads((O4 / "fixtures/candidate-packet.json").read_text(encoding="utf-8"))
+    for filename, text in SPLIT_NET_CASES:
+        candidate = deepcopy(packet)
+        candidate["experiment"]["hypothesis"] = text
+        candidate["strategy_contract"]["hypothesis"] = text
+        found = validate.assess(candidate)
+        assert [item.code for item in found] == ["hypothesis_costs"]
+        frozen = json.loads((O4 / "fixtures" / "negative" / filename).read_text(encoding="utf-8"))
+        assert frozen["experiment"]["hypothesis"] == text
+        assert frozen["strategy_contract"]["hypothesis"] == text
 
 
 def test_o4_rejects_measured_costs_on_unrun_experiment() -> None:

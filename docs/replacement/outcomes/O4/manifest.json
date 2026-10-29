@@ -5,7 +5,7 @@
   "files": [
     {
       "path": "PROTOCOL.md",
-      "sha256": "04bc950f54f498d741d35855b7ff44fefde890804f5652821677eaccbebfeb49"
+      "sha256": "94411f4ae0cb07cac51dc3079a150f69b19bde8fb39850604feb437a51157e4b"
     },
     {
       "path": "fixtures/candidate-packet.json",
@@ -20,8 +20,24 @@
       "sha256": "50d738f1cc32ac6e89af54ef87b45ef61ce1258befafee8ea3f583d21d45ebfd"
     },
     {
+      "path": "fixtures/negative/hypothesis-before-costs.json",
+      "sha256": "552062629d9b0bb50305d827c3c80d3f0a09c41016236d92ccfd8ccb11411966"
+    },
+    {
       "path": "fixtures/negative/hypothesis-cost-excluded.json",
       "sha256": "7d5b41bb3d45ceb588466ce6c947d8924c862c617c2808a67871981e78a3231d"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-net-of-nothing.json",
+      "sha256": "aa00ea2ff0f38b11a4ba73a6c9b624134471f7e1c00c2fddfe9dc4ffa7d1ff7a"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-net-partial.json",
+      "sha256": "518ffebe130fe769243c44d427ed9f454e6e98084ccc11623bf6bf77a24c30e0"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-set-aside.json",
+      "sha256": "979f315724e59cb097279536c926a5d76623c1304de1927ddabba42fdbe50a5f"
     },
     {
       "path": "fixtures/negative/leakage-control-satisfied.json",
@@ -105,7 +121,7 @@
     },
     {
       "path": "validate.py",
-      "sha256": "31a36501986c1ec6faf73d2703697dc106cd17bf56e1e929bd433512d4a73036"
+      "sha256": "e12c5edc28ce548d1b802a21a18588eb1107da2fba4c472f6ee1a9d9b1cfbd48"
     }
   ],
   "linear_issue": "CSL-216",
@@ -170,6 +186,22 @@
     {
       "expect": "hypothesis_costs",
       "path": "fixtures/negative/hypothesis-cost-excluded.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-net-partial.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-net-of-nothing.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-before-costs.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-set-aside.json"
     }
   ],
   "outcome": "O4",
