@@ -163,6 +163,19 @@ OUTCOME_BASELINE_DIGESTS = {
     "O8": "7b25def385c632df8181c214fa94d67f3051f2d49143746e08645b873e7e88d7",
     "O9": "97d60e01df216f84581f69453b3c770e8b477a02181f6dde72f06db904eb1b4d",
 }
+# CSL-577: SUCCESSOR-PRODUCT.md may be a pointer to the accepted contract in
+# csl-research (Lucas, Oct 29). The receipt pins the pointer file like any
+# governing file; the pointer pins the target bytes by commit and SHA-256, so
+# no new digest lives in code. csl-research is private, so CI checks the
+# pointer's shape only; --research-root also checks the target bytes.
+POINTER_CONTRACT = "docs/replacement/SUCCESSOR-PRODUCT.md"
+POINTER_FENCE = "csl-contract-pointer"
+POINTER_REPOSITORY = "CSL-Laboratories/csl-research"
+POINTER_KEYS = {"pointer_version", "repository", "commit", "path", "sha256", "acceptance"}
+POINTER_ACCEPTANCE_KEYS = {"linear_issue", "linear_comment_id"}
+_POINTER_BLOCK = re.compile(r"^```json " + POINTER_FENCE + r"\n(.*?)^```$", re.MULTILINE | re.DOTALL)
+_POINTER_PATH = re.compile(r"[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*")
+_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 RESEARCH_BUDGET_FIELDS = {
     "question",
     "source_classes",
@@ -290,6 +303,63 @@ def _require_no_governed_diff(root: Path, approved: str, head: str) -> None:
     )
     _require(completed.returncode != 1, "github receipt governed bytes changed after approval")
     _require(completed.returncode == 0, "github receipt governed diff unavailable")
+
+
+def read_pointer(path: Path) -> dict[str, Any] | None:
+    """Return the contract pointer in ``path``, or None for an in-place contract."""
+    try:
+        text = path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ContractError(f"contract is not UTF-8: {exc}") from exc
+    if POINTER_FENCE not in text:
+        return None
+    blocks = _POINTER_BLOCK.findall(text)
+    _require(len(blocks) == 1 and text.count(POINTER_FENCE) == 1, "contract pointer must be exactly one fenced block")
+    try:
+        pointer = json.loads(blocks[0], object_pairs_hook=_unique_object)
+    except (ValueError, RecursionError) as exc:
+        raise ContractError(f"contract pointer is not valid JSON: {exc}") from exc
+    _require(isinstance(pointer, dict) and set(pointer) == POINTER_KEYS, "contract pointer fields changed")
+    _require(type(pointer["pointer_version"]) is int and pointer["pointer_version"] == 1, "unsupported pointer_version")
+    _require(pointer["repository"] == POINTER_REPOSITORY, "contract pointer repository is not csl-research")
+    commit = pointer["commit"]
+    _require(isinstance(commit, str) and re.fullmatch(r"[0-9a-f]{40}", commit) is not None, "contract pointer commit must be 40 lowercase hex")
+    digest = pointer["sha256"]
+    _require(isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest) is not None, "contract pointer digest invalid")
+    target = pointer["path"]
+    _require(
+        isinstance(target, str)
+        and _POINTER_PATH.fullmatch(target) is not None
+        and not {".", ".."} & set(target.split("/")),
+        "contract pointer path must be relative with no . or .. parts",
+    )
+    acceptance = pointer["acceptance"]
+    _require(
+        isinstance(acceptance, dict) and set(acceptance) == POINTER_ACCEPTANCE_KEYS,
+        "contract pointer acceptance fields changed",
+    )
+    _require(
+        isinstance(acceptance["linear_issue"], str)
+        and re.fullmatch(r"CSL-[0-9]+", acceptance["linear_issue"]) is not None,
+        "contract pointer acceptance issue invalid",
+    )
+    _require(
+        isinstance(acceptance["linear_comment_id"], str)
+        and _UUID.fullmatch(acceptance["linear_comment_id"]) is not None,
+        "contract pointer acceptance comment invalid",
+    )
+    return pointer
+
+
+def verify_pointer_target(pointer: dict[str, Any], research_root: Path) -> None:
+    """Check the pointed-to bytes in a local csl-research checkout."""
+    spec = f"{pointer['commit']}:{pointer['path']}"
+    completed = _git_run(research_root, ("cat-file", "blob", spec), message="contract pointer target unavailable")
+    _require(completed.returncode == 0, f"contract pointer target unavailable: {spec}")
+    _require(
+        hashlib.sha256(completed.stdout).hexdigest() == pointer["sha256"],
+        "contract pointer target digest mismatch",
+    )
 
 
 def _require_digest_map(value: Any, message: str) -> dict[str, str]:
@@ -439,7 +509,7 @@ def _month_projection(document: str) -> dict[str, tuple[str, list[str]]]:
     return projection
 
 
-def validate(program: dict[str, Any], root: Path = ROOT) -> None:
+def validate(program: dict[str, Any], root: Path = ROOT, *, research_root: Path | None = None) -> None:
     _require(
         isinstance(program, dict) and set(program) == EXPECTED_PROGRAM_KEYS,
         "program fields changed",
@@ -568,6 +638,9 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
         verified_contracts == accepted_receipt["accepted_contracts"],
         "governing files differ from accepted receipt",
     )
+    pointer = read_pointer(root / POINTER_CONTRACT)
+    if pointer is not None and research_root is not None:
+        verify_pointer_target(pointer, research_root)
     superseded_contracts = receipt.get("accepted_contracts")
     _require(isinstance(superseded_contracts, dict), "superseded contract digest set missing")
     _require(superseded_contracts == EXPECTED_SUPERSEDED_CONTRACTS, "superseded contract digests changed")
@@ -675,12 +748,22 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--program", type=Path, default=DEFAULT_PROGRAM)
     parser.add_argument("--root", type=Path, default=ROOT)
+    parser.add_argument(
+        "--research-root",
+        type=Path,
+        default=None,
+        help="local csl-research checkout; also checks a contract pointer's target bytes",
+    )
     args = parser.parse_args(argv)
     try:
-        validate(load(args.program), root=args.root)
+        validate(load(args.program), root=args.root, research_root=args.research_root)
+        pointer = read_pointer(args.root / POINTER_CONTRACT)
     except (OSError, json.JSONDecodeError, ContractError) as exc:
         print(f"replacement-program: FAIL: {exc}", file=sys.stderr)
         return 1
+    if pointer is not None and args.research_root is None:
+        print("replacement-program: PASS (contract pointer shape only; target bytes not checked without --research-root)")
+        return 0
     print("replacement-program: PASS")
     return 0
 
