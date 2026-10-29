@@ -466,7 +466,15 @@ not change quantity.
 ## Corporate actions
 
 Equity only. A cash dividend debits `cash_available` and credits
-`realized_pnl` and does not change share quantity. Every line on a
+`realized_pnl` and does not change share quantity. A validated
+correction may reverse that posting: the mirror credits
+`cash_available` and debits `realized_pnl` for the original amounts,
+keeps the original `strategy_id`, and is accepted only when a later
+replacement is posted for the same instrument. The
+cash identity nets those signed amounts, so the original, the mirror,
+and the replacement together equal the declared `cash_minor`. A mirror
+with no replacement, or a corporate-action credit that is not that
+mirror, fails `corporate_action_mismatch`. Every line on a
 corporate-action entry must name an instrument that has a declared
 corporate action in the fixture — booking a dividend on one security to
 another's accounts fails `corporate_action_mismatch`. The candidate vocabulary

@@ -419,10 +419,10 @@ def _posted_correction_facts(fixture: dict) -> tuple[set[str], set[str], set[str
     Lines on the original post only that instrument, so a bare checkpoint
     id does not qualify. The reversal id is exempted only after that
     replacement is present, and then it may post the swapped sides of a
-    reserve, fill, or fee. When the original, the reversal, and the
-    replacement are all reserves for one order, the original id is
-    returned so its debit is not counted again as collateral created for
-    the fill. A second original that shares that pair stays counted.
+    reserve, fill, fee, or cash dividend. When the original, the reversal,
+    and the replacement are all reserves for one order, the original id
+    is returned so its debit is not counted again as collateral created
+    for the fill. A second original that shares that pair stays counted.
     """
     supported: set[str] = set()
     mirrors: set[str] = set()
@@ -1201,11 +1201,18 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         elif order_ref in orders:
             ref_instrument = orders[order_ref]["instrument_id"]
         if entry["reason"] == "corporate_action":
+            # A validated mirror swaps the dividend. Any other credit is not one.
+            is_mirror = entry.get("entry_id") in correction_mirrors
+            allowed_action = (
+                {("cash_available", "cr"), ("realized_pnl", "dr")}
+                if is_mirror
+                else {("cash_available", "dr"), ("realized_pnl", "cr")}
+            )
             for line in entry["lines"]:
-                if (line["account"], line["side"]) not in {
-                    ("cash_available", "dr"),
-                    ("realized_pnl", "cr"),
-                } or line["instrument_id"] not in action_instruments:
+                if (
+                    (line["account"], line["side"]) not in allowed_action
+                    or line["instrument_id"] not in action_instruments
+                ):
                     failures.add("corporate_action_mismatch")
         if entry["reason"] == "settlement_payout":
             line_instruments = {line["instrument_id"] for line in entry["lines"]}
@@ -1248,10 +1255,15 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                     fee_delta += signed
             if account == "cash_available":
                 cash += amount if side == "dr" else -amount
-                if entry["reason"] == "corporate_action" and side == "dr":
-                    corporate_cash += amount
+                if entry["reason"] == "corporate_action" and (
+                    side == "dr" or entry.get("entry_id") in correction_mirrors
+                ):
+                    # Debits are the dividend and its replacement. Only a
+                    # validated mirror's credit nets them back out.
+                    signed = amount if side == "dr" else -amount
+                    corporate_cash += signed
                     corporate_cash_by[line["instrument_id"]] = (
-                        corporate_cash_by.get(line["instrument_id"], 0) + amount
+                        corporate_cash_by.get(line["instrument_id"], 0) + signed
                     )
                 counts_settlement = (
                     entry["reason"] == "settlement_payout"

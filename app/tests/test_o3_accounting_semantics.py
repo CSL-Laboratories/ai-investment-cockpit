@@ -3370,3 +3370,177 @@ def test_o3_fill_correction_cannot_consume_the_order_replacement() -> None:
                     variant["journal"].append(row)
                 variant["corrections"] = corrections
                 assert _evaluate(variant) == set()
+
+
+def _dividend_lines(amount: int, *, reverse: bool) -> list[dict]:
+    cash_side = "cr" if reverse else "dr"
+    pnl_side = "dr" if reverse else "cr"
+    return [
+        {
+            "account": "cash_available",
+            "side": cash_side,
+            "amount_minor": amount,
+            "instrument_id": "eq-aapl",
+        },
+        {
+            "account": "realized_pnl",
+            "side": pnl_side,
+            "amount_minor": amount,
+            "instrument_id": "eq-aapl",
+        },
+    ]
+
+
+def _dividend_correction(*, replacement: int = 5100, admit: str = "f1") -> dict:
+    """Reverse the 5000 dividend and replace it. Net cash is the replacement."""
+    path = VALIDATOR.parent / "fixtures" / "equity_partial_then_dividend.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["journal"].extend([
+        {
+            "entry_id": "j-div-rev",
+            "sequence": 4,
+            "idempotency_key": "div-rev",
+            "strategy_id": "s-equity",
+            "reason": "corporate_action",
+            "lines": _dividend_lines(5000, reverse=True),
+        },
+        {
+            "entry_id": "j-div-rep",
+            "sequence": 5,
+            "idempotency_key": "div-rep",
+            "strategy_id": "s-equity",
+            "reason": "corporate_action",
+            "lines": _dividend_lines(replacement, reverse=False),
+        },
+    ])
+    fixture["corporate_actions"][0]["cash_minor"] = replacement
+    fixture["corrections"] = [{
+        "correction_id": "c-div",
+        "admits_fill_id": admit,
+        "reverses_entry_id": "j3",
+        "reason": "correct the dividend",
+        "instrument_id": "eq-aapl",
+        "cause": "corporate_action",
+    }]
+    fixture["reported"]["cash_available"] = 9904998 - 5000 + replacement
+    fixture["reported"]["attribution"][0]["realized_pnl_minor"] = replacement
+    return fixture
+
+
+def test_o3_dividend_correction_nets_the_reversal() -> None:
+    """A validated dividend mirror credits cash and the identity nets it."""
+    base = _dividend_correction()
+    assert _evaluate(base) == set()
+    journal = base["journal"]
+    for order in itertools.permutations(range(len(journal))):
+        variant = json.loads(json.dumps(base))
+        variant["journal"] = [journal[index] for index in order]
+        assert _evaluate(variant) == set()
+    unpaired = _dividend_correction()
+    unpaired["journal"] = [
+        entry for entry in unpaired["journal"] if entry["entry_id"] != "j-div-rep"
+    ]
+    assert "corporate_action_mismatch" in _evaluate(unpaired)
+    assert "corporate_action_mismatch" in _evaluate(_dividend_correction(admit="ghost"))
+    stale = _dividend_correction()
+    stale["corporate_actions"][0]["cash_minor"] = 5000
+    assert "corporate_action_mismatch" in _evaluate(stale)
+    extra = _dividend_correction()
+    extra["journal"].append({
+        "entry_id": "j-div-extra",
+        "sequence": 6,
+        "idempotency_key": "div-extra",
+        "strategy_id": "s-equity",
+        "reason": "corporate_action",
+        "lines": _dividend_lines(5000, reverse=True),
+    })
+    assert "corporate_action_mismatch" in _evaluate(extra)
+
+
+def _two_reserve_corrections(*, rep2_sequence: int = 6) -> dict:
+    """One order, two corrections. The earlier replacement precedes the second reversal."""
+    fixture = _two_order_book()
+    fixture["orders"] = [{
+        "order_id": "ord-yes",
+        "instrument_id": "ev-yes",
+        "family": "event",
+        "side": "buy",
+        "qty": 1,
+        "state": "filled",
+    }]
+    fixture["fills"] = [{
+        "fill_id": "f-yes",
+        "order_id": "ord-yes",
+        "instrument_id": "ev-yes",
+        "sequence": 7,
+        "qty": 1,
+        "price_minor": 1740000,
+        "fee_minor": 0,
+        "side": "buy",
+    }]
+    fixture["journal"] = [
+        _order_reserve_line("j-a", 1, "ord-yes", 800000),
+        _order_reserve_line("j-ar", 2, "ord-yes", 800000, release=True),
+        _order_reserve_line("j-a2", 3, "ord-yes", 830000),
+        _order_reserve_line("j-b", 4, "ord-yes", 900000),
+        _order_reserve_line("j-br", 5, "ord-yes", 900000, release=True),
+        _order_reserve_line("j-b2", rep2_sequence, "ord-yes", 910000),
+    ]
+    fixture["corrections"] = [
+        {
+            "correction_id": "c-a",
+            "admits_fill_id": "f-yes",
+            "reverses_entry_id": "j-a",
+            "reason": "correct the first reserve",
+            "instrument_id": "ev-yes",
+            "cause": "reserve_collateral",
+        },
+        {
+            "correction_id": "c-b",
+            "admits_fill_id": "f-yes",
+            "reverses_entry_id": "j-b",
+            "reason": "correct the second reserve",
+            "instrument_id": "ev-yes",
+            "cause": "reserve_collateral",
+        },
+    ]
+    fixture["reported"] = {
+        "cash_available": 9998260000,
+        "collateral_reserved": 1740000,
+        "positions": [{"instrument_id": "ev-yes", "qty": 1}],
+        "open_reservations": [{
+            "reservation_id": "r-yes",
+            "order_id": "ord-yes",
+            "instrument_id": "ev-yes",
+            "amount_minor": 1740000,
+        }],
+        "attribution": [],
+    }
+    return fixture
+
+
+def test_o3_correction_replacements_follow_sequence() -> None:
+    """The later replacement listed first still belongs to the later correction."""
+    base = _two_reserve_corrections()
+    # The finding's order: the later replacement is ahead of the earlier one.
+    later_first = json.loads(json.dumps(base))
+    by_id = {entry["entry_id"]: entry for entry in later_first["journal"]}
+    later_first["journal"] = [
+        by_id["j-a"],
+        by_id["j-ar"],
+        by_id["j-b"],
+        by_id["j-br"],
+        by_id["j-b2"],
+        by_id["j-a2"],
+    ]
+    assert _evaluate(later_first) == set()
+    journal = base["journal"]
+    corrections = base["corrections"]
+    for entry_order in itertools.permutations(range(len(journal))):
+        for rows in (corrections, list(reversed(corrections))):
+            variant = json.loads(json.dumps(base))
+            variant["journal"] = [journal[index] for index in entry_order]
+            variant["corrections"] = rows
+            assert _evaluate(variant) == set()
+    tied = _two_reserve_corrections(rep2_sequence=3)
+    assert "balance_mismatch" in _evaluate(tied)
