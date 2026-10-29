@@ -331,6 +331,7 @@ Columns: path, static test-function count, disposition, oracle, reason, and the 
 | `app/tests/test_invariants.py` | 12 | keep | `K-INV` | The nine invariants stay binding until a separately reviewed amendment; these files are their executable gates. | Invariant gates, wired from WP0 so every later WP lands behind them. |
 | `app/tests/test_linear_pr_sync.py` | 13 | port | `P-REHOME` | Guards .github/scripts/linear_pr_sync.py and its workflow wiring. | Unit tests for Linear PR-sync comments. |
 | `app/tests/test_numeric.py` | 5 | keep | `K-RISK` | Shared fail-closed Decimal parse contract used on the risk path. | CSL-327 — pin the shared fail-closed Decimal parse contract. |
+| `app/tests/test_o4_strategy_qualification.py` | 10 | keep | `K-REGISTRY` | Provider-free CSL-216 O4 candidate checker. It guards docs/replacement/outcomes/O4 and must stay so linux-gates keeps running the negative controls. | CSL-216 O4 strategy qualification packet. |
 | `app/tests/test_o7_operator_contract.py` | 69 | keep | `K-REGISTRY` | WP4 (PR #283) pins this file at its current path with a floor. | Provider-free checks for the CSL-219 O7 candidate. |
 | `app/tests/test_replacement_program_registry.py` | 8 | keep | `K-REGISTRY` | WP4 (PR #283) pins this file at its current path with a floor; deleting it must turn linux-gates red. | (no module docstring) |
 | `app/tests/test_rw22_autoloop.py` | 3 | keep | `K-QUANT` | Auto-loop fill-evidence and accounting refusal (escalate-list path). | RW-22: full venue sequences must preserve fill evidence and refuse invalid accounting. |
