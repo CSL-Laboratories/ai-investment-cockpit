@@ -51,6 +51,8 @@ FAILURES = (
     "O4 negative control FAIL hypothesis_costs:",
     "O4 negative control FAIL hypothesis_costs:",
     "O4 negative control FAIL hypothesis_costs:",
+    "O4 negative control FAIL hypothesis_costs:",
+    "O4 negative control FAIL hypothesis_costs:",
 )
 CHECKED = (
     "O4 candidate packet checked at maturity researched; "
@@ -254,6 +256,8 @@ def test_o4_accepts_equivalent_net_cost_wording() -> None:
         "model, venue fees, spread/slippage, funding/collateral, and tax/accounting).",
         "Beats cash net of all eight retained costs (tax/accounting, funding/collateral, "
         "spread/slippage, venue-fee, model, data, latency, and transaction).",
+        "Beats cash without look-ahead bias, net of transaction, latency, data, "
+        "model, venue fees, spread/slippage, funding/collateral, and tax/accounting.",
     )
     for hypothesis in equivalents:
         candidate = deepcopy(packet)
@@ -276,6 +280,7 @@ _EIGHT_COSTS = (
     "transaction, latency, data, model, venue fees, spread/slippage, "
     "funding/collateral, and tax/accounting"
 )
+_NET_CLAUSE = f"Beats cash net of {_EIGHT_COSTS}."
 SPLIT_NET_CASES = (
     (
         "hypothesis-net-partial.json",
@@ -295,12 +300,29 @@ SPLIT_NET_CASES = (
         f"Beats cash net of {_EIGHT_COSTS}, with data costs set aside.",
     ),
 )
+VERB_EXCLUSION_CASES = (
+    (
+        "hypothesis-excludes-venue-fees.json",
+        _NET_CLAUSE + " The strategy excludes venue fees.",
+    ),
+    (
+        "hypothesis-ignores-model.json",
+        _NET_CLAUSE + " It ignores model costs.",
+    ),
+)
+_VERB_INFLECTIONS = (
+    _NET_CLAUSE + " The strategy will exclude latency.",
+    _NET_CLAUSE + " It is excluding data.",
+    _NET_CLAUSE + " It ignored model costs.",
+    _NET_CLAUSE + " It omits data costs.",
+    _NET_CLAUSE + " It is omitting data.",
+)
 
 
 def test_o4_rejects_a_net_claim_split_from_its_costs() -> None:
     validate = _load_o4_validate()
     packet = json.loads((O4 / "fixtures/candidate-packet.json").read_text(encoding="utf-8"))
-    for filename, text in SPLIT_NET_CASES:
+    for filename, text in (*SPLIT_NET_CASES, *VERB_EXCLUSION_CASES):
         candidate = deepcopy(packet)
         candidate["experiment"]["hypothesis"] = text
         candidate["strategy_contract"]["hypothesis"] = text
@@ -309,6 +331,12 @@ def test_o4_rejects_a_net_claim_split_from_its_costs() -> None:
         frozen = json.loads((O4 / "fixtures" / "negative" / filename).read_text(encoding="utf-8"))
         assert frozen["experiment"]["hypothesis"] == text
         assert frozen["strategy_contract"]["hypothesis"] == text
+    for text in _VERB_INFLECTIONS:
+        candidate = deepcopy(packet)
+        candidate["experiment"]["hypothesis"] = text
+        candidate["strategy_contract"]["hypothesis"] = text
+        found = validate.assess(candidate)
+        assert [item.code for item in found] == ["hypothesis_costs"]
 
 
 def test_o4_rejects_measured_costs_on_unrun_experiment() -> None:

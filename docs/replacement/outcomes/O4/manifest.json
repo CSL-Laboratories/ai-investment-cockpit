@@ -5,7 +5,7 @@
   "files": [
     {
       "path": "PROTOCOL.md",
-      "sha256": "94411f4ae0cb07cac51dc3079a150f69b19bde8fb39850604feb437a51157e4b"
+      "sha256": "ef3e69ad62829d3296813d36371cc6722f28479d9efe419383beab88dd8d2ddd"
     },
     {
       "path": "fixtures/candidate-packet.json",
@@ -26,6 +26,14 @@
     {
       "path": "fixtures/negative/hypothesis-cost-excluded.json",
       "sha256": "7d5b41bb3d45ceb588466ce6c947d8924c862c617c2808a67871981e78a3231d"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-excludes-venue-fees.json",
+      "sha256": "fb94a59e530c91de960de4f758d5fe1d369f5b737f94db45a30786fcaa176a7e"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-ignores-model.json",
+      "sha256": "4d01b1431b1052779aa7d6d43b7153fa00579de6b3268d2027755467ba8d38b7"
     },
     {
       "path": "fixtures/negative/hypothesis-net-of-nothing.json",
@@ -121,7 +129,7 @@
     },
     {
       "path": "validate.py",
-      "sha256": "e12c5edc28ce548d1b802a21a18588eb1107da2fba4c472f6ee1a9d9b1cfbd48"
+      "sha256": "d73e9e260a5ffcc5d89b2ab9d9a6bfa9d366ffa6246091ad9edd10d9313ec492"
     }
   ],
   "linear_issue": "CSL-216",
@@ -202,6 +210,14 @@
     {
       "expect": "hypothesis_costs",
       "path": "fixtures/negative/hypothesis-set-aside.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-excludes-venue-fees.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-ignores-model.json"
     }
   ],
   "outcome": "O4",

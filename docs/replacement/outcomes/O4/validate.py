@@ -146,6 +146,8 @@ CONTROL_ORDER = (
     "hypothesis_costs",
     "hypothesis_costs",
     "hypothesis_costs",
+    "hypothesis_costs",
+    "hypothesis_costs",
 )
 REQUIRED_STAGE_GATES = {
     "replay": {
@@ -434,7 +436,11 @@ _NEGATED_EXCLUSIONS = (
     "nothing is omitted",
     "not ignored",
 )
-# A marker that drops the next named cost ("without venue fees", "except data").
+# A marker drops only the cost phrase it governs: the words after it, up to
+# the next net-of claim. "without look-ahead bias, net of ..." governs
+# "look-ahead bias", not the costs named after "net of". Finite verbs,
+# gerunds, and "except" / "without" are forward markers. Past participles
+# ("are excluded") stay predicates because their subject comes first.
 _FORWARD_MARKERS = (
     "does not include",
     "do not include",
@@ -449,14 +455,19 @@ _FORWARD_MARKERS = (
     "leave out",
     "left out",
     "excluding",
+    "excludes",
+    "exclude",
     "except",
     "without",
     "omitting",
+    "omits",
+    "omit",
     "ignoring",
+    "ignores",
+    "ignore",
 )
 # Past-participle predicates ("are excluded"). Gerunds ("excluding") stay forward markers.
 _PREDICATE_TOKENS = {"excluded": "exclud", "omitted": "omitt", "ignored": "ignor"}
-_FORWARD_WINDOW = 8
 # Exclusion wording that is not one of the markers above. It still drops the
 # net-of claim when it shares a clause with a named cost ("set aside",
 # "reported separately").
@@ -544,11 +555,27 @@ def _marker_label(marker: str) -> str:
     head = marker.split()[0]
     if head.startswith("exclud"):
         return "exclud"
-    if head.startswith("omitt"):
+    if head.startswith("omit"):
         return "omitt"
     if head.startswith("ignor"):
         return "ignor"
     return marker
+
+
+def _net_claim_at(tokens: list[str], index: int) -> bool:
+    rest = " ".join(tokens[index:])
+    if any(rest == phrase or rest.startswith(phrase + " ") for phrase in _NET_PHRASES):
+        return True
+    # "after" plus the eight costs is the other accepted net claim.
+    return tokens[index] == "after"
+
+
+def _governed_tokens(tokens: list[str]) -> list[str]:
+    """Words the marker governs, stopping at the next net-of claim."""
+    for index in range(len(tokens)):
+        if _net_claim_at(tokens, index):
+            return tokens[:index]
+    return tokens
 
 
 def _forward_excluded(tokens: list[str]) -> list[tuple[str, str]]:
@@ -567,8 +594,8 @@ def _forward_excluded(tokens: list[str]) -> list[tuple[str, str]]:
             index += 1
             continue
         width = len(matched.split())
-        window = scanned[index + width : index + width + _FORWARD_WINDOW]
-        for key, _start, _end in _cost_spans(window):
+        governed = _governed_tokens(scanned[index + width :])
+        for key, _start, _end in _cost_spans(governed):
             found.append((key, _marker_label(matched)))
         index += width
     return found
