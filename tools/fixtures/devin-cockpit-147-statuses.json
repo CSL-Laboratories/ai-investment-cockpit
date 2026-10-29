@@ -1,0 +1,26 @@
+[
+  {
+    "id": 56550390641,
+    "context": "Devin Review",
+    "state": "success",
+    "url": "https://api.github.com/repos/CSL-Laboratories/ai-investment-cockpit/statuses/c2708f2248a1e04bebf511c19007841b0aa18037",
+    "created_at": "2026-10-16T18:22:49Z",
+    "creator": {
+      "id": 158243242,
+      "login": "devin-ai-integration[bot]",
+      "type": "Bot"
+    }
+  },
+  {
+    "id": 56550267617,
+    "context": "Devin Review",
+    "state": "pending",
+    "url": "https://api.github.com/repos/CSL-Laboratories/ai-investment-cockpit/statuses/c2708f2248a1e04bebf511c19007841b0aa18037",
+    "created_at": "2026-10-16T18:21:17Z",
+    "creator": {
+      "id": 158243242,
+      "login": "devin-ai-integration[bot]",
+      "type": "Bot"
+    }
+  }
+]

@@ -19,7 +19,7 @@ from __future__ import annotations
 import time
 from contextlib import nullcontext
 from datetime import date, datetime, timedelta, timezone
-from typing import Sequence
+from typing import Literal, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
@@ -190,21 +190,30 @@ def _net_spent(entries: Sequence[AuditEntry], day: date) -> int:
     )
 
 
-def _latest_unreleased(
+def _unreleased_target(
     entries: Sequence[AuditEntry], *, day: date, event_id: str,
+    entry_id: str | None,
 ) -> AuditEntry | None:
+    """The consumption a release may cancel.
+
+    Only the id ``try_consume`` returned. Omitting it releases nothing:
+    ``state.lock`` is process-local, so the latest unreleased row can belong
+    to another process. A mismatch does not fall through to another row.
+    """
+    if not isinstance(entry_id, str) or not entry_id:
+        return None
     released = _released_consumption_ids(entries)
     day_s = day.isoformat()
-    matches = [
-        entry for entry in entries
-        if entry.event_type == EVENT_DEEP_ESCALATION
-        and entry.id not in released
-        and (entry.payload or {}).get("date") == day_s
-        and (entry.payload or {}).get("event_id") == event_id
-    ]
-    if not matches:
-        return None
-    return max(matches, key=lambda entry: entry.seq)
+    for entry in entries:
+        if entry.id != entry_id or entry.event_type != EVENT_DEEP_ESCALATION:
+            continue
+        if entry.id in released:
+            return None
+        payload = entry.payload or {}
+        if payload.get("event_id") != event_id or payload.get("date") != day_s:
+            return None
+        return entry
+    return None
 
 
 class DeepBudget:
@@ -263,9 +272,12 @@ class DeepBudget:
             return self._remaining_in(session, day)
 
     def try_consume(self, *, day: date, event_id: str, symbol: str, reason: str,
-                    corroborated: bool) -> bool:
+                    corroborated: bool) -> str | Literal[False]:
         """Atomically consume one unit: under ``state.lock``, re-check remaining, then
-        append the EVENT_DEEP_ESCALATION ledger entry. True on success.
+        append the EVENT_DEEP_ESCALATION ledger entry. The new entry id on success.
+
+        A refusal (uncorroborated, exhausted, or an unbound event type) returns
+        False and appends nothing. Callers treat a false return as a deferral.
 
         SEC-21 (round-2) defense-in-depth backstop: an UNcorroborated consumption is
         REFUSED (return False, append nothing) so no caller can spend deep budget without
@@ -303,8 +315,9 @@ class DeepBudget:
                                      "symbol": symbol, "reason": reason,
                                      "corroborated": bool(corroborated)},
                         )
+                        consumed_id = entry.id
                     self._state.audit.observe_committed(entry)
-                return True
+                return consumed_id
             except AuditIntegrityError as exc:
                 raise BudgetIntegrityError(str(exc)) from exc
             except (IntegrityError, OperationalError):
@@ -313,27 +326,37 @@ class DeepBudget:
                 time.sleep(0.02 * attempt)
         raise RuntimeError("deep budget: exhausted transaction retries")
 
-    def release(self, *, day: date, event_id: str, reason: str) -> bool:
+    def release(self, *, day: date, event_id: str, reason: str,
+                entry_id: str | None = None) -> bool:
         """Release one unused same-day reservation for ``event_id``.
 
-        ``try_consume`` records the spend before the proposal handler runs. A
-        ``context_limited`` outcome made no model call, so the reservation is
-        unused. The ledger is append-only: this appends a signed release that
-        nets that one row out of ``spent``. A second release of the same row,
-        or a release for another event or day, appends nothing and returns
-        False — it cannot mint a unit. Chain tamper raises ``BudgetIntegrityError``.
+        ``try_consume`` records the spend before the proposal handler runs and
+        returns that row's id. ``entry_id`` is required. ``state.lock`` is
+        process-local, so falling back to the latest unreleased row can cancel
+        a reservation this caller does not own. Omitting the id appends nothing
+        and returns False.
+
+        A ``context_limited`` outcome that never dispatched made no model call,
+        so the reservation is unused. The ledger is append-only: this appends a
+        signed release that nets that one row out of ``spent``. A second release
+        of the same row, a release for another event or day, or an unknown id
+        appends nothing and returns False — it cannot mint a unit. Chain tamper
+        raises ``BudgetIntegrityError``.
         """
         if not isinstance(event_id, str) or not event_id:
             return False
         if not isinstance(reason, str) or not reason:
+            return False
+        if not isinstance(entry_id, str) or not entry_id:
             return False
         for attempt in range(1, 7):
             try:
                 with self._state.lock:
                     with self._state.session_factory() as session, session.begin():
                         _assert_budget_chain_ok(self._state, session)
-                        target = _latest_unreleased(
-                            self._budget_entries(session), day=day, event_id=event_id)
+                        target = _unreleased_target(
+                            self._budget_entries(session), day=day, event_id=event_id,
+                            entry_id=entry_id)
                         if target is None:
                             return False
                         entry = self._state.audit.append_in(

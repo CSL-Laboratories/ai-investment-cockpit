@@ -20,6 +20,34 @@ empirical and release gates remain pending. Acceptance does not change current r
 invariants, credentials, order routing, or live-trading controls. A PR, merge, test
 or contract decision is not empirical acceptance.
 
+Research may use any deep-research source the team has, such as Parallel,
+Exa, Claude Deep Research, Open Deep Research, ChatGPT Deep Research or the
+web. Each run records its tool, its run id and its cost (or `unknown` plus a
+reason) in its csl-research record. All research output (notes, briefs,
+findings, source tables, competitor or frontier writeups, research registers
+or indexes) goes to
+[CSL-Laboratories/csl-research](https://github.com/CSL-Laboratories/csl-research)
+as `submissions/<record_id>/`, through a PR in that repo, with a digest on the
+Linear issue. Never commit research content to this repo; specs, amendments and
+code only link to the vault record (repo, 40-hex commit, path, claim,
+limitations). If csl-research is not accessible, stop and post a blocker on the
+Linear issue; do not fall back to this repo. Every new non-public doc goes to
+csl-research through a PR there; this repo only links to it.
+Gate and operational evidence that code or a runbook in this repo already reads
+stays in `docs/evidence/` until
+[CSL-536](https://linear.app/csl-laboratories/issue/CSL-536). Contract
+fixtures under `docs/replacement/outcomes/**` stay. Existing files stay until
+[CSL-536](https://linear.app/csl-laboratories/issue/CSL-536).
+`docs/research/**` is **legacy** (no new files). Navigation:
+[CSL research index](https://github.com/CSL-Laboratories/csl-research/blob/main/INDEX.md),
+[Cockpit context](https://github.com/CSL-Laboratories/csl-research/blob/main/knowledge/cockpit/README.md)
+and [research-to-delivery guide](https://github.com/CSL-Laboratories/csl-research/blob/main/README.md#connecting-research-and-delivery).
+These views are dated explanatory navigation; linked submissions are candidate
+evidence. Linear remains the live source for ownership, status and admission.
+Product contracts and authenticated human decisions retain their authority;
+user-facing and revision-dependent operational docs and contracts stay in this
+repository.
+
 Reconciled 2026-10-15 against `origin/main` `4a4308d`, using the same commit and
 UTC merge-date rule as the REGISTER and PLAN status pass (CSL-61,
 [PR #121](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/121),
@@ -32,8 +60,9 @@ witness, selection, or pre-live gate, and it does not claim PASS.
 
 ## Cursor Cloud process rebase — RW-33 merged 2026-09-15
 
-[RW-33 rebase](research/agent-swarm-rebase-2026-09-14.md) replaces current Devin
-instructions with Cursor Cloud/native work and qualification-gated CLI routes.
+[RW-33 rebase](research/agent-swarm-rebase-2026-09-14.md) is **legacy and frozen**.
+New research output goes to [CSL-Laboratories/csl-research](https://github.com/CSL-Laboratories/csl-research).
+It replaced then-current Devin instructions with Cursor Cloud/native work and qualification-gated CLI routes.
 It merged in [PR #96](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/96)
 (`cfb4f7c`) on 2026-09-15.
 [Start the next Cloud task here](research/cursor-cloud-rdt-handoff-2026-09-14.md)
@@ -324,6 +353,13 @@ defects got fixed twice on two branches.
 | [[low-priv-agent-account]] | The SEC-05 low-privilege account |
 
 ## Reference — cited, not planned from
+
+Existing `docs/research/**` paths below are **legacy** (no new files). Link new
+research to
+[CSL-Laboratories/csl-research](https://github.com/CSL-Laboratories/csl-research)
+`submissions/<record_id>/`. Existing `docs/evidence/**` files stay until
+[CSL-536](https://linear.app/csl-laboratories/issue/CSL-536). Contract fixtures
+under `docs/replacement/outcomes/**` stay.
 
 | Doc | Why it is still load-bearing |
 |---|---|

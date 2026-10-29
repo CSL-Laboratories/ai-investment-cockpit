@@ -8,6 +8,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import os
+import re
 import subprocess
 import sys
 import unittest
@@ -15,6 +16,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 GATE_PATH = ROOT / "scripts" / "ci" / "codex_gate.py"
@@ -1461,22 +1464,110 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("<!-- codex-gate:", source)
         self.assertIn("CODEX-GATE:", source)
 
-    def test_review_job_if_is_codex_only(self) -> None:
-        self.assertIn("chatgpt-codex-connector[bot]", self.text)
-        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", self.text)
-        self.assertIn("group: codex-gate", self.text)
-        self.assertNotIn("github.run_id", self.text)
-        self.assertIn("github.event.repository.default_branch", self.text)
-        self.assertIn("persist-credentials: false", self.text)
-        self.assertIn("codex_gate.py is not on the default branch yet", self.text)
-        self.assertIn("event-paths", self.text)
-        self.assertIn("never checks out PR or fork code", self.text)
-        # Tests may check out same-repo PR code; they never receive the PAT.
-        event_paths_job = self.text.split("\n  event-paths:")[1]
-        self.assertIn(
-            "github.event.pull_request.head.repo.full_name == github.repository",
-            event_paths_job.split("runs-on:")[0],
-        )
+    def test_candidate_coordinator_uses_shared_writer_lock_and_trusted_policy(self) -> None:
+        doc = yaml.load(self.text, Loader=yaml.BaseLoader)
+        self.assertEqual(doc['on']['pull_request_review']['types'], ['submitted'])
+        # No repo-wide lock: the read-only scan of PR B must not wait behind a
+        # gate of PR A that is queued on a busy Claude writer lock. The per-PR
+        # gate lock below is the only serialization of candidate side effects.
+        self.assertNotIn('concurrency', doc)
+        scan, gate, tests = (doc['jobs'][name] for name in ('scan', 'gate', 'event-paths'))
+        self.assertNotIn('concurrency', scan)
+        self.assertNotIn('concurrency', tests)
+        self.assertEqual(gate['needs'], 'scan')
+        self.assertEqual(gate['concurrency'], {'group': 'claude-${{ matrix.pr }}',
+                                               'queue': 'max', 'cancel-in-progress': 'false'})
+        # Trusted policy identity flows from the gate job's own checkout.
+        policy = next(s for s in gate['steps'] if s.get('id') == 'policy')
+        self.assertEqual(policy['if'], "steps.pat.outputs.skip != 'true'")
+        self.assertEqual(policy['env'], {'DEFAULT_BRANCH': '${{ github.event.repository.default_branch }}'})
+        self.assertIn('git rev-parse HEAD', policy['run'])
+        names = [s.get('id') or s.get('name') or s.get('uses') for s in gate['steps']]
+        self.assertLess(names.index('actions/checkout@v4'), names.index('policy'))
+        self.assertLess(names.index('policy'), names.index('Run Codex gate'))
+        self.assertEqual(gate['strategy']['matrix']['pr'],
+                         "${{ fromJSON(needs.scan.outputs.prs || '[]') }}")
+        # Human review changes must wake reconciliation, including hold release.
+        # Exact reviewer identity is authenticated by the trusted helper.
+        self.assertEqual(' '.join(scan['if'].split()),
+                         "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || "
+                         'github.event.pull_request.head.repo.full_name == github.repository')
+        self.assertEqual(scan.get('permissions', doc['permissions']),
+                         {'contents': 'read', 'pull-requests': 'read', 'issues': 'read'})
+        self.assertEqual(scan['steps'][1]['env'],
+                         {'GH_TOKEN': '${{ github.token }}', 'CANDIDATE_SCAN': '${{ vars.CANDIDATE_COORDINATOR }}'})
+        self.assertEqual(gate['permissions'],
+                         {'contents': 'read', 'pull-requests': 'read', 'issues': 'write'})
+        for job in (scan, gate):
+            checkouts = [s for s in job['steps'] if s.get('uses') == 'actions/checkout@v4']
+            self.assertEqual(len(checkouts), 1)
+            self.assertEqual(checkouts[0]['with']['ref'], '${{ github.event.repository.default_branch }}')
+            self.assertEqual(checkouts[0]['with']['persist-credentials'], 'false')
+        execute = next(s for s in gate['steps'] if s.get('name') == 'Run Codex gate')
+        self.assertEqual(execute['if'], "steps.pat.outputs.skip != 'true'")
+        self.assertEqual(execute['env']['CODEX_CANDIDATE_PR'], '${{ matrix.pr }}')
+        self.assertEqual(execute['env']['CODEX_POLICY_SHA'], '${{ steps.policy.outputs.sha }}')
+        self.assertEqual(execute['env']['CODEX_POLICY_BRANCH'], '${{ steps.policy.outputs.branch }}')
+        self.assertEqual(execute['env']['CODEX_TRIGGER_PAT'], '${{ secrets.CODEX_TRIGGER_PAT }}')
+        self.assertEqual(execute['env']['GH_TOKEN'], '${{ github.token }}')
+        # Same-repository tests may load PR code, but have no privileged secrets.
+        self.assertEqual(tests['permissions'], {'contents': 'read'})
+        self.assertEqual(' '.join(tests['if'].split()),
+                         "github.event_name == 'pull_request' && "
+                         'github.event.pull_request.head.repo.full_name == github.repository')
+        self.assertNotIn('secrets.', yaml.dump(tests))
+
+    def test_legacy_route_runs_only_when_coordinator_is_off(self) -> None:
+        doc = yaml.load(self.text, Loader=yaml.BaseLoader)
+        legacy = doc['jobs']['legacy']
+        condition = ' '.join(legacy['if'].split())
+        self.assertTrue(condition.startswith("vars.CANDIDATE_COORDINATOR != 'true' && ("), condition)
+        # Every clause of main's pre-CSL-259 gate condition, unchanged.
+        for clause in ("github.event_name == 'schedule'",
+                       "github.event_name == 'workflow_dispatch'",
+                       "github.event_name == 'pull_request' &&",
+                       ("github.event_name == 'pull_request_review' && "
+                        "github.event.review.user.login == 'chatgpt-codex-connector[bot]' && "
+                        "github.event.pull_request.head.repo.full_name == github.repository")):
+            self.assertIn(clause, condition)
+        self.assertEqual(condition.count('github.event.pull_request.head.repo.full_name == github.repository'), 2)
+        # Only main's four pull_request actions, on non-draft PRs, reach the legacy handlers.
+        self.assertIn("github.event.pull_request.draft == false", legacy['if'])
+        self.assertIn('contains(fromJSON(\'["opened","synchronize","reopened","ready_for_review"]\'), '
+                      'github.event.action)', condition)
+        self.assertNotIn('needs', legacy)
+        self.assertEqual(legacy['concurrency'], {'group': 'codex-gate', 'cancel-in-progress': 'false'})
+        self.assertEqual(legacy['permissions'], {'contents': 'read', 'pull-requests': 'read', 'issues': 'write'})
+        self.assertEqual(legacy['runs-on'], 'ubuntu-latest')
+        self.assertEqual(legacy['timeout-minutes'], '10')
+        self.assertEqual([s.get('name') or s.get('uses') for s in legacy['steps']],
+                         ['Check trigger PAT', 'actions/checkout@v4', 'Run Codex gate'])
+        checkout = legacy['steps'][1]
+        self.assertEqual(checkout['if'], "steps.pat.outputs.skip != 'true'")
+        self.assertEqual(checkout['with'], {'ref': '${{ github.event.repository.default_branch }}',
+                                            'persist-credentials': 'false', 'fetch-depth': '1'})
+        execute = legacy['steps'][2]
+        self.assertEqual(execute['if'], "steps.pat.outputs.skip != 'true'")
+        self.assertEqual(execute['env'], {
+            'GH_TOKEN': '${{ github.token }}', 'CODEX_TRIGGER_PAT': '${{ secrets.CODEX_TRIGGER_PAT }}',
+            'LINEAR_API_KEY': '${{ secrets.LINEAR_API_KEY }}', 'GITHUB_REPOSITORY': '${{ github.repository }}',
+            'GITHUB_EVENT_NAME': '${{ github.event_name }}', 'GITHUB_EVENT_PATH': '${{ github.event_path }}'})
+        self.assertNotIn('CODEX_CANDIDATE_PR', yaml.dump(legacy))
+        self.assertIn('python3 -X utf8 -B scripts/ci/codex_gate.py', execute['run'])
+
+    def test_coordinator_route_runs_only_when_coordinator_is_on(self) -> None:
+        doc = yaml.load(self.text, Loader=yaml.BaseLoader)
+        gate, scan = doc['jobs']['gate'], doc['jobs']['scan']
+        self.assertEqual(' '.join(gate['if'].split()),
+                         "vars.CANDIDATE_COORDINATOR == 'true' && needs.scan.outputs.prs != '[]' && "
+                         "needs.scan.outputs.prs != ''")
+        self.assertEqual(scan['steps'][1]['env']['CANDIDATE_SCAN'], '${{ vars.CANDIDATE_COORDINATOR }}')
+
+    def test_only_gate_jobs_see_trigger_pat(self) -> None:
+        doc = yaml.load(self.text, Loader=yaml.BaseLoader)
+        with_pat = {name for name, job in doc['jobs'].items() if 'CODEX_TRIGGER_PAT' in yaml.dump(job)}
+        self.assertEqual(with_pat, {'legacy', 'gate'})
+        self.assertNotIn('CODEX_TRIGGER_PAT', yaml.dump({k: v for k, v in doc.items() if k != 'jobs'}))
 
     def test_claude_dispatch_triggers(self) -> None:
         self.assertIn("repository_dispatch:", self.claude)
@@ -1484,13 +1575,24 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("job:", self.claude)
         self.assertIn("devin-review-fix", self.claude)
 
-    def test_windows_runner_is_2vcpu(self) -> None:
-        self.assertIn("blacksmith-2vcpu-windows-2025", self.ci)
-        self.assertNotIn("blacksmith-4vcpu-windows-2025", self.ci)
-        self.assertIn("blacksmith-2vcpu-windows-2025", self.rust)
-        self.assertNotIn("blacksmith-4vcpu-windows-2025", self.rust)
-        self.assertIn("blacksmith-2vcpu-windows-2025", self.actionlint)
-        self.assertNotIn("blacksmith-4vcpu-windows-2025", self.actionlint)
+    def test_test_jobs_use_free_github_hosted_runners(self) -> None:
+        # CSL-408: no job may run on a billed Blacksmith runner or use a Blacksmith
+        # action. Comments are stripped (they name the superseded migration branch),
+        # and the blacksmith-sh[bot] login in bot allow-lists is not a runner.
+        configs = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
+        configs += [ROOT / ".github" / "actions" / "run-gates" / "action.yml",
+                    ROOT / ".github" / "actionlint.yaml"]
+        self.assertGreater(len(configs), 5)
+        for path in configs:
+            code = "\n".join(line for line in path.read_text(encoding="utf-8").splitlines()
+                             if not line.lstrip().startswith("#"))
+            hits = re.findall(r"(?i)blacksmith-(?!sh\[bot\])\S*|useblacksmith/\S*", code)
+            with self.subTest(path=path.name):
+                self.assertEqual(hits, [])
+        self.assertIn("runs-on: windows-2025", self.ci)
+        self.assertIn('"runner": "windows-2025"', self.rust)
+        self.assertIn('"runner": "ubuntu-24.04"', self.rust)
+        self.assertNotIn("self-hosted-runner", self.actionlint)
 
     def test_rust_cache_and_label_skip(self) -> None:
         self.assertIn("Swatinem/rust-cache@v2", self.rust)
@@ -1507,11 +1609,11 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertNotIn("labeled, unlabeled", rust_on)
         self.assertIn("github.event.pull_request.draft != true", self.ci)
         self.assertIn("&& 'draft'", self.ci)
-        self.assertNotIn("&& 'label'", self.ci)
+        self.assertIn("format('label-{0}-{1}', inputs.pr_head_sha", self.ci)
         gates = self.ci.split("\n  linux-gates:\n", 1)[1].split("\n  windows:\n", 1)[0]
         header = gates.split("steps:", 1)[0]
         self.assertIn("name: linux-gates", self.ci)
-        self.assertIn("always() && !cancelled() && github.event_name != 'schedule'", header)
+        self.assertIn("always() && github.event_name != 'schedule'", header)
         self.assertNotIn("needs.filter.result != 'skipped'", header)
         self.assertIn('FILTER_RESULT" != "success"', gates)
         self.assertNotIn("required check passes.", self.ci)
@@ -1537,16 +1639,16 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("github.event.pull_request.draft != true", self.rust)
         self.assertIn("ready_for_review", self.rust)
         self.assertIn("&& 'draft'", self.rust)
-        self.assertNotIn("&& 'label'", self.rust)
+        self.assertIn("format('label-{0}-{1}', inputs.pr_head_sha", self.rust)
         linux = self.ci.split("\n  linux:\n", 1)[1].split("\n  linux-gates:\n", 1)[0]
-        self.assertIn("blacksmith-2vcpu-ubuntu-2404", linux)
+        self.assertIn("runs-on: ubuntu-24.04", linux)
         claude_runners = [
             line.strip()
             for line in self.claude.splitlines()
             if line.strip().startswith("runs-on:")
         ]
         self.assertTrue(claude_runners)
-        self.assertTrue(all(r == "runs-on: ubuntu-latest" for r in claude_runners))
+        self.assertTrue(all(r == "runs-on: ubuntu-24.04" for r in claude_runners))
         scan = (ROOT / ".github" / "workflows" / "conflict-scan.yml").read_text(encoding="utf-8")
         scan_runners = [
             line.strip()
@@ -1577,9 +1679,86 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("CODEX-GATE: READY", self.agents)
         self.assertIn("CODEX-GATE: MEDIATE", self.agents)
         self.assertIn("When you are the assignee", self.agents)
-        self.assertIn("Parallel Task API deep research", self.agents)
-        self.assertIn("in addition to Search/Extract", self.agents)
-        self.assertIn("Grok Bots do not research or resolve decision issues", self.agents)
+        self.assertIn("## Research", self.agents)
+        self.assertIn("post a cited brief", self.agents)
+        self.assertIn("Grok Bot, preparing research for <owner>", self.agents)
+        self.assertIn("Only the designated human decision-maker", self.agents)
+        self.assertIn("never marks the issue decided", self.agents)
+        self.assertIn("No specific tool is required", self.agents)
+        self.assertIn(
+            "any deep-research source the team has", self.agents
+        )
+        self.assertIn("Open Deep Research", self.agents)
+        self.assertIn("Claude Deep Research", self.agents)
+        self.assertIn("ChatGPT Deep Research", self.agents)
+        self.assertIn(
+            "Each run records its tool, its run id and its cost", self.agents
+        )
+        self.assertIn("no-pay-per-token-API", self.agents)
+        self.assertIn("This section adds no spend ceiling", self.agents)
+        self.assertIn(
+            "Record which source or tool produced each piece of evidence",
+            self.agents,
+        )
+        self.assertIn("three-founder", self.agents)
+        self.assertIn("a digest on the Linear issue", self.agents)
+        self.assertIn("submissions/<record_id>/", self.agents)
+        self.assertIn("tools/check_submission.py", self.agents)
+        self.assertIn("Every new non-public doc", self.agents)
+        self.assertIn("CSL-536", self.agents)
+        self.assertIn("docs/research/**` is legacy", self.agents)
+        self.assertIn("no separate admission is needed", self.agents)
+        self.assertIn(
+            "If csl-research is not accessible, stop and post a blocker",
+            self.agents,
+        )
+        self.assertNotIn(
+            "docs/evidence/**` are legacy and frozen", self.agents
+        )
+        self.assertNotIn(
+            "This repository takes contracts, specs, fixtures and runbooks only",
+            self.agents,
+        )
+        self.assertIn("docs/replacement/outcomes/**", self.agents)
+        carve_out = (
+            "Gate and operational evidence that code or a runbook in this repo already reads"
+        )
+        runbook = (ROOT / "docs" / "runbooks" / "w25-worm-audit-witness.md").read_text(
+            encoding="utf-8"
+        )
+        screens = (ROOT / "app" / "feasibility" / "screens.py").read_text(
+            encoding="utf-8"
+        )
+        writers_use_docs_evidence = (
+            "docs/evidence/" in runbook and "docs/evidence/" in screens
+        )
+        agents_allows_docs_evidence = (
+            carve_out in self.agents and "docs/evidence/" in self.agents
+        )
+        self.assertEqual(
+            writers_use_docs_evidence,
+            agents_allows_docs_evidence,
+            "W-25 / feasibility docs/evidence/ writers must match the AGENTS.md carve-out",
+        )
+        self.assertIn(
+            "this cockpit's research/dev swarm dispatch", self.agents
+        )
+        self.assertNotIn("solo-developer", self.agents)
+        self.assertNotIn(
+            "Current process: `docs/research/agent-swarm-rebase-2026-09-14.md`",
+            self.agents,
+        )
+        self.assertNotIn(
+            "in the issue or the evidence so the research can be checked",
+            self.agents,
+        )
+        self.assertNotIn(
+            "Do not assume published records, a record schema or a validator exist",
+            self.agents,
+        )
+        self.assertNotIn(
+            "Grok Bots do not research or resolve decision issues", self.agents
+        )
         self.assertIn("neither a Devin substitute", self.agents)
         self.assertIn("Human-only findings need a human `@claude` mention", self.agents)
         self.assertIn("A founder may have their own bot", self.agents)
@@ -1591,19 +1770,91 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("needs-decision", self.agents)
         self.assertIn("do **not** add a `CODEX-GATE:` line", self.agents)
         self.assertIn("aggregator is GitHub-hosted", self.agents)
-        self.assertIn("Python 3.11+3.12 matrix it wraps runs on Blacksmith", self.agents)
+        self.assertIn("Python 3.11+3.12 matrix it wraps runs on GitHub-hosted `ubuntu-24.04`", self.agents)
         self.assertIn("fails closed until `ready_for_review`", self.agents)
         self.assertIn("ci-label-retrigger.yml", self.agents)
         claude = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
         self.assertIn("AGENTS.md", claude)
-        self.assertIn("Grok Bots", claude)
+        self.assertIn("Grok Bot, preparing research for <owner>", claude)
+        self.assertIn("submissions/<record_id>/", claude)
+        self.assertIn("Every new", claude)
+        self.assertIn("non-public doc", claude)
+        self.assertIn("CSL-536", claude)
+        self.assertNotIn(
+            "docs/evidence/**` are legacy and frozen", claude
+        )
+        self.assertIn(carve_out, claude)
+        self.assertIn("docs/replacement/outcomes/**", claude)
+        self.assertIn("docs/evidence/", claude)
+        self.assertIn("three-founder", claude)
+        self.assertIn("CSL-511", claude)
+        self.assertIn("this cockpit's", claude)
+        self.assertIn("Devin may still post research briefs", claude)
+        self.assertNotIn("solo-developer", claude)
+        self.assertNotIn(
+            "Current process: `docs/research/agent-swarm-rebase-2026-09-14.md`",
+            claude,
+        )
+        self.assertNotIn(
+            "Grok Bots do not research or resolve those issues", claude
+        )
+        skill = (
+            ROOT / ".claude" / "skills" / "proceed-or-escalate" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Grok Bot, preparing research for <owner>", skill)
+        self.assertIn("submissions/<record_id>/", skill)
+        self.assertIn("Every new non-public doc", skill)
+        self.assertIn("CSL-536", skill)
+        self.assertNotIn(
+            "docs/evidence/**` are legacy and frozen", skill
+        )
+        self.assertIn(carve_out, skill)
+        self.assertIn("docs/replacement/outcomes/**", skill)
+        self.assertIn("docs/evidence/", skill)
+        self.assertIn(
+            "If csl-research is not accessible, stop and post a blocker", skill
+        )
+        self.assertNotIn(
+            "Grok Bots do not research or resolve decision issues", skill
+        )
+        writer = (
+            ROOT / ".github" / "workflows" / "claude-conflict-writer.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "Research bodies go to CSL-Laboratories/csl-research as a submissions record through a PR there",
+            writer,
+        )
+        self.assertGreaterEqual(
+            writer.count(
+                "Research bodies go to CSL-Laboratories/csl-research as a submissions record through a PR there"
+            ),
+            2,
+        )
+        self.assertIn("Never commit research content to this repo", writer)
+        self.assertIn(
+            "An agent working in both repos follows each repo's own rule",
+            self.agents,
+        )
+        self.assertIn("This note changes neither rule", self.agents)
+        self.assertNotIn("research-attestations/", self.agents)
+        self.assertNotIn("research-attestations/", claude)
+        self.assertIn(
+            "any deep-research source the team has", writer
+        )
+        self.assertNotIn("web research (Parallel)", writer)
+        self.assertNotIn("web research (Parallel)", claude)
+        self.assertNotIn("web research (Parallel)", self.agents)
 
     def test_pat_job_token_has_narrow_receipt_scope_and_actionlint_is_checksummed(self) -> None:
         self.assertIn("contents: read", self.text)
         self.assertIn("pull-requests: read", self.text)
         self.assertIn("issues: read", self.text)
         self.assertNotIn("actions: write", self.text)
-        self.assertEqual(self.text.count("issues: write"), 1)
+        # Only the two mutually exclusive PAT jobs may write receipts.
+        jobs = yaml.load(self.text, Loader=yaml.BaseLoader)["jobs"]
+        self.assertEqual({name for name, job in jobs.items()
+                          if (job.get("permissions") or {}).get("issues") == "write"}, {"legacy", "gate"})
+        self.assertEqual(self.text.count("issues: write"), 2)
         self.assertNotIn("pull-requests: write", self.text)
         self.assertIn("ACTIONLINT_SHA256", self.text)
         self.assertIn("sha256sum -c", self.text)

@@ -1,0 +1,66 @@
+{
+  "projections": [
+    {
+      "derivation": {
+        "kind": "count_where",
+        "match": {
+          "disposition": "accepted"
+        },
+        "pointer": "/cells"
+      },
+      "digest": "sha256:a821e0bcd75d57fa9c3873b2a3c78465046fb46e059cbbc31da2bcf698191033",
+      "label": "X2 plumbing cells accepted by the consumer",
+      "projection_id": "x2-fake-driver-cells-accepted",
+      "source": {
+        "commit": "4aa2190d0ee198b7735d4396c0fb3e2a4763c3b2",
+        "path": "contracts/ai-investment-cockpit/evidence/x2-fake-driver-bakeoff.json",
+        "repository": "CSL-Laboratories/csl-research",
+        "sha256": "0d94f066256ded639ddae11a5122b8e88ba9f29609e6dbcebbd6a55f201619b3"
+      },
+      "tier": "published",
+      "unit": "cells",
+      "value": 15
+    },
+    {
+      "derivation": {
+        "kind": "count_where",
+        "match": {
+          "disposition": "fail_closed"
+        },
+        "pointer": "/cells"
+      },
+      "digest": "sha256:d55a314f1ecc1b9be4d8d35d1bf731578bb37abf9c1c850e754bd039e043961b",
+      "label": "X2 plumbing cells that failed closed",
+      "projection_id": "x2-fake-driver-cells-fail-closed",
+      "source": {
+        "commit": "4aa2190d0ee198b7735d4396c0fb3e2a4763c3b2",
+        "path": "contracts/ai-investment-cockpit/evidence/x2-fake-driver-bakeoff.json",
+        "repository": "CSL-Laboratories/csl-research",
+        "sha256": "0d94f066256ded639ddae11a5122b8e88ba9f29609e6dbcebbd6a55f201619b3"
+      },
+      "tier": "published",
+      "unit": "cells",
+      "value": 5
+    },
+    {
+      "derivation": {
+        "kind": "len_at",
+        "pointer": "/cells"
+      },
+      "digest": "sha256:835444ce09c1b9c22fc90116f37b32ed1c22bb61873580e1f87d9e285ac87095",
+      "label": "Cells in the X2 plumbing record (not a result)",
+      "projection_id": "x2-fake-driver-cells-total",
+      "source": {
+        "commit": "4aa2190d0ee198b7735d4396c0fb3e2a4763c3b2",
+        "path": "contracts/ai-investment-cockpit/evidence/x2-fake-driver-bakeoff.json",
+        "repository": "CSL-Laboratories/csl-research",
+        "sha256": "0d94f066256ded639ddae11a5122b8e88ba9f29609e6dbcebbd6a55f201619b3"
+      },
+      "tier": "published",
+      "unit": "cells",
+      "value": 20
+    }
+  ],
+  "registry_digest": "sha256:b08d2e8bac84caf3d8cb47af073793278e70e5fe61ebb1ce39f63e2a9b7e0f2b",
+  "registry_version": 1
+}

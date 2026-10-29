@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "InterrogationAnswer",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "question": {
+      "type": "string",
+      "description": "The operator's question posed to the agent (thread reply or /ask[-deep])."
+    },
+    "answer": {
+      "type": "string",
+      "description": "The agent's answer. Rendered beside the deterministic RiskDecision and the raw cited source, never as sole ground truth (SEC-18)."
+    },
+    "pattern": {
+      "type": "string",
+      "enum": ["fresh"],
+      "description": "Interaction pattern. Approve/veto interrogations are fresh-context only (SEC-18). Route Contract v0 cannot resume a session."
+    },
+    "session_id": {
+      "type": ["string", "null"],
+      "description": "Null for a fresh answer. Route Contract v0 does not resume a proposing session."
+    },
+    "risk_decision_ref": {
+      "type": ["string", "null"],
+      "description": "Opaque id of the RiskDecision rendered as ground truth beside this answer; null when the question is not tied to a specific proposal's risk decision."
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp when this answer was produced."
+    }
+  },
+  "required": ["question", "answer", "pattern", "generated_at"]
+}

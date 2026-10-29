@@ -13,7 +13,9 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy import select
 
-from agent_runner.result import OK
+from agent_runner.result import (
+    OK, agent_dispatched, restore_agent_dispatch_watch, watch_agent_dispatch,
+)
 from config.models import runtime_for
 from config.settings import DecisionRuntime, Mode, Settings
 from orchestrator.breakers import BreakerEngine
@@ -165,6 +167,133 @@ def test_jev_model_alias_is_rejected(monkeypatch):
     monkeypatch.setenv("COCKPIT_JEV_REQUEST_TOKEN_CAP", "64000")
     with pytest.raises(ValidationError):
         Settings()
+
+
+def test_owned_client_close_after_http_keeps_the_dispatch_mark(st, monkeypatch):
+    """http.close() can raise after the request was sent and hide the attempt.
+
+    The dispatch watch must already be set, or a later preflight failure would
+    release a unit Jev already used.
+    """
+    _provision(monkeypatch)
+    posted = {}
+
+    class Client:
+        def __init__(self, timeout=None):
+            pass
+
+        def post(self, url, headers=None, json=None, timeout=None):
+            posted["url"] = str(url)
+            return _jev_response()
+
+        def close(self):
+            raise RuntimeError("close failed")
+
+    monkeypatch.setattr("workflows.jev.httpx.Client", Client)
+    token = watch_agent_dispatch()
+    try:
+        with pytest.raises(RuntimeError, match="close failed"):
+            evaluate_decision(
+                st.settings, _packet(), symbol="AAPL",
+                schema=load_schema("TradeProposal"),
+            )
+        assert posted["url"] == JEV_URL
+        assert agent_dispatched() is True
+    finally:
+        restore_agent_dispatch_watch(token)
+
+
+def test_closed_jev_client_does_not_mark_dispatch(st, monkeypatch):
+    """client.post on a closed client fails before any bytes are sent."""
+    _provision(monkeypatch)
+    http = httpx.Client()
+    http.close()
+    token = watch_agent_dispatch()
+    try:
+        attempt = evaluate_decision(
+            st.settings, _packet(), symbol="AAPL",
+            schema=load_schema("TradeProposal"), client=http,
+        )
+        assert attempt.dispatched is False
+        assert attempt.reason == "jev_error"
+        assert agent_dispatched() is False
+    finally:
+        restore_agent_dispatch_watch(token)
+
+
+def test_hookless_post_that_sends_then_raises_keeps_the_mark(st, monkeypatch):
+    """A client with no request hook can send and then raise inside post()."""
+    _provision(monkeypatch)
+    sent = {}
+
+    def handler(request):
+        sent["url"] = str(request.url)
+        return _jev_response()
+
+    inner = _client(handler)
+
+    class Hookless:
+        def post(self, *args, **kwargs):
+            inner.post(*args, **kwargs)
+            raise RuntimeError("wrapper cleanup after send")
+
+    token = watch_agent_dispatch()
+    try:
+        attempt = evaluate_decision(
+            st.settings, _packet(), symbol="AAPL",
+            schema=load_schema("TradeProposal"), client=Hookless(),
+        )
+        assert sent["url"] == JEV_URL
+        assert attempt.dispatched is True
+        assert agent_dispatched() is True
+    finally:
+        restore_agent_dispatch_watch(token)
+        inner.close()
+
+
+def test_hookless_pre_send_failure_stays_marked(st, monkeypatch):
+    """A hookless post that fails before send still counts as dispatched.
+
+    That over-counts. The same client shape can send and then raise, and
+    releasing that case would let a retry exceed the cap. A client with
+    request hooks still releases a closed-client failure.
+    """
+    _provision(monkeypatch)
+
+    class Hookless:
+        def post(self, *args, **kwargs):
+            raise RuntimeError("closed before send")
+
+    token = watch_agent_dispatch()
+    try:
+        attempt = evaluate_decision(
+            st.settings, _packet(), symbol="AAPL",
+            schema=load_schema("TradeProposal"), client=Hookless(),
+        )
+        assert attempt.dispatched is True
+        assert attempt.reason == "jev_error"
+        assert agent_dispatched() is True
+    finally:
+        restore_agent_dispatch_watch(token)
+
+
+def test_transport_error_after_the_request_hook_keeps_the_mark(st, monkeypatch):
+    """Once httpx has passed the request hook, a transport failure has sent."""
+    _provision(monkeypatch)
+
+    def handler(_request):
+        raise RuntimeError("connection failed after send")
+
+    token = watch_agent_dispatch()
+    try:
+        attempt = evaluate_decision(
+            st.settings, _packet(), symbol="AAPL",
+            schema=load_schema("TradeProposal"), client=_client(handler),
+        )
+        assert attempt.dispatched is True
+        assert agent_dispatched() is True
+    finally:
+        restore_agent_dispatch_watch(token)
 
 
 def test_runtime_map_keeps_non_decisions_on_claude():
@@ -966,10 +1095,12 @@ def test_framed_state_plus_question_stays_inside_the_cap():
 
 def test_subprocess_child_does_not_inherit_jev_api_key(monkeypatch):
     import subprocess
+    import sys
 
     from agent_runner.transport import SubprocessTransport
 
     monkeypatch.setenv("JEV_API_KEY", _KEY)
+    monkeypatch.setenv("JEV_TEST_KEEP", "1")
     seen = {}
 
     class _Proc:
@@ -983,5 +1114,10 @@ def test_subprocess_child_does_not_inherit_jev_api_key(monkeypatch):
         return _Proc()
 
     monkeypatch.setattr(subprocess, "Popen", _popen)
-    SubprocessTransport().run(["/bin/true"], "", 1.0, None)
+    # sys.executable resolves on every platform: /bin/true is not on Windows PATH,
+    # and run() resolves argv[0] via shutil.which before the mocked Popen is reached.
+    SubprocessTransport().run([sys.executable], "", 1.0, None)
     assert "JEV_API_KEY" not in seen["env"]
+    # The rest of the parent env must still reach the child — an env={} bug would
+    # starve it of PATH etc. while still passing the assertion above.
+    assert seen["env"].get("JEV_TEST_KEEP") == "1"
