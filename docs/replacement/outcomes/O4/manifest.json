@@ -5,7 +5,7 @@
   "files": [
     {
       "path": "PROTOCOL.md",
-      "sha256": "b4cbfb1e8e21620a62d0d5d2ca143bcb8f1b708f1107e234eb42886ce16834ca"
+      "sha256": "969357e4c66e1da6aa5e326f87f1f9f6f2b5c49a3bcbcef80e84a6ad5c2e4a39"
     },
     {
       "path": "fixtures/candidate-packet.json",
@@ -28,12 +28,24 @@
       "sha256": "7d5b41bb3d45ceb588466ce6c947d8924c862c617c2808a67871981e78a3231d"
     },
     {
+      "path": "fixtures/negative/hypothesis-drops-data.json",
+      "sha256": "200c767fcf1ab02cd512345fe6ca63fa23a73e10d15dad8a6fc257f1a5471f72"
+    },
+    {
       "path": "fixtures/negative/hypothesis-except-after-hours.json",
       "sha256": "31e6e76f4cbfa10fdac362b90a1b0579d1222d144eb736aa2847f372a2dca136"
     },
     {
+      "path": "fixtures/negative/hypothesis-except-for-example.json",
+      "sha256": "8d6be477fb786ea7f478990d49a557ed48e9b5f8ef2b75b0e598fb775b066162"
+    },
+    {
       "path": "fixtures/negative/hypothesis-excludes-venue-fees.json",
       "sha256": "fb94a59e530c91de960de4f758d5fe1d369f5b737f94db45a30786fcaa176a7e"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-excluding-notably.json",
+      "sha256": "0ca88a8f06baa57c7c80688806524865f26b7b51170b7334fd91245a2661cca8"
     },
     {
       "path": "fixtures/negative/hypothesis-ignores-model.json",
@@ -48,8 +60,28 @@
       "sha256": "518ffebe130fe769243c44d427ed9f454e6e98084ccc11623bf6bf77a24c30e0"
     },
     {
+      "path": "fixtures/negative/hypothesis-no-longer-includes.json",
+      "sha256": "264d1821d5c15084caebc896414ce8978fcafa15ba374c1eb8530c065d10c73e"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-not-counted.json",
+      "sha256": "0e8acd77ba93625a940801822e8db3f68a80c2e557dfa5eebadf014dda8a355b"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-removes-model.json",
+      "sha256": "3a3f5985b4c1b769f46040df35f06bf0f78de4f76e3eee13fd33e91827df15ab"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-save-for-data.json",
+      "sha256": "d68c2ddd74b5b865bd0ce162c30c4ab9a1150eac6e3fef9a512bb9b91a25829c"
+    },
+    {
       "path": "fixtures/negative/hypothesis-set-aside.json",
       "sha256": "979f315724e59cb097279536c926a5d76623c1304de1927ddabba42fdbe50a5f"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-waived-venue-fees.json",
+      "sha256": "9df29e34f76ac22dac648d51458fdc8768191d87d17fafa815bb74b655686886"
     },
     {
       "path": "fixtures/negative/leakage-control-satisfied.json",
@@ -133,7 +165,7 @@
     },
     {
       "path": "validate.py",
-      "sha256": "86e17048adbefd78547dc6eb4bdd466046acf366d6fae985d83431c8801b49c8"
+      "sha256": "395ac837187979a89f632e12bcaa7c5f207c1eac8ce00945e9f8440558e3d6b5"
     }
   ],
   "linear_issue": "CSL-216",
@@ -226,6 +258,38 @@
     {
       "expect": "hypothesis_costs",
       "path": "fixtures/negative/hypothesis-except-after-hours.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-except-for-example.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-excluding-notably.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-no-longer-includes.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-drops-data.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-removes-model.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-waived-venue-fees.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-not-counted.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-save-for-data.json"
     }
   ],
   "outcome": "O4",

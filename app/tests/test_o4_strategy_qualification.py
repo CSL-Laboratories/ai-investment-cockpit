@@ -54,6 +54,14 @@ FAILURES = (
     "O4 negative control FAIL hypothesis_costs:",
     "O4 negative control FAIL hypothesis_costs:",
     "O4 negative control FAIL hypothesis_costs:",
+    "O4 negative control FAIL hypothesis_costs:",
+    "O4 negative control FAIL hypothesis_costs:",
+    "O4 negative control FAIL hypothesis_costs:",
+    "O4 negative control FAIL hypothesis_costs:",
+    "O4 negative control FAIL hypothesis_costs:",
+    "O4 negative control FAIL hypothesis_costs:",
+    "O4 negative control FAIL hypothesis_costs:",
+    "O4 negative control FAIL hypothesis_costs:",
 )
 CHECKED = (
     "O4 candidate packet checked at maturity researched; "
@@ -333,6 +341,38 @@ VERB_EXCLUSION_CASES = (
     (
         "hypothesis-except-after-hours.json",
         _NET_CLAUSE[:-1] + ", except after-hours transaction fees.",
+    ),
+    (
+        "hypothesis-except-for-example.json",
+        _NET_CLAUSE[:-1] + ", except, for example, transaction fees.",
+    ),
+    (
+        "hypothesis-excluding-notably.json",
+        _NET_CLAUSE[:-1] + ", excluding, notably, data.",
+    ),
+    (
+        "hypothesis-no-longer-includes.json",
+        _NET_CLAUSE + " It no longer includes venue fees.",
+    ),
+    (
+        "hypothesis-drops-data.json",
+        _NET_CLAUSE + " It drops data costs.",
+    ),
+    (
+        "hypothesis-removes-model.json",
+        _NET_CLAUSE + " It removes model costs.",
+    ),
+    (
+        "hypothesis-waived-venue-fees.json",
+        _NET_CLAUSE + " Venue fees are waived.",
+    ),
+    (
+        "hypothesis-not-counted.json",
+        _NET_CLAUSE + " Data costs are not counted.",
+    ),
+    (
+        "hypothesis-save-for-data.json",
+        _NET_CLAUSE[:-1] + ", save for data.",
     ),
 )
 _VERB_INFLECTIONS = (

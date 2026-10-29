@@ -149,6 +149,14 @@ CONTROL_ORDER = (
     "hypothesis_costs",
     "hypothesis_costs",
     "hypothesis_costs",
+    "hypothesis_costs",
+    "hypothesis_costs",
+    "hypothesis_costs",
+    "hypothesis_costs",
+    "hypothesis_costs",
+    "hypothesis_costs",
+    "hypothesis_costs",
+    "hypothesis_costs",
 )
 REQUIRED_STAGE_GATES = {
     "replay": {
@@ -459,13 +467,17 @@ _NEGATED_EXCLUSIONS = (
     *_NEGATED_FINITE,
 )
 # A marker drops only the cost phrase it governs: the words after it, up to
-# a comma or the next net-of claim. "without look-ahead bias, from the
-# historical data" governs "look-ahead bias", not "data". A bare "after"
-# does not end that phrase, so "except after-hours transaction fees" still
-# governs "transaction". Finite verbs,
+# a comma or the next net-of claim. A comma-wrapped aside that names no
+# retained cost is not that stop ("except, for example, transaction").
+# "without look-ahead bias, from the historical data" governs "look-ahead
+# bias", not "data". A bare "after" does not end that phrase, so "except
+# after-hours transaction fees" still governs "transaction". Finite verbs,
 # gerunds, and "except" / "without" are forward markers. Past participles
-# ("are excluded") stay predicates because their subject comes first.
+# ("are excluded", "are waived", "are not counted") stay predicates because
+# their subject comes first. The list is closed. Wording outside it is not
+# an exclusion.
 _FORWARD_MARKERS = (
+    "no longer includes",
     "does not include",
     "do not include",
     "not including",
@@ -473,6 +485,7 @@ _FORWARD_MARKERS = (
     "apart from",
     "aside from",
     "not retained",
+    "save for",
     "not count",
     "not apply",
     "not part",
@@ -489,9 +502,13 @@ _FORWARD_MARKERS = (
     "ignoring",
     "ignores",
     "ignore",
+    "removes",
+    "drops",
 )
 # Past-participle predicates ("are excluded"). Gerunds ("excluding") stay forward markers.
+# "waived" and "not counted" are predicates: the cost is named before them.
 _PREDICATE_TOKENS = {"excluded": "exclud", "omitted": "omitt", "ignored": "ignor"}
+_PREDICATE_PHRASES = (("not counted", "not counted"), ("waived", "waived"))
 # Exclusion wording that is not one of the markers above. It still drops the
 # net-of claim when it shares a clause with a named cost ("set aside",
 # "reported separately").
@@ -577,7 +594,12 @@ def _strip_negated_exclusions(folded: str) -> str:
 
 
 def _predicate_stem(folded: str) -> str | None:
-    for token in _strip_negated_exclusions(folded).split():
+    stripped = _strip_negated_exclusions(folded)
+    padded = f" {stripped} "
+    for phrase, label in _PREDICATE_PHRASES:
+        if f" {phrase} " in padded:
+            return label
+    for token in stripped.split():
         label = _PREDICATE_TOKENS.get(token)
         if label is not None:
             return label
@@ -600,12 +622,55 @@ def _net_claim_at(tokens: list[str], index: int) -> bool:
     return any(rest == phrase or rest.startswith(phrase + " ") for phrase in _NET_PHRASES)
 
 
+def _aside_closing(tokens: list[str], index: int) -> int | None:
+    """Comma that closes a no-cost aside opening at this comma, if there is one."""
+    if index >= len(tokens) or tokens[index] != ",":
+        return None
+    end = index + 1
+    while end < len(tokens) and tokens[end] != "," and not _net_claim_at(tokens, end):
+        end += 1
+    if end >= len(tokens) or tokens[end] != ",":
+        return None
+    aside = tokens[index + 1 : end]
+    if not aside or _cost_spans(aside):
+        return None
+    return end
+
+
 def _governed_tokens(tokens: list[str]) -> list[str]:
-    """Words the marker governs, through the next comma or net-of claim."""
-    for index, token in enumerate(tokens):
-        if token == "," or _net_claim_at(tokens, index):
-            return tokens[:index]
-    return tokens
+    """Words the marker governs, through the next comma or net-of claim.
+
+    A comma-wrapped aside that names no retained cost is skipped
+    ("except, for example, transaction", "excluding, notably, data").
+    A comma after real governed words still ends the phrase, so
+    "without look-ahead bias, from the historical data" stops at "bias".
+    """
+    index = 0
+    skipped = False
+    while index < len(tokens) and tokens[index] == ",":
+        closing = _aside_closing(tokens, index)
+        if closing is None:
+            index += 1
+            break
+        skipped = True
+        index = closing + 1
+    if skipped:
+        while index < len(tokens):
+            end = index
+            while end < len(tokens) and tokens[end] != "," and not _net_claim_at(tokens, end):
+                end += 1
+            span = tokens[index:end]
+            if span and not _cost_spans(span) and end < len(tokens) and tokens[end] == ",":
+                index = end + 1
+                continue
+            break
+    governed: list[str] = []
+    while index < len(tokens):
+        if tokens[index] == "," or _net_claim_at(tokens, index):
+            break
+        governed.append(tokens[index])
+        index += 1
+    return governed
 
 
 def _forward_excluded(tokens: list[str]) -> list[tuple[str, str]]:

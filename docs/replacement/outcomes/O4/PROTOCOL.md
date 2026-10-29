@@ -50,7 +50,7 @@ Candidate command, not a completion gate:
 python -X utf8 -B docs/replacement/outcomes/O4/validate.py
 ```
 
-A clean command prints twenty-two negative-control failures and one researched-maturity
+A clean command prints thirty negative-control failures and one researched-maturity
 line. Exit 0 means those controls failed as designed and the candidate packet
 stayed internally consistent. It does not promote the outcome.
 
@@ -147,13 +147,16 @@ sentence that lists the other costs, or a "net of nothing" sentence, does not
 carry the claim. A bare "after", including "after-hours", is not a net-of
 claim. A cost is dropped when an exclusion marker governs that cost. The
 marker binds to the phrase after it and stops at a comma or the next net-of
-claim. Finite verbs and their inflections count: exclude, excludes,
+claim. A comma-wrapped aside that names no retained cost ("for example",
+"notably") is not that stop. Finite verbs and their inflections count: exclude, excludes,
 excluding, and excluded; ignore, ignores, ignoring, and ignored; omit,
 omits, omitting, and omitted; plus except and without. "does not", "do not",
-and "never" in front of those verbs are not exclusions. A non-marker
+and "never" in front of those verbs are not exclusions. Also listed: drops,
+removes, save for, no longer includes, waived, and not counted. A non-marker
 exclusion that shares the clause ("set aside", "reported separately",
 "reported elsewhere") also drops the claim. "without look-ahead bias" and
-"no costs are excluded" do not drop a cost.
+"no costs are excluded" do not drop a cost. The check matches only these
+listed markers, so a human must still read the cost claim.
 
 Alternatives: equity leg only, event leg only, and the awareness-only fallback
 that supplies no execution edge.
@@ -282,6 +285,14 @@ two-stage ladder; the other controls preserve the complete schema shape:
 | `hypothesis-excludes-venue-fees.json` | A full net-of clause, then "The strategy excludes venue fees." Rejected as `hypothesis_costs`. |
 | `hypothesis-ignores-model.json` | A full net-of clause, then "It ignores model costs." Rejected as `hypothesis_costs`. |
 | `hypothesis-except-after-hours.json` | A full net-of clause, then "except after-hours transaction fees." Rejected as `hypothesis_costs`. |
+| `hypothesis-except-for-example.json` | A full net-of clause, then "except, for example, transaction fees." Rejected as `hypothesis_costs`. |
+| `hypothesis-excluding-notably.json` | A full net-of clause, then "excluding, notably, data." Rejected as `hypothesis_costs`. |
+| `hypothesis-no-longer-includes.json` | A full net-of clause, then "It no longer includes venue fees." Rejected as `hypothesis_costs`. |
+| `hypothesis-drops-data.json` | A full net-of clause, then "It drops data costs." Rejected as `hypothesis_costs`. |
+| `hypothesis-removes-model.json` | A full net-of clause, then "It removes model costs." Rejected as `hypothesis_costs`. |
+| `hypothesis-waived-venue-fees.json` | A full net-of clause, then "Venue fees are waived." Rejected as `hypothesis_costs`. |
+| `hypothesis-not-counted.json` | A full net-of clause, then "Data costs are not counted." Rejected as `hypothesis_costs`. |
+| `hypothesis-save-for-data.json` | A full net-of clause, then "save for data." Rejected as `hypothesis_costs`. |
 
 The checker prints each rejection. A control that passes, or that fails for a
 different reason, rejects the run.
