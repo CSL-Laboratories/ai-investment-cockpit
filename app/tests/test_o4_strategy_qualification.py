@@ -179,9 +179,11 @@ def test_o4_protocol_keeps_research_and_owner_decisions() -> None:
     assert "## Research (Parallel)" not in protocol
     assert "## Unresolved decisions (owner: roles)" in protocol
     assert "CSL-Laboratories/csl-research" in protocol
-    assert "aab0b90c130948434a752611d66da32390e7186c" in protocol
+    assert "6698d84acae4f52a1794baf73fccc26859173b4e" in protocol
+    assert "aab0b90c130948434a752611d66da32390e7186c" not in protocol
     assert "submissions/20261029-cockpit-csl216-o4-research-prose-01/record.json" in protocol
-    assert "candidate-only, unreviewed submission (csl-research#261 not yet merged)" in protocol
+    assert "candidate-only, unreviewed evidence" in protocol
+    assert "not yet merged" not in protocol
     assert "search_a81ed0bcb8b97e64d4f958ef59dde38a" not in protocol
     assert "https://doi.org/10.1016/j.knosys.2024.112477" not in protocol
     assert "https://github.com/eslazarev/purged-cross-validation" not in protocol

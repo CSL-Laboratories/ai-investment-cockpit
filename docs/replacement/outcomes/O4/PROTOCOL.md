@@ -302,10 +302,10 @@ different reason, rejects the run.
 ## Research record
 
 - repo: CSL-Laboratories/csl-research
-- commit: aab0b90c130948434a752611d66da32390e7186c
+- commit: 6698d84acae4f52a1794baf73fccc26859173b4e
 - path: submissions/20261029-cockpit-csl216-o4-research-prose-01/record.json
 - claim: the O4 research prose (Parallel research notes, metric-registry literature comparison, reference-implementation notes) is held in that record
-- limitations: candidate-only, unreviewed submission (csl-research#261 not yet merged)
+- limitations: candidate-only, unreviewed evidence
 
 ## Unresolved decisions (owner: roles)
 
