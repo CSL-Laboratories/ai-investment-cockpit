@@ -41,6 +41,7 @@ AUDITED = (
     'app/workflows/prompts/trade_proposal.v1.md',
     'app/workflows/prompts/triage_batch.v1.md',
     'docs/PLAN.md',
+    'docs/ci-runbook.md',
     'docs/evidence/w24-natural-head-rescreen-2026-09-09.md',
     'docs/evidence/w24-natural-head-rescreen-2026-09-12.md',
     'docs/evidence/w24-natural-head-rescreen-2026-09-15-tue.md',
@@ -241,6 +242,8 @@ class TestSourceGuardTests(unittest.TestCase):
         for name in ('tools/test_ci_dispatch_scope.py', 'tools/test_ci_settle.py',
                      'tools/test_review_gate.py', 'tools/test_queue_gates.py',
                      'tools/test_ci_cancel_controller.py', 'tools/test_candidate_workflows.py',
+                     'tools/test_workflow_size.py',
+                     'tools/test_sandbox_e3.py',
                      'tools/test_run_gates_action.py', 'app/tests/test_o7_operator_contract.py'):
             self.assertIn(name, sources)
         self.assertNotIn(SELF, sources)

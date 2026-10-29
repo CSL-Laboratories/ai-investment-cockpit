@@ -342,7 +342,11 @@ class EvidenceTests(unittest.TestCase):
         self.assertGreaterEqual(len(steps), 3)
         for index, (name, body) in enumerate(steps):
             with self.subTest(workflow=name, step=index):
-                self.assertIn("\n          path_to_claude_code_executable: /opt/csl-claude/2.1.306/claude\n", body)
+                if name == "claude.yml":
+                    want = "\n          path_to_claude_code_executable: /opt/csl-claude/launch\n"
+                else:
+                    want = "\n          path_to_claude_code_executable: /opt/csl-claude/2.1.306/claude\n"
+                self.assertIn(want, body)
                 self.assertIn("\n          DISABLE_UPDATES:", body)
 
     def test_workflow_emits_context_from_actual_locked_eligibility_and_embeds_consumer(self):
@@ -350,8 +354,9 @@ class EvidenceTests(unittest.TestCase):
         import textwrap
         text = (ROOT / ".github/workflows/claude.yml").read_text(encoding="utf-8")
         self.assertEqual(text.count('name: "Fixer attempt ${{ needs.fixer-prepare.outputs.attempt_key }}"'), 1)
-        embedded = textwrap.dedent(text.split("<<'CLAUDE_FIXER_RECEIPTS'\n")[1].split("          CLAUDE_FIXER_RECEIPTS")[0]).rstrip()
-        self.assertEqual(embedded, (ROOT / "scripts/ci/claude_fixer_receipts.py").read_text().rstrip())
+        self.assertIn('install -m 0444 "$TRUSTED/claude_fixer_receipts.py"', text)
+        self.assertNotIn("<<'CLAUDE_FIXER_RECEIPTS'", text)
+        self.assertTrue((ROOT / "scripts/ci/claude_fixer_receipts.py").is_file())
         # Parse the supported indentation/step schema without adding a YAML
         # dependency to the existing standard-library-only event-path job.
         job = re.split(r"\n  [A-Za-z0-9_-]+:\n", text.split("\n  devin-review-fix:\n", 1)[1])[0]

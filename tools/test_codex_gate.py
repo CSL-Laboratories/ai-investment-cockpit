@@ -1648,7 +1648,7 @@ class WorkflowStructureTests(unittest.TestCase):
             if line.strip().startswith("runs-on:")
         ]
         self.assertTrue(claude_runners)
-        self.assertTrue(all(r == "runs-on: ubuntu-latest" for r in claude_runners))
+        self.assertTrue(all(r == "runs-on: ubuntu-24.04" for r in claude_runners))
         scan = (ROOT / ".github" / "workflows" / "conflict-scan.yml").read_text(encoding="utf-8")
         scan_runners = [
             line.strip()
@@ -1684,6 +1684,78 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("Grok Bot, preparing research for <owner>", self.agents)
         self.assertIn("Only the designated human decision-maker", self.agents)
         self.assertIn("never marks the issue decided", self.agents)
+        self.assertIn("No specific tool is required", self.agents)
+        self.assertIn(
+            "any deep-research source the team has", self.agents
+        )
+        self.assertIn("Open Deep Research", self.agents)
+        self.assertIn("Claude Deep Research", self.agents)
+        self.assertIn("ChatGPT Deep Research", self.agents)
+        self.assertIn(
+            "Each run records its tool, its run id and its cost", self.agents
+        )
+        self.assertIn("no-pay-per-token-API", self.agents)
+        self.assertIn("This section adds no spend ceiling", self.agents)
+        self.assertIn(
+            "Record which source or tool produced each piece of evidence",
+            self.agents,
+        )
+        self.assertIn("three-founder", self.agents)
+        self.assertIn("a digest on the Linear issue", self.agents)
+        self.assertIn("submissions/<record_id>/", self.agents)
+        self.assertIn("tools/check_submission.py", self.agents)
+        self.assertIn("Every new non-public doc", self.agents)
+        self.assertIn("CSL-536", self.agents)
+        self.assertIn("docs/research/**` is legacy", self.agents)
+        self.assertIn("no separate admission is needed", self.agents)
+        self.assertIn(
+            "If csl-research is not accessible, stop and post a blocker",
+            self.agents,
+        )
+        self.assertNotIn(
+            "docs/evidence/**` are legacy and frozen", self.agents
+        )
+        self.assertNotIn(
+            "This repository takes contracts, specs, fixtures and runbooks only",
+            self.agents,
+        )
+        self.assertIn("docs/replacement/outcomes/**", self.agents)
+        carve_out = (
+            "Gate and operational evidence that code or a runbook in this repo already reads"
+        )
+        runbook = (ROOT / "docs" / "runbooks" / "w25-worm-audit-witness.md").read_text(
+            encoding="utf-8"
+        )
+        screens = (ROOT / "app" / "feasibility" / "screens.py").read_text(
+            encoding="utf-8"
+        )
+        writers_use_docs_evidence = (
+            "docs/evidence/" in runbook and "docs/evidence/" in screens
+        )
+        agents_allows_docs_evidence = (
+            carve_out in self.agents and "docs/evidence/" in self.agents
+        )
+        self.assertEqual(
+            writers_use_docs_evidence,
+            agents_allows_docs_evidence,
+            "W-25 / feasibility docs/evidence/ writers must match the AGENTS.md carve-out",
+        )
+        self.assertIn(
+            "this cockpit's research/dev swarm dispatch", self.agents
+        )
+        self.assertNotIn("solo-developer", self.agents)
+        self.assertNotIn(
+            "Current process: `docs/research/agent-swarm-rebase-2026-09-14.md`",
+            self.agents,
+        )
+        self.assertNotIn(
+            "in the issue or the evidence so the research can be checked",
+            self.agents,
+        )
+        self.assertNotIn(
+            "Do not assume published records, a record schema or a validator exist",
+            self.agents,
+        )
         self.assertNotIn(
             "Grok Bots do not research or resolve decision issues", self.agents
         )
@@ -1704,6 +1776,25 @@ class WorkflowStructureTests(unittest.TestCase):
         claude = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
         self.assertIn("AGENTS.md", claude)
         self.assertIn("Grok Bot, preparing research for <owner>", claude)
+        self.assertIn("submissions/<record_id>/", claude)
+        self.assertIn("Every new", claude)
+        self.assertIn("non-public doc", claude)
+        self.assertIn("CSL-536", claude)
+        self.assertNotIn(
+            "docs/evidence/**` are legacy and frozen", claude
+        )
+        self.assertIn(carve_out, claude)
+        self.assertIn("docs/replacement/outcomes/**", claude)
+        self.assertIn("docs/evidence/", claude)
+        self.assertIn("three-founder", claude)
+        self.assertIn("CSL-511", claude)
+        self.assertIn("this cockpit's", claude)
+        self.assertIn("Devin may still post research briefs", claude)
+        self.assertNotIn("solo-developer", claude)
+        self.assertNotIn(
+            "Current process: `docs/research/agent-swarm-rebase-2026-09-14.md`",
+            claude,
+        )
         self.assertNotIn(
             "Grok Bots do not research or resolve those issues", claude
         )
@@ -1711,9 +1802,48 @@ class WorkflowStructureTests(unittest.TestCase):
             ROOT / ".claude" / "skills" / "proceed-or-escalate" / "SKILL.md"
         ).read_text(encoding="utf-8")
         self.assertIn("Grok Bot, preparing research for <owner>", skill)
+        self.assertIn("submissions/<record_id>/", skill)
+        self.assertIn("Every new non-public doc", skill)
+        self.assertIn("CSL-536", skill)
+        self.assertNotIn(
+            "docs/evidence/**` are legacy and frozen", skill
+        )
+        self.assertIn(carve_out, skill)
+        self.assertIn("docs/replacement/outcomes/**", skill)
+        self.assertIn("docs/evidence/", skill)
+        self.assertIn(
+            "If csl-research is not accessible, stop and post a blocker", skill
+        )
         self.assertNotIn(
             "Grok Bots do not research or resolve decision issues", skill
         )
+        writer = (
+            ROOT / ".github" / "workflows" / "claude-conflict-writer.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "Research bodies go to CSL-Laboratories/csl-research as a submissions record through a PR there",
+            writer,
+        )
+        self.assertGreaterEqual(
+            writer.count(
+                "Research bodies go to CSL-Laboratories/csl-research as a submissions record through a PR there"
+            ),
+            2,
+        )
+        self.assertIn("Never commit research content to this repo", writer)
+        self.assertIn(
+            "An agent working in both repos follows each repo's own rule",
+            self.agents,
+        )
+        self.assertIn("This note changes neither rule", self.agents)
+        self.assertNotIn("research-attestations/", self.agents)
+        self.assertNotIn("research-attestations/", claude)
+        self.assertIn(
+            "any deep-research source the team has", writer
+        )
+        self.assertNotIn("web research (Parallel)", writer)
+        self.assertNotIn("web research (Parallel)", claude)
+        self.assertNotIn("web research (Parallel)", self.agents)
 
     def test_pat_job_token_has_narrow_receipt_scope_and_actionlint_is_checksummed(self) -> None:
         self.assertIn("contents: read", self.text)
