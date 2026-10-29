@@ -5,7 +5,7 @@
   "files": [
     {
       "path": "PROTOCOL.md",
-      "sha256": "2c9b0297ca503a263e97d79bb17504fd4883a07517536bfbbb1af3e8abb9a866"
+      "sha256": "04bc950f54f498d741d35855b7ff44fefde890804f5652821677eaccbebfeb49"
     },
     {
       "path": "fixtures/candidate-packet.json",
@@ -105,7 +105,7 @@
     },
     {
       "path": "validate.py",
-      "sha256": "11f7db5dd40a250ed030928f0ffb1e2242d0fccf6faa1aa6404795e6aecf70eb"
+      "sha256": "31a36501986c1ec6faf73d2703697dc106cd17bf56e1e929bd433512d4a73036"
     }
   ],
   "linear_issue": "CSL-216",

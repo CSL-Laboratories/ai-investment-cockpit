@@ -139,6 +139,13 @@ cash retains the null and rejects the strategy hypothesis; only a net result
 that beats matched cash rejects the null. This packet does not compute that
 comparison.
 
+The checker accepts an equivalent net-of claim. Either hypothesis may say
+"net of" or "after all eight retained costs", name the eight costs in any
+order, repeat a name, or use the singular "venue-fee" as well as "venue fees".
+A cost is dropped only when the text excludes that cost ("excluded", "except",
+or "without" applied to the cost). "without look-ahead bias" and "no costs are
+excluded" do not drop a cost.
+
 Alternatives: equity leg only, event leg only, and the awareness-only fallback
 that supplies no execution edge.
 

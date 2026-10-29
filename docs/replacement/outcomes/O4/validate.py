@@ -393,66 +393,212 @@ def _costs(packet: dict[str, Any], failures: list[Failure]) -> None:
     )
 
 
-# Contiguous folded form of the required net-of clause. Naming a cost anywhere
-# else, including after "excluded" or "except", does not satisfy it.
-_INCLUSION_CLAUSE = " ".join((
+# Equivalent names for one retained cost, longest first. Hyphens and slashes
+# fold to spaces, so "venue-fee" and "spread/slippage" match the phrase forms.
+_COST_PHRASES: dict[str, tuple[str, ...]] = {
+    "transaction": ("transaction",),
+    "latency": ("latency",),
+    "data": ("data",),
+    "model": ("model",),
+    "venue_fees": ("venue fees", "venue fee"),
+    "spread_slippage": ("spread and slippage", "spread slippage"),
+    "funding_collateral": ("funding and collateral", "funding collateral"),
+    "tax_accounting": ("tax and accounting", "tax accounting"),
+}
+# A net-of claim. Any order of the eight names satisfies it. "after" plus every
+# cost in one clause is the other accepted form.
+_NET_PHRASES = (
+    "net of",
     "after all eight retained costs",
-    "transaction latency data model venue fees",
-    "spread slippage funding collateral and tax accounting",
-))
-# Token prefixes, or full phrases, that take a named cost back out of the net.
-_EXCLUSION_MARKERS = (
-    "exclud",
-    "except",
-    "without",
-    "omitt",
-    "ignor",
+    "after the eight retained costs",
+    "after all retained costs",
+)
+# These deny an exclusion. They are not themselves exclusions.
+_NEGATED_EXCLUSIONS = (
+    "no costs are excluded",
+    "no cost is excluded",
+    "costs are not excluded",
+    "are not excluded",
+    "is not excluded",
+    "not excluded",
+    "none are excluded",
+    "none is excluded",
+    "nothing is excluded",
+    "without excluding",
+    "no exclusion",
+    "not omitted",
+    "nothing is omitted",
+    "not ignored",
+)
+# A marker that drops the next named cost ("without venue fees", "except data").
+_FORWARD_MARKERS = (
+    "does not include",
+    "do not include",
+    "not including",
     "other than",
     "apart from",
     "aside from",
-    "not including",
     "not retained",
     "not count",
     "not apply",
     "not part",
     "leave out",
     "left out",
-    "does not include",
-    "do not include",
+    "excluding",
+    "except",
+    "without",
+    "omitting",
+    "ignoring",
 )
+# Past-participle predicates ("are excluded"). Gerunds ("excluding") stay forward markers.
+_PREDICATE_TOKENS = {"excluded": "exclud", "omitted": "omitt", "ignored": "ignor"}
+_FORWARD_WINDOW = 8
 
 
 def _fold_hypothesis(text: str) -> str:
     return " ".join("".join(ch if ch.isalnum() else " " for ch in text.casefold()).split())
 
 
-def _exclusion_marker(folded: str) -> str | None:
-    tokens = folded.split()
-    for marker in _EXCLUSION_MARKERS:
-        if " " in marker:
-            if f" {marker} " in f" {folded} ":
-                return marker
-            continue
-        if any(token.startswith(marker) for token in tokens):
-            return marker
+def _hypothesis_clauses(text: str) -> list[str]:
+    chunks: list[str] = []
+    current: list[str] = []
+    for char in text:
+        if char in ".;!?\n":
+            chunks.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+    chunks.append("".join(current))
+    clauses: list[str] = []
+    for chunk in chunks:
+        lower = chunk.casefold()
+        start = 0
+        while True:
+            at = lower.find(" but ", start)
+            if at < 0:
+                clauses.append(chunk[start:])
+                break
+            clauses.append(chunk[start:at])
+            start = at + len(" but ")
+    return [part for part in clauses if part.strip()]
+
+
+def _phrase_index() -> list[tuple[tuple[str, ...], str]]:
+    ranked: list[tuple[int, int, tuple[str, ...], str]] = []
+    for key, phrases in _COST_PHRASES.items():
+        for phrase in phrases:
+            parts = tuple(phrase.split())
+            ranked.append((len(parts), len(phrase), parts, key))
+    ranked.sort(key=lambda item: (-item[0], -item[1]))
+    return [(parts, key) for _, _, parts, key in ranked]
+
+
+def _cost_spans(tokens: list[str]) -> list[tuple[str, int, int]]:
+    spans: list[tuple[str, int, int]] = []
+    index = 0
+    phrases = _phrase_index()
+    while index < len(tokens):
+        matched = False
+        for parts, key in phrases:
+            width = len(parts)
+            if tokens[index : index + width] == list(parts):
+                spans.append((key, index, index + width))
+                index += width
+                matched = True
+                break
+        if not matched:
+            index += 1
+    return spans
+
+
+def _strip_negated_exclusions(folded: str) -> str:
+    padded = f" {folded} "
+    for snippet in sorted(_NEGATED_EXCLUSIONS, key=len, reverse=True):
+        padded = padded.replace(f" {snippet} ", " ")
+    return " ".join(padded.split())
+
+
+def _predicate_stem(folded: str) -> str | None:
+    for token in _strip_negated_exclusions(folded).split():
+        label = _PREDICATE_TOKENS.get(token)
+        if label is not None:
+            return label
     return None
+
+
+def _marker_label(marker: str) -> str:
+    head = marker.split()[0]
+    if head.startswith("exclud"):
+        return "exclud"
+    if head.startswith("omitt"):
+        return "omitt"
+    if head.startswith("ignor"):
+        return "ignor"
+    return marker
+
+
+def _forward_excluded(tokens: list[str]) -> list[tuple[str, str]]:
+    scanned = _strip_negated_exclusions(" ".join(tokens)).split()
+    found: list[tuple[str, str]] = []
+    markers = sorted(_FORWARD_MARKERS, key=len, reverse=True)
+    index = 0
+    while index < len(scanned):
+        matched: str | None = None
+        for marker in markers:
+            parts = marker.split()
+            if scanned[index : index + len(parts)] == parts:
+                matched = marker
+                break
+        if matched is None:
+            index += 1
+            continue
+        width = len(matched.split())
+        window = scanned[index + width : index + width + _FORWARD_WINDOW]
+        for key, _start, _end in _cost_spans(window):
+            found.append((key, _marker_label(matched)))
+        index += width
+    return found
 
 
 def _hypothesis_defects(name: str, text: object) -> list[str]:
     if not isinstance(text, str):
         return [f"{name}.{key}" for key in COST_KEYS]
-    folded = _fold_hypothesis(text)
-    padded = f" {folded} "
+    included: set[str] = set()
+    excluded: list[tuple[str, str]] = []
+    clause_folds: list[str] = []
+    for clause in _hypothesis_clauses(text):
+        folded = _fold_hypothesis(clause)
+        if not folded:
+            continue
+        clause_folds.append(folded)
+        tokens = folded.split()
+        spans = _cost_spans(tokens)
+        keys = {key for key, _start, _end in spans}
+        stem = _predicate_stem(folded)
+        if stem is not None and keys:
+            for key in keys:
+                excluded.append((key, stem))
+            continue
+        forward = _forward_excluded(tokens)
+        excluded_keys = {key for key, _label in forward}
+        excluded.extend(forward)
+        included.update(key for key in keys if key not in excluded_keys)
+    folded_all = " ".join(clause_folds)
+    affirms = any(phrase in folded_all for phrase in _NET_PHRASES) or any(
+        "after" in clause.split() and set(COST_KEYS) <= {key for key, _start, _end in _cost_spans(clause.split())}
+        for clause in clause_folds
+    )
     defects: list[str] = []
-    if _INCLUSION_CLAUSE not in folded:
+    if not affirms:
         defects.append(f"{name}.inclusion")
     for key in COST_KEYS:
-        needle = f" {key.replace('_', ' ')} "
-        if padded.count(needle) != 1:
+        if key not in included:
             defects.append(f"{name}.{key}")
-    marker = _exclusion_marker(folded)
-    if marker is not None:
-        defects.append(f"{name}.exclusion:{marker}")
+    seen: set[str] = set()
+    for _key, label in excluded:
+        if label not in seen:
+            defects.append(f"{name}.exclusion:{label}")
+            seen.add(label)
     return defects
 
 

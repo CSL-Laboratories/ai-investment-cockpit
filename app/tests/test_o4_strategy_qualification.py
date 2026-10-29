@@ -242,6 +242,55 @@ def test_o4_hypothesis_names_every_retained_cost() -> None:
     assert "experiment.exclusion:exclud" in found[0].message
 
 
+def test_o4_accepts_equivalent_net_cost_wording() -> None:
+    validate = _load_o4_validate()
+    packet = json.loads((O4 / "fixtures/candidate-packet.json").read_text(encoding="utf-8"))
+    equivalents = (
+        "Beats cash net of all eight retained costs (transaction, latency, data, "
+        "model, venue fees, spread/slippage, funding/collateral, and tax/accounting).",
+        "Beats cash net of all eight retained costs (tax/accounting, funding/collateral, "
+        "spread/slippage, venue-fee, model, data, latency, and transaction).",
+    )
+    for hypothesis in equivalents:
+        candidate = deepcopy(packet)
+        candidate["experiment"]["hypothesis"] = hypothesis
+        candidate["strategy_contract"]["hypothesis"] = hypothesis
+        assert validate.assess(candidate) == []
+    base = packet["experiment"]["hypothesis"]
+    repeated = deepcopy(packet)
+    repeated["experiment"]["hypothesis"] = base + " Data costs remain included."
+    repeated["strategy_contract"]["hypothesis"] = base + " Data costs remain included."
+    assert validate.assess(repeated) == []
+    unrelated = deepcopy(packet)
+    suffix = " The experiment runs without look-ahead bias; no costs are excluded."
+    unrelated["experiment"]["hypothesis"] = base + suffix
+    unrelated["strategy_contract"]["hypothesis"] = base + suffix
+    assert validate.assess(unrelated) == []
+
+
+def test_o4_rejects_measured_costs_on_unrun_experiment() -> None:
+    validate = _load_o4_validate()
+    packet = json.loads((O4 / "fixtures/candidate-packet.json").read_text(encoding="utf-8"))
+    one = deepcopy(packet)
+    one["experiment"]["costs"]["transaction"] = {
+        "amount": "0.01",
+        "status": "retained_measured",
+        "unit": "owner_unset",
+    }
+    found = validate.assess(one)
+    assert [item.code for item in found] == ["measured_costs_on_unrun_experiment"]
+    assert "transaction" in found[0].message
+    several = deepcopy(packet)
+    for key in ("transaction", "latency", "data", "model"):
+        several["experiment"]["costs"][key] = {
+            "amount": "1.0",
+            "status": "retained_measured",
+            "unit": "owner_unset",
+        }
+    found = validate.assess(several)
+    assert [item.code for item in found] == ["measured_costs_on_unrun_experiment"]
+
+
 def test_o4_leaves_accepted_csl212_digests_unchanged() -> None:
     program = json.loads((ROOT / "docs" / "replacement" / "program.json").read_text(encoding="utf-8"))
     recorded = {item["path"]: item["sha256"] for item in program["contracts"]}
