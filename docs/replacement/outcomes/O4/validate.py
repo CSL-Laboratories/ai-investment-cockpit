@@ -157,6 +157,9 @@ CONTROL_ORDER = (
     "hypothesis_costs",
     "hypothesis_costs",
     "hypothesis_costs",
+    "hypothesis_costs",
+    "hypothesis_costs",
+    "hypothesis_costs",
 )
 REQUIRED_STAGE_GATES = {
     "replay": {
@@ -429,10 +432,10 @@ _NET_PHRASES = (
     "after all retained costs",
 )
 # One negation rule for every marker: these prefixes immediately before a
-# marker deny it. "does not include" and "not counted" stay markers because
-# the negation is part of the marker, not in front of it. A marker that
-# itself starts with a negation and is followed by a non-cost word
-# ("not counted twice") binds that negation to the following word.
+# marker deny it. "does not include" and "not counted" are exclusions
+# themselves; the negation is part of the marker. A later non-cost word
+# ("any", "the", "in") does not cancel them. Only a listed qualifier after
+# the marker does ("not counted twice").
 _NEGATION_PREFIXES = (
     "does not",
     "do not",
@@ -502,6 +505,9 @@ _FORWARD_MARKERS = (
 # "waived" and "not counted" are predicates: the cost is named before them.
 _PREDICATE_TOKENS = {"excluded": "exclud", "omitted": "omitt", "ignored": "ignor"}
 _PREDICATE_PHRASES = (("not counted", "not counted"), ("waived", "waived"))
+# Closed. A qualifier after an exclusion marker denies that marker.
+# "not counted twice" is the qualifier. "not counted in" stays an exclusion.
+_QUALIFIER_AFTER = {"not counted": frozenset({"twice"})}
 # Exclusion wording that is not one of the markers above. It still drops the
 # net-of claim when it shares a clause with a named cost ("set aside",
 # "reported separately").
@@ -604,24 +610,20 @@ def _negation_before(tokens: list[str], start: int) -> bool:
     return any(tail == subject or tail.endswith(" " + subject) for subject in _DENIAL_SUBJECTS)
 
 
-def _cost_starts(tokens: list[str], index: int) -> bool:
-    spans = _cost_spans(tokens[index:])
-    return bool(spans) and spans[0][1] == 0
-
-
 def _negation_binds_forward(tokens: list[str], start: int, width: int) -> bool:
-    """A leading negation followed by a non-cost word is not an exclusion.
+    """A listed qualifier after the marker denies it. Nothing else does.
 
-    "not counted twice" denies double counting. "does not include venue fees"
-    still excludes venue fees, because the next word is a cost.
+    "not counted twice" denies double counting. "does not include" and
+    "not counted" stay exclusions when the next word is "any", "the", or "in".
     """
     marker = " ".join(tokens[start : start + width])
-    if not any(marker == prefix or marker.startswith(prefix + " ") for prefix in _NEGATION_PREFIXES):
+    qualifiers = _QUALIFIER_AFTER.get(marker)
+    if not qualifiers:
         return False
     nxt = start + width
     if nxt >= len(tokens) or tokens[nxt] == ",":
         return False
-    return not _cost_starts(tokens, nxt)
+    return tokens[nxt] in qualifiers
 
 
 def _marker_cancelled(tokens: list[str], start: int, width: int) -> bool:

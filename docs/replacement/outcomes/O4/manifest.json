@@ -5,7 +5,7 @@
   "files": [
     {
       "path": "PROTOCOL.md",
-      "sha256": "7b683bffe20cda00f0654d5f6bacebd98ab42e16668b190a50c2c07526225689"
+      "sha256": "1b8a9e321e913251778339dd8bd143d92f5baef298496099f4483220e95c1655"
     },
     {
       "path": "fixtures/candidate-packet.json",
@@ -26,6 +26,14 @@
     {
       "path": "fixtures/negative/hypothesis-cost-excluded.json",
       "sha256": "7d5b41bb3d45ceb588466ce6c947d8924c862c617c2808a67871981e78a3231d"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-does-not-include-any.json",
+      "sha256": "b5d20ded2ba9555066859a61f9905b96d163c0cc310f33dabc5768165344d476"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-does-not-include-the-data.json",
+      "sha256": "c18ec2f54550014fc8008ce2b0142919879db67b6bfef3f6225d28f012419a4f"
     },
     {
       "path": "fixtures/negative/hypothesis-drops-data.json",
@@ -62,6 +70,10 @@
     {
       "path": "fixtures/negative/hypothesis-no-longer-includes.json",
       "sha256": "264d1821d5c15084caebc896414ce8978fcafa15ba374c1eb8530c065d10c73e"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-not-counted-in-yield.json",
+      "sha256": "b2b7c291793cd85aa5824c02ed4cc136a67785e8754f1956975c6dd54bfdcaca"
     },
     {
       "path": "fixtures/negative/hypothesis-not-counted.json",
@@ -165,7 +177,7 @@
     },
     {
       "path": "validate.py",
-      "sha256": "adc2ce7e61f1630267993157e4eb4ffcf1577a37b78d40390c2818bcbb8584af"
+      "sha256": "40d62a9179cc4ad10c8d60c3dddd04642c4819b535662f073935dbee9f4526fd"
     }
   ],
   "linear_issue": "CSL-216",
@@ -290,6 +302,18 @@
     {
       "expect": "hypothesis_costs",
       "path": "fixtures/negative/hypothesis-save-for-data.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-does-not-include-any.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-does-not-include-the-data.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-not-counted-in-yield.json"
     }
   ],
   "outcome": "O4",

@@ -62,6 +62,9 @@ FAILURES = (
     "O4 negative control FAIL hypothesis_costs:",
     "O4 negative control FAIL hypothesis_costs:",
     "O4 negative control FAIL hypothesis_costs:",
+    "O4 negative control FAIL hypothesis_costs:",
+    "O4 negative control FAIL hypothesis_costs:",
+    "O4 negative control FAIL hypothesis_costs:",
 )
 CHECKED = (
     "O4 candidate packet checked at maturity researched; "
@@ -389,6 +392,18 @@ VERB_EXCLUSION_CASES = (
     (
         "hypothesis-save-for-data.json",
         _NET_CLAUSE[:-1] + ", save for data.",
+    ),
+    (
+        "hypothesis-does-not-include-any.json",
+        _NET_CLAUSE + " It does not include any venue fees.",
+    ),
+    (
+        "hypothesis-does-not-include-the-data.json",
+        _NET_CLAUSE + " It does not include the data costs.",
+    ),
+    (
+        "hypothesis-not-counted-in-yield.json",
+        _NET_CLAUSE + " Data costs are not counted in net yield.",
     ),
 )
 _VERB_INFLECTIONS = (

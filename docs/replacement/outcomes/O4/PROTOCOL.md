@@ -50,7 +50,7 @@ Candidate command, not a completion gate:
 python -X utf8 -B docs/replacement/outcomes/O4/validate.py
 ```
 
-A clean command prints thirty negative-control failures and one researched-maturity
+A clean command prints thirty-three negative-control failures and one researched-maturity
 line. Exit 0 means those controls failed as designed and the candidate packet
 stayed internally consistent. It does not promote the outcome.
 
@@ -154,10 +154,12 @@ governed phrase, and it still ends at a comma or a trailing preposition, so
 verbs and their inflections count: exclude, excludes, excluding, and excluded;
 ignore, ignores, ignoring, and ignored; omit, omits, omitting, and omitted;
 plus except and without. "not" and "never", including "does not" and "do not",
-immediately before any listed marker are not exclusions. A marker that starts
-with "not" and is followed by another word ("not counted twice") is not the
-bare exclusion. Also listed: drops, removes, save for, no longer includes,
-waived, and not counted. A non-marker exclusion that shares the clause
+immediately before any listed marker are not exclusions. "does not include"
+and "not counted" are exclusions themselves. A following word does not cancel
+them, so "any", "the", and "in" still leave the exclusion. Only a negation
+immediately before the marker, or the qualifier "twice" after "not counted"
+("not counted twice"), cancels that marker. Also listed: drops, removes,
+save for, no longer includes, waived, and not counted. A non-marker exclusion that shares the clause
 ("set aside", "reported separately", "reported elsewhere") also drops the
 claim. "without look-ahead bias" and "no costs are excluded" do not drop a
 cost. The check matches only these listed markers, so a human must still read
@@ -283,6 +285,9 @@ two-stage ladder; the other controls preserve the complete schema shape:
 | `hypothesis-waived-venue-fees.json` | A full net-of clause, then "Venue fees are waived." Rejected as `hypothesis_costs`. |
 | `hypothesis-not-counted.json` | A full net-of clause, then "Data costs are not counted." Rejected as `hypothesis_costs`. |
 | `hypothesis-save-for-data.json` | A full net-of clause, then "save for data." Rejected as `hypothesis_costs`. |
+| `hypothesis-does-not-include-any.json` | A full net-of clause, then "It does not include any venue fees." Rejected as `hypothesis_costs`. |
+| `hypothesis-does-not-include-the-data.json` | A full net-of clause, then "It does not include the data costs." Rejected as `hypothesis_costs`. |
+| `hypothesis-not-counted-in-yield.json` | A full net-of clause, then "Data costs are not counted in net yield." Rejected as `hypothesis_costs`. |
 
 The checker prints each rejection. A control that passes, or that fails for a
 different reason, rejects the run.
