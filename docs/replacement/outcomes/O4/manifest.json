@@ -5,7 +5,7 @@
   "files": [
     {
       "path": "PROTOCOL.md",
-      "sha256": "1c37af6b67778a10841d5583fdfff165dcd6de2910cce60cc53c5033b1cccb54"
+      "sha256": "7b683bffe20cda00f0654d5f6bacebd98ab42e16668b190a50c2c07526225689"
     },
     {
       "path": "fixtures/candidate-packet.json",

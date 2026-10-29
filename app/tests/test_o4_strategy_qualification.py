@@ -172,15 +172,19 @@ def test_o4_enforces_gates_and_refuses_authority_at_every_rung() -> None:
 
 def test_o4_protocol_keeps_research_and_owner_decisions() -> None:
     protocol = (O4 / "PROTOCOL.md").read_text(encoding="utf-8")
-    assert "## Research (Parallel)" in protocol
+    assert "## Research record" in protocol
+    assert "## Research (Parallel)" not in protocol
     assert "## Unresolved decisions (owner: roles)" in protocol
-    assert "search_a81ed0bcb8b97e64d4f958ef59dde38a" in protocol
-    assert "search_73f6ee6002538aa601e083ab7169dee4" in protocol
+    assert "CSL-Laboratories/csl-research" in protocol
+    assert "aab0b90c130948434a752611d66da32390e7186c" in protocol
+    assert "submissions/20261029-cockpit-csl216-o4-research-prose-01/record.json" in protocol
+    assert "candidate-only, unreviewed submission (csl-research#261 not yet merged)" in protocol
+    assert "search_a81ed0bcb8b97e64d4f958ef59dde38a" not in protocol
+    assert "https://doi.org/10.1016/j.knosys.2024.112477" not in protocol
+    assert "https://github.com/eslazarev/purged-cross-validation" not in protocol
     for url in (
         "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2460551",
         "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2326253",
-        "https://doi.org/10.1016/j.knosys.2024.112477",
-        "https://github.com/eslazarev/purged-cross-validation",
     ):
         assert url in protocol
     for decision in ("Spend", "Credentials", "Tax/legal", "Architecture", "Release", "Live", "Thresholds"):

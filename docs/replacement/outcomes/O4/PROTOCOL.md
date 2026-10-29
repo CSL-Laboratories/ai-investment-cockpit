@@ -185,21 +185,6 @@ Threshold values are owner decisions. Every threshold in this packet is
 | Net yield | Net-of-cost result against the matched-cash baseline: the net-result series, the matched-cash baseline series, and the retained cost amounts. This is the primary economic outcome the hypothesis names. | Local accounting requirement. No numeric bar. |
 | Capital use | The capital the family requires: the capital-employed series and peak capital employed. | Local accounting requirement. No numeric bar. |
 
-[Arian, Norouzi, and Seco](https://doi.org/10.1016/j.knosys.2024.112477) compare
-out-of-sample methods in a synthetic controlled environment and report lower
-backtest-overfitting probability and a stronger deflated-Sharpe statistic for
-combinatorial purged cross-validation than for walk-forward, k-fold, and purged
-k-fold. That comparison is their result, not a result of this repository. This
-packet does not adopt their ranking, does not pick an exclusive splitter, and
-does not run their study. It does require purge and embargo on the declared
-split, because an unpurged cut can place overlapping labels on both sides.
-[purgedcv](https://github.com/eslazarev/purged-cross-validation) is the
-reference implementation consulted for those two operations: purge drops
-overlapping-horizon training rows, and embargo drops a post-test buffer. The
-same notes say those controls do not guarantee independence. Deflated Sharpe
-in that library is applied to the number of strategy configurations searched,
-not to the number of cross-validation paths.
-
 ## Promotion protocol and candidate queue
 
 The non-live promotion ladder follows SCOPE-AUDIT RC-8: replay, simulation,
@@ -309,30 +294,13 @@ different reason, rejects the run.
 - Registry source commit recorded by CSL-212: `73ab78d9d69494c757cec875855121b1d29320a4`
 - Accepted contract digests remain the CSL-212 receipt digests. See `manifest.json` and the packet field `accepted_contract_digests`.
 
-## Research (Parallel)
+## Research record
 
-Embedded Parallel searches `search_a81ed0bcb8b97e64d4f958ef59dde38a` and
-`search_73f6ee6002538aa601e083ab7169dee4`, run on Dan's box on 2026-10-17.
-This session started from those results. Titles and method details below were
-read from the cited pages and from the purgedcv README and quickstart that
-document the same purge, embargo, deflated-Sharpe, and backtest-overfitting
-operations.
-
-- Bailey and López de Prado, *The Deflated Sharpe Ratio: Correcting for Selection Bias, Backtest Overfitting and Non-Normality*: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2460551
-- Bailey, Borwein, López de Prado, and Zhu, *The Probability of Backtest Overfitting*: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2326253
-- Arian, Norouzi, and Seco, *Backtest overfitting in the machine learning era: A comparison of out-of-sample testing methods in a synthetic controlled environment*, Knowledge-Based Systems (2024): https://doi.org/10.1016/j.knosys.2024.112477
-- Purged cross-validation reference implementation: https://github.com/eslazarev/purged-cross-validation
-
-Pages opened while reading those results:
-
-- ScienceDirect record of the 2024 paper: https://www.sciencedirect.com/science/article/abs/pii/S0950705124011110
-- SSRN working paper of the same study: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4778909
-- purgedcv quickstart: https://eslazarev.github.io/purged-cross-validation/quickstart/
-
-No further Deep Research run and no new data acquisition were authorized.
-Local evidence is the feasibility freeze, evaluation, protocol, and screen
-ledger already in the repository. Context7 was not required: this packet adds
-no library integration.
+- repo: CSL-Laboratories/csl-research
+- commit: aab0b90c130948434a752611d66da32390e7186c
+- path: submissions/20261029-cockpit-csl216-o4-research-prose-01/record.json
+- claim: the O4 research prose (Parallel research notes, metric-registry literature comparison, reference-implementation notes) is held in that record
+- limitations: candidate-only, unreviewed submission (csl-research#261 not yet merged)
 
 ## Unresolved decisions (owner: roles)
 
