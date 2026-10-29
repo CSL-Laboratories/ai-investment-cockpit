@@ -1,0 +1,13 @@
+{
+  "title": "O3 candidate equity corporate action",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["corporate_action_id", "instrument_id", "kind", "cash_minor", "sequence"],
+  "properties": {
+    "corporate_action_id": {"type": "string", "minLength": 1},
+    "instrument_id": {"type": "string", "minLength": 1},
+    "kind": {"enum": ["cash_dividend", "split", "stock_dividend", "symbol_change", "merger_cash"]},
+    "cash_minor": {"type": "integer", "minimum": 0},
+    "sequence": {"type": "integer", "minimum": 1}
+  }
+}

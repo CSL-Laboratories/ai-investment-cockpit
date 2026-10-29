@@ -1,0 +1,25 @@
+{
+  "title": "O3 candidate fill",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "fill_id",
+    "order_id",
+    "instrument_id",
+    "sequence",
+    "qty",
+    "price_minor",
+    "fee_minor",
+    "side"
+  ],
+  "properties": {
+    "fill_id": {"type": "string", "minLength": 1},
+    "order_id": {"type": "string", "minLength": 1},
+    "instrument_id": {"type": "string", "minLength": 1},
+    "sequence": {"type": "integer", "minimum": 1},
+    "qty": {"type": "integer", "minimum": 1},
+    "price_minor": {"type": "integer", "minimum": 0},
+    "fee_minor": {"type": "integer", "minimum": 0},
+    "side": {"enum": ["buy"]}
+  }
+}
