@@ -53,6 +53,7 @@ FAILURES = (
     "O4 negative control FAIL hypothesis_costs:",
     "O4 negative control FAIL hypothesis_costs:",
     "O4 negative control FAIL hypothesis_costs:",
+    "O4 negative control FAIL hypothesis_costs:",
 )
 CHECKED = (
     "O4 candidate packet checked at maturity researched; "
@@ -274,6 +275,26 @@ def test_o4_accepts_equivalent_net_cost_wording() -> None:
     unrelated["experiment"]["hypothesis"] = base + suffix
     unrelated["strategy_contract"]["hypothesis"] = base + suffix
     assert validate.assess(unrelated) == []
+    for suffix in (
+        " It does not ignore model costs.",
+        " It does not exclude venue fees.",
+        " They do not omit latency.",
+        " It never ignores model costs.",
+        " It never excluded data.",
+        " It is never excluding data.",
+    ):
+        candidate = deepcopy(packet)
+        candidate["experiment"]["hypothesis"] = _NET_CLAUSE + suffix
+        candidate["strategy_contract"]["hypothesis"] = _NET_CLAUSE + suffix
+        assert validate.assess(candidate) == [], suffix
+    bounded = (
+        _NET_CLAUSE[:-1]
+        + ", without look-ahead bias, verified using dated observations from the historical data."
+    )
+    candidate = deepcopy(packet)
+    candidate["experiment"]["hypothesis"] = bounded
+    candidate["strategy_contract"]["hypothesis"] = bounded
+    assert validate.assess(candidate) == []
 
 
 _EIGHT_COSTS = (
@@ -308,6 +329,10 @@ VERB_EXCLUSION_CASES = (
     (
         "hypothesis-ignores-model.json",
         _NET_CLAUSE + " It ignores model costs.",
+    ),
+    (
+        "hypothesis-except-after-hours.json",
+        _NET_CLAUSE[:-1] + ", except after-hours transaction fees.",
     ),
 )
 _VERB_INFLECTIONS = (

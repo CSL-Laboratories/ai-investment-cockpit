@@ -148,6 +148,7 @@ CONTROL_ORDER = (
     "hypothesis_costs",
     "hypothesis_costs",
     "hypothesis_costs",
+    "hypothesis_costs",
 )
 REQUIRED_STAGE_GATES = {
     "replay": {
@@ -412,12 +413,32 @@ _COST_PHRASES: dict[str, tuple[str, ...]] = {
     "tax_accounting": ("tax and accounting", "tax accounting"),
 }
 # A net-of claim. The eight names must sit in that same clause, in any order.
-# "after" plus every cost in one clause is the other accepted form.
+# A bare "after" is not a claim. Only these "after … retained costs" phrases are.
 _NET_PHRASES = (
     "net of",
     "after all eight retained costs",
     "after the eight retained costs",
     "after all retained costs",
+)
+# "does not / do not / never" plus an exclude/ignore/omit inflection denies
+# the exclusion. "does not include" stays an exclusion marker, not a denial.
+_NEGATED_FINITE = tuple(
+    f"{polarity} {verb}"
+    for polarity in ("does not", "do not", "never")
+    for verb in (
+        "exclude",
+        "excludes",
+        "excluding",
+        "excluded",
+        "ignore",
+        "ignores",
+        "ignoring",
+        "ignored",
+        "omit",
+        "omits",
+        "omitting",
+        "omitted",
+    )
 )
 # These deny an exclusion. They are not themselves exclusions.
 _NEGATED_EXCLUSIONS = (
@@ -435,10 +456,13 @@ _NEGATED_EXCLUSIONS = (
     "not omitted",
     "nothing is omitted",
     "not ignored",
+    *_NEGATED_FINITE,
 )
 # A marker drops only the cost phrase it governs: the words after it, up to
-# the next net-of claim. "without look-ahead bias, net of ..." governs
-# "look-ahead bias", not the costs named after "net of". Finite verbs,
+# a comma or the next net-of claim. "without look-ahead bias, from the
+# historical data" governs "look-ahead bias", not "data". A bare "after"
+# does not end that phrase, so "except after-hours transaction fees" still
+# governs "transaction". Finite verbs,
 # gerunds, and "except" / "without" are forward markers. Past participles
 # ("are excluded") stay predicates because their subject comes first.
 _FORWARD_MARKERS = (
@@ -481,7 +505,16 @@ _NON_MARKER_EXCLUSIONS = (
 
 
 def _fold_hypothesis(text: str) -> str:
-    return " ".join("".join(ch if ch.isalnum() else " " for ch in text.casefold()).split())
+    # Commas stay as their own token so a marker stops at the phrase boundary.
+    pieces: list[str] = []
+    for char in text.casefold():
+        if char == ",":
+            pieces.append(" , ")
+        elif char.isalnum():
+            pieces.append(char)
+        else:
+            pieces.append(" ")
+    return " ".join("".join(pieces).split())
 
 
 def _hypothesis_clauses(text: str) -> list[str]:
@@ -564,16 +597,13 @@ def _marker_label(marker: str) -> str:
 
 def _net_claim_at(tokens: list[str], index: int) -> bool:
     rest = " ".join(tokens[index:])
-    if any(rest == phrase or rest.startswith(phrase + " ") for phrase in _NET_PHRASES):
-        return True
-    # "after" plus the eight costs is the other accepted net claim.
-    return tokens[index] == "after"
+    return any(rest == phrase or rest.startswith(phrase + " ") for phrase in _NET_PHRASES)
 
 
 def _governed_tokens(tokens: list[str]) -> list[str]:
-    """Words the marker governs, stopping at the next net-of claim."""
-    for index in range(len(tokens)):
-        if _net_claim_at(tokens, index):
+    """Words the marker governs, through the next comma or net-of claim."""
+    for index, token in enumerate(tokens):
+        if token == "," or _net_claim_at(tokens, index):
             return tokens[:index]
     return tokens
 
@@ -602,10 +632,8 @@ def _forward_excluded(tokens: list[str]) -> list[tuple[str, str]]:
 
 
 def _clause_has_net_phrase(folded: str, tokens: list[str]) -> bool:
-    if any(phrase in folded for phrase in _NET_PHRASES):
-        return True
-    keys = {key for key, _start, _end in _cost_spans(tokens)}
-    return "after" in tokens and set(COST_KEYS) <= keys
+    del tokens  # the cost list does not make a bare "after" into a net claim
+    return any(phrase in folded for phrase in _NET_PHRASES)
 
 
 def _non_marker_hits(folded: str) -> list[str]:

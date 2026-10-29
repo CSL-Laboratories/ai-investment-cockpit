@@ -5,7 +5,7 @@
   "files": [
     {
       "path": "PROTOCOL.md",
-      "sha256": "ef3e69ad62829d3296813d36371cc6722f28479d9efe419383beab88dd8d2ddd"
+      "sha256": "b4cbfb1e8e21620a62d0d5d2ca143bcb8f1b708f1107e234eb42886ce16834ca"
     },
     {
       "path": "fixtures/candidate-packet.json",
@@ -26,6 +26,10 @@
     {
       "path": "fixtures/negative/hypothesis-cost-excluded.json",
       "sha256": "7d5b41bb3d45ceb588466ce6c947d8924c862c617c2808a67871981e78a3231d"
+    },
+    {
+      "path": "fixtures/negative/hypothesis-except-after-hours.json",
+      "sha256": "31e6e76f4cbfa10fdac362b90a1b0579d1222d144eb736aa2847f372a2dca136"
     },
     {
       "path": "fixtures/negative/hypothesis-excludes-venue-fees.json",
@@ -129,7 +133,7 @@
     },
     {
       "path": "validate.py",
-      "sha256": "d73e9e260a5ffcc5d89b2ab9d9a6bfa9d366ffa6246091ad9edd10d9313ec492"
+      "sha256": "86e17048adbefd78547dc6eb4bdd466046acf366d6fae985d83431c8801b49c8"
     }
   ],
   "linear_issue": "CSL-216",
@@ -218,6 +222,10 @@
     {
       "expect": "hypothesis_costs",
       "path": "fixtures/negative/hypothesis-ignores-model.json"
+    },
+    {
+      "expect": "hypothesis_costs",
+      "path": "fixtures/negative/hypothesis-except-after-hours.json"
     }
   ],
   "outcome": "O4",
