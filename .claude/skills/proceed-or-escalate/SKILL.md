@@ -145,8 +145,11 @@ If csl-research is not accessible, stop and post a blocker on the Linear
 issue; do not fall back to this repo. Every new non-public doc goes to
 csl-research through a PR there; this repo only links to it.
 Gate and operational evidence that code or a runbook in this repo already reads
-stays in `docs/evidence/` until CSL-536. Contract fixtures under
-`docs/replacement/outcomes/**` stay. Existing files stay until CSL-536.
+stays in `docs/evidence/` until the CSL-536 move round that lists it
+(csl-research #263, approved by Lucas on Oct 30), and no earlier than
+the date the list gives it. Contract fixtures under
+`docs/replacement/outcomes/**` stay. Existing files stay until the
+CSL-536 move round that lists them, and no earlier than that date.
 `docs/research/**` is legacy (no new files).
 
 Then stop that line of work, release your claim, if you hold one, with a release record (AGENTS.md)
