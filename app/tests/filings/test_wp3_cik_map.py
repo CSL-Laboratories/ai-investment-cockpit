@@ -16,8 +16,7 @@ from filings.edgar.cik_map import (
 )
 from filings.edgar.fetch import SEC_COMPANY_TICKERS_URL, SecFetcher
 from tests.filings._sec_replay import FixtureTransport, VirtualTime
-
-UA = "Lucas Salvador lucassalvador987@gmail.com (personal research)"
+from tests.filings._sec_replay import SEC_TEST_USER_AGENT as UA
 
 # The real SEC company_tickers.json shape: a dict keyed by stringified row index, each row
 # {cik_str: int (leading zeros dropped), ticker, title}.

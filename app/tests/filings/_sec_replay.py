@@ -11,9 +11,13 @@ no ``test_`` prefix). It provides:
   under ``app/tests/fixtures/sec/``. Unknown URLs return HTTP 404. Every request is
   recorded so tests can assert the declared User-Agent rode on it.
 * small purpose-built transports for error injection (403/429/500/timeout).
+* :data:`SEC_TEST_USER_AGENT` — the declared User-Agent the WP3 tests send. Read from
+  ``COCKPIT_TEST_SEC_USER_AGENT``; blank or unset falls back to the CSL contact alias. Test
+  support only: production ``Settings.sec_user_agent`` stays optional with no default.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from filings.edgar.fetch import (
@@ -24,6 +28,11 @@ from filings.edgar.fetch import (
 )
 
 FIXTURES = Path(__file__).parent / "fixtures" / "sec"
+
+SEC_TEST_USER_AGENT = (
+    os.environ.get("COCKPIT_TEST_SEC_USER_AGENT", "").strip()
+    or "CSL Laboratories contact@csl-laboratories.com"
+)
 
 # The two captured registrants (fixture dir -> CIK). Matches MANIFEST.md.
 FIXTURE_CIKS = {
