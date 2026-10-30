@@ -8,7 +8,6 @@ related:
   - REGISTER
   - runbooks/w23-cash-merger-edge
   - evidence/w23-cash-merger-edge-2026-08-14
-  - evidence/w24-merger-semantic-verifier-2026-08-17
 ---
 
 # W-24 merger semantic verifier
@@ -67,7 +66,7 @@ override.
 The implementation merged in PR #38. Its final BUG-106-integrated Windows gate is 2,274 passed /
 1 skipped with Ruff clean. This is code evidence, not a substitute for the external witness,
 prospective cohort, or cross-platform CI; see
-[[evidence/w24-merger-semantic-verifier-2026-08-17]].
+`evidence/w24-merger-semantic-verifier-2026-08-17` (moved to csl-research `contracts/ai-investment-cockpit/evidence/legacy/`).
 
 The minimum evaluation horizon means a qualifying real 30-deal cohort cannot be completed on the
 same day it is selected. Background/read-only and named live-feed evidence can run now; opening

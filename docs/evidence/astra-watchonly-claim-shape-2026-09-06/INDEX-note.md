@@ -1,1 +1,0 @@
-- 2026-09-06 PT: watch_only D1–D4 claim shape completed (docs/evidence only); refusal contracts, fixture map and Monitor criteria retained; no production claim or PR by this task. Local history records #74 merged at `ce62cf2`; next claim must verify accepted main/matrix. D1–D4 remain open; soak `c5ef0ad:8787` unchanged. See `astra-watchonly-claim-shape-2026-09-06.md`.

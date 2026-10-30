@@ -1,9 +1,0 @@
-A1: $150 fixed order submitted under a $100 cap after unsigned proposal became $15.
-.A2: order submitted after fresh signed $1,000 equity loss; daily limit is $500.
-.A3: JSON inside a script becomes an eligible cash-merger assertion.
-.A4: "It is not true that the merger was completed" is labelled closed.
-.A5: an unrelated live fill makes paper performance fail as an oversized fill.
-.A6: unchanged merger terms pass alone; adding a routine quarterly filing refuses them.
-.A7: inspector approves Claude argv with no built-in-tool or MCP disable flags.
-.
-7 passed in 1.24s

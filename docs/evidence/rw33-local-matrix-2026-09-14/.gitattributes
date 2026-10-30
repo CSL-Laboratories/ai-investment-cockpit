@@ -1,3 +1,0 @@
-# Preserve the exact bytes bound by the matrix's artifact hashes.
-*.json -text diff whitespace=trailing-space,space-before-tab,cr-at-eol
-*.log -text diff whitespace=trailing-space,space-before-tab,cr-at-eol

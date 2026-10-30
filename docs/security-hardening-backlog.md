@@ -54,7 +54,7 @@ related: [security-architecture, prompt-injection-defense, draft-discord-control
 >   W-24 exact-message readback is green, but no S3 WORM bucket/credential is provisioned. The
 >   valid local chain/mirrors therefore still have no out-of-domain trust authority; no paper/
 >   live/autonomous promotion is permitted. See
->   [[evidence/w25-admin-discord-worm-witness-2026-08-17]].
+>   `evidence/w25-admin-discord-worm-witness-2026-08-17` (moved to csl-research `contracts/ai-investment-cockpit/evidence/legacy/`).
 > - **W11-closed (G11 adversarial gate, 2026-07-09):** SEC-03 (runtime capability
 >   boundary — tracer + live-MCP token binding + trust-root pinning), SEC-05
 >   (credential starvation — ACTIVATION pending the low-priv account + launcher;
@@ -687,7 +687,7 @@ first, one 128-entry page must prove its whole sequence group, and ambiguity ret
 Read and append operation counts are constant; post-write concurrency is rechecked. PR #48 merged
 the package, but W-25 activation still waits on independent/cross-platform attestation. No cost
 workaround may weaken rollback, candidate shadow/conflict/delete, retention, or fail-closed checks. See
-[[evidence/bug110-bounded-witness-read-2026-08-18]].
+`evidence/bug110-bounded-witness-read-2026-08-18` (moved to csl-research `contracts/ai-investment-cockpit/evidence/legacy/`).
 
 ### SEC-12 — Pin hash coverage and canonical serialization
 **Attack.** The docs never say *which* columns or *what* serialization feed each hash. If

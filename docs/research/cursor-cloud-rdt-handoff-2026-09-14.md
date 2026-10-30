@@ -16,7 +16,7 @@ in Cursor Cloud, or its eventual merged main. Confirm the source
 revision includes this handoff and the RW-33 evidence; never silently run against
 the older OneDrive checkout or an unamended Cloud main.
 
-[RW-33 evidence](../evidence/rw33-swarm-rebase-2026-09-14.md) distinguishes local
+RW-33 evidence (`evidence/rw33-swarm-rebase-2026-09-14.md`, moved to csl-research `contracts/ai-investment-cockpit/evidence/legacy/`) distinguishes local
 test evidence from runtime qualification. Installed Cloud CLIs have not been
 inspected or qualified by the local session. The filename
 `spawn_scoped_leaf.py` is historical: it is a preview-only tool with no launch
