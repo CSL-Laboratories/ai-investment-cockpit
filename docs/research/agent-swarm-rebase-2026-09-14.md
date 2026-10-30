@@ -129,5 +129,5 @@ adopted delivery slices with a claim and testable useful outcome. Empty screens
 must explain rejection/unknown causes and the next evidence trigger. They do not
 satisfy the goals merely because the process exited successfully.
 
-[RW-33 evidence](../evidence/rw33-swarm-rebase-2026-09-14.md) records local checks.
+RW-33 evidence (`evidence/rw33-swarm-rebase-2026-09-14.md`, moved to csl-research `contracts/ai-investment-cockpit/evidence/legacy/`) records local checks.
 Runtime qualification, paid dispatch and product empirical gates are separate.

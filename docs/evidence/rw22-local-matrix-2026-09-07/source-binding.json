@@ -1,9 +1,0 @@
-{
-  "commit": "cacaff4f88753227a2d59a4bc51c82e39bfb5eef",
-  "tree": "2207c2cc83783f82701e7b39669491c9a5cb5eaa",
-  "app_tree": "267799acdccec6e5dbf97f730a17121c1e7a1120",
-  "git_archive_sha256": "754f4198066a4b4efcb5361f6de6eb94fd437c244dbe47e530748d5254c39f8e",
-  "archive_matches_tested_bytes": true,
-  "working_application_matches_commit": true,
-  "method": "Recreate git archive --format=tar from the committed revision, hash its bytes, compare app tree and worktree diff."
-}

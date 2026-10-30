@@ -15,7 +15,7 @@ related:
 This runbook brings the composed background service up for Alpaca paper testing. It does not
 authorize live capital or any autonomous mode.
 
-The first dated bring-up record is [[../evidence/w22-paper-mvp-2026-08-14]]. It demonstrates
+The first dated bring-up record is `evidence/w22-paper-mvp-2026-08-14` (moved to csl-research `contracts/ai-investment-cockpit/evidence/legacy/`). It demonstrates
 healthy read-only quote/feed/audit operation and records the still-open evidence gates.
 
 ## Hard hold: what cannot pass tomorrow

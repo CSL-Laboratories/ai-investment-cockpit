@@ -1,7 +1,0 @@
-chronology: {'position': 1, 'fills': [(1, 150)], 'desync_cancels': 1, 'valid': True, 'calls': [('book', 100), ('fill', 200), ('book', 200)]}
-early fill report: {'position': 1, 'fills': [(101, 101)], 'calls': [('book', 1), ('fill', 101), ('book', 2)]}
-denied cash separator '' REFUSED SemanticEvidenceUnavailable
-denied cash separator '<!-- page marker -->' ACCEPTED 120
-denied cash separator '<br>' ACCEPTED 120
-denied cash separator '<span hidden>layout</span>' ACCEPTED 120
-signed fixture denied cash: {'verified': True, 'gross_return_bps': '1018.160365045315249346820390', 'audit_valid': True, 'isolated_case': 'C:\\t\\cockpit-audit-20260907\\quant-semantic-fxf2e9cp'}
