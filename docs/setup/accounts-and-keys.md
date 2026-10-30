@@ -173,7 +173,7 @@ Verify a round-trip once the app exists:
 
 The externally-verified facts are moving targets. As of **2026-07-06** the two re-run
 targets are **unchanged** (Anthropic SDK credit still paused; Robinhood scope holds) —
-see [[moving-targets-refresh-2026-07-06]]. Re-verify again immediately before funding a
+see `setup/moving-targets-refresh-2026-07-06.md` (moved to csl-research history, CSL-588). Re-verify again immediately before funding a
 live account: Anthropic SDK-credit status, Robinhood Agentic scope/limits/session TTLs,
 and per-broker post-PDT house rules.
 

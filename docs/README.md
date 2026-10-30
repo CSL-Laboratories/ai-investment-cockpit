@@ -388,7 +388,7 @@ under `docs/replacement/outcomes/**` stay.
 | [[research/rw36-screen-intake-2026-09-15]] | RW-36 third GET-only screen row: cash 1 BOW, still empty/date-not-ready; merged in PR #98 (`5a963ff`) on 2026-09-16; no PASS |
 | [[research/rw37-screen-intake-2026-09-15]] | RW-37 fourth GET-only screen row: Tue 2026-09-15, supported 32, cash 0; merged in PR #99 (`33156c9`) on 2026-09-16; the 30-identity gate stays closed; no PASS |
 | [[research-report]] · [[research-supplement]] · [[upside-and-roi]] | Original research inputs |
-| [[moving-targets-refresh-2026-07-06]] | A dated verification snapshot |
+| `moving-targets-refresh-2026-07-06.md` | A dated verification snapshot; moved to csl-research `contracts/ai-investment-cockpit/history/` at `e81c5f66df5e04ea73344088e19d6ec9e2916719` (CSL-588) |
 
 ## Superseded — history only
 

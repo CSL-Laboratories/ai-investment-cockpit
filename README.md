@@ -139,6 +139,6 @@ toggle. See [`AGENTS.md`](AGENTS.md) and
 ## Before you build
 
 - Provision accounts + keys into the host OS credential store — [`docs/setup/accounts-and-keys.md`](docs/setup/accounts-and-keys.md).
-- Re-verify the moving targets before the full-scale/live stage — [`docs/setup/moving-targets-refresh-2026-07-06.md`](docs/setup/moving-targets-refresh-2026-07-06.md).
+- Re-verify the moving targets before the full-scale/live stage — the dated snapshot `setup/moving-targets-refresh-2026-07-06.md` moved to csl-research `contracts/ai-investment-cockpit/history/` at `e81c5f66df5e04ea73344088e19d6ec9e2916719` (CSL-588).
 - **Keep this repository private.** Secrets live in keyring, never in the repo (Invariant 4).
 - Not financial advice; personal-use experiment with capped, loss-tolerable downside.
