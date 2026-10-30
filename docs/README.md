@@ -309,7 +309,7 @@ Every doc carries `status:` in its frontmatter. Four values, and they mean exact
 | `live` | It is current | **Yes** |
 | `reference` | You need stable background — a contract, a spec, a research input | No — it describes, it does not schedule |
 | `superseded` | You want the history behind a decision | **No.** [[PLAN]] replaced it |
-| `archive` | Same, and it has moved to `archive/` | **No** |
+| `archive` | Same, and it has moved to the csl-research vault (see Archive below) | **No** |
 
 This vocabulary is closed. Before this cleanup there were seven overlapping values
 (`active`, `draft`, `verified`, `built`, `live`, `under-review`, `archive`) across 25 files, so
@@ -400,9 +400,12 @@ carries a banner saying what replaced it.
 
 ## Archive
 
-Five documents, ~275 KB, **zero production-code references** — see [[archive/README]]. Mostly
-orchestration scaffolding for a multi-agent build session that has finished: prompts and
-sequencing, not design.
+Five documents, ~275 KB, **zero production-code references**. Mostly orchestration scaffolding
+for a multi-agent build session that has finished: prompts and sequencing, not design. They moved
+to the csl-research vault under CSL-536 (batch 1, CSL-583), with `csl-392-docs-read-audit.md` and
+`csl-474-OPEN-QUESTIONS.md`: repository `CSL-Laboratories/csl-research`, commit
+`69ae47566a37b873b4ae434a5bd8289a0023230c`, path `contracts/ai-investment-cockpit/history/`.
+That directory's README lists each file's SHA-256, which matches this repo at `11a122e2`.
 
 ---
 
