@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -167,7 +168,9 @@ OUTCOME_BASELINE_DIGESTS = {
 # csl-research (Lucas, Oct 29). The receipt pins the pointer file like any
 # governing file; the pointer pins the target bytes by commit and SHA-256, so
 # no new digest lives in code. csl-research is private, so CI checks the
-# pointer's shape only; --research-root also checks the target bytes.
+# pointer's shape only; --vault-root (or CSL_RESEARCH_CHECKOUT, the same
+# setting cockpit_spine reads) also checks the target bytes.
+VAULT_CHECKOUT_ENV = "CSL_RESEARCH_CHECKOUT"
 POINTER_CONTRACT = "docs/replacement/SUCCESSOR-PRODUCT.md"
 POINTER_FENCE = "csl-contract-pointer"
 POINTER_REPOSITORY = "CSL-Laboratories/csl-research"
@@ -351,10 +354,10 @@ def read_pointer(path: Path) -> dict[str, Any] | None:
     return pointer
 
 
-def verify_pointer_target(pointer: dict[str, Any], research_root: Path) -> None:
+def verify_pointer_target(pointer: dict[str, Any], vault_root: Path) -> None:
     """Check the pointed-to bytes in a local csl-research checkout."""
     spec = f"{pointer['commit']}:{pointer['path']}"
-    completed = _git_run(research_root, ("cat-file", "blob", spec), message="contract pointer target unavailable")
+    completed = _git_run(vault_root, ("cat-file", "blob", spec), message="contract pointer target unavailable")
     _require(completed.returncode == 0, f"contract pointer target unavailable: {spec}")
     _require(
         hashlib.sha256(completed.stdout).hexdigest() == pointer["sha256"],
@@ -509,7 +512,7 @@ def _month_projection(document: str) -> dict[str, tuple[str, list[str]]]:
     return projection
 
 
-def validate(program: dict[str, Any], root: Path = ROOT, *, research_root: Path | None = None) -> None:
+def validate(program: dict[str, Any], root: Path = ROOT, *, vault_root: Path | None = None) -> None:
     _require(
         isinstance(program, dict) and set(program) == EXPECTED_PROGRAM_KEYS,
         "program fields changed",
@@ -639,8 +642,8 @@ def validate(program: dict[str, Any], root: Path = ROOT, *, research_root: Path 
         "governing files differ from accepted receipt",
     )
     pointer = read_pointer(root / POINTER_CONTRACT)
-    if pointer is not None and research_root is not None:
-        verify_pointer_target(pointer, research_root)
+    if pointer is not None and vault_root is not None:
+        verify_pointer_target(pointer, vault_root)
     superseded_contracts = receipt.get("accepted_contracts")
     _require(isinstance(superseded_contracts, dict), "superseded contract digest set missing")
     _require(superseded_contracts == EXPECTED_SUPERSEDED_CONTRACTS, "superseded contract digests changed")
@@ -749,20 +752,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--program", type=Path, default=DEFAULT_PROGRAM)
     parser.add_argument("--root", type=Path, default=ROOT)
     parser.add_argument(
-        "--research-root",
+        "--vault-root",
         type=Path,
         default=None,
-        help="local csl-research checkout; also checks a contract pointer's target bytes",
+        help=f"csl-research checkout (default: {VAULT_CHECKOUT_ENV}); also checks a contract pointer's target bytes",
     )
     args = parser.parse_args(argv)
+    vault_root = args.vault_root
+    if vault_root is None and os.environ.get(VAULT_CHECKOUT_ENV, "").strip():
+        vault_root = Path(os.environ[VAULT_CHECKOUT_ENV].strip())
     try:
-        validate(load(args.program), root=args.root, research_root=args.research_root)
+        validate(load(args.program), root=args.root, vault_root=vault_root)
         pointer = read_pointer(args.root / POINTER_CONTRACT)
     except (OSError, json.JSONDecodeError, ContractError) as exc:
         print(f"replacement-program: FAIL: {exc}", file=sys.stderr)
         return 1
-    if pointer is not None and args.research_root is None:
-        print("replacement-program: PASS (contract pointer shape only; target bytes not checked without --research-root)")
+    if pointer is not None and vault_root is None:
+        print(f"replacement-program: PASS (contract pointer shape only; target bytes not checked without --vault-root or {VAULT_CHECKOUT_ENV})")
         return 0
     print("replacement-program: PASS")
     return 0

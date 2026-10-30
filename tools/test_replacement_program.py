@@ -7,12 +7,14 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 import re
 import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("checker", ROOT / "tools" / "check_replacement_program.py")
@@ -899,18 +901,18 @@ class ContractPointerTests(unittest.TestCase):
         with self.assertRaisesRegex(CHECKER.ContractError, "github receipt is not checker-pinned"):
             CHECKER.validate(candidate, root)
 
-    def test_malformed_pointer_fails_validate_without_research_root(self) -> None:
+    def test_malformed_pointer_fails_validate_without_vault_root(self) -> None:
         root, candidate = self.pointer_root(pointer_bytes(pointer_record(commit="abc")))
         with pinned_github_receipt(candidate), self.assertRaisesRegex(CHECKER.ContractError, "40 lowercase hex"):
             CHECKER.validate(candidate, root)
 
-    def test_research_root_checks_target_bytes(self) -> None:
+    def test_vault_root_checks_target_bytes(self) -> None:
         research, commit, digest = research_repo(self.tmp)
         good = pointer_record(commit=commit, sha256=digest)
         CHECKER.verify_pointer_target(good, research)
         root, candidate = self.pointer_root(pointer_bytes(good))
         with pinned_github_receipt(candidate):
-            CHECKER.validate(candidate, root, research_root=research)
+            CHECKER.validate(candidate, root, vault_root=research)
         with self.assertRaisesRegex(CHECKER.ContractError, "target digest mismatch"):
             CHECKER.verify_pointer_target(pointer_record(commit=commit, sha256="b" * 64), research)
         with self.assertRaisesRegex(CHECKER.ContractError, "target unavailable"):
@@ -933,8 +935,24 @@ class ContractPointerTests(unittest.TestCase):
             self.assertIn("target bytes not checked", out.getvalue())
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
-                self.assertEqual(CHECKER.main([*args, "--research-root", str(research)]), 0)
+                self.assertEqual(CHECKER.main([*args, "--vault-root", str(research)]), 0)
             self.assertEqual(out.getvalue(), "replacement-program: PASS\n")
+            out = io.StringIO()
+            with mock.patch.dict(os.environ, {CHECKER.VAULT_CHECKOUT_ENV: str(research)}), contextlib.redirect_stdout(out):
+                self.assertEqual(CHECKER.main(args), 0)
+            self.assertEqual(out.getvalue(), "replacement-program: PASS\n")
+
+    def test_vault_checkout_env_checks_target_bytes(self) -> None:
+        research, commit, _digest = research_repo(self.tmp)
+        root, candidate = self.pointer_root(pointer_bytes(pointer_record(commit=commit, sha256="b" * 64)))
+        program_path = self.tmp / "program.json"
+        program_path.write_text(json.dumps(candidate), encoding="utf-8")
+        err = io.StringIO()
+        with pinned_github_receipt(candidate), mock.patch.dict(
+            os.environ, {CHECKER.VAULT_CHECKOUT_ENV: str(research)}
+        ), contextlib.redirect_stderr(err):
+            self.assertEqual(CHECKER.main(["--program", str(program_path), "--root", str(root)]), 1)
+        self.assertIn("target digest mismatch", err.getvalue())
 
     def test_pointer_adds_no_digest_constants(self) -> None:
         source = (ROOT / "tools" / "check_replacement_program.py").read_text(encoding="utf-8")

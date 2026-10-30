@@ -34,7 +34,7 @@ class Floor(NamedTuple):
 FLOORS = (
     Floor("app/tests/test_replacement_program_registry.py", "pytest", 142),
     Floor("app/tests/test_o7_operator_contract.py", "pytest", 69),
-    Floor("tools/test_replacement_program.py", "unittest", 65),
+    Floor("tools/test_replacement_program.py", "unittest", 66),
 )
 
 REQUIRED_FILES = (
