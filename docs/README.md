@@ -369,25 +369,25 @@ under `docs/replacement/outcomes/**` stay.
 | [[ultracode-build-playbook]] | The adversarial-review pattern, still the house rule for any order-path change |
 | [[security-architecture]] | The security model |
 | [[prompt-injection-defense]] | The untrusted-content threat model — M2/M3 are cited throughout `ingest/` and `workflows/` |
-| [[research/llm-hybrid-trading]] | Viability research. Confirms the extraction-not-prediction architecture; sets the cost and accuracy bars in [[PLAN]] §2 |
-| [[research/autonomy-blockers-and-unblockers-2026-08-12]] | Dated evidence for the paper-reliability/dynamic-paper/live-broker distinction, Robinhood/MCP unknowns, event-trigger design, empirical spikes, and hold points in [[PLAN]] |
-| [[research/rw19-event-source-characterization-2026-08-12]] | RW-19 measurement ledger: dated entitlement probes, IEX/SIP coverage, capture manifests, unresolved stream/replay/load gates, and DEC-07 status |
-| [[research/sec11-zero-cost-witness-feasibility-2026-08-18]] | Same-host/R2 rejection, Rekor/home-device research candidates, AWS cost boundary, and `BUG-110` finding/remediation |
+| `research/llm-hybrid-trading.md` (moved to csl-research `submissions/20261023-cockpit-llm-hybrid-trading-source-history-01/`) | Viability research. Confirms the extraction-not-prediction architecture; sets the cost and accuracy bars in [[PLAN]] §2 |
+| `research/autonomy-blockers-and-unblockers-2026-08-12.md` (moved to csl-research `submissions/20261023-cockpit-autonomy-blockers-and-unblockers-2026-08-12-source-history-01/`) | Dated evidence for the paper-reliability/dynamic-paper/live-broker distinction, Robinhood/MCP unknowns, event-trigger design, empirical spikes, and hold points in [[PLAN]] |
+| `research/rw19-event-source-characterization-2026-08-12.md` (moved to csl-research `submissions/20261030-csl591-rw19-event-source-characterization-2026-08-12-history-01/`) | RW-19 measurement ledger: dated entitlement probes, IEX/SIP coverage, capture manifests, unresolved stream/replay/load gates, and DEC-07 status |
+| `research/sec11-zero-cost-witness-feasibility-2026-08-18.md` (moved to csl-research `submissions/20261023-cockpit-sec11-zero-cost-witness-feasibility-2026-08-18-source-history-01/`) | Same-host/R2 rejection, Rekor/home-device research candidates, AWS cost boundary, and `BUG-110` finding/remediation |
 | [[research/dec03-strategy-selection-2026-08-14]] | Closed DEC-03 comparison, selection, and the fail-closed W-23 edge-source contract |
-| [[research/agent-swarm-orchestration-2026-09-10]] | 2-step research/dev swarm shape (Head → domain middles → Devin leaves). Host/runtime amended 2026-09-11 |
-| [[research/agent-swarm-cloud-host-2026-09-11]] | Owner direction: swarm host is Cursor Cloud (not sentry); Devin SWE-2 at 30–40 agents for research/dev/review; market/live testing stays owner-operated |
-| [[research/agent-swarm-pipeline-2026-09-11]] | SWE-2 volume + first-gate review; Muse Spark 1.3 second-gate synthesis; Grok 4.6 xhigh Head; Lucas merges |
-| [[research/agent-swarm-smoke-2026-09-11]] | Measured 2026-09-11 pipeline smoke: hashes, spawn argv, Head steer of Muse nits; no empirical PASS |
-| [[research/rw26-slice-a-inventory-2026-09-11]] | RW-26 slice A inventory swarm run: hashes, Head-frozen proposed shortlist, no activation / no PASS |
-| [[research/rw27-feasibility-freeze-2026-09-11]] | RW-27 freeze: versioned contracts, fail-closed qualify block, no activation / no PASS |
-| [[research/rw28-slice-a-evaluation-2026-09-11]] | RW-28 metrics + evaluation: discrete protocol, 0 qualify, no activation / no PASS |
-| [[research/rw29-case-inspection-2026-09-11]] | RW-29 case inspection: six failure classes, missing decisions, no activation / no PASS |
-| [[research/rw30-measurement-protocol-2026-09-12]] | RW-30 pre-measurement protocol: sealed rules, no measurement / no PASS |
-| [[research/rw34-cloud-adapter-2026-09-15]] | RW-34 Cloud CLI inventory and admitted json-child profile; merged with RW-35 in PR #97 (`8beb271`) on 2026-09-15; no empirical PASS |
-| [[research/rw35-empty-run-update-2026-09-15]] | RW-35 composed empty-run research update from retained RW-29/RW-31 inputs; merged with RW-34 in PR #97 (`8beb271`) on 2026-09-15; no empirical PASS |
-| [[research/rw36-screen-intake-2026-09-15]] | RW-36 third GET-only screen row: cash 1 BOW, still empty/date-not-ready; merged in PR #98 (`5a963ff`) on 2026-09-16; no PASS |
-| [[research/rw37-screen-intake-2026-09-15]] | RW-37 fourth GET-only screen row: Tue 2026-09-15, supported 32, cash 0; merged in PR #99 (`33156c9`) on 2026-09-16; the 30-identity gate stays closed; no PASS |
-| [[research-report]] · [[research-supplement]] · [[upside-and-roi]] | Original research inputs |
+| `research/agent-swarm-orchestration-2026-09-10.md` (moved to csl-research `submissions/20261030-csl591-agent-swarm-orchestration-2026-09-10-history-01/`) | 2-step research/dev swarm shape (Head → domain middles → Devin leaves). Host/runtime amended 2026-09-11 |
+| `research/agent-swarm-cloud-host-2026-09-11.md` (moved to csl-research `submissions/20261023-cockpit-agent-swarm-cloud-host-2026-09-11-source-history-01/`) | Owner direction: swarm host is Cursor Cloud (not sentry); Devin SWE-2 at 30–40 agents for research/dev/review; market/live testing stays owner-operated |
+| `research/agent-swarm-pipeline-2026-09-11.md` (moved to csl-research `submissions/20261023-cockpit-agent-swarm-pipeline-2026-09-11-source-history-01/`) | SWE-2 volume + first-gate review; Muse Spark 1.3 second-gate synthesis; Grok 4.6 xhigh Head; Lucas merges |
+| `research/agent-swarm-smoke-2026-09-11.md` (moved to csl-research `submissions/20261023-cockpit-agent-swarm-smoke-2026-09-11-source-history-01/`) | Measured 2026-09-11 pipeline smoke: hashes, spawn argv, Head steer of Muse nits; no empirical PASS |
+| `research/rw26-slice-a-inventory-2026-09-11.md` (moved to csl-research `submissions/20261023-cockpit-rw26-slice-a-inventory-2026-09-11-source-history-01/`) | RW-26 slice A inventory swarm run: hashes, Head-frozen proposed shortlist, no activation / no PASS |
+| `research/rw27-feasibility-freeze-2026-09-11.md` (moved to csl-research `submissions/20261023-cockpit-rw27-freeze-history-01/`) | RW-27 freeze: versioned contracts, fail-closed qualify block, no activation / no PASS |
+| `research/rw28-slice-a-evaluation-2026-09-11.md` (moved to csl-research `submissions/20261023-cockpit-rw28-slice-a-evaluation-2026-09-11-source-history-01/`) | RW-28 metrics + evaluation: discrete protocol, 0 qualify, no activation / no PASS |
+| `research/rw29-case-inspection-2026-09-11.md` (moved to csl-research `submissions/20261023-cockpit-rw29-case-inspection-2026-09-11-source-history-01/`) | RW-29 case inspection: six failure classes, missing decisions, no activation / no PASS |
+| `research/rw30-measurement-protocol-2026-09-12.md` (moved to csl-research `submissions/20261023-cockpit-rw30-measurement-protocol-2026-09-12-source-history-01/`) | RW-30 pre-measurement protocol: sealed rules, no measurement / no PASS |
+| `research/rw34-cloud-adapter-2026-09-15.md` (moved to csl-research `submissions/20261030-csl591-rw34-cloud-adapter-2026-09-15-history-01/`) | RW-34 Cloud CLI inventory and admitted json-child profile; merged with RW-35 in PR #97 (`8beb271`) on 2026-09-15; no empirical PASS |
+| `research/rw35-empty-run-update-2026-09-15.md` (moved to csl-research `submissions/20261023-cockpit-rw35-empty-run-update-2026-09-15-source-history-01/`) | RW-35 composed empty-run research update from retained RW-29/RW-31 inputs; merged with RW-34 in PR #97 (`8beb271`) on 2026-09-15; no empirical PASS |
+| `research/rw36-screen-intake-2026-09-15.md` (moved to csl-research `submissions/20261023-cockpit-rw36-screen-intake-2026-09-15-source-history-01/`) | RW-36 third GET-only screen row: cash 1 BOW, still empty/date-not-ready; merged in PR #98 (`5a963ff`) on 2026-09-16; no PASS |
+| `research/rw37-screen-intake-2026-09-15.md` (moved to csl-research `submissions/20261023-cockpit-rw37-screen-intake-2026-09-15-source-history-01/`) | RW-37 fourth GET-only screen row: Tue 2026-09-15, supported 32, cash 0; merged in PR #99 (`33156c9`) on 2026-09-16; the 30-identity gate stays closed; no PASS |
+| `research/research-report.md` (moved to csl-research `submissions/20261023-cockpit-research-report-source-history-01/`) · [[research-supplement]] · `research/upside-and-roi.md` (moved to csl-research `submissions/20261023-cockpit-upside-and-roi-source-history-01/`) | Original research inputs |
 | `moving-targets-refresh-2026-07-06.md` | A dated verification snapshot; moved to csl-research `contracts/ai-investment-cockpit/history/` at `e81c5f66df5e04ea73344088e19d6ec9e2916719` (CSL-588) |
 
 ## Superseded — history only
