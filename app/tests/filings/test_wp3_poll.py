@@ -46,8 +46,8 @@ from storage.audit import AuditLog
 from storage.engine import create_all, make_engine, make_session_factory
 from filings.raw_store import RawStore
 from tests.filings._sec_replay import FixtureTransport, RaisingTransport, VirtualTime
+from tests.filings._sec_replay import SEC_TEST_USER_AGENT as UA
 
-UA = "Lucas Salvador lucassalvador987@gmail.com (personal research)"
 NVDA = "0001045810"
 AAPL = "0000320193"
 BASELINE_AUDIT_KEY = b"wp3-baseline-test-key"

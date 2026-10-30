@@ -8,9 +8,11 @@ related: []
 
 # SEC fixture manifest
 
-Captured 2026-07-08 by Claude (curl, declared User-Agent
-`Lucas Salvador lucassalvador987@gmail.com (personal research)` per SEC fair-access
-policy, sequential requests ≥1s apart). Raw bytes, unmodified — the WP4 offset
+Captured 2026-07-08 by Claude (curl, declared User-Agent with a personal contact
+— redacted 2026-10-29, CSL-579 — per SEC fair-access policy, sequential requests ≥1s
+apart). The fixtures were not re-captured. Replay tests now declare the CSL contact
+alias `contact@csl-laboratories.com` via `SEC_TEST_USER_AGENT` in
+`app/tests/filings/_sec_replay.py` (override: `COCKPIT_TEST_SEC_USER_AGENT`). Raw bytes, unmodified — the WP4 offset
 round-trip acceptance test depends on these files never being re-saved or reformatted.
 `sha256` column is the first 16 hex chars of the file's SHA-256, pinning the bytes.
 
