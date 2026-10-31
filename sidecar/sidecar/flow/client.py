@@ -159,8 +159,8 @@ class FlowDataClient:
             self._sleep(wait)
         self._last_request = time.monotonic()
 
-    def _backoff(self, response: httpx.Response, attempt: int) -> None:
-        header = response.headers.get("Retry-After")
+    def _backoff(self, response: httpx.Response | None, attempt: int) -> None:
+        header = None if response is None else response.headers.get("Retry-After")
         try:
             pause = float(header) if header is not None else min(8.0, 2.0**attempt)
         except ValueError:
@@ -182,10 +182,19 @@ class FlowDataClient:
         response: httpx.Response | None = None
         for attempt in range(REQUEST_RETRIES):
             self._pace()
-            response = self._client.request("GET", url, params=params, headers=headers)
-            if response.status_code != 429 or attempt + 1 == REQUEST_RETRIES:
-                return response
-            self._backoff(response, attempt)
+            try:
+                response = self._client.request("GET", url, params=params, headers=headers)
+            except httpx.TimeoutException:
+                if attempt + 1 == REQUEST_RETRIES:
+                    raise FlowError("market data request timed out after retries")
+                self._backoff(None, attempt)
+                continue
+            if response.status_code == 429 or 500 <= response.status_code <= 599:
+                if attempt + 1 == REQUEST_RETRIES:
+                    return response
+                self._backoff(response, attempt)
+                continue
+            return response
         assert response is not None
         return response
 

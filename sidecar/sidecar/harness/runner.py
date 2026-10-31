@@ -400,6 +400,8 @@ def run_runner(
     order_log_path: Path = DEFAULT_ORDER_LOG,
     kill_file: Path | None = None,
     strategy: str = "inverse_vol",
+    shadow: bool = False,
+    shadow_ledger: Path | None = None,
     kronos_report: Path = DEFAULT_KRONOS_REPORT,
     when: str = "auto",
     execute: bool = False,
@@ -412,8 +414,15 @@ def run_runner(
     bars_client: PaperReadClient | None = None,
     bars_out: Path | None = None,
 ) -> dict:
-    if strategy not in {"inverse_vol", "spy_only", "kronos"}:
-        raise RunnerError("strategy must be inverse_vol, spy_only, or kronos")
+    live_strategies = {"inverse_vol", "spy_only", "kronos"}
+    benchmark_strategies = {"w18", "o17", "w25"}
+    if strategy not in live_strategies | benchmark_strategies:
+        raise RunnerError("strategy must be inverse_vol, spy_only, kronos, w18, o17, or w25")
+    if strategy in benchmark_strategies and execute:
+        raise RunnerError(
+            "benchmark strategies are shadow-only and place no orders; "
+            "the live paper close run stays on inverse_vol"
+        )
     moment = now or datetime.now(timezone.utc)
     phase = session_phase(moment)
     try:
@@ -473,18 +482,38 @@ def run_runner(
         raise RunnerError(f"bars are missing {missing}")
     strategy_id = {"spy_only": SPY_ONLY_ID, "kronos": KRONOS_ID}.get(strategy, STRATEGY_ID)
     ledger = TrialLedger(ledger_path)
-    _append_trials(ledger, strategy, target_vol="0.01", kelly_frac="0.25")
     order_log = ChainLog(order_log_path)
-    simulated = _simulate(
-        {symbol: grouped[symbol] for symbol in symbols},
-        lookback=PRIMARY_LOOKBACK,
-        rebalance_every=5,
-        starting_equity=Decimal("100000"),
-        cost_bps=Decimal("1"),
-        target_vol=Decimal("0.01"),
-        kelly_frac=Decimal("0.25"),
-        collect_fills=True,
-    )
+    benchmark_result = None
+    if strategy in benchmark_strategies:
+        from sidecar.benchmarks.book import simulate_benchmark
+
+        benchmark_result = simulate_benchmark(strategy, grouped)
+        simulated = benchmark_result
+        strategy_id = benchmark_result["strategy_id"]
+        symbols = tuple(benchmark_result["symbols"])
+        ledger.append(
+            kind="strategy_config",
+            name=strategy_id,
+            config={
+                "strategy_id": strategy_id,
+                "live_eligible": False,
+                "traded_this_run": False,
+                "orders_submitted": 0,
+            },
+            recorded_at=moment,
+        )
+    else:
+        _append_trials(ledger, strategy, target_vol="0.01", kelly_frac="0.25")
+        simulated = _simulate(
+            {symbol: grouped[symbol] for symbol in symbols},
+            lookback=PRIMARY_LOOKBACK,
+            rebalance_every=5,
+            starting_equity=Decimal("100000"),
+            cost_bps=Decimal("1"),
+            target_vol=Decimal("0.01"),
+            kelly_frac=Decimal("0.25"),
+            collect_fills=True,
+        )
     owns_client = False
     account = None
     if strategy == "kronos" and execute:
@@ -533,16 +562,33 @@ def run_runner(
             )
         except KronosGateError as exc:
             raise RunnerError(str(exc)) from exc
-    intents, plan = plan_orders(
-        grouped=grouped,
-        symbols=symbols,
-        strategy_id=strategy_id,
-        equity=equity,
-        positions=broker_positions,
-        session_day=session_day,
-        limits=limits,
-        targets=kronos_targets,
-    )
+    if benchmark_result is not None:
+        intents = []
+        plan = {
+            "targets": benchmark_result["last_targets"],
+            "binding_counts": {},
+            "skipped": [],
+            "orders_submitted": 0,
+            "shadow_only": True,
+        }
+    else:
+        intents, plan = plan_orders(
+            grouped=grouped,
+            symbols=symbols,
+            strategy_id=strategy_id,
+            equity=equity,
+            positions=broker_positions,
+            session_day=session_day,
+            limits=limits,
+            targets=kronos_targets,
+        )
+    if shadow and strategy not in benchmark_strategies:
+        from sidecar.benchmarks.shadow import DEFAULT_LEDGER, append_shadow
+
+        plan["shadow"] = append_shadow(
+            {symbol: grouped[symbol] for symbol in grouped},
+            ledger_path=shadow_ledger or DEFAULT_LEDGER,
+        )
     submitted = 0
     broker_writes = False
     results: list[dict] = []
@@ -807,7 +853,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--when", choices=("auto", "open", "close"), default="auto")
     parser.add_argument("--execute", action="store_true", help="Post to the sidecar Alpaca paper account")
     parser.add_argument("--force-window", action="store_true", help="Allow --execute outside the session window")
-    parser.add_argument("--strategy", choices=("inverse_vol", "spy_only", "kronos"), default="inverse_vol")
+    parser.add_argument(
+        "--strategy",
+        choices=("inverse_vol", "spy_only", "kronos", "w18", "o17", "w25"),
+        default="inverse_vol",
+    )
+    parser.add_argument(
+        "--shadow",
+        action="store_true",
+        help="Log hypothetical benchmark P&L. Does not add orders to the live strategy.",
+    )
     parser.add_argument("--kronos-report", type=Path, default=DEFAULT_KRONOS_REPORT)
     parser.add_argument("--bars", type=Path, default=DEFAULT_BARS)
     parser.add_argument(
@@ -839,6 +894,7 @@ def main(argv: list[str] | None = None) -> int:
             order_log_path=args.order_log,
             kill_file=args.kill_file,
             strategy=args.strategy,
+            shadow=args.shadow,
             kronos_report=args.kronos_report,
             when=args.when,
             execute=args.execute,

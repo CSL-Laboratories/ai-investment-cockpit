@@ -870,6 +870,63 @@ def test_stock_snapshots_batch_and_a_429_retries():
     assert any(pause > 0.2 for pause in slept)
 
 
+def test_timeouts_and_5xx_retry_then_a_later_success_is_kept():
+    import httpx
+
+    calls = {"n": 0}
+
+    def timeout_then_ok(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise httpx.ReadTimeout("timed out")
+        return httpx.Response(200, json={"SPY": {"latestTrade": {"p": 11}}})
+
+    slept: list[float] = []
+    client = FlowDataClient(
+        "key",
+        "secret",
+        transport=httpx.MockTransport(timeout_then_ok),
+        min_interval=0,
+        sleeper=slept.append,
+    )
+    assert client.stock_price("SPY") == 11
+    client.close()
+    assert calls["n"] == 3
+    assert len(slept) == 2
+
+    calls["n"] = 0
+
+    def server_then_ok(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(503, json={"message": "unavailable"})
+        return httpx.Response(200, json={"SPY": {"latestTrade": {"p": 12}}})
+
+    client = FlowDataClient(
+        "key",
+        "secret",
+        transport=httpx.MockTransport(server_then_ok),
+        min_interval=0,
+        sleeper=slept.append,
+    )
+    assert client.stock_price("SPY") == 12
+    client.close()
+
+    def always_timeout(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("timed out")
+
+    client = FlowDataClient(
+        "key",
+        "secret",
+        transport=httpx.MockTransport(always_timeout),
+        min_interval=0,
+        sleeper=slept.append,
+    )
+    with pytest.raises(FlowError, match="timed out"):
+        client.stock_price("SPY")
+    client.close()
+
+
 def test_page_cap_truncates_one_tape_and_the_scan_continues(tmp_path: Path, caplog):
     trade_ends: list[str] = []
     trade_pages = {"SPY": 0, "QQQ": 0}
