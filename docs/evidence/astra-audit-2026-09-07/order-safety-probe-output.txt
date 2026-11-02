@@ -1,9 +1,0 @@
-GATE: gateway_submit True
-GATE: before {'adjudicated': 1, 'approvals': 1, 'approval_rate': 1.0}
-GATE: after {'adjudicated': 2, 'approvals': 1, 'approval_rate': 0.5}
-GATE: chain_ok True
-SELL: holding [{'symbol': 'AAPL', 'qty': '100', 'market_value': '1000', 'current_price': '10.00'}]
-SELL: proposed_qty 101
-SELL: decision approved failed [] warnings []
-SELL: checks [{'name': 'sell_backed', 'passed': True, 'hard': True, 'detail': 'sell must be held and <= held market value'}, {'name': 'execution_quality', 'passed': True, 'hard': False, 'detail': 'execution verdict is ok -> human review (QT-06)'}, {'name': 'net_edge_available', 'passed': True, 'hard': False, 'detail': 'trusted net-edge state is not_applicable; unavailable edge cannot mint an order until deterministic strategy evidence verifies (W-21/W-23)'}]
-SELL: chain_ok True
