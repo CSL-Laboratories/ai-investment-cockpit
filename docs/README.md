@@ -109,11 +109,11 @@ all four DEC-09 cells pass against implementation `fa3cc1c`, including repairs f
 two integration regressions found by the first completed matrix. Windows 3.11/3.12:
 3,107 passed / 4 skipped each; Ubuntu WSL2 3.11/3.12: 3,105 passed / 6 skipped each.
 All 233 required regression cases pass in every cell. Final evidence:
-[[evidence/rw23-rw24-local-matrix-2026-09-08/README]].
+[`evidence/rw23-rw24-local-matrix-2026-09-08/README.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/rw23-rw24-local-matrix-2026-09-08/README.md).
 See [`evidence/rw23-audit-repair-2026-09-07.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/rw23-audit-repair-2026-09-07.md),
 [`evidence/rw24-reliability-2026-09-07.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/rw24-reliability-2026-09-07.md), and
-[[evidence/rw23-rw24-local-matrix-2026-09-08/README]] for changes and evidence.
-The frozen baseline findings remain in [[evidence/astra-audit-2026-09-07/AUDIT]].
+[`evidence/rw23-rw24-local-matrix-2026-09-08/README.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/rw23-rw24-local-matrix-2026-09-08/README.md) for changes and evidence.
+The frozen baseline findings remain in [`evidence/astra-audit-2026-09-07/AUDIT.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/astra-audit-2026-09-07/AUDIT.md).
 Branch head `f3f315f` on `codex/audit-reliability-2026-09-07` (one docs commit after
 `fa3cc1c`) merged with RW-24 in [PR #81](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/81)
 (`5d50b25`) on 2026-09-08. The head and the merge commit are on main. No empirical
@@ -137,7 +137,7 @@ then use
 [`evidence/rw20-repair-notes-2026-09-06.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/rw20-repair-notes-2026-09-06.md),
 [`evidence/rw21-repair-notes-2026-09-06.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/rw21-repair-notes-2026-09-06.md), and
 [`evidence/rw20-matrix-isolation-2026-09-06.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/rw20-matrix-isolation-2026-09-06.md) for exact repair and validation scope.
-The original findings remain in [[evidence/astra-audit-2026-09-05/AUDIT-2026-09-05]].
+The original findings remain in [`evidence/astra-audit-2026-09-05/AUDIT-2026-09-05.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/astra-audit-2026-09-05/AUDIT-2026-09-05.md).
 The selection-to-order map, independent-witness plan and cohort/value review are linked from
 the repair record. Missing prospective observations and independent labels remain open gates.
 
