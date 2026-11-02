@@ -35,6 +35,7 @@ from filings.edgar.fetch import (
     pad_cik,
     submissions_url,
 )
+from tests.filings._sec_replay import SEC_TEST_USER_AGENT as UA
 from tests.filings._sec_replay import (
     FixtureTransport,
     RaisingTransport,
@@ -44,7 +45,6 @@ from tests.filings._sec_replay import (
 )
 
 NVDA = "0001045810"
-UA = "Lucas Salvador lucassalvador987@gmail.com (personal research)"
 
 
 @pytest.fixture(autouse=True)
