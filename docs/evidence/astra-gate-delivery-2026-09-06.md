@@ -57,7 +57,7 @@ Real Discord, CLI, independent witness, broker, market-day and deployment eviden
 inferred from those tests. The seven excerpt checks also include an intentional reproduction
 of an unfixed SAFT defect; that passing test is not a semantic-repair PASS.
 
-[The research calculator](../runbooks/research-value-score.md) measures field precision and
+[The research calculator](https://github.com/CSL-Laboratories/csl-research/blob/c6587b65ceb9672a0ea5e88ce2f3aa8167721067/contracts/ai-investment-cockpit/history/runbooks/research-value-score.md) measures field precision and
 recall against separately supplied labels, paired net hours saved, and strategy returns after
 execution/operating costs against cash, broad equity and a simple merger benchmark. Its ten
 unit checks use synthetic arithmetic inputs. The

@@ -306,7 +306,7 @@ and DEC-09 evidence. The operator also
 authorized the subsequent held semantic-miss package (`RW-21`) and research/measurement
 review. Production packages are implemented sequentially. No selection, watchlist,
 date, witness, paper-activation or live gate is waived. Scope and acceptance are in
-[[runbooks/rw20-gate-repair-plan-2026-09-06]]. The original audit is preserved in
+[`runbooks/rw20-gate-repair-plan-2026-09-06.md`](https://github.com/CSL-Laboratories/csl-research/blob/c6587b65ceb9672a0ea5e88ce2f3aa8167721067/contracts/ai-investment-cockpit/history/runbooks/rw20-gate-repair-plan-2026-09-06.md). The original audit is preserved in
 [[evidence/astra-audit-2026-09-05/AUDIT-2026-09-05]].
 
 Implementation and independent review of BUG-115 through BUG-122 are complete on
