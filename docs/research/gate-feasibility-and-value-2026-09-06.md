@@ -4,7 +4,7 @@ The premise remains worthwhile as a human-gated awareness and discipline tool. I
 edge and time savings are hypotheses. The current evidence supports continuing read-only
 observation and bounded repairs; it does not support increasing autonomy.
 
-The [offline scorer](https://github.com/CSL-Laboratories/csl-research/blob/c6587b65ceb9672a0ea5e88ce2f3aa8167721067/contracts/ai-investment-cockpit/history/runbooks/research-value-score.md) now implements separate extraction,
+The [offline scorer](../runbooks/research-value-score.md) now implements separate extraction,
 paired time and cost-adjusted strategy arithmetic with ten synthetic calculator checks.
 Its [current output](../evidence/research-value-status-2026-09-06.json) correctly reports all three
 as unmeasured because independently collected study inputs were not supplied. It grants no gate.
