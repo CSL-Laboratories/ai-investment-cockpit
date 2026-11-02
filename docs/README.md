@@ -365,7 +365,12 @@ Evidence notes already moved under CSL-536 round 4
 to csl-research `contracts/ai-investment-cockpit/evidence/legacy/`, at the same path
 as under `docs/evidence/`, pinned at commit
 `4bed7965c8c57de55caaecbf44c4fba0c88e7ce5` (the merge of csl-research #314). Their
-raw logs stay only at tag `pre-x1-cockpit-20261026`.
+raw logs stay only at tag `pre-x1-cockpit-20261026`. The archived copies are the
+notes as they stood at `11a122e2`. One later cockpit edit is not in them:
+[CSL-588](https://linear.app/csl-laboratories/issue/CSL-588) fixed line 60 of
+`astra-gate-delivery-2026-09-06.md` after #314 merged, so the archived copy still
+links `../runbooks/research-value-score.md`. That runbook is at csl-research
+[`c6587b65…/contracts/ai-investment-cockpit/history/runbooks/research-value-score.md`](https://github.com/CSL-Laboratories/csl-research/blob/c6587b65ceb9672a0ea5e88ce2f3aa8167721067/contracts/ai-investment-cockpit/history/runbooks/research-value-score.md).
 
 | Doc | Why it is still load-bearing |
 |---|---|
