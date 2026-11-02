@@ -9,7 +9,7 @@ related: [path-to-production, security-hardening-backlog, security-architecture,
 > **[REFERENCE]** The W-series definitions. The build session is over, but code comments cite W-IDs and this is where they resolve. NEW W-IDs are claimed in [[REGISTER]].
 
 > **2026-08-12 autonomy correction:** [[PLAN]] M5–M8 and
-> [[research/autonomy-blockers-and-unblockers-2026-08-12]] own current sequencing and moving
+> [`research/autonomy-blockers-and-unblockers-2026-08-12`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-autonomy-blockers-and-unblockers-2026-08-12-source-history-01/result.md) own current sequencing and moving
 > targets. The W17 text below predates the final MCP 2026-07-28 stateless protocol and empirical
 > Robinhood discovery requirements; its "HTTP-MCP session," two-week funding implication, and
 > combined discovery/first-live gate are not current contracts. Preserve W IDs for code-comment

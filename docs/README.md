@@ -73,11 +73,11 @@ records offline validation and remaining runtime qualification.
 the admitted json-child fixture hashes and the composed empty-run update.
 Both merged in [PR #97](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/97)
 (`8beb271`) on 2026-09-15. That record is not DEC-09 and not empirical PASS.
-[RW-36 2026-09-15 screen intake](https://github.com/CSL-Laboratories/csl-research/tree/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-rw36-screen-intake-2026-09-15-source-history-01/result.md)
+[RW-36 2026-09-15 screen intake](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-rw36-screen-intake-2026-09-15-source-history-01/result.md)
 appends the Monday-evening GET-only board (cash 1 BOW, still empty/date-not-ready)
 and merged in [PR #98](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/98)
 (`5a963ff`) on 2026-09-16.
-[RW-37 Tuesday rescreen](https://github.com/CSL-Laboratories/csl-research/tree/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-rw37-screen-intake-2026-09-15-source-history-01/result.md)
+[RW-37 Tuesday rescreen](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-rw37-screen-intake-2026-09-15-source-history-01/result.md)
 appends the same-day board (supported 32, cash 0) and merged in
 [PR #99](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/99)
 (`33156c9`) on 2026-09-16. The 30-identity gate stays closed. No empirical PASS.
@@ -395,14 +395,14 @@ raw logs stay only at tag `pre-x1-cockpit-20261026`.
 | `research/rw36-screen-intake-2026-09-15.md` (moved to csl-research [`submissions/20261023-cockpit-rw36-screen-intake-2026-09-15-source-history-01/`](https://github.com/CSL-Laboratories/csl-research/tree/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-rw36-screen-intake-2026-09-15-source-history-01)) | RW-36 third GET-only screen row: cash 1 BOW, still empty/date-not-ready; merged in PR #98 (`5a963ff`) on 2026-09-16; no PASS |
 | `research/rw37-screen-intake-2026-09-15.md` (moved to csl-research [`submissions/20261023-cockpit-rw37-screen-intake-2026-09-15-source-history-01/`](https://github.com/CSL-Laboratories/csl-research/tree/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-rw37-screen-intake-2026-09-15-source-history-01)) | RW-37 fourth GET-only screen row: Tue 2026-09-15, supported 32, cash 0; merged in PR #99 (`33156c9`) on 2026-09-16; the 30-identity gate stays closed; no PASS |
 | `research/research-report.md` (moved to csl-research [`submissions/20261023-cockpit-research-report-source-history-01/`](https://github.com/CSL-Laboratories/csl-research/tree/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-research-report-source-history-01)) · [[research-supplement]] · `research/upside-and-roi.md` (moved to csl-research [`submissions/20261023-cockpit-upside-and-roi-source-history-01/`](https://github.com/CSL-Laboratories/csl-research/tree/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-upside-and-roi-source-history-01)) | Original research inputs |
-| `moving-targets-refresh-2026-07-06.md` | A dated verification snapshot; moved to csl-research `contracts/ai-investment-cockpit/history/` at `e81c5f66df5e04ea73344088e19d6ec9e2916719` (CSL-588) |
+| `moving-targets-refresh-2026-07-06.md` | A dated verification snapshot; moved to csl-research [`contracts/ai-investment-cockpit/history/setup/moving-targets-refresh-2026-07-06.md`](https://github.com/CSL-Laboratories/csl-research/blob/c6587b65ceb9672a0ea5e88ce2f3aa8167721067/contracts/ai-investment-cockpit/history/setup/moving-targets-refresh-2026-07-06.md) at `c6587b65ceb9672a0ea5e88ce2f3aa8167721067` (the merge of csl-research #299, CSL-588) |
 
 ## Superseded — history only
 
 [[capability-expansion-master-plan]] · [[draft-discord-control-plane]] ·
 [[enhancements-and-additions]] · [[cockpit-plan-original]]
 
-Kept in place rather than moved to `archive/` **only because production code cites them.** Each
+Kept in place rather than moved to the csl-research vault **only because production code cites them.** Each
 carries a banner saying what replaced it.
 
 ## Archive
@@ -411,7 +411,8 @@ Five documents, ~275 KB, **zero production-code references**. Mostly orchestrati
 for a multi-agent build session that has finished: prompts and sequencing, not design. They moved
 to the csl-research vault under CSL-536 (batch 1, CSL-583), with `csl-392-docs-read-audit.md` and
 `csl-474-OPEN-QUESTIONS.md`: repository `CSL-Laboratories/csl-research`, commit
-`69ae47566a37b873b4ae434a5bd8289a0023230c`, path `contracts/ai-investment-cockpit/history/`.
+`db35c0991dfdb25fa20c45c065b8171370c6d444` (the merge of csl-research #297 on `main`), path
+`contracts/ai-investment-cockpit/history/`.
 That directory's README lists each file's SHA-256, which matches this repo at `11a122e2`.
 
 ---

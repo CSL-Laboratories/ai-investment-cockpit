@@ -286,8 +286,8 @@ RW-23 and RW-24 merged together in PR #81 (`5d50b25`). RW-22 has merged in PR #8
 > say so in a PR rather than working around it.
 
 Written 2026-08-09, after the branch-consolidation audit (PRs #8/#9/#10) and the
-[[llm-hybrid-trading]] viability research; autonomy boundaries and gates refreshed
-2026-08-12 from [[research/autonomy-blockers-and-unblockers-2026-08-12]], and repository
+[`llm-hybrid-trading`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-llm-hybrid-trading-source-history-01/result.md) viability research; autonomy boundaries and gates refreshed
+2026-08-12 from [`research/autonomy-blockers-and-unblockers-2026-08-12`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-autonomy-blockers-and-unblockers-2026-08-12-source-history-01/result.md), and repository
 state/lifecycle reconciled through PR #53 and the 2026-08-24 RW-11/RW-19 evidence sessions.
 
 ### Supported-platform validation (`DEC-09`, resolved 2026-08-24)
@@ -573,14 +573,14 @@ pipeline gets exercised every single day; there are no borrow or ADV problems.
 
 **It is the wrong universe to expect edge from, and nothing in this repo should ever imply
 otherwise.** Mega-cap tech is the most efficiently priced, most heavily covered segment in
-existence. [[llm-hybrid-trading]] is explicit that residual edge lives in capacity-constrained
+existence. [`llm-hybrid-trading`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-llm-hybrid-trading-source-history-01/result.md) is explicit that residual edge lives in capacity-constrained
 situations institutions cannot fit into — the structural opposite.
 
 > **A working pipeline on liquid names is not evidence of alpha.** Write this on anything that
 > renders a paper-trading P&L. The failure mode is someone reading a green dashboard in four
 > months as a reason to fund the thing.
 
-Niche selection — [[llm-hybrid-trading]] argues for closed-end-fund discounts and small
+Niche selection — [`llm-hybrid-trading`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-llm-hybrid-trading-source-history-01/result.md) argues for closed-end-fund discounts and small
 merger-arb, and against index-inclusion (decayed to ~0.3%) and post-bankruptcy equities (high
 dispersion) — moved into active paper-MVP scope by operator direction on 2026-08-14. `DEC-03`
 is not closed merely by moving it: [[research/dec03-strategy-selection-2026-08-14]] recommends a
@@ -592,7 +592,7 @@ authorize live capital, or permit a model-authored expected return.
 
 ## 2. What the research changed, and what it confirmed
 
-[[llm-hybrid-trading]] was commissioned to test the premise. Summary of what it means here.
+[`llm-hybrid-trading`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-llm-hybrid-trading-source-history-01/result.md) was commissioned to test the premise. Summary of what it means here.
 
 ### Confirmed: the architecture is right
 
@@ -1221,7 +1221,7 @@ The
 existing Hetzner VPS is still the same rollback domain, and Cloudflare R2 still lacks the adapter's
 required AWS Object Lock/version-retention interface, so neither can be promoted from mirror to
 authority. Sigstore Rekor remains a research candidate. See
-[[research/sec11-zero-cost-witness-feasibility-2026-08-18]].
+[`research/sec11-zero-cost-witness-feasibility-2026-08-18`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-sec11-zero-cost-witness-feasibility-2026-08-18-source-history-01/result.md).
 
 **`BUG-110` intake — delivered in PR #48 from `work/bug110-bounded-witness-read`:**
 
