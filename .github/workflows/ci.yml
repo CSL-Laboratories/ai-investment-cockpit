@@ -493,10 +493,12 @@ jobs:
         run: python -X utf8 -B -m unittest discover -s cockpit_spine -t . -p 'test_*.py'
       # CSL-601 (Rule CA, CP0-v2 section 6.1): engine/ is the X1 new tree (CX-NEW).
       # Its tests count as a verifier only when this job runs them. The step is
-      # skipped while engine/tests/ holds no test_*.py file.
+      # skipped while engine/tests/ holds no test_*.py file. It runs pytest, not
+      # unittest: the X1 parity-cutover amendment (csl-research, CSL-633) counts an
+      # engine/ successor only when pytest collects it in this job.
       - name: engine tests
         if: hashFiles('engine/tests/test_*.py') != ''
-        run: python -X utf8 -B -m unittest discover -s engine -t . -p 'test_*.py'
+        run: python -X utf8 -B -m pytest -q -p no:cacheprovider engine/tests
       # CSL-166: the required linux gate runs pytest before any wheel exists, so
       # test_book_batch.py's skipif dropped the whole file. Build the extension
       # here and run that file. This is the existing linux job, not a new
