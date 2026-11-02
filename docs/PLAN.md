@@ -217,7 +217,7 @@ The bounded fail-closed package was claimed on `fix/bug159-watchonly-durability`
 and merged in [PR #83](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/83)
 (`9c61dcf`) on 2026-09-08. GitHub deleted the branch ref the same minute. Its primary contract is
 [[evidence/astra-watchonly-claim-shape-2026-09-06]] and its fixture ownership map
-is [[evidence/astra-watchonly-claim-shape-2026-09-06/fixture-contracts]].
+is [`evidence/astra-watchonly-claim-shape-2026-09-06/fixture-contracts.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/astra-watchonly-claim-shape-2026-09-06/fixture-contracts.md).
 
 1. **Operator change:** pending or failed safety persistence, interrupted/legacy
    sessions, and safety or integrity changes admitted before final authorization
@@ -265,7 +265,7 @@ The replay fixture and fractional-quantity status regressions found in the first
 completed matrix are repaired and independently reviewed. All four DEC-09 cells pass
 against `fa3cc1c`: Windows 3.11/3.12 each 3,107 passed / 4 skipped; Ubuntu WSL2
 3.11/3.12 each 3,105 passed / 6 skipped. Every cell passes all 233 required cases.
-Final validation: [[evidence/rw23-rw24-local-matrix-2026-09-08/README]].
+Final validation: [`evidence/rw23-rw24-local-matrix-2026-09-08/README.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/rw23-rw24-local-matrix-2026-09-08/README.md).
 A provisional hosted Blacksmith four-cell stand-in on merged main `94862b6` is recorded in
 [[evidence/csl62-dec09-hosted-2026-10-17]]; whether hosted cells satisfy DEC-09 is an
 unresolved decision owned by Lucas.

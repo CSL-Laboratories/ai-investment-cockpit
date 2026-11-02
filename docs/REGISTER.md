@@ -180,7 +180,7 @@ Branch head `f3f315fc2b0da76c89a6da27ef2bcb23e8eef744` (one docs commit after `f
 merged in [PR #81](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/81)
 (`5d50b25`) on 2026-09-08. GitHub deleted the branch ref on 2026-09-10. The head and
 the merge commit are on main. No empirical PASS.
-Evidence: [[evidence/rw23-rw24-local-matrix-2026-09-08/README]].
+Evidence: [`evidence/rw23-rw24-local-matrix-2026-09-08/README.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/rw23-rw24-local-matrix-2026-09-08/README.md).
 Intake, reproducible baselines and validation: [[evidence/rw24-reliability-2026-09-07]].
 
 | ID | Defect/improvement | Priority | Status |
@@ -199,7 +199,7 @@ local DEC-09 matrix. Those repairs merged with RW-24 in [PR #81](https://github.
 (`5d50b25`) on 2026-09-08; no empirical gate is closed here.
 All 11 defects below are implemented in individual slices (155/156 share a chronology
 slice); independent authority review and the final four-cell matrix pass. Evidence:
-[[evidence/rw23-rw24-local-matrix-2026-09-08/README]].
+[`evidence/rw23-rw24-local-matrix-2026-09-08/README.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/rw23-rw24-local-matrix-2026-09-08/README.md).
 
 | ID | Defect | Priority | Status |
 |---|---|---|---|
@@ -215,7 +215,7 @@ slice); independent authority review and the final four-cell matrix pass. Eviden
 | `BUG-155` | Simulator advances orders past earlier exchange cancellations | P2 | merged — PR #81; RW-23 |
 | `BUG-156` | Simulator dispatches fill reports before receive time | P2 | merged — PR #81; RW-23 |
 
-Baseline findings and reproduction outputs: [[evidence/astra-audit-2026-09-07/AUDIT]].
+Baseline findings and reproduction outputs: [`evidence/astra-audit-2026-09-07/AUDIT.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/astra-audit-2026-09-07/AUDIT.md).
 Intake and delivery record: [[evidence/rw23-audit-repair-2026-09-07]]. Further bug/performance
 work will be recorded from measurements and scoped after these repairs, without widening
 execution authority. CLN-01 is promoted into BUG-147's correctness repair where appropriate.
@@ -307,7 +307,7 @@ authorized the subsequent held semantic-miss package (`RW-21`) and research/meas
 review. Production packages are implemented sequentially. No selection, watchlist,
 date, witness, paper-activation or live gate is waived. Scope and acceptance are in
 [[runbooks/rw20-gate-repair-plan-2026-09-06]]. The original audit is preserved in
-[[evidence/astra-audit-2026-09-05/AUDIT-2026-09-05]].
+[`evidence/astra-audit-2026-09-05/AUDIT-2026-09-05.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/astra-audit-2026-09-05/AUDIT-2026-09-05.md).
 
 Implementation and independent review of BUG-115 through BUG-122 are complete on
 this branch (`be1ff13`, then `69a1c9c`). All four real DEC-09 cells passed:
