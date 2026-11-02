@@ -13,8 +13,8 @@ from filings.edgar.companyfacts import (
 )
 from filings.edgar.fetch import SecFetcher
 from tests.filings._sec_replay import FixtureTransport, VirtualTime
+from tests.filings._sec_replay import SEC_TEST_USER_AGENT as UA
 
-UA = "Lucas Salvador lucassalvador987@gmail.com (personal research)"
 NVDA = "0001045810"
 
 

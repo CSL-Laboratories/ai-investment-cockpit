@@ -395,7 +395,7 @@ under `docs/replacement/outcomes/**` stay.
 [[capability-expansion-master-plan]] · [[draft-discord-control-plane]] ·
 [[enhancements-and-additions]] · [[cockpit-plan-original]]
 
-Kept in place rather than moved to `archive/` **only because production code cites them.** Each
+Kept in place rather than moved to the csl-research vault **only because production code cites them.** Each
 carries a banner saying what replaced it.
 
 ## Archive
@@ -404,7 +404,8 @@ Five documents, ~275 KB, **zero production-code references**. Mostly orchestrati
 for a multi-agent build session that has finished: prompts and sequencing, not design. They moved
 to the csl-research vault under CSL-536 (batch 1, CSL-583), with `csl-392-docs-read-audit.md` and
 `csl-474-OPEN-QUESTIONS.md`: repository `CSL-Laboratories/csl-research`, commit
-`69ae47566a37b873b4ae434a5bd8289a0023230c`, path `contracts/ai-investment-cockpit/history/`.
+`db35c0991dfdb25fa20c45c065b8171370c6d444` (the merge of csl-research #297 on `main`), path
+`contracts/ai-investment-cockpit/history/`.
 That directory's README lists each file's SHA-256, which matches this repo at `11a122e2`.
 
 ---
