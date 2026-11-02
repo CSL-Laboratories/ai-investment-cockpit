@@ -73,11 +73,11 @@ records offline validation and remaining runtime qualification.
 the admitted json-child fixture hashes and the composed empty-run update.
 Both merged in [PR #97](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/97)
 (`8beb271`) on 2026-09-15. That record is not DEC-09 and not empirical PASS.
-[RW-36 2026-09-15 screen intake](https://github.com/CSL-Laboratories/csl-research/tree/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-rw36-screen-intake-2026-09-15-source-history-01/result.md)
+[RW-36 2026-09-15 screen intake](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-rw36-screen-intake-2026-09-15-source-history-01/result.md)
 appends the Monday-evening GET-only board (cash 1 BOW, still empty/date-not-ready)
 and merged in [PR #98](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/98)
 (`5a963ff`) on 2026-09-16.
-[RW-37 Tuesday rescreen](https://github.com/CSL-Laboratories/csl-research/tree/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-rw37-screen-intake-2026-09-15-source-history-01/result.md)
+[RW-37 Tuesday rescreen](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-rw37-screen-intake-2026-09-15-source-history-01/result.md)
 appends the same-day board (supported 32, cash 0) and merged in
 [PR #99](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/99)
 (`33156c9`) on 2026-09-16. The 30-identity gate stays closed. No empirical PASS.

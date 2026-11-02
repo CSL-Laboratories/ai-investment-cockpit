@@ -365,7 +365,7 @@ W's file; keep the reason).**
 ### SEC-05 — Enumerate bearer-credential stores as first-class assets
 **Attack.** `keyring` protects Alpaca/Finnhub/MCP/Discord creds, but the **Codex and
 Claude CLI auth stores are plaintext files** (`~/.codex/auth.json`, the claude session
-store; [[research-report]] §3 names `auth.json`). A prompt-injected or compromised agent
+store; [`research-report`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-research-report-source-history-01/result.md) §3 names `auth.json`). A prompt-injected or compromised agent
 with any filesystem read exfiltrates them; a harvested Robinhood MCP session token lets
 an attacker connect a **rogue client and place orders with zero contact with this app** —
 the "single order path" is a property of *this process*, not of the credential.
@@ -1059,7 +1059,7 @@ retrofit. Land them alongside the WP they touch.
 - **OPS-04 — Trading-session calendar.** The intraday loop's market-hours guard needs a
   real US-equity session calendar (holidays, half-days, DST/early closes);
   `ingest/calendars.py` is earnings/macro only.
-- **OPS-05 — MCP session lifetime & re-auth.** [[research-report]] open-Q2 flags
+- **OPS-05 — MCP session lifetime & re-auth.** [`research-report`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-research-report-source-history-01/result.md) open-Q2 flags
   auth/session lifetimes for long-running headless agents; give a design answer — token
   refresh, re-auth-on-expiry, a breaker on auth failure, and monitoring for
   concurrent/foreign sessions (pairs with SEC-05).
@@ -1090,4 +1090,4 @@ retrofit. Land them alongside the WP they touch.
 
 *Baseline: [[security-architecture]] · [[prompt-injection-defense]]. Spec:
 [[build-scaffold-ultracode]] · [[draft-discord-control-plane]]. Constraint source:
-[[research-report]] · [[research-supplement]].*
+[`research-report`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-research-report-source-history-01/result.md) · [[research-supplement]].*

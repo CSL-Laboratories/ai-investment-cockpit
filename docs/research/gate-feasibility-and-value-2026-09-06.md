@@ -97,4 +97,4 @@ expand autonomy. No empirical PASS is manufactured from offline tests.
 
 Source records: [September 3](../evidence/w24-natural-head-rescreen-2026-09-03.md),
 [September 4](../evidence/w24-natural-head-rescreen-2026-09-04.md),
-[W-24 contract](../PLAN.md), [historical ROI estimates](upside-and-roi.md).
+[W-24 contract](../PLAN.md), [historical ROI estimates](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-upside-and-roi-source-history-01/result.md).
