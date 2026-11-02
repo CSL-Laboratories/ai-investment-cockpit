@@ -24,7 +24,7 @@ RW-35 extends `workflows.services.build_services` with `research_update`.
 No live packets are ingested. Freeze/evaluation/cases/protocol/screens bytes
 are unchanged. The 30-identity gate is not lowered. No empirical PASS.
 
-Evidence: [[evidence/rw34-cloud-adapter-2026-09-15]].
+Evidence: [`evidence/rw34-cloud-adapter-2026-09-15.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/rw34-cloud-adapter-2026-09-15.md).
 
 Production entry points: `research.empty_run.compose_empty_run_update`,
 `workflows.research_update.empty_run_update`, composed

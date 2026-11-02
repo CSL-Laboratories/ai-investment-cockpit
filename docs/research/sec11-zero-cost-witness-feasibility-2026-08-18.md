@@ -135,7 +135,7 @@ head races fail closed. No local cache or mutable latest object contributes auth
 A fresh adapter over 2,048 retained anchors used exactly one bucket-lock read, one list, one object
 read, and one retention read. A non-idempotent append through the defense-in-depth store uses a
 fixed three of each read plus one put, independent of history. The Windows suite passed 2,321 /
-1 skipped with Ruff clean. See [[../evidence/bug110-bounded-witness-read-2026-08-18]].
+1 skipped with Ruff clean. See [`evidence/bug110-bounded-witness-read-2026-08-18.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/bug110-bounded-witness-read-2026-08-18.md).
 
 ## Safe next decision
 

@@ -72,7 +72,7 @@ empirical PASS. Same-host Cloud is not an independent witness.
 
 ## Fixture hashes (this host)
 
-See [[evidence/rw34-cloud-adapter-2026-09-15]]. Leaf filing SHA-256
+See [`evidence/rw34-cloud-adapter-2026-09-15.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/rw34-cloud-adapter-2026-09-15.md). Leaf filing SHA-256
 `f5d394529518ca0b00745c3c0a23d762e84accaa9c73be3729b67d0a81175708`.
 Policy digest (`json_child.py`)
 `ecbf584b60f46c18b2c3905e91431c76ddb24d8c4ae79ad94d277864a9def37a`.
