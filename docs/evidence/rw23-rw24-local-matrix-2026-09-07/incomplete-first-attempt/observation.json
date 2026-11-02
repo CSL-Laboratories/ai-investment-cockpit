@@ -1,0 +1,58 @@
+{
+  "accepted_as_validation": false,
+  "observation": "Execution sessions disappeared before pytest completion. Cause not established.",
+  "cells": {
+    "w311": {
+      "completed": false,
+      "junit_present": false,
+      "artifacts_sha256": {
+        "attestation.json": "56a2a5d74d6b9c97649a6e7510bf53e42bb6796abf3a7fe5ec42e964645e7ed8",
+        "source-manifest.json": "f2ec33228ac0f901260c0c5a9d15e3dd01797e69ab03c1c4e0ef78f5eeb51abd",
+        "version.log": "0df15fd26972aabd8d0d2c2ec5cc1e9b55727f260b78a8ce4e80f56a84711142",
+        "dependencies.log": "3f676e335ca59d77a4fe4d2c9e4d93ee62f08a3398af465547aa9768fa8857b2",
+        "pip-check.log": "672aec65a45bed50e70229c70934a7eebf0462595c459b83023027645d57cccf",
+        "ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+        "pytest.log": "ba6d340b9500fe666d9a56a84a5723939c2a19d5d3646c245195df029327db00"
+      }
+    },
+    "w312": {
+      "completed": false,
+      "junit_present": false,
+      "artifacts_sha256": {
+        "attestation.json": "4372a1df8c41ea8733ad4fc119270d042aac61fafb0ca06cc1245c82da9eb183",
+        "source-manifest.json": "f2ec33228ac0f901260c0c5a9d15e3dd01797e69ab03c1c4e0ef78f5eeb51abd",
+        "version.log": "5121fbc50e5ec70f01f8b2f792a98dad7371da89f6b3faef0ac750cbe5096c1e",
+        "dependencies.log": "0e2b271a0954c885d6c8b0a131d3394da5b447f01db90ea7c0bd2b9c4cc4b4c3",
+        "pip-check.log": "672aec65a45bed50e70229c70934a7eebf0462595c459b83023027645d57cccf",
+        "ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+        "pytest.log": "f0d73731138b1cd665aecabec13e0261debf920acfe64150b52f35b621c7dd0f"
+      }
+    },
+    "l311": {
+      "completed": false,
+      "junit_present": false,
+      "artifacts_sha256": {
+        "attestation.json": "f11b23620b6c4a02aa8a7bc5a5efba76dbefb934442d8bba2e0d48b4c58135b6",
+        "source-manifest.json": "9a19f082843e7ad0748e924adf87ca488f904458aa0d895d76be9adcde5afc0e",
+        "version.log": "4c36c5b12e05dd26041a8ed21197c6256885dddc441e4ecf61f10aeb9cb5cbbc",
+        "dependencies.log": "4c8bec96473c9a81d3869c44c875814679fa5ab0a56a572ee4688fc3ac36e93b",
+        "pip-check.log": "9261363b733079a641c2e4cc9bc46ffa1d8336945a87f807b6cf68847dbc9b09",
+        "ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+        "pytest.log": "121bbea696b4585f42df30378d904069728ce6047a02a44503769aa589dc5a77"
+      }
+    },
+    "l312": {
+      "completed": false,
+      "junit_present": false,
+      "artifacts_sha256": {
+        "attestation.json": "fceb7b6a679b266fd65992af51d4e5be5c3389d606f16c661f0ec0e55847e79a",
+        "source-manifest.json": "9a19f082843e7ad0748e924adf87ca488f904458aa0d895d76be9adcde5afc0e",
+        "version.log": "2a7e3143125975fab190c620f7cf4f5c3a04ca57b7539e1b65422c9ddce455a4",
+        "dependencies.log": "99a281f6ea85c0674bcd60e7dc8e6480e46777219015b760e78573cfbe242a21",
+        "pip-check.log": "9261363b733079a641c2e4cc9bc46ffa1d8336945a87f807b6cf68847dbc9b09",
+        "ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+        "pytest.log": "bc001f2eaeb1114d81b9866931b258ff017f8cc4898c2ca955a017063a9ca821"
+      }
+    }
+  }
+}

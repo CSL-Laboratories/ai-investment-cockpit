@@ -1,0 +1,9 @@
+{
+  "errors": [
+    "w311: missing artifacts: attestation.json, dependencies.log, pip-check.log, pytest.log, pytest.xml, ruff.log, source-manifest.json, version.log",
+    "w312: missing artifacts: attestation.json, dependencies.log, pip-check.log, pytest.log, pytest.xml, ruff.log, source-manifest.json, version.log",
+    "l311: missing artifacts: attestation.json, dependencies.log, pip-check.log, pytest.log, pytest.xml, ruff.log, source-manifest.json, version.log",
+    "l312: missing artifacts: attestation.json, dependencies.log, pip-check.log, pytest.log, pytest.xml, ruff.log, source-manifest.json, version.log"
+  ],
+  "verified": false
+}

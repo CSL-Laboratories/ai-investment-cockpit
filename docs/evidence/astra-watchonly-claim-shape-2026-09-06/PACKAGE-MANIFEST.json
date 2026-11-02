@@ -1,0 +1,87 @@
+{
+  "created_utc": "2026-09-07T02:52:38.432563+00:00",
+  "scope": "same-host file integrity only; not independent witness or acceptance",
+  "root": "/workspace/ai-investment-cockpit/docs/evidence",
+  "files": [
+    {
+      "path": "astra-watchonly-claim-shape-2026-09-06.md",
+      "bytes": 30887,
+      "sha256": "69d957f49390cec164ae6dcdbeda610fb409161702f6b526bb591a3df5c769c3"
+    },
+    {
+      "path": "astra-watchonly-claim-shape-2026-09-06/HANDOFF.md",
+      "bytes": 2129,
+      "sha256": "b681240460d643c2e3bdf4a39f5cd8ed52aa9a1d38f22250d00952a34d6d18d9"
+    },
+    {
+      "path": "astra-watchonly-claim-shape-2026-09-06/INDEX-note.md",
+      "bytes": 375,
+      "sha256": "8e9c78e7067e51193df94f1886d0de70c66e972a5d1b331b1b3812cdf3b0a133"
+    },
+    {
+      "path": "astra-watchonly-claim-shape-2026-09-06/a57e8cf-baseline.json",
+      "bytes": 1262,
+      "sha256": "dcd084d6825759163b71f67f8bf4e07dce4da76c40e136afd5d3bf5ebeda8817"
+    },
+    {
+      "path": "astra-watchonly-claim-shape-2026-09-06/a57e8cf-baseline.log",
+      "bytes": 195,
+      "sha256": "6e7b2bb77a1f876609b3e0e09acd12a58b4df55cdefeead353241da1b9ae8f58"
+    },
+    {
+      "path": "astra-watchonly-claim-shape-2026-09-06/a57e8cf-durability-replay.json",
+      "bytes": 1148,
+      "sha256": "800a95c1389399143c1aece4ad740f7304b5157cb93ebc1c23d8c9618eed9d0e"
+    },
+    {
+      "path": "astra-watchonly-claim-shape-2026-09-06/a57e8cf-durability-replay.log",
+      "bytes": 12662,
+      "sha256": "83eeecefc4a0b418653e7bda6914efb5d9cf2fe350a62094cad2d9ffec46bd6b"
+    },
+    {
+      "path": "astra-watchonly-claim-shape-2026-09-06/ce62cf2-d4-observation.json",
+      "bytes": 1420,
+      "sha256": "db697291ad01e18799788a6d950f389df800e08a54482f3e751075a0e64ab0ab"
+    },
+    {
+      "path": "astra-watchonly-claim-shape-2026-09-06/ce62cf2-d4-observation.log",
+      "bytes": 1182,
+      "sha256": "d3cd7f2137749b32499f23ce0a9254695b8299e0793a429c47075ed2696047a6"
+    },
+    {
+      "path": "astra-watchonly-claim-shape-2026-09-06/ce62cf2-durability-replay.json",
+      "bytes": 1422,
+      "sha256": "20834f395a4b5edf6cdbeaaa66164770eaaa56854267d1c967487885d32f81c4"
+    },
+    {
+      "path": "astra-watchonly-claim-shape-2026-09-06/ce62cf2-durability-replay.log",
+      "bytes": 12214,
+      "sha256": "6b803563fd00eff1fb199adc1f5a1cda8bcc5586df70deee9e697e7e66b524ce"
+    },
+    {
+      "path": "astra-watchonly-claim-shape-2026-09-06/final-verification.json",
+      "bytes": 1330,
+      "sha256": "05b9a123767d91ca7e5ad1d767614e0f633af746df5fd4379ec0313e59f9cc29"
+    },
+    {
+      "path": "astra-watchonly-claim-shape-2026-09-06/fixture-contracts.md",
+      "bytes": 14083,
+      "sha256": "f866e80f3d9d8ea21225c55b5efd985b0146026e9006b303b91b84698afc8bcc"
+    },
+    {
+      "path": "astra-watchonly-claim-shape-2026-09-06/prompt.md",
+      "bytes": 1089,
+      "sha256": "0084a90652cd1a6a23226caf8c5a7b8516fc2567d6fa2aa629b3399c7303e686"
+    },
+    {
+      "path": "astra-watchonly-claim-shape-2026-09-06/source-and-evidence-verification.json",
+      "bytes": 9326,
+      "sha256": "1fa84beb2b7b6d4162300904a31247ea50ea90a4b28c8798317c7443115af4ca"
+    },
+    {
+      "path": "astra-watchonly-claim-shape-2026-09-06/test_ce62cf2_d4_observation.py",
+      "bytes": 3284,
+      "sha256": "d8b1a7fe9357a9fd4b10884649342c18d954be386b05ddf8c999d22482bc2056"
+    }
+  ]
+}

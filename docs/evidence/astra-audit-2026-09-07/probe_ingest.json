@@ -1,0 +1,90 @@
+{
+  "summary_and_body": {
+    "audit_valid": true,
+    "returned_keys": [
+      "article_id",
+      "content_hash",
+      "event_type",
+      "headline",
+      "raw_ref",
+      "source",
+      "summary",
+      "symbols",
+      "ts"
+    ],
+    "returned_summary_length": 21,
+    "original_content_length": 4536,
+    "qualification_recoverable": false,
+    "url_recoverable": false
+  },
+  "long_body_only": {
+    "audit_valid": true,
+    "returned_keys": [
+      "article_id",
+      "content_hash",
+      "event_type",
+      "headline",
+      "raw_ref",
+      "source",
+      "summary",
+      "symbols",
+      "ts"
+    ],
+    "returned_summary_length": 4000,
+    "original_content_length": 4536,
+    "qualification_recoverable": false,
+    "url_recoverable": false
+  },
+  "stream_persistence_failure": {
+    "run_outcome": {
+      "feed": "alpaca:benzinga",
+      "status": "ok",
+      "emitted": 0
+    },
+    "operator_status": {
+      "kind": "stream",
+      "runs": 1,
+      "emitted": 0,
+      "errors": 0,
+      "last_error": null,
+      "alive": false,
+      "persisted": 0,
+      "duplicates": 0
+    },
+    "internal_consumer_counters": {
+      "emit_error": 1,
+      "frame_error": 0
+    }
+  },
+  "daily_bars_audit_retry": {
+    "refresh_outcomes": [
+      {
+        "updated": [],
+        "cached": [],
+        "failed": [
+          "AAPL"
+        ],
+        "at": "2026-09-07"
+      },
+      {
+        "updated": [],
+        "cached": [],
+        "failed": [
+          "AAPL"
+        ],
+        "at": "2026-09-07"
+      },
+      {
+        "updated": [],
+        "cached": [],
+        "failed": [
+          "AAPL"
+        ],
+        "at": "2026-09-07"
+      }
+    ],
+    "vendor_fetches": 1,
+    "audit_append_attempts": 1,
+    "metrics_available": false
+  }
+}

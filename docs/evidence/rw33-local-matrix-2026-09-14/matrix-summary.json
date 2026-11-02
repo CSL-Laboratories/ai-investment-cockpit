@@ -1,0 +1,202 @@
+{
+  "package": "RW-33",
+  "base_commit": "f24f9a8dc9e0fda00ffc56109374ebd05fe519b1",
+  "source_kind": "uncommitted working-source snapshot",
+  "archive_sha256": "50f6b69bc15f5bb33291da2e00ca377ba4ce7743b8d9c44fd9dcfed3358f755a",
+  "source_manifest_sha256": "4ca5d5076e3c6482f5d0863972ef08db9b1cfa8f058318761df4af7ca4d75aa0",
+  "source_files": 928,
+  "verification": "all four complete and source-bound",
+  "empirical_pass_claimed": false,
+  "cloud_runtime_qualified": false,
+  "cells": {
+    "w311": {
+      "python": "3.11.16 (main, Sep  1 2026, 14:15:24) [MSC v.1944 64 bit (AMD64)]",
+      "platform": "Windows-10-10.0.26200-SP0",
+      "passed": 3270,
+      "skipped": 5,
+      "collected": 3275,
+      "swarm_passed": 43,
+      "swarm_skipped": 1,
+      "duration_seconds": 1780.81,
+      "skips": [
+        {
+          "name": "tests.filings.test_provenance::test_vendored_source_differs_from_the_pin_only_by_the_rename_map",
+          "reason": "sibling edgar-morning-brew checkout (or git) not present \u2014 provenance diff skipped"
+        },
+        {
+          "name": "tests.filings.test_provenance::test_pinned_commits_exist_upstream",
+          "reason": "sibling edgar-morning-brew checkout (or git) not present \u2014 provenance diff skipped"
+        },
+        {
+          "name": "tests.swarm.test_scoped_spawn::test_resolved_brief_escape_refused",
+          "reason": "symlink privilege unavailable"
+        },
+        {
+          "name": "tests.tools.test_rw11_companyfacts::test_verify_rejects_linked_package_root_and_inner_artifact",
+          "reason": "this host cannot create a directory symlink: [WinError 1314] A required privilege is not held by the client: 'C:\\\\t\\\\r33\\\\candidate2\\\\w311\\\\tmp\\\\pytest-of-drfoo\\\\pytest-0\\\\test_verify_rejects_linked_pac0\\\\real' -> 'C:\\\\t\\\\r33\\\\candidate2\\\\w311\\\\tmp\\\\pytest-of-drfoo\\\\pytest-0\\\\test_verify_rejects_linked_pac0\\\\linked-root'"
+        },
+        {
+          "name": "tests.tools.test_rw19_news_reconnect_plan_bound::test_verifier_rejects_symlinked_package_root_when_supported",
+          "reason": "symlink creation unavailable on this host"
+        }
+      ],
+      "artifact_sha256": {
+        "dependencies.log": "3f676e335ca59d77a4fe4d2c9e4d93ee62f08a3398af465547aa9768fa8857b2",
+        "pip-check.log": "672aec65a45bed50e70229c70934a7eebf0462595c459b83023027645d57cccf",
+        "pytest.log": "950c47486f99544996bf4fcb1445d5b87059eb55322cb2dcba2d180547afffa9",
+        "pytest.xml": "6539bb1573f2147e555180b216f67ec56f87b80a88577b7048fcf1e36d1c9c46",
+        "ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+        "source-manifest.json": "4ca5d5076e3c6482f5d0863972ef08db9b1cfa8f058318761df4af7ca4d75aa0",
+        "version.log": "0df15fd26972aabd8d0d2c2ec5cc1e9b55727f260b78a8ce4e80f56a84711142"
+      },
+      "attestation_sha256": "596194e4cda43b5add8ced27752ebc0ee62bda82277d8b2e3f6b8899d2ea127e"
+    },
+    "w312": {
+      "python": "3.12.14 (main, Sep  1 2026, 14:17:39) [MSC v.1944 64 bit (AMD64)]",
+      "platform": "Windows-11-10.0.26200-SP0",
+      "passed": 3270,
+      "skipped": 5,
+      "collected": 3275,
+      "swarm_passed": 43,
+      "swarm_skipped": 1,
+      "duration_seconds": 1793.14,
+      "skips": [
+        {
+          "name": "tests.filings.test_provenance::test_vendored_source_differs_from_the_pin_only_by_the_rename_map",
+          "reason": "sibling edgar-morning-brew checkout (or git) not present \u2014 provenance diff skipped"
+        },
+        {
+          "name": "tests.filings.test_provenance::test_pinned_commits_exist_upstream",
+          "reason": "sibling edgar-morning-brew checkout (or git) not present \u2014 provenance diff skipped"
+        },
+        {
+          "name": "tests.swarm.test_scoped_spawn::test_resolved_brief_escape_refused",
+          "reason": "symlink privilege unavailable"
+        },
+        {
+          "name": "tests.tools.test_rw11_companyfacts::test_verify_rejects_linked_package_root_and_inner_artifact",
+          "reason": "this host cannot create a directory symlink: [WinError 1314] A required privilege is not held by the client: 'C:\\\\t\\\\r33\\\\candidate2\\\\w312\\\\tmp\\\\pytest-of-drfoo\\\\pytest-0\\\\test_verify_rejects_linked_pac0\\\\real' -> 'C:\\\\t\\\\r33\\\\candidate2\\\\w312\\\\tmp\\\\pytest-of-drfoo\\\\pytest-0\\\\test_verify_rejects_linked_pac0\\\\linked-root'"
+        },
+        {
+          "name": "tests.tools.test_rw19_news_reconnect_plan_bound::test_verifier_rejects_symlinked_package_root_when_supported",
+          "reason": "symlink creation unavailable on this host"
+        }
+      ],
+      "artifact_sha256": {
+        "dependencies.log": "0e2b271a0954c885d6c8b0a131d3394da5b447f01db90ea7c0bd2b9c4cc4b4c3",
+        "pip-check.log": "672aec65a45bed50e70229c70934a7eebf0462595c459b83023027645d57cccf",
+        "pytest.log": "e11a6c8d17167a61c1f2a7524b0245035bee38ec74c2e571bf093955c4fb8c30",
+        "pytest.xml": "d2266b45ebd3220a4f25474c9084117cef6c15079ea8d6397e15f56e4b6bbfa8",
+        "ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+        "source-manifest.json": "4ca5d5076e3c6482f5d0863972ef08db9b1cfa8f058318761df4af7ca4d75aa0",
+        "version.log": "5121fbc50e5ec70f01f8b2f792a98dad7371da89f6b3faef0ac750cbe5096c1e"
+      },
+      "attestation_sha256": "325087ac9e3f85bef0b0317ef3205a3bbbe86e3a061cf916fb8a152064df80f9"
+    },
+    "l311": {
+      "python": "3.11.16 (main, Sep  1 2026, 14:18:37) [Clang 22.1.3 ]",
+      "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+      "passed": 3269,
+      "skipped": 6,
+      "collected": 3275,
+      "swarm_passed": 44,
+      "swarm_skipped": 0,
+      "duration_seconds": 1618.78,
+      "skips": [
+        {
+          "name": "tests.agent_runner.test_transport_resolve::test_claude_cli_is_spawnable_when_installed",
+          "reason": "claude CLI not installed on this host"
+        },
+        {
+          "name": "tests.agent_runner.test_transport_resolve::test_codex_cli_is_spawnable_when_installed",
+          "reason": "codex CLI not installed on this host"
+        },
+        {
+          "name": "tests.agent_runner.test_transport_resolve::test_subprocess_run_without_resolution_is_what_broke",
+          "reason": "claude CLI not installed on this host"
+        },
+        {
+          "name": "tests.filings.test_provenance::test_vendored_source_differs_from_the_pin_only_by_the_rename_map",
+          "reason": "sibling edgar-morning-brew checkout (or git) not present \u2014 provenance diff skipped"
+        },
+        {
+          "name": "tests.filings.test_provenance::test_pinned_commits_exist_upstream",
+          "reason": "sibling edgar-morning-brew checkout (or git) not present \u2014 provenance diff skipped"
+        },
+        {
+          "name": "tests.tools.test_rw19_preflight::test_windows_scan_live_smoke",
+          "reason": "WMI/CIM scan is Windows-only"
+        }
+      ],
+      "artifact_sha256": {
+        "dependencies.log": "4c8bec96473c9a81d3869c44c875814679fa5ab0a56a572ee4688fc3ac36e93b",
+        "pip-check.log": "9261363b733079a641c2e4cc9bc46ffa1d8336945a87f807b6cf68847dbc9b09",
+        "pytest.log": "d6fc6d2bc84d0a78a1a6f26b4ce0763b175eb1c02ba5feafb1c070fb663cda36",
+        "pytest.xml": "878e235f3b0f9a0b9922970957d168d982179981f342f21abcbf316c1edf45cf",
+        "ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+        "source-manifest.json": "dae6f87d3fb33f4c1cef044a7d2b0bd3f35b99e5b5f779f633b1fbc1e2b70962",
+        "version.log": "4c36c5b12e05dd26041a8ed21197c6256885dddc441e4ecf61f10aeb9cb5cbbc"
+      },
+      "attestation_sha256": "2556c4f50f111f653443e2828056f7c8d141a8807439cf55521d17924e3982c2"
+    },
+    "l312": {
+      "python": "3.12.14 (main, Sep  1 2026, 14:16:52) [Clang 22.1.3 ]",
+      "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+      "passed": 3269,
+      "skipped": 6,
+      "collected": 3275,
+      "swarm_passed": 44,
+      "swarm_skipped": 0,
+      "duration_seconds": 1597.68,
+      "skips": [
+        {
+          "name": "tests.agent_runner.test_transport_resolve::test_claude_cli_is_spawnable_when_installed",
+          "reason": "claude CLI not installed on this host"
+        },
+        {
+          "name": "tests.agent_runner.test_transport_resolve::test_codex_cli_is_spawnable_when_installed",
+          "reason": "codex CLI not installed on this host"
+        },
+        {
+          "name": "tests.agent_runner.test_transport_resolve::test_subprocess_run_without_resolution_is_what_broke",
+          "reason": "claude CLI not installed on this host"
+        },
+        {
+          "name": "tests.filings.test_provenance::test_vendored_source_differs_from_the_pin_only_by_the_rename_map",
+          "reason": "sibling edgar-morning-brew checkout (or git) not present \u2014 provenance diff skipped"
+        },
+        {
+          "name": "tests.filings.test_provenance::test_pinned_commits_exist_upstream",
+          "reason": "sibling edgar-morning-brew checkout (or git) not present \u2014 provenance diff skipped"
+        },
+        {
+          "name": "tests.tools.test_rw19_preflight::test_windows_scan_live_smoke",
+          "reason": "WMI/CIM scan is Windows-only"
+        }
+      ],
+      "artifact_sha256": {
+        "dependencies.log": "99a281f6ea85c0674bcd60e7dc8e6480e46777219015b760e78573cfbe242a21",
+        "pip-check.log": "9261363b733079a641c2e4cc9bc46ffa1d8336945a87f807b6cf68847dbc9b09",
+        "pytest.log": "3e61e9ea6433780321f038e3f50a5474509d8a18216bf5e6f01b247d8d4159b4",
+        "pytest.xml": "4e6c7c88f4b7458bae35403e2b71cc534720b36b91f65468abc4447961e95cd2",
+        "ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+        "source-manifest.json": "dae6f87d3fb33f4c1cef044a7d2b0bd3f35b99e5b5f779f633b1fbc1e2b70962",
+        "version.log": "2a7e3143125975fab190c620f7cf4f5c3a04ca57b7539e1b65422c9ddce455a4"
+      },
+      "attestation_sha256": "79c2751f3e3e50864b5340f7ccd5f2af541392a9552104cfab473db34cbba8bc"
+    }
+  },
+  "host": {
+    "name": "SEHKTRZ2",
+    "cpu": "Intel Core Ultra 9 185H",
+    "cores": 16,
+    "logical_processors": 22,
+    "ram_gb": 32,
+    "execution": "native Windows and local Ubuntu WSL2",
+    "wsl_distribution": "Cockpit-Audit-2404",
+    "sentry_ssh_used": false,
+    "cursor_cloud_used": false
+  },
+  "verification_script_sha256": "bc9218e5cb639e597966c1e7a23803ae157d2ddf807e990d0c2a37350e5383d8",
+  "runner_sha256": "0206c8d5a37e012fc83255c6c2c7c5afed41a05ec560b2f6c325075f2d110c57"
+}

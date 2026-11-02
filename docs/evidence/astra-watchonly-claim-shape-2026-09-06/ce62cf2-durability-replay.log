@@ -1,0 +1,101 @@
+OBSERVATION {"after": {"audit_ok": true, "halt": false, "integrity_error": false, "memory": {"claude": {"generation": 0, "state": "ok", "used": 0}}, "signed": [], "watch_only": false}, "before": {"audit_ok": true, "halt": false, "integrity_error": false, "memory": {"claude": {"generation": 1, "state": "exhausted", "used": 0}}, "signed": [], "watch_only": true}, "case": "failed_watch_append", "fake_submissions": 1, "outcome": "submitted"}
+FOBSERVATION {"after": {"audit_ok": true, "halt": false, "integrity_error": false, "memory": {"claude": {"generation": 0, "state": "ok", "used": 0}}, "signed": [], "watch_only": false}, "before": {"audit_ok": true, "halt": false, "integrity_error": false, "memory": {"claude": {"generation": 1, "state": "exhausted", "used": 0}}, "signed": [], "watch_only": true}, "case": "runner_gap_agent_job", "fake_submissions": 1, "outcome": "submitted"}
+FOBSERVATION {"after": {"audit_ok": true, "halt": false, "integrity_error": false, "memory": {"claude": {"generation": 0, "state": "ok", "used": 0}}, "signed": [], "watch_only": false}, "before": {"audit_ok": true, "halt": false, "integrity_error": false, "memory": {"claude": {"generation": 2, "state": "exhausted", "used": 0}}, "signed": [], "watch_only": true}, "case": "runner_gap_watch_only", "fake_submissions": 1, "outcome": "submitted"}
+FOBSERVATION {"after": {"audit_ok": true, "halt": false, "integrity_error": false, "memory": {"claude": {"generation": 0, "state": "ok", "used": 0}, "sec:edgar": {"generation": 2, "state": "ok", "used": 0}}, "signed": [{"generation": 1, "state": "exhausted", "vendor": "sec:edgar"}], "watch_only": false}, "before": {"audit_ok": true, "halt": false, "integrity_error": false, "memory": {"sec:edgar": {"generation": 2, "state": "ok", "used": 0}}, "signed": [{"generation": 1, "state": "exhausted", "vendor": "sec:edgar"}], "watch_only": false}, "case": "failed_recovery_append", "fake_submissions": 1, "outcome": "submitted", "restarted": {"audit_ok": true, "halt": false, "integrity_error": false, "memory": {"sec:edgar": {"generation": 1, "state": "exhausted", "used": 0}}, "signed": [{"generation": 1, "state": "exhausted", "vendor": "sec:edgar"}], "watch_only": true}}
+FOBSERVATION {"after": {"audit_ok": true, "halt": false, "integrity_error": false, "memory": {"claude": {"generation": 1, "state": "exhausted", "used": 0}}, "signed": [{"generation": 1, "state": "exhausted", "vendor": "claude"}], "watch_only": true}, "at_boundary": {"audit_ok": true, "halt": false, "integrity_error": false, "memory": {"claude": {"generation": 1, "state": "exhausted", "used": 0}}, "signed": [{"generation": 1, "state": "exhausted", "vendor": "claude"}], "watch_only": true}, "case": "submit_intent_transition", "committed_before_broker": true, "fake_submissions": 1, "outcome": "submitted", "recover": false}
+FOBSERVATION {"after": {"audit_ok": true, "halt": false, "integrity_error": false, "memory": {"claude": {"generation": 2, "state": "ok", "used": 0}}, "signed": [{"generation": 1, "state": "exhausted", "vendor": "claude"}, {"generation": 2, "state": "ok", "vendor": "claude"}], "watch_only": false}, "at_boundary": {"audit_ok": true, "halt": false, "integrity_error": false, "memory": {"claude": {"generation": 2, "state": "ok", "used": 0}}, "signed": [{"generation": 1, "state": "exhausted", "vendor": "claude"}], "watch_only": false}, "case": "submit_intent_transition", "committed_before_broker": false, "fake_submissions": 1, "outcome": "submitted", "recover": true}
+FOBSERVATION {"after": {"audit_ok": true, "halt": false, "integrity_error": false, "memory": {"claude": {"generation": 0, "state": "ok", "used": 0}, "sec:edgar": {"generation": 2, "state": "ok", "used": 0}}, "signed": [{"generation": 1, "state": "exhausted", "vendor": "sec:edgar"}, {"generation": 2, "state": "ok", "vendor": "sec:edgar"}], "watch_only": false}, "before": {"audit_ok": true, "halt": false, "integrity_error": false, "memory": {"claude": {"generation": 0, "state": "ok", "used": 0}, "sec:edgar": {"generation": 1, "state": "exhausted", "used": 0}}, "signed": [{"generation": 1, "state": "exhausted", "vendor": "sec:edgar"}], "watch_only": true}, "blocked_outcome": "gateway_mode", "case": "sec_429_recovery_scope", "fake_submissions": 1, "recovered_outcome": "submitted"}
+.OBSERVATION {"after": {"audit_ok": true, "halt": false, "integrity_error": false, "memory": {}, "signed": [], "watch_only": false}, "before": {"audit_ok": true, "halt": false, "integrity_error": false, "memory": {"sec:edgar": {"generation": 1, "state": "exhausted", "used": 0}}, "signed": [], "watch_only": true}, "case": "edgar_retry_suppressed"}
+FOBSERVATION {"after": {"audit_ok": false, "halt": false, "integrity_error": true, "memory": {"__watch_only_integrity__": {"generation": 9223372036854775807, "state": "exhausted", "used": 0}}, "signed": [{"generation": 0, "state": "ok", "vendor": "claude"}], "watch_only": true}, "case": "invalid_ledger_control", "fake_submissions": 0, "outcome": "lineage_unverified"}
+.F.....OBSERVATION {"after": {"audit_ok": true, "halt": false, "integrity_error": true, "memory": {"__watch_only_integrity__": {"generation": 9223372036854775807, "state": "exhausted", "used": 0}, "claude": {"generation": 0, "state": "ok", "used": 0}}, "signed": [], "watch_only": true}, "case": "transient_restore_read_failure", "fake_submissions": 0, "outcome": "gateway_mode"}
+..
+=================================== FAILURES ===================================
+_________ test_failed_watch_only_append_must_not_revive_prior_proposal _________
+../evidence/test_durability_diagnosis.py:120: in test_failed_watch_only_append_must_not_revive_prior_proposal
+    assert client.submitted == [], "restart revived a proposal after an uncommitted blackout"
+E   AssertionError: restart revived a proposal after an uncommitted blackout
+E   assert [{'broker_ord...': None, ...}] == []
+E     
+E     Left contains one more item: {'broker_order_id': 'alp_d56ade9ac1264c72a019d471a502c998', 'status': 'accepted', 'filled_qty': Decimal('0'), 'avg_fill_price': None, ...}
+E     Use -v to get more diff
+________ test_runner_limit_persistence_gap_must_fail_closed[agent_job] _________
+../evidence/test_durability_diagnosis.py:142: in test_runner_limit_persistence_gap_must_fail_closed
+    assert client.submitted == [], "runner blackout was lost between memory and signed transition"
+E   AssertionError: runner blackout was lost between memory and signed transition
+E   assert [{'broker_ord...': None, ...}] == []
+E     
+E     Left contains one more item: {'broker_order_id': 'alp_ce85f0f72e4c44e4890f629328da9668', 'status': 'accepted', 'filled_qty': Decimal('0'), 'avg_fill_price': None, ...}
+E     Use -v to get more diff
+________ test_runner_limit_persistence_gap_must_fail_closed[watch_only] ________
+../evidence/test_durability_diagnosis.py:142: in test_runner_limit_persistence_gap_must_fail_closed
+    assert client.submitted == [], "runner blackout was lost between memory and signed transition"
+E   AssertionError: runner blackout was lost between memory and signed transition
+E   assert [{'broker_ord...': None, ...}] == []
+E     
+E     Left contains one more item: {'broker_order_id': 'alp_6f9ad81b1a894cdfa88db3abeee23cce', 'status': 'accepted', 'filled_qty': Decimal('0'), 'avg_fill_price': None, ...}
+E     Use -v to get more diff
+_________ test_failed_feed_recovery_commit_must_keep_order_path_closed _________
+../evidence/test_durability_diagnosis.py:158: in test_failed_feed_recovery_commit_must_keep_order_path_closed
+    assert client.submitted == [], "memory recovery authorized an order while signed state is exhausted"
+E   AssertionError: memory recovery authorized an order while signed state is exhausted
+E   assert [{'broker_ord...': None, ...}] == []
+E     
+E     Left contains one more item: {'broker_order_id': 'alp_20d515f80ded4cec91362407882f1e97', 'status': 'accepted', 'filled_qty': Decimal('0'), 'avg_fill_price': None, ...}
+E     Use -v to get more diff
+___________ test_transition_during_submit_intent_must_refuse[False] ____________
+../evidence/test_durability_diagnosis.py:197: in test_transition_during_submit_intent_must_refuse
+    assert client.submitted == [], "blackout/generation changed before the final broker call"
+E   AssertionError: blackout/generation changed before the final broker call
+E   assert [{'broker_ord...': None, ...}] == []
+E     
+E     Left contains one more item: {'broker_order_id': 'alp_816c4958b3da4a9cb3e9b4972a6bcf6d', 'status': 'accepted', 'filled_qty': Decimal('0'), 'avg_fill_price': None, ...}
+E     Use -v to get more diff
+____________ test_transition_during_submit_intent_must_refuse[True] ____________
+../evidence/test_durability_diagnosis.py:197: in test_transition_during_submit_intent_must_refuse
+    assert client.submitted == [], "blackout/generation changed before the final broker call"
+E   AssertionError: blackout/generation changed before the final broker call
+E   assert [{'broker_ord...': None, ...}] == []
+E     
+E     Left contains one more item: {'broker_order_id': 'alp_bd9d3107e81f4393b9c0f073c5549bb7', 'status': 'accepted', 'filled_qty': Decimal('0'), 'avg_fill_price': None, ...}
+E     Use -v to get more diff
+____ test_failed_edgar_transition_is_not_retried_while_memory_is_exhausted _____
+../evidence/test_durability_diagnosis.py:254: in test_failed_edgar_transition_is_not_retried_while_memory_is_exhausted
+    assert after["watch_only"], "later failed poll did not persist the memory-only blackout"
+E   AssertionError: later failed poll did not persist the memory-only blackout
+E   assert False
+------------------------------ Captured log call -------------------------------
+WARNING  cockpit.ingest:ingest_runner.py:219 ingest feed sec:edgar FAILED (consecutive=1): SecFairAccessHalt('SEC fair-access HALT (HTTP 429) on https://data.sec.gov/synthetic-fixture — run stopped, no retry')
+WARNING  cockpit.ingest:ingest_runner.py:219 ingest feed sec:edgar FAILED (consecutive=2): SecFairAccessHalt('SEC fair-access HALT (HTTP 429) on https://data.sec.gov/synthetic-fixture — run stopped, no retry')
+______________ test_audit_tamper_during_submit_intent_must_refuse ______________
+../evidence/test_durability_diagnosis.py:288: in test_audit_tamper_during_submit_intent_must_refuse
+    outcome = approve(service, scenario)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^
+../evidence/test_durability_diagnosis.py:71: in approve
+    return service.decide(
+brokers/paper_execution.py:562: in decide
+    outcome = self._gateway.place_equity_order(
+brokers/gateway.py:978: in place_equity_order
+    return self.submit(
+brokers/gateway.py:908: in submit
+    transition(st, order, "approved", actor=producing_runtime,
+brokers/order_state_machine.py:281: in transition
+    committed, _ = st.audit.record_state_change(
+storage/audit.py:246: in record_state_change
+    model_row = prepare(s)
+                ^^^^^^^^^^
+brokers/order_state_machine.py:257: in prepare
+    current = _current_order(st, session, order)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+brokers/order_state_machine.py:121: in _current_order
+    raise AuditIntegrityError(verified.error or "invalid order history")
+E   storage.audit.AuditIntegrityError: hash mismatch (tamper) at seq 1
+=========================== short test summary info ============================
+FAILED ../evidence/test_durability_diagnosis.py::test_failed_watch_only_append_must_not_revive_prior_proposal
+FAILED ../evidence/test_durability_diagnosis.py::test_runner_limit_persistence_gap_must_fail_closed[agent_job]
+FAILED ../evidence/test_durability_diagnosis.py::test_runner_limit_persistence_gap_must_fail_closed[watch_only]
+FAILED ../evidence/test_durability_diagnosis.py::test_failed_feed_recovery_commit_must_keep_order_path_closed
+FAILED ../evidence/test_durability_diagnosis.py::test_transition_during_submit_intent_must_refuse[False]
+FAILED ../evidence/test_durability_diagnosis.py::test_transition_during_submit_intent_must_refuse[True]
+FAILED ../evidence/test_durability_diagnosis.py::test_failed_edgar_transition_is_not_retried_while_memory_is_exhausted
+FAILED ../evidence/test_durability_diagnosis.py::test_audit_tamper_during_submit_intent_must_refuse
+8 failed, 9 passed in 5.02s

@@ -1,0 +1,79 @@
+{
+  "archive_sha256": "da6e4ae1c375ff4e161fb6e1c6b1d75093ce7b41532297222484f125b36ffb05",
+  "artifacts_sha256": {
+    "dependencies.log": "99a281f6ea85c0674bcd60e7dc8e6480e46777219015b760e78573cfbe242a21",
+    "pip-check.log": "9261363b733079a641c2e4cc9bc46ffa1d8336945a87f807b6cf68847dbc9b09",
+    "pytest.log": "c5007c8211c0b62280dbc6b9c1ae6eeb39556f5ce4831f0a07063d9e4262ad35",
+    "pytest.xml": "9cb4536867978a8c3d5e95d6d604b316794701373c6c1bf23a51a05a852e48f4",
+    "ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "source-manifest.json": "838746a2d673a3b04844f3be54af38c85eed3b48c678e65c555abe75211edd74",
+    "version.log": "2a7e3143125975fab190c620f7cf4f5c3a04ca57b7539e1b65422c9ddce455a4"
+  },
+  "checks": [
+    {
+      "argv": [
+        "/audit/env312/bin/python",
+        "-VV"
+      ],
+      "duration_seconds": 0.0,
+      "name": "version",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/audit/env312/bin/python",
+        "-m",
+        "pip",
+        "freeze"
+      ],
+      "duration_seconds": 0.53,
+      "name": "dependencies",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/audit/env312/bin/python",
+        "-m",
+        "pip",
+        "check"
+      ],
+      "duration_seconds": 0.26,
+      "name": "pip-check",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/audit/env312/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "."
+      ],
+      "duration_seconds": 0.15,
+      "name": "ruff",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/audit/env312/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "-ra",
+        "--junitxml=/audit/rw25/l312r/pytest.xml"
+      ],
+      "duration_seconds": 1017.35,
+      "name": "pytest",
+      "returncode": 0
+    }
+  ],
+  "commit": "fa3cc1c0d8dc41af913a2d3fe6040d85d4e6e2e2",
+  "completed_utc": "2026-09-08T04:42:03Z",
+  "executable": "/audit/env312/bin/python",
+  "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+  "python": "3.12.14 (main, Sep  1 2026, 14:16:52) [Clang 22.1.3 ]",
+  "source_file_count": 799,
+  "started_utc": "2026-09-08T04:25:05Z",
+  "tracked_source_changed": [],
+  "tree": "cb8cefaa98913bc8efd77e4acb4750b572d095bc"
+}

@@ -1,0 +1,254 @@
+{
+  "app_tree": "5125e7edd2489c027364bbbfbd4556d928109817",
+  "artifacts_sha256": {
+    ".gitattributes": "f4e0519aa7dd62bf496fc69347f2b334208ad0e722c863b1c01f285ff4b7c263",
+    "README.md": "087a28f81e5cdbbeb21ecc46cb6fc0cfc9bcb3512f0fede2ca9c91cad222ef3a",
+    "aggregate_matrix.py": "c65a2a88f9782248e12c8a79b70fc1bf25ec51feda25b9e04c4fef4252f976ab",
+    "environment.json": "25e9f641d7682137ed692e91b5b29d83adf93e154f2a7c54c14dd072702ced05",
+    "h311l/attestation.json": "8e29415aba3fc14b245187d6a96f57ba85be59b800f737648b17eba0968f6c84",
+    "h311l/ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "h311l/unittest.log": "f6020fc40c9ca201da66d0345bb8937ed225d3e8c9daf9ab45ad0068a7219157",
+    "h311w/attestation.json": "e7f1c445bf4bccb64511826b46fbf8ea50ca205301859909accc857be8736b44",
+    "h311w/ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "h311w/unittest.log": "f5d255ac2faa856b696a7a215bcaf203f1a3a0dac8f3d6289fd4a3c52fae047f",
+    "h312l/attestation.json": "c3dfce95b30958ae6f35af820f5ce211e260138b49faa3a25eb77f704377eaea",
+    "h312l/ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "h312l/unittest.log": "f6020fc40c9ca201da66d0345bb8937ed225d3e8c9daf9ab45ad0068a7219157",
+    "h312w/attestation.json": "74b075e14ccf35f5a80d15fb42df9fb67a077efd319c5317853dd7f58e396e27",
+    "h312w/ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "h312w/unittest.log": "d5d57e33af9fe792b9d7d67d432d90a98aa6a87a61482c5e6683d76f3a3634c6",
+    "l311/attestation.json": "feaf4b9365d2a2a49f735851ad96144855da174954bd696ed3775456e9c02847",
+    "l311/dependencies.log": "5fb7f515ef6cb6d6457d844a286d43261e53af2d0888b14e7bca77044c77c12e",
+    "l311/pip-check.log": "9261363b733079a641c2e4cc9bc46ffa1d8336945a87f807b6cf68847dbc9b09",
+    "l311/pytest.log": "73a48a2ab3f462f021bc0bd0738c560b5d60b426b316d335e128d6f98c2a1730",
+    "l311/pytest.xml": "83d6b2e0044e958a4701bc42ff4be101ca42e3eae651518465a77668acc4dedb",
+    "l311/ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "l311/source-manifest.json": "7cc518ecef7366afd53af57de80179403733a5c5634d0e67d07df888f98ab24f",
+    "l311/version.log": "4c36c5b12e05dd26041a8ed21197c6256885dddc441e4ecf61f10aeb9cb5cbbc",
+    "l312/attestation.json": "48f7db80ce2168d3c170af806d460d04e7485f17a9f0cc615dcedff665f933b3",
+    "l312/dependencies.log": "c0fa9b000a2a74525e19d6b701b83518be53a53689bde9e43f12645a86cdd173",
+    "l312/pip-check.log": "9261363b733079a641c2e4cc9bc46ffa1d8336945a87f807b6cf68847dbc9b09",
+    "l312/pytest.log": "41d4d5ce40defbeea1fc91d69635b31e60c09afbf07b04f6eb26637fe4f40339",
+    "l312/pytest.xml": "b24e1a809d52f9f26d92da3ec788b1f6f5a755300f2554b5f63c1bd78b2dca68",
+    "l312/ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "l312/source-manifest.json": "7cc518ecef7366afd53af57de80179403733a5c5634d0e67d07df888f98ab24f",
+    "l312/version.log": "2a7e3143125975fab190c620f7cf4f5c3a04ca57b7539e1b65422c9ddce455a4",
+    "lifecycle.json": "dfab0249c2b79ccd7690d3d1b68fad70beef2eb4abac819de61981af30751d93",
+    "run_cell.py": "0206c8d5a37e012fc83255c6c2c7c5afed41a05ec560b2f6c325075f2d110c57",
+    "run_held_cell.py": "d0fac613b826624698a4a400edebcb14836ae3ec5df6d18a7ab9714ef478d289",
+    "run_score_cell.py": "5c93e889addc74f451bcd6b577d7e14805f0a8df5a66de48f2efc1520f2660ec",
+    "s311l/attestation.json": "bc5c3f6ec261024b2f115b5b0fedd069972838095ce5ebbcdb16499d7d18a61d",
+    "s311l/ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "s311l/unittest.log": "643c7cfc3921e5830e047bed28578bc933677c101c9c5a9f6610b6207052d03c",
+    "s311l/unmeasured.log": "76d8a2bb880110ad6972378c58fa61c5d2dec2091a48e60f6176e4908907e038",
+    "s311w/attestation.json": "56a1cb93626df0743fc04d48d9b54ef707b49eaf0492aa61a9e6886b029c453e",
+    "s311w/ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "s311w/unittest.log": "9006308d47a9575a7382b3af4166b3c56e3437f553b56f2859d6c962f008a071",
+    "s311w/unmeasured.log": "2cab0a6872a9e16e0c7444dbe1fe96db2edb64de4b161373d6485630bded70d9",
+    "s312l/attestation.json": "b8f07a40cbae3219cb6b00ae5c98990af746ec24db75ddc599a12ec89a8de123",
+    "s312l/ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "s312l/unittest.log": "cf8d3a2572a7898fcf32a4c2dd1445509b3d59e66061853243c4627f80695068",
+    "s312l/unmeasured.log": "76d8a2bb880110ad6972378c58fa61c5d2dec2091a48e60f6176e4908907e038",
+    "s312w/attestation.json": "53589422c438906cf4b533952c2d945e66efb112a28f241f56e1f3d28daebc6b",
+    "s312w/ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "s312w/unittest.log": "463b130b4eaabcfbe0589e98832500207243b1003b9014e1d2cacb61c897215e",
+    "s312w/unmeasured.log": "2cab0a6872a9e16e0c7444dbe1fe96db2edb64de4b161373d6485630bded70d9",
+    "setup-windows312-memory-failure.log": "c43998aad5f9fabe7f9c7a78b8df1c835609969a4385ff9866eb6c62f42d674d",
+    "w311/attestation.json": "f2ff8eb9291d99365f94b7f5d00bd1a46316f1fb3e7d644cbba4df3bc2faeac4",
+    "w311/dependencies.log": "e9d02289f027c83a6684eba19f39597cbfa5720139da0affb800840ad1051003",
+    "w311/pip-check.log": "672aec65a45bed50e70229c70934a7eebf0462595c459b83023027645d57cccf",
+    "w311/pytest.log": "623448fe33235463240afcd7a12ac2cf55169876723d21be4920bd45e50ae065",
+    "w311/pytest.xml": "15508b47d4eb0668f605e31cdf9b7832b268925c837d7d0189c9be44fd97f8bc",
+    "w311/ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "w311/source-manifest.json": "c0b0be30ab23b141b39ea1385e59b31a03c876259c52fd603f02722d6b3e3a9a",
+    "w311/version.log": "0df15fd26972aabd8d0d2c2ec5cc1e9b55727f260b78a8ce4e80f56a84711142",
+    "w312/attestation.json": "3963bdd4d0d0dc4276ae13a5d5e4e57a52bd4112d30cd49b63b4b49b2311c485",
+    "w312/dependencies.log": "dfd57bca50e712fd54b41d9821beef82096565f8b121b0485222599ddc491bfe",
+    "w312/pip-check.log": "672aec65a45bed50e70229c70934a7eebf0462595c459b83023027645d57cccf",
+    "w312/pytest.log": "729bf6be129c84838b49102ae5a458c7c2d29ef875cac78a5ec3f99dc51f390a",
+    "w312/pytest.xml": "798555d926601021f9c6cf437932b9b72dc2bc78164fce69a78ac90a91a8772e",
+    "w312/ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "w312/source-manifest.json": "c0b0be30ab23b141b39ea1385e59b31a03c876259c52fd603f02722d6b3e3a9a",
+    "w312/version.log": "5121fbc50e5ec70f01f8b2f792a98dad7371da89f6b3faef0ac750cbe5096c1e",
+    "wsl-environment.log": "316df47f64c28a6e3947d5b8c1a7ee35574c2ad70477548065f16f46f3dc2c82"
+  },
+  "cells": [
+    {
+      "all_recorded_checks_pass": true,
+      "app_artifact": "w311\\attestation.json",
+      "held_artifact": "h311w\\attestation.json",
+      "name": "w311",
+      "platform": "Windows-10-10.0.26200-SP0",
+      "pytest": {
+        "errors": 0,
+        "failures": 0,
+        "passed": 2648,
+        "skipped": 5,
+        "tests": 2653
+      },
+      "pytest_seconds": 531.729,
+      "python": "3.11.16 (main, Sep  1 2026, 14:15:24) [MSC v.1944 64 bit (AMD64)]",
+      "score_artifact": "s311w\\attestation.json",
+      "skips": [
+        {
+          "reason": "collection skipped",
+          "test": ".tests.bridge.test_bot_tree"
+        },
+        {
+          "reason": "sibling edgar-morning-brew checkout (or git) not present \u2014 provenance diff skipped",
+          "test": "tests.filings.test_provenance.test_vendored_source_differs_from_the_pin_only_by_the_rename_map"
+        },
+        {
+          "reason": "sibling edgar-morning-brew checkout (or git) not present \u2014 provenance diff skipped",
+          "test": "tests.filings.test_provenance.test_pinned_commits_exist_upstream"
+        },
+        {
+          "reason": "this host cannot create a directory symlink: [WinError 1314] A required privilege is not held by the client: 'C:\\\\t\\\\a26\\\\w311\\\\tmp\\\\pytest-of-drfoo\\\\pytest-0\\\\test_verify_rejects_linked_pac0\\\\real' -> 'C:\\\\t\\\\a26\\\\w311\\\\tmp\\\\pytest-of-drfoo\\\\pytest-0\\\\test_verify_rejects_linked_pac0\\\\linked-root'",
+          "test": "tests.tools.test_rw11_companyfacts.test_verify_rejects_linked_package_root_and_inner_artifact"
+        },
+        {
+          "reason": "symlink creation unavailable on this host",
+          "test": "tests.tools.test_rw19_news_reconnect_plan_bound.test_verifier_rejects_symlinked_package_root_when_supported"
+        }
+      ]
+    },
+    {
+      "all_recorded_checks_pass": true,
+      "app_artifact": "w312\\attestation.json",
+      "held_artifact": "h312w\\attestation.json",
+      "name": "w312",
+      "platform": "Windows-11-10.0.26200-SP0",
+      "pytest": {
+        "errors": 0,
+        "failures": 0,
+        "passed": 2648,
+        "skipped": 5,
+        "tests": 2653
+      },
+      "pytest_seconds": 630.671,
+      "python": "3.12.14 (main, Sep  1 2026, 14:17:39) [MSC v.1944 64 bit (AMD64)]",
+      "score_artifact": "s312w\\attestation.json",
+      "skips": [
+        {
+          "reason": "collection skipped",
+          "test": ".tests.bridge.test_bot_tree"
+        },
+        {
+          "reason": "sibling edgar-morning-brew checkout (or git) not present \u2014 provenance diff skipped",
+          "test": "tests.filings.test_provenance.test_vendored_source_differs_from_the_pin_only_by_the_rename_map"
+        },
+        {
+          "reason": "sibling edgar-morning-brew checkout (or git) not present \u2014 provenance diff skipped",
+          "test": "tests.filings.test_provenance.test_pinned_commits_exist_upstream"
+        },
+        {
+          "reason": "this host cannot create a directory symlink: [WinError 1314] A required privilege is not held by the client: 'C:\\\\t\\\\a26\\\\w312\\\\tmp\\\\pytest-of-drfoo\\\\pytest-0\\\\test_verify_rejects_linked_pac0\\\\real' -> 'C:\\\\t\\\\a26\\\\w312\\\\tmp\\\\pytest-of-drfoo\\\\pytest-0\\\\test_verify_rejects_linked_pac0\\\\linked-root'",
+          "test": "tests.tools.test_rw11_companyfacts.test_verify_rejects_linked_package_root_and_inner_artifact"
+        },
+        {
+          "reason": "symlink creation unavailable on this host",
+          "test": "tests.tools.test_rw19_news_reconnect_plan_bound.test_verifier_rejects_symlinked_package_root_when_supported"
+        }
+      ]
+    },
+    {
+      "all_recorded_checks_pass": true,
+      "app_artifact": "l311\\attestation.json",
+      "held_artifact": "h311l\\attestation.json",
+      "name": "l311",
+      "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+      "pytest": {
+        "errors": 0,
+        "failures": 0,
+        "passed": 2646,
+        "skipped": 7,
+        "tests": 2653
+      },
+      "pytest_seconds": 666.578,
+      "python": "3.11.16 (main, Sep  1 2026, 14:18:37) [Clang 22.1.3 ]",
+      "score_artifact": "s311l\\attestation.json",
+      "skips": [
+        {
+          "reason": "collection skipped",
+          "test": ".tests.bridge.test_bot_tree"
+        },
+        {
+          "reason": "claude CLI not installed on this host",
+          "test": "tests.agent_runner.test_transport_resolve.test_claude_cli_is_spawnable_when_installed"
+        },
+        {
+          "reason": "codex CLI not installed on this host",
+          "test": "tests.agent_runner.test_transport_resolve.test_codex_cli_is_spawnable_when_installed"
+        },
+        {
+          "reason": "claude CLI not installed on this host",
+          "test": "tests.agent_runner.test_transport_resolve.test_subprocess_run_without_resolution_is_what_broke"
+        },
+        {
+          "reason": "sibling edgar-morning-brew checkout (or git) not present \u2014 provenance diff skipped",
+          "test": "tests.filings.test_provenance.test_vendored_source_differs_from_the_pin_only_by_the_rename_map"
+        },
+        {
+          "reason": "sibling edgar-morning-brew checkout (or git) not present \u2014 provenance diff skipped",
+          "test": "tests.filings.test_provenance.test_pinned_commits_exist_upstream"
+        },
+        {
+          "reason": "WMIC scan is Windows-only",
+          "test": "tests.tools.test_rw19_preflight.test_windows_scan_live_smoke"
+        }
+      ]
+    },
+    {
+      "all_recorded_checks_pass": true,
+      "app_artifact": "l312\\attestation.json",
+      "held_artifact": "h312l\\attestation.json",
+      "name": "l312",
+      "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+      "pytest": {
+        "errors": 0,
+        "failures": 0,
+        "passed": 2646,
+        "skipped": 7,
+        "tests": 2653
+      },
+      "pytest_seconds": 558.487,
+      "python": "3.12.14 (main, Sep  1 2026, 14:16:52) [Clang 22.1.3 ]",
+      "score_artifact": "s312l\\attestation.json",
+      "skips": [
+        {
+          "reason": "collection skipped",
+          "test": ".tests.bridge.test_bot_tree"
+        },
+        {
+          "reason": "claude CLI not installed on this host",
+          "test": "tests.agent_runner.test_transport_resolve.test_claude_cli_is_spawnable_when_installed"
+        },
+        {
+          "reason": "codex CLI not installed on this host",
+          "test": "tests.agent_runner.test_transport_resolve.test_codex_cli_is_spawnable_when_installed"
+        },
+        {
+          "reason": "claude CLI not installed on this host",
+          "test": "tests.agent_runner.test_transport_resolve.test_subprocess_run_without_resolution_is_what_broke"
+        },
+        {
+          "reason": "sibling edgar-morning-brew checkout (or git) not present \u2014 provenance diff skipped",
+          "test": "tests.filings.test_provenance.test_vendored_source_differs_from_the_pin_only_by_the_rename_map"
+        },
+        {
+          "reason": "sibling edgar-morning-brew checkout (or git) not present \u2014 provenance diff skipped",
+          "test": "tests.filings.test_provenance.test_pinned_commits_exist_upstream"
+        },
+        {
+          "reason": "WMIC scan is Windows-only",
+          "test": "tests.tools.test_rw19_preflight.test_windows_scan_live_smoke"
+        }
+      ]
+    }
+  ],
+  "claim": "local compatibility only; no selection, order, witness or deployment authority",
+  "complete_four_cell_matrix_pass": true,
+  "full_app_commit": "69a1c9c53c0beeb0f91310ee017b24ba21a592b7",
+  "held_excerpt_commit": "8fc9c936c6a6c2c25d344a8425ffc5a48c01e879",
+  "research_tool_commit": "0149b86a8e0ce6d971e6c6f69bd31d08bdb5ad8c"
+}

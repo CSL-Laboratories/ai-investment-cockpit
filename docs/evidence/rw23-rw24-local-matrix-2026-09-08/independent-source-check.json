@@ -1,0 +1,9 @@
+{
+  "implementation_commit": "fa3cc1c0d8dc41af913a2d3fe6040d85d4e6e2e2",
+  "method": "git ls-tree plus git cat-file --batch; separately from tar extraction",
+  "source_files": 799,
+  "manifest_sha256": "2df4347c36b6c7c25ff9538c2122bb1b07c5e01b6dc6a429e02888e0ebc16311",
+  "matches_archive_manifest": true,
+  "benchmark_production_file_unchanged": true,
+  "production_budget_sha256": "13303bafca42d3814cf5777de5847b6288633c0c90ed3a16a002cec56bbcc490"
+}

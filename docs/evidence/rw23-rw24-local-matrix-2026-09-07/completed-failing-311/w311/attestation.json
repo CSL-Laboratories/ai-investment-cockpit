@@ -1,0 +1,79 @@
+{
+  "archive_sha256": "8247c677f1f055321bce2ee7d8132d0b28949aa0085e7ddbe995062ee3a670ab",
+  "artifacts_sha256": {
+    "dependencies.log": "3f676e335ca59d77a4fe4d2c9e4d93ee62f08a3398af465547aa9768fa8857b2",
+    "pip-check.log": "672aec65a45bed50e70229c70934a7eebf0462595c459b83023027645d57cccf",
+    "pytest.log": "a5ccdbdf093cc3be9793079f72c95461c1afe75f873097dbc3e0bf8e28108618",
+    "pytest.xml": "1e032c3b34baf7c2eddaa7d7aecb4e77aaeddbb04e0cee3412a0a6d9dfc37393",
+    "ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "source-manifest.json": "f2ec33228ac0f901260c0c5a9d15e3dd01797e69ab03c1c4e0ef78f5eeb51abd",
+    "version.log": "0df15fd26972aabd8d0d2c2ec5cc1e9b55727f260b78a8ce4e80f56a84711142"
+  },
+  "checks": [
+    {
+      "argv": [
+        "C:\\t\\a26\\env311\\Scripts\\python.exe",
+        "-VV"
+      ],
+      "duration_seconds": 0.11,
+      "name": "version",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "C:\\t\\a26\\env311\\Scripts\\python.exe",
+        "-m",
+        "pip",
+        "freeze"
+      ],
+      "duration_seconds": 2.75,
+      "name": "dependencies",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "C:\\t\\a26\\env311\\Scripts\\python.exe",
+        "-m",
+        "pip",
+        "check"
+      ],
+      "duration_seconds": 1.94,
+      "name": "pip-check",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "C:\\t\\a26\\env311\\Scripts\\python.exe",
+        "-m",
+        "ruff",
+        "check",
+        "."
+      ],
+      "duration_seconds": 2.22,
+      "name": "ruff",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "C:\\t\\a26\\env311\\Scripts\\python.exe",
+        "-m",
+        "pytest",
+        "-q",
+        "-ra",
+        "--junitxml=C:\\t\\r24\\w311r\\pytest.xml"
+      ],
+      "duration_seconds": 1374.27,
+      "name": "pytest",
+      "returncode": 1
+    }
+  ],
+  "commit": "6d7d7df73b4f480818c64a3a2b8fa8df39c6fdf9",
+  "completed_utc": "2026-09-07T23:35:49Z",
+  "executable": "C:\\t\\a26\\env311\\Scripts\\python.exe",
+  "platform": "Windows-10-10.0.26200-SP0",
+  "python": "3.11.16 (main, Sep  1 2026, 14:15:24) [MSC v.1944 64 bit (AMD64)]",
+  "source_file_count": 735,
+  "started_utc": "2026-09-07T23:12:40Z",
+  "tracked_source_changed": [],
+  "tree": "5a9b5b5439a3a4bfb4e4203ddb37597fdc313449"
+}

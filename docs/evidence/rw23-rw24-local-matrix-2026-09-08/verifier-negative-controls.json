@@ -1,0 +1,32 @@
+{
+  "old_matrix_relabelled_as_current": {
+    "verified": false,
+    "errors": [
+      "w311: source manifest differs from the independently reconstructed frozen archive",
+      "w312: source manifest differs from the independently reconstructed frozen archive",
+      "l311: source manifest differs from the independently reconstructed frozen archive",
+      "l312: source manifest differs from the independently reconstructed frozen archive"
+    ]
+  },
+  "substituted_commands": {
+    "verified": false,
+    "errors": [
+      "w311: wrong gate argv: ruff",
+      "w312: wrong gate argv: ruff",
+      "l311: wrong gate argv: ruff",
+      "l312: wrong gate argv: ruff"
+    ]
+  },
+  "coverage_skip": {
+    "refused": true,
+    "reason": "required testcase did not pass: ('tests.bridge.test_bot_tree', 'test_a_wired_command_did_not_also_get_a_stub')"
+  },
+  "coverage_missing": {
+    "refused": true,
+    "reason": "missing required regression cases: [('tests.bridge.test_bot_tree', 'test_a_wired_command_did_not_also_get_a_stub')]"
+  },
+  "coverage_duplicate": {
+    "refused": true,
+    "reason": "duplicate required testcase: ('tests.bridge.test_bot_tree', 'test_a_wired_command_did_not_also_get_a_stub')"
+  }
+}

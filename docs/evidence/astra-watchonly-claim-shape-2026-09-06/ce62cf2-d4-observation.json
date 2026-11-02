@@ -1,0 +1,30 @@
+{
+  "label": "ce62cf2-d4-observation",
+  "source_sha": "ce62cf2b0567899019a446e693e95512fe96a3cf",
+  "app_tree": "2045e2c74010a49a8c9a67b4a5ef50f55b0b644a",
+  "fixture_source": "/workspace/ai-investment-cockpit/docs/evidence/astra-watchonly-claim-shape-2026-09-06/test_ce62cf2_d4_observation.py",
+  "fixture_sha256": "d8b1a7fe9357a9fd4b10884649342c18d954be386b05ddf8c999d22482bc2056",
+  "archive_sha256": "8913c36d152c8ce218e6b0080120db1a24f9d4e73d8e0184ee3459df92726905",
+  "argv": [
+    "/workspace/ai-investment-cockpit/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "-s",
+    "/tmp/watchonly-d4-ce62cf2-5hok9ozt/evidence/test_ce62cf2_d4_observation.py",
+    "--tb=short",
+    "-p",
+    "no:cacheprovider",
+    "--basetemp",
+    "/tmp/watchonly-d4-ce62cf2-5hok9ozt/pytest-tmp"
+  ],
+  "cwd": "/tmp/watchonly-d4-ce62cf2-5hok9ozt/app",
+  "started_utc": "2026-09-07T02:50:10.460061+00:00",
+  "completed_utc": "2026-09-07T02:50:11.592077+00:00",
+  "elapsed_seconds": 1.08,
+  "exit_code": 1,
+  "timed_out": false,
+  "python": "3.13.5 (main, Jul 15 2026, 20:25:40) [GCC 14.2.0]",
+  "isolation": "git archive ce62cf2 app; temporary SQLite/paths; FakeAlpaca and fake transports; absent dotenv; null/in-memory keyring; no service access",
+  "scope": "research-only D4 observation; catches AuditIntegrityError only to record side effects, retains zero-submission refusal assertion; no acceptance or platform matrix"
+}
