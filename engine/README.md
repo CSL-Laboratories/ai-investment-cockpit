@@ -5,15 +5,16 @@ This is the new Cockpit engine tree. X1 names it `CX-NEW`: recreated code goes i
 lands here until the rules below can be checked.
 
 The rules come from CP0-v2 in csl-research,
-`contracts/ai-investment-cockpit/amendments/SUCCESSOR-PRODUCT-2026-10-26.md`. If this
-file and that one differ, that one wins.
+`contracts/ai-investment-cockpit/amendments/SUCCESSOR-PRODUCT-2026-10-26.md`, as amended
+by `contracts/ai-investment-cockpit/amendments/X1-PARITY-CUTOVER-2026-11-02.md` (Lucas's
+receipt on CSL-633, comment `7ece7d3b`). If this file and those differ, those win.
 
 ## What lives where
 
 | Tree | Status | What to do with it |
 | -- | -- | -- |
 | `engine/**`, `engine/tests/**` | `CX-NEW` (X1, CP0-v2 §3) | New engine code and its tests. |
-| `app/**`, `rust/**` | `CX-LEGACY` (X1) | Read-only. Frozen at tag `pre-x1-cockpit-20261026`. Deleted by the cutover PR after the Nov 10 rehearsal. Never edited. |
+| `app/**`, `rust/**` | `CX-LEGACY` (X1) | Frozen whole at Cockpit main `11a122e2`. Still the paper runtime and the reference `engine/` is built against. Edited only to remove personal data or a secret, or for an escalate-list safety fix, each on its own issue with founder review. Deleted, with the X1 guard, by one cutover PR that opens only when the amendment's parity gate holds. |
 | `cockpit_spine/**`, `successor/**` | Reference | Kept as reference until the cutover. Useful parts move to csl-research before they are deleted. Engine PRs do not edit them. |
 | `tools/**` | CI and test tooling (Rule CA) | Checkers and test tooling only. |
 
@@ -35,6 +36,14 @@ file and that one differ, that one wins.
 5. **Keys live in the OS keyring.** CSL adds no pay-per-token keys (CP0-v2 §4 item 5).
 6. **Research does not live here.** Specs, decisions, evidence and runbooks go to
    csl-research (X4). Only files that code or agents read offline stay in this repo.
+
+## What engine/ has to reach before app/ goes
+
+Every `keep` and `port` oracle class in the Cockpit X1 inventory
+(`docs/evidence/x1-cockpit-legacy-test-inventory-2026-10-26.md`) needs successors here,
+listed in a parity table with the failing and passing run ids for each row. Floors are
+counted at `11a122e2`. `engine/` also needs order authority (CP0-v2 §4.4) and an edge
+source of its own (CSL-637). The amendment's section 3 is the full gate.
 
 ## When code may land
 
