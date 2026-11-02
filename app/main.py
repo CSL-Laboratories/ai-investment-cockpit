@@ -127,22 +127,6 @@ def _build_anchor_store(settings):
     return GitAuditLogAnchorStore(*adapters)
 
 
-def _build_merger_semantic_witness(settings):
-    """Build W-24's exact-message witness from the existing Discord audit channel contract.
-
-    Missing token/channel is an expected fail-closed state: composition still installs the
-    deterministic verifier, but no retrospective or same-host evidence can impersonate the
-    required server-stamped pre-outcome commitment.
-    """
-    from bridge.witness import discord_rest_semantic_witness
-    from core.secrets import get_secret
-
-    token = get_secret(_DISCORD_TOKEN_NAME)
-    if token is None or settings.audit_log_channel_id is None:
-        return None
-    return discord_rest_semantic_witness(settings.audit_log_channel_id, token.reveal())
-
-
 def run_startup_security_checks(settings):
     """W11 (SEC-05 / SEC-06) — fail-closed startup checks invoked by ``compose()`` BEFORE the app
     graph is built: (1) the decision-agent account provably cannot read the bearer stores
@@ -840,8 +824,6 @@ def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/r
     from orchestrator.halt import default_halt_path, ensure_halt_dir
     from orchestrator.state import OrchestratorState
     from storage.engine import create_all, make_engine, make_session_factory
-    from strategies.merger_edge import CashMergerEdgeProvider
-    from strategies.merger_semantics import CashMergerSemanticVerifier
     from workflows.services import build_services
 
     settings = get_settings()
@@ -873,25 +855,13 @@ def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/r
     def watchlist_fn():
         return configured_watchlist
 
-    # DEC-03/W-23 selects a deterministic source without granting it order authority. The
-    # same instance is injected into draft and approval-time verification; an empty strategy
-    # watchlist or absent evidence leaves it visibly unavailable.
-    semantic_verifier = CashMergerSemanticVerifier(
-        state,
-        raw_root=parquet_root,
-        witness=_build_merger_semantic_witness(settings),
-    )
-    edge_provider = CashMergerEdgeProvider(
-        state,
-        raw_root=parquet_root,
-        strategy_watchlist=settings.merger_watchlist_symbols,
-        semantic_verifier=semantic_verifier,
-    )
-    state.edge_provider = edge_provider
-
+    # X1 stage A (CSL-643) removed the W-23 cash-merger edge provider, the only production
+    # edge source. No provider is composed, so ``state.edge_provider`` stays None and the risk
+    # engine refuses decision-path proposals as "unavailable edge" (fail closed) until a new
+    # edge source exists (CSL-637).
     paper = build_paper_execution(
         state, client=paper_client, watchlist_fn=watchlist_fn, parquet_root=parquet_root,
-        deliver=deliver, edge_provider=edge_provider,
+        deliver=deliver,
     )
     # RW-15: settle broker-visible orders before the completeness report. No provisioned paper
     # transport means unresolved submits remain visible; production never substitutes fake history.
@@ -908,8 +878,7 @@ def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/r
                               verify_params=(market_data.verify_params
                                              if market_data is not None else None),
                               holdings_fn=(paper.holdings_symbols if paper is not None else None),
-                              watchlist_fn=watchlist_fn,
-                              edge_provider=edge_provider)
+                              watchlist_fn=watchlist_fn)
     app = create_app(
         state,
         services=services,

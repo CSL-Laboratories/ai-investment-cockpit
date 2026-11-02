@@ -22,10 +22,10 @@ DEFAULT_TABLE = ROOT / "docs" / "evidence" / "x1-cockpit-legacy-test-inventory-2
 
 # Floors, exact at the head that introduced them. A deliberate move or deletion
 # edits these in the same reviewed change as the table row it affects.
-X1_MIN_ROWS = 224
+X1_MIN_ROWS = 217
 X1_MIN_KEEP_ROWS = 136
-X1_MIN_PORT_ROWS = 77
-X1_MIN_ORACLE_TESTS = 2719
+X1_MIN_PORT_ROWS = 76
+X1_MIN_ORACLE_TESTS = 2712
 
 X1_TAG = "pre-x1-cockpit-20261026"
 X1_TAG_COMMIT = "3122cac4780d776cbd487dd2a671466151a465ba"
@@ -244,7 +244,7 @@ def check(
             errors.append(f"{path} has no disposition row")
     for path in sorted(seen):
         if path not in actual:
-            errors.append(f"{path} has a row but the file is missing; deletion is not allowed before the Nov 10 rehearsal")
+            errors.append(f"{path} has a row but the file is missing; a deletion removes its row in the same reviewed change")
 
     keep_rows = port_rows = oracle_tests = 0
     for row in rows:

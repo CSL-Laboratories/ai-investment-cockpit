@@ -4,8 +4,9 @@ Each test names the BUG id from the fix commit message and fails on the old code
 tampered limits fall back safely, NaN gate inputs reject instead of crashing, dead
 clocks are armed, replay/auth ordering holds, vendor integrity blocks approvals,
 drawdown garbage locks the gate, forged embed rows refuse to render, id-less news
-stays distinct, veto minting is HALT-atomic, sim races count instead of crash, cash
-semantics accept real mergers, and the P2 hardening holds.
+stays distinct, veto minting is HALT-atomic, sim races count instead of crash, and
+the P2 hardening holds. (X1 stage A, CSL-643, removed the BUG-140 cash-semantics pins
+with the cash-merger code they exercised.)
 """
 from __future__ import annotations
 
@@ -53,7 +54,6 @@ from schemas.models.audit_entry import AuditEntry
 from schemas.models.risk_decision import RiskDecision
 from storage.engine import create_all, make_engine, make_session_factory
 from storage.parquet_store import verify_snapshot, write_snapshot
-from strategies.merger_semantics import _CASH, _assertion_matches
 from tests.brokers.conftest import build_scenario
 from tests.workflows.conftest import FakeTransport, envelope
 from workflows.interrogation import fresh_interrogate
@@ -554,23 +554,6 @@ def test_sim_pending_replace_with_bad_qty_is_refused():
     assert venue.replace_order("x", new_qty=0, ts=10) is False
     venue.advance(2_000)  # must not raise
     assert venue.book.get("x") is not None
-
-
-# --- BUG-140: cash semantics accept real mergers ------------------------------------------
-CASH_SENTENCE = (
-    "each share of common stock will be converted into the right to receive "
-    "$150 in cash per share, with no fractional shares issued"
-)
-
-
-def test_cash_with_fractional_boilerplate_is_accepted():
-    assert list(_assertion_matches(_CASH, CASH_SENTENCE.lower())) != []
-
-
-def test_negated_cash_still_refused():
-    assert list(_assertion_matches(
-        _CASH, "it is not true that each share of common stock will receive "
-               "$150 in cash per share")) == []
 
 
 # --- BUG-141/142: market-data universe + size coercion --------------------------------------
