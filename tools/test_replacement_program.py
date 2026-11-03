@@ -5,11 +5,16 @@ import contextlib
 import copy
 import hashlib
 import importlib.util
+import io
+import json
+import os
+import re
 import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("checker", ROOT / "tools" / "check_replacement_program.py")
@@ -757,6 +762,203 @@ DIRECT_CI_COMMANDS = (
     "python -X utf8 -B -m unittest -q tools.test_replacement_program",
     "python -X utf8 -B tools/check_checker_test_floor.py",
 )
+
+
+POINTER_TARGET = "contracts/ai-investment-cockpit/PRODUCT.md"
+
+
+def pointer_record(**overrides):
+    record = {
+        "pointer_version": 1,
+        "repository": CHECKER.POINTER_REPOSITORY,
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "path": POINTER_TARGET,
+        "sha256": "a" * 64,
+        "acceptance": {
+            "linear_issue": "CSL-577",
+            "linear_comment_id": "57fc34c5-0000-4000-8000-000000000000",
+        },
+    }
+    record.update(overrides)
+    return record
+
+
+def pointer_bytes(record, *, fences=1, prose="") -> bytes:
+    block = "```json " + CHECKER.POINTER_FENCE + "\n" + json.dumps(record, indent=2) + "\n```\n"
+    text = "# Successor product\n\nThe accepted contract lives in csl-research.\n" + prose + "\n" + block * fences
+    return text.encode("utf-8")
+
+
+def research_repo(tmp, content: bytes = b"# Product contract\n") -> tuple[Path, str, str]:
+    root = Path(tmp) / "research"
+    target = root / POINTER_TARGET
+    target.parent.mkdir(parents=True)
+    target.write_bytes(content)
+    _init_git(root)
+    _git(root, "add", "-A")
+    _git(root, "commit", "-m", "contract")
+    return root, _git(root, "rev-parse", "HEAD").stdout.strip(), hashlib.sha256(content).hexdigest()
+
+
+class ContractPointerTests(unittest.TestCase):
+    """CSL-577: SUCCESSOR-PRODUCT.md may point at the accepted csl-research contract."""
+
+    def setUp(self) -> None:
+        self.program = CHECKER.load(ROOT / "docs" / "replacement" / "program.json")
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name)
+
+    def write_pointer(self, data: bytes) -> Path:
+        path = self.tmp / "SUCCESSOR-PRODUCT.md"
+        path.write_bytes(data)
+        return path
+
+    def pointer_root(self, data: bytes):
+        """A governed repo whose SUCCESSOR-PRODUCT.md is ``data``, accepted by a pinned founder receipt."""
+        root = replacement_root(self.tmp)
+        path = root / CHECKER.POINTER_CONTRACT
+        path.write_bytes(data)
+        digest = hashlib.sha256(data).hexdigest()
+        _init_git(root)
+        _git(root, "add", "docs/replacement")
+        _git(root, "commit", "-m", "approved pointer")
+        sha = _git(root, "rev-parse", "HEAD").stdout.strip()
+        candidate = github_acceptance_program(self.program, approved_head_sha=sha)
+        candidate["authority"]["acceptance_receipt"]["accepted_contracts"][CHECKER.POINTER_CONTRACT] = digest
+        for contract in candidate["contracts"]:
+            if contract["path"] == CHECKER.POINTER_CONTRACT:
+                contract["sha256"] = digest
+        return root, candidate
+
+    def test_current_in_place_contract_is_not_a_pointer(self) -> None:
+        self.assertIsNone(CHECKER.read_pointer(ROOT / CHECKER.POINTER_CONTRACT))
+        CHECKER.validate(self.program)
+
+    def test_well_formed_pointer_parses(self) -> None:
+        record = pointer_record()
+        self.assertEqual(CHECKER.read_pointer(self.write_pointer(pointer_bytes(record))), record)
+
+    def test_malformed_pointer_fields_fail_closed(self) -> None:
+        bad = [
+            {"repository": "CSL-Laboratories/recursion"},
+            {"repository": "csl-laboratories/csl-research"},
+            {"commit": "0" * 39},
+            {"commit": "A" * 40},
+            {"commit": 1},
+            {"sha256": "f" * 63},
+            {"sha256": "F" * 64},
+            {"sha256": None},
+            {"path": "/" + POINTER_TARGET},
+            {"path": "../" + POINTER_TARGET},
+            {"path": "contracts/../PRODUCT.md"},
+            {"path": "contracts/./PRODUCT.md"},
+            {"path": "contracts//PRODUCT.md"},
+            {"path": "contracts\\PRODUCT.md"},
+            {"path": ""},
+            {"pointer_version": True},
+            {"pointer_version": 2},
+            {"pointer_version": "1"},
+            {"acceptance": {"linear_issue": "CSL-577"}},
+            {"acceptance": {"linear_issue": "csl-577", "linear_comment_id": "57fc34c5-0000-4000-8000-000000000000"}},
+            {"acceptance": {"linear_issue": "CSL-577", "linear_comment_id": "57fc34c5"}},
+            {"acceptance": {"linear_issue": "CSL-577", "linear_comment_id": "57fc34c5-0000-4000-8000-000000000000", "accepted": True}},
+            {"acceptance": None},
+            {"extra": True},
+        ]
+        for override in bad:
+            with self.subTest(override=override):
+                path = self.write_pointer(pointer_bytes(pointer_record(**override)))
+                with self.assertRaises(CHECKER.ContractError):
+                    CHECKER.read_pointer(path)
+        record = pointer_record()
+        del record["sha256"]
+        with self.assertRaisesRegex(CHECKER.ContractError, "pointer fields changed"):
+            CHECKER.read_pointer(self.write_pointer(pointer_bytes(record)))
+
+    def test_fence_must_be_one_valid_json_block(self) -> None:
+        cases = {
+            "two blocks": pointer_bytes(pointer_record(), fences=2),
+            "marker without block": ("Pointer: " + CHECKER.POINTER_FENCE + " pending.\n").encode("utf-8"),
+            "marker in prose too": pointer_bytes(pointer_record(), prose="See " + CHECKER.POINTER_FENCE + ".\n"),
+            "invalid json": ("```json " + CHECKER.POINTER_FENCE + "\n{nope\n```\n").encode("utf-8"),
+            "duplicate key": (
+                "```json " + CHECKER.POINTER_FENCE + '\n{"pointer_version": 1, "pointer_version": 1}\n```\n'
+            ).encode("utf-8"),
+            "not utf-8": b"\xff" + pointer_bytes(pointer_record()),
+        }
+        for name, data in cases.items():
+            with self.subTest(name=name), self.assertRaises(CHECKER.ContractError):
+                CHECKER.read_pointer(self.write_pointer(data))
+
+    def test_pointer_switch_passes_under_pinned_founder_receipt(self) -> None:
+        root, candidate = self.pointer_root(pointer_bytes(pointer_record()))
+        with pinned_github_receipt(candidate):
+            CHECKER.validate(candidate, root)
+
+    def test_pointer_bytes_still_need_the_receipt(self) -> None:
+        root, candidate = self.pointer_root(pointer_bytes(pointer_record()))
+        with self.assertRaisesRegex(CHECKER.ContractError, "github receipt is not checker-pinned"):
+            CHECKER.validate(candidate, root)
+
+    def test_malformed_pointer_fails_validate_without_vault_root(self) -> None:
+        root, candidate = self.pointer_root(pointer_bytes(pointer_record(commit="abc")))
+        with pinned_github_receipt(candidate), self.assertRaisesRegex(CHECKER.ContractError, "40 lowercase hex"):
+            CHECKER.validate(candidate, root)
+
+    def test_vault_root_checks_target_bytes(self) -> None:
+        research, commit, digest = research_repo(self.tmp)
+        good = pointer_record(commit=commit, sha256=digest)
+        CHECKER.verify_pointer_target(good, research)
+        root, candidate = self.pointer_root(pointer_bytes(good))
+        with pinned_github_receipt(candidate):
+            CHECKER.validate(candidate, root, vault_root=research)
+        with self.assertRaisesRegex(CHECKER.ContractError, "target digest mismatch"):
+            CHECKER.verify_pointer_target(pointer_record(commit=commit, sha256="b" * 64), research)
+        with self.assertRaisesRegex(CHECKER.ContractError, "target unavailable"):
+            CHECKER.verify_pointer_target(pointer_record(commit="0" * 40, sha256=digest), research)
+        with self.assertRaisesRegex(CHECKER.ContractError, "target unavailable"):
+            CHECKER.verify_pointer_target(
+                pointer_record(commit=commit, sha256=digest, path="contracts/missing.md"), research
+            )
+
+    def test_main_says_when_target_bytes_were_not_checked(self) -> None:
+        research, commit, digest = research_repo(self.tmp)
+        root, candidate = self.pointer_root(pointer_bytes(pointer_record(commit=commit, sha256=digest)))
+        program_path = self.tmp / "program.json"
+        program_path.write_text(json.dumps(candidate), encoding="utf-8")
+        args = ["--program", str(program_path), "--root", str(root)]
+        with pinned_github_receipt(candidate):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(CHECKER.main(args), 0)
+            self.assertIn("target bytes not checked", out.getvalue())
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(CHECKER.main([*args, "--vault-root", str(research)]), 0)
+            self.assertEqual(out.getvalue(), "replacement-program: PASS\n")
+            out = io.StringIO()
+            with mock.patch.dict(os.environ, {CHECKER.VAULT_CHECKOUT_ENV: str(research)}), contextlib.redirect_stdout(out):
+                self.assertEqual(CHECKER.main(args), 0)
+            self.assertEqual(out.getvalue(), "replacement-program: PASS\n")
+
+    def test_vault_checkout_env_checks_target_bytes(self) -> None:
+        research, commit, _digest = research_repo(self.tmp)
+        root, candidate = self.pointer_root(pointer_bytes(pointer_record(commit=commit, sha256="b" * 64)))
+        program_path = self.tmp / "program.json"
+        program_path.write_text(json.dumps(candidate), encoding="utf-8")
+        err = io.StringIO()
+        with pinned_github_receipt(candidate), mock.patch.dict(
+            os.environ, {CHECKER.VAULT_CHECKOUT_ENV: str(research)}
+        ), contextlib.redirect_stderr(err):
+            self.assertEqual(CHECKER.main(["--program", str(program_path), "--root", str(root)]), 1)
+        self.assertIn("target digest mismatch", err.getvalue())
+
+    def test_pointer_adds_no_digest_constants(self) -> None:
+        source = (ROOT / "tools" / "check_replacement_program.py").read_text(encoding="utf-8")
+        start = source.index("# CSL-577:")
+        end = source.index("RESEARCH_BUDGET_FIELDS = {")
+        self.assertIsNone(re.search(r"[0-9a-f]{40}", source[start:end]))
 
 
 def floor_counters(value):
