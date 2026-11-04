@@ -168,7 +168,7 @@ dates, watchlists, model authority, broker adapters, or the live soak.
 
 | ID | Defect | Priority | Status |
 |---|---|---|---|
-| `BUG-159` | Interrupted watch-only transitions can lose denial across restart; recovery can publish permission before its signed event commits; admitted late safety changes and final audit corruption can be missed before paper broker entry (D1–D4) | P1 high paper | merged — [PR #83](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/83) (`9c61dcf`); head `d076b50`; [[evidence/astra-watchonly-claim-shape-2026-09-06]]; [[evidence/bug159-watchonly-durability-2026-09-08]]; provisional hosted four-cell stand-in on merged `94862b6` (run 39029246863, jobs 117386225539/117386225549/117386225573/117386225584): [[evidence/csl62-dec09-hosted-2026-10-17]] — DEC-09 substitution undecided (Lucas) |
+| `BUG-159` | Interrupted watch-only transitions can lose denial across restart; recovery can publish permission before its signed event commits; admitted late safety changes and final audit corruption can be missed before paper broker entry (D1–D4) | P1 high paper | merged — [PR #83](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/83) (`9c61dcf`); head `d076b50`; [`evidence/astra-watchonly-claim-shape-2026-09-06.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/astra-watchonly-claim-shape-2026-09-06.md); [[evidence/bug159-watchonly-durability-2026-09-08]]; provisional hosted four-cell stand-in on merged `94862b6` (run 39029246863, jobs 117386225539/117386225549/117386225573/117386225584): [[evidence/csl62-dec09-hosted-2026-10-17]] — DEC-09 substitution undecided (Lucas) |
 
 ### RW-24 measured reliability follow-up — merged 2026-09-08
 
@@ -315,7 +315,7 @@ Windows 3.11/3.12 each 2,648 passed / 5 skipped; Ubuntu/WSL2 3.11/3.12 each
 2,646 passed / 7 skipped, with Ruff and dependency checks clean. Exact source
 scope and the separately passing 10-test scorer / 7-test excerpt supplements are in
 [[evidence/rw20-matrix-isolation-2026-09-06]].
-The [delivery record](evidence/astra-gate-delivery-2026-09-06.md) maps every operator
+The [delivery record](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/astra-gate-delivery-2026-09-06.md) maps every operator
 request to its result and remaining evidence. BUG-115 through BUG-122 merged with PR #70. BUG-123 stays open. No selection, watchlist, date, witness, paper-activation, or live gate is closed.
 
 | ID | What | Sev | Status | Where |

@@ -135,7 +135,7 @@ Merged in PR #80 at `c231dc2`; no selection, witness, paper or live gate is sati
 
 The independent audit was committed on `codex/audit-gates-2026-09-06`; it is review material,
 not a deployment or selection commitment. Start with
-[[evidence/astra-gate-delivery-2026-09-06]] for all requested findings and remaining dependencies;
+[`evidence/astra-gate-delivery-2026-09-06.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/astra-gate-delivery-2026-09-06.md) for all requested findings and remaining dependencies;
 then use
 [[evidence/rw20-repair-notes-2026-09-06]],
 [[evidence/rw21-repair-notes-2026-09-06]], and
@@ -363,6 +363,17 @@ research to
 `submissions/<record_id>/`. Existing `docs/evidence/**` files stay until
 [CSL-536](https://linear.app/csl-laboratories/issue/CSL-536). Contract fixtures
 under `docs/replacement/outcomes/**` stay.
+Evidence notes already moved under CSL-536 round 4
+([CSL-592](https://linear.app/csl-laboratories/issue/CSL-592) and its parts) link
+to csl-research `contracts/ai-investment-cockpit/evidence/legacy/`, at the same path
+as under `docs/evidence/`, pinned at commit
+`4bed7965c8c57de55caaecbf44c4fba0c88e7ce5` (the merge of csl-research #314). Their
+raw logs stay only at tag `pre-x1-cockpit-20261026`. The archived copies are the
+notes as they stood at `11a122e2`. One later cockpit edit is not in them:
+[CSL-588](https://linear.app/csl-laboratories/issue/CSL-588) fixed line 60 of
+`astra-gate-delivery-2026-09-06.md` after #314 merged, so the archived copy still
+links `../runbooks/research-value-score.md`. That runbook is at csl-research
+[`c6587b65…/contracts/ai-investment-cockpit/history/runbooks/research-value-score.md`](https://github.com/CSL-Laboratories/csl-research/blob/c6587b65ceb9672a0ea5e88ce2f3aa8167721067/contracts/ai-investment-cockpit/history/runbooks/research-value-score.md).
 
 | Doc | Why it is still load-bearing |
 |---|---|

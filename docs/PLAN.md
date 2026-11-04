@@ -216,7 +216,7 @@ The bounded fail-closed package was claimed on `fix/bug159-watchonly-durability`
 (head `d076b50a74d723fe521766adb5cb14115b9310ee`) from merged main `abbaf3f` (PR #82)
 and merged in [PR #83](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/83)
 (`9c61dcf`) on 2026-09-08. GitHub deleted the branch ref the same minute. Its primary contract is
-[[evidence/astra-watchonly-claim-shape-2026-09-06]] and its fixture ownership map
+[`evidence/astra-watchonly-claim-shape-2026-09-06.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/astra-watchonly-claim-shape-2026-09-06.md) and its fixture ownership map
 is [[evidence/astra-watchonly-claim-shape-2026-09-06/fixture-contracts]].
 
 1. **Operator change:** pending or failed safety persistence, interrupted/legacy
