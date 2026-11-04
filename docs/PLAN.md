@@ -251,7 +251,7 @@ not claim atomicity against an unrestricted concurrent SQL writer committing aft
 Crash, legacy, integrity, or unproven shutdown startup holds have no automatic release in
 this package; clean genesis and provably closed-session restarts remain required controls.
 A provisional hosted Blacksmith four-cell stand-in on merged main `94862b6` is recorded in
-[[evidence/csl62-dec09-hosted-2026-10-17]]; whether hosted cells satisfy DEC-09 is an
+[`evidence/csl62-dec09-hosted-2026-10-17.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/csl62-dec09-hosted-2026-10-17.md); whether hosted cells satisfy DEC-09 is an
 unresolved decision owned by Lucas.
 
 ### RW-24 reliability follow-up — merged 2026-09-08
@@ -260,14 +260,14 @@ RW-23's 11 repairs and RW-24's two further fixes, measured triage optimization a
 Discord validation coverage were committed on `codex/audit-reliability-2026-09-07`
 (head `f3f315fc2b0da76c89a6da27ef2bcb23e8eef744`) and merged in [PR #81](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/81)
 (`5d50b25`) on 2026-09-08. GitHub deleted that branch ref on 2026-09-10.
-Independent authority review passed. Intake: [[evidence/rw24-reliability-2026-09-07]].
+Independent authority review passed. Intake: [`evidence/rw24-reliability-2026-09-07.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/rw24-reliability-2026-09-07.md).
 The replay fixture and fractional-quantity status regressions found in the first
 completed matrix are repaired and independently reviewed. All four DEC-09 cells pass
 against `fa3cc1c`: Windows 3.11/3.12 each 3,107 passed / 4 skipped; Ubuntu WSL2
 3.11/3.12 each 3,105 passed / 6 skipped. Every cell passes all 233 required cases.
 Final validation: [[evidence/rw23-rw24-local-matrix-2026-09-08/README]].
 A provisional hosted Blacksmith four-cell stand-in on merged main `94862b6` is recorded in
-[[evidence/csl62-dec09-hosted-2026-10-17]]; whether hosted cells satisfy DEC-09 is an
+[`evidence/csl62-dec09-hosted-2026-10-17.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/csl62-dec09-hosted-2026-10-17.md); whether hosted cells satisfy DEC-09 is an
 unresolved decision owned by Lucas.
 
 ### RW-23 audit repair delivery — merged 2026-09-08
@@ -275,7 +275,7 @@ unresolved decision owned by Lucas.
 The operator authorized BUG-146 through BUG-156 repairs and local commits in slices from
 merged main `c231dc2`. This is one bounded correctness package extending existing authority,
 workflow, ingest and simulation paths; its seven intake answers and validation record are in
-[[evidence/rw23-audit-repair-2026-09-07]]. No new capability or empirical gate is introduced.
+[`evidence/rw23-audit-repair-2026-09-07.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/rw23-audit-repair-2026-09-07.md). No new capability or empirical gate is introduced.
 Further reliability/performance work follows a measured review and its own scope entry.
 RW-23 and RW-24 merged together in PR #81 (`5d50b25`). RW-22 has merged in PR #80; older branch-status text below records its pre-merge state.
 
@@ -300,7 +300,7 @@ not a release gate. Hosted Linux `linux-gates` is a cheap required PR status che
 not replace that local matrix as package acceptance. Hosted Windows runs on `main`,
 the `ci:full` label, or `workflow_dispatch`; hosted macOS is nightly on `main` (skipped if
 idle 24h), `ci:full`, or `workflow_dispatch`. Hetzner is outside this decision and is not
-required or tested for current packages. See [[evidence/local-platform-matrix-2026-08-24]].
+required or tested for current packages. See [`evidence/local-platform-matrix-2026-08-24.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/local-platform-matrix-2026-08-24.md).
 
 This policy does not weaken platform-neutral implementation requirements and does not convert
 same-host WSL2 into an independent witness. Any older statement below that a hosted/macOS or
@@ -313,7 +313,7 @@ external-witness, and deployment gates remain separate.
 ## 0. Current state — 2026-08-24
 
 The first live W-22 bring-up snapshot is recorded in
-[[evidence/w22-paper-mvp-2026-08-14]]. At 11:17 PT the `read_only` process had a valid audit
+[`evidence/w22-paper-mvp-2026-08-14.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/w22-paper-mvp-2026-08-14.md). At 11:17 PT the `read_only` process had a valid audit
 chain, no breaker/watch-only state, healthy signed paper-equity sampling, zero feed errors, and
 all 11 Alpaca IEX book sequences at 78. That is operational evidence, not trading-performance
 evidence: there were no proposals eligible for opening execution and no paper fills.
@@ -347,7 +347,7 @@ verifier, BUG-106, the repeated RW-19 measurements, and W-25's Administrator-saf
 implementation, plus the sealed RW-11 prospective text-population collector.
 
 The outage recovery queue is recorded in
-[[evidence/github-outage-session-handoff-2026-08-17]]. BUG-106, W-24's verifier and adversarial
+[`evidence/github-outage-session-handoff-2026-08-17.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/github-outage-session-handoff-2026-08-17.md). BUG-106, W-24's verifier and adversarial
 hardening, and the repeated RW-19 measurements subsequently merged in PRs #37–#39. This final
 documentation reconciliation preserves the stopped-system preflight and historical handoff.
 
@@ -375,7 +375,7 @@ windows and the 2026-08-24 ten-minute regular-session window all held zero strea
 Those are hash-valid insufficient samples, not reconnect or correction evidence. Broader regimes,
 a non-empty news correction/reconnect sample, and a bounded deterministic coalescing decision
 remain open, so `DEC-07` is unresolved. See
-[[evidence/rw14-rw19-live-evidence-2026-08-18]].
+[`evidence/rw14-rw19-live-evidence-2026-08-18.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/rw14-rw19-live-evidence-2026-08-18.md).
 
 Two later plan-bound NVIDIA-window attempts aborted without collecting news articles.
 2026-08-26: headless resume arrived ~20 minutes after the sealed 20:50:00Z start; the collector
@@ -405,8 +405,8 @@ open, because the blind window was empty - nothing was published during the disc
 there was nothing to lose or recover. The apparatus is now proven end to end; news
 blind-window loss and recovery, correction and update behavior across reconnect, and broader
 regimes remain unmeasured, and `DEC-07` is unresolved. Apparatus complete, evidence partial.
-See [[evidence/rw19-ack-order-defect-2026-08-27]] and
-[[evidence/rw19-close-transition-capture-2026-08-28]].
+See [`evidence/rw19-ack-order-defect-2026-08-27.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/rw19-ack-order-defect-2026-08-27.md) and
+[`evidence/rw19-close-transition-capture-2026-08-28.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/rw19-close-transition-capture-2026-08-28.md).
 
 **Verification posture:** RW-14 merged in PR #31, W-21 in PR #33, RW-15 in PR #34, W-22 in
 PR #35, and the bring-up repairs plus W-23 in PR #36. The PR #36 tree passes 2,240 tests / 1
@@ -476,7 +476,7 @@ the work being reviewed rather than claiming it is already merged or production-
 7. **Bound:** five reviewed defects and their direct integration consequences, regression
    tests and evidence. No soak, source capture, witness provisioning or live activation.
 
-Implementation and validation are recorded in [[evidence/rw22-review-remediation-2026-09-07]].
+Implementation and validation are recorded in [`evidence/rw22-review-remediation-2026-09-07.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/rw22-review-remediation-2026-09-07.md).
 
 **A human-gated, paper-first investing copilot with two engines**, per [[CLAUDE]]:
 
@@ -829,7 +829,7 @@ No future collection ran during development. RW-11 remains open for the actual m
 population, independent ≥95% labels, supported periodic numeric replay, and cited prospective
 material delta. The final local matrix is green: Windows Python 3.11 2,373/2 skipped, Windows
 Python 3.12 2,368/2, and WSL2 Python 3.11/3.12 each 2,366/4, with Ruff clean in all four cells;
-[[evidence/rw11-prospective-text-population-2026-08-24]].
+[`evidence/rw11-prospective-text-population-2026-08-24.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/rw11-prospective-text-population-2026-08-24.md).
 
 PR #15 added the `sec:edgar` branch to `build_ingest_fetchers`, backed by
 `run_edgar_pipeline` when `sec_user_agent` and watchlist scope are configured. It is preferred
@@ -841,12 +841,12 @@ pipeline faults as degraded rather than quiet success.
 - **2026-08-18 live check:** a trustworthy 11-CIK poll stored one SNDK 10-K as a clean first
   baseline with zero poll/delta errors and no delta, advancing the valid operational chain to
   sequence 10,241 with zero Orders. This is reachability evidence, not a precision sample; see
-  [[evidence/rw11-live-poll-2026-08-18]].
+  [`evidence/rw11-live-poll-2026-08-18.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/rw11-live-poll-2026-08-18.md).
 - **Still open:** hand-label a meaningful post-cutoff delta sample and demonstrate ≥95% field
   precision. Four prior real 8-K delta anchors pass exact raw-byte round-trip, but their semantic
-  fields remain deliberately unscored in [[evidence/rw11-precision-label-sheet-2026-08-18]]. The
+  fields remain deliberately unscored in [`evidence/rw11-precision-label-sheet-2026-08-18.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/rw11-precision-label-sheet-2026-08-18.md). The
   prospective Company Facts capture contract and bounded next-session run are recorded in
-  [[evidence/rw11-companyfacts-capture-2026-08-18]]. Only
+  [`evidence/rw11-companyfacts-capture-2026-08-18.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/rw11-companyfacts-capture-2026-08-18.md). Only
   then does a separate `RW-12` package delete
   `edgar_brew.py` + its tests. Until then the legacy reader is an intentional fallback, not the
   primary configured path.
@@ -900,7 +900,7 @@ binding. The 2026-08-18 composed live drill advanced all 11 quote sequences, cro
 and recovered fresh in `read_only` with zero Orders. The old hosted/macOS attestation never ran;
 `DEC-09` supersedes it as a blocker and the current local matrix is green. Final original offline
 gates: 2,121 passed / 1 skipped on Windows, with Ruff clean. See
-[[evidence/rw14-rw19-live-evidence-2026-08-18]].
+[`evidence/rw14-rw19-live-evidence-2026-08-18.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/rw14-rw19-live-evidence-2026-08-18.md).
 
 - Add a daily-bars poller alongside the quote poller (same Alpaca credentials; entitlement and
   feed coverage re-verified at build under `DEC-07`). Cache per symbol, refresh daily. Yields
@@ -1126,7 +1126,7 @@ The final BUG-106-integrated Windows gate is 2,274 passed / 1 skipped with Ruff 
 direct attack pass additionally pinned expanded agreement negation, target-specific cash
 consideration, unconditional outcomes, five-minute pre-commit quote freshness, configured
 Discord channel identity, and final EDGAR CIK binding; see
-[[evidence/w24-merger-semantic-verifier-2026-08-17]]. The preferred read-only DeepSeek Pro/Flash
+[`evidence/w24-merger-semantic-verifier-2026-08-17.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/w24-merger-semantic-verifier-2026-08-17.md). The preferred read-only DeepSeek Pro/Flash
 review attempts timed out without a verdict, so that external attestation remains missing.
 
 **W-24 intake blocker and repair (2026-08-18):** a GET-only screen of 46 real discovery names
@@ -1166,7 +1166,7 @@ set from accession `0001140361-26-027642` through strict head `0001140361-26-032
 five still refuse. One unsigned candidate is not a ≥30-name universe, and CRNX's combined primary
 sources state neither one exact expected-resolution date nor one exact outside date in the pinned
 grammar, so the current-target gate also remains unavailable. No raw import, quote, selection row,
-or Discord witness was created; see [[evidence/w24-post-bug109-rescreen-2026-08-18]].
+or Discord witness was created; see [`evidence/w24-post-bug109-rescreen-2026-08-18.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/w24-post-bug109-rescreen-2026-08-18.md).
 
 **`W-25` — merged in PR #41; activation evidence pending:**
 
@@ -1308,7 +1308,7 @@ treated as closing `RW-19`/`DEC-07` merely because it completed.
 The later plan—not this development branch—will prospectively freeze the exact sorted 11-symbol
 awareness universe, time window, resource ceilings, external output path, selection rationale,
 and clean merged collector SHA. Discord witnessing is not included or authorized here. See
-[[evidence/rw19-plan-bound-news-reconnect-2026-08-24]].
+[`evidence/rw19-plan-bound-news-reconnect-2026-08-24.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/rw19-plan-bound-news-reconnect-2026-08-24.md).
 
 ### M5 — Event-driven triggers  (`RW-13`)
 
