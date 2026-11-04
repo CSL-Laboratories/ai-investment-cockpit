@@ -1,0 +1,110 @@
+{
+  "api_version": "o1.product.v0",
+  "outcome": "O1",
+  "maturity": "researched",
+  "items": [
+    {
+      "id": "no-selection-of-language-store-broker-provider-limit-venue-or-capital",
+      "statement": "No language, store, broker, provider, numeric risk limit, production venue, or capital selection.",
+      "source": {
+        "kind": "linear_issue_text",
+        "linear_issue": "CSL-213",
+        "field": "Explicit non-goals",
+        "attribution": "CSL-213 issue text. This packet does not add a selection under this line."
+      }
+    },
+    {
+      "id": "month-schedule-is-not-safety-or-profitability",
+      "statement": "No claim that a one-month schedule proves safety or profitability.",
+      "source": {
+        "kind": "linear_issue_text",
+        "linear_issue": "CSL-213",
+        "field": "Explicit non-goals",
+        "attribution": "CSL-213 issue text, repeated by the accepted successor product."
+      }
+    },
+    {
+      "id": "no-team-or-multitenant-scope",
+      "statement": "No team, institutional, multi-tenant, or delegated-role scope in this month.",
+      "source": {
+        "kind": "accepted_csl212_receipt",
+        "linear_issue": "CSL-212",
+        "comment_id": "25c50b43-6de4-4f6d-9652-47a649ccc5ae",
+        "document": "docs/replacement/SUCCESSOR-PRODUCT.md",
+        "also_recorded_on": "CSL-213 inherited owner decisions",
+        "attribution": "Inherited from the accepted successor product. Not re-decided here."
+      }
+    },
+    {
+      "id": "equity-options-deferred",
+      "statement": "Equity options are owner direction, pending a versioned amendment to SUCCESSOR-PRODUCT, to plan once the stock slice is stable.",
+      "decision_id": "D8",
+      "admitted": false,
+      "source": {
+        "kind": "human_linear_comment",
+        "linear_issue": "CSL-213",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "author_name": "Samir",
+        "author_linear_user_id": "6fa16a6b-3dc8-46c0-9cd9-5a58f374bf92",
+        "authored_at": "2026-10-18T08:57:35.660Z",
+        "attribution": "Human-authored Linear comment by Samir. The amendment is not written here."
+      }
+    },
+    {
+      "id": "per-strategy-scorecards-on-hold",
+      "statement": "Per-strategy benchmarks and scorecards stay on hold.",
+      "decision_id": "D2",
+      "source": {
+        "kind": "human_linear_comment",
+        "linear_issue": "CSL-213",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "author_name": "Samir",
+        "attribution": "Samir rejected per-strategy benchmarks because per-strategy scorecards are on hold."
+      }
+    },
+    {
+      "id": "no-named-strategy-family",
+      "statement": "No named strategy family is the first stock slice.",
+      "decision_id": "D9",
+      "source": {
+        "kind": "human_linear_comment",
+        "linear_issue": "CSL-213",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "author_name": "Samir",
+        "attribution": "Samir rejected a named strategy family because it would contradict SUCCESSOR-PRODUCT."
+      }
+    },
+    {
+      "id": "no-shorting-or-margin-in-first-slice",
+      "statement": "Shorting and margin are outside the first stock slice.",
+      "decision_id": "D9",
+      "source": {
+        "kind": "human_linear_comment",
+        "linear_issue": "CSL-213",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "author_name": "Samir",
+        "attribution": "Samir rejected shorting or margin because O3 collateral semantics are not frozen."
+      }
+    },
+    {
+      "id": "no-live-capital-or-credentials",
+      "statement": "This packet authorizes no live capital, credentials, venue action, or second order path.",
+      "source": {
+        "kind": "linear_issue_text",
+        "linear_issue": "CSL-213",
+        "field": "Authority boundary",
+        "attribution": "CSL-213 authority boundary and the nine current invariants. D13's carry-over field does not change this."
+      }
+    },
+    {
+      "id": "historical-features-are-not-accepted-scope",
+      "statement": "A historical or proposed feature is not accepted scope unless a human decision says so.",
+      "source": {
+        "kind": "linear_issue_text",
+        "linear_issue": "CSL-213",
+        "field": "Falsifiers",
+        "attribution": "CSL-213 falsifier. September PRODUCT and CSL-42, CSL-44, CSL-96, CSL-99, CSL-191, and CSL-192 stay evidence or possible children."
+      }
+    }
+  ]
+}

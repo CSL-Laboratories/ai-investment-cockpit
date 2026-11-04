@@ -1,0 +1,384 @@
+{
+  "api_version": "o1.product.v0",
+  "outcome": "O1",
+  "linear_issue": "CSL-213",
+  "maturity": "researched",
+  "packet_maturity_is_not_row_status": true,
+  "digest_bound_acceptance": false,
+  "revisit_trigger_for_d0_through_d13": "The O1 packet review, or a downstream outcome (O3 or O4) showing a decision cannot be met.",
+  "source_notes": [
+    "Samir's comment cda1f329 is a human-authored Linear comment. He asked that the decided rows be recorded as human_decided with that comment as the row source. ISSUE-CONTRACT also requires an exact digest. That digest binding is absent, so the packet maturity stays researched.",
+    "Comment 509ec246 is an attributed relay. Its body says Codex recorded Lucas's confirmation and that Lucas did not personally type the comment.",
+    "Devin comments are not receipts.",
+    "At drafting, CSL-213 assignee was empty and status was Triage. This file does not change Linear."
+  ],
+  "decisions": [
+    {
+      "id": "D0",
+      "status": "human_decided",
+      "decided": true,
+      "owner": "Samir",
+      "owner_role": "founder",
+      "tier": "research_lane",
+      "question": "Who owns O1, and what research budget and discretion class apply?",
+      "selected_option": "Samir owns O1. Research budget one_bounded_reconciliation_pass. Discretion class human_gated. Tier-1 capital, credentials, and release scope stay with Lucas.",
+      "rejected_options": [],
+      "source": {
+        "kind": "human_linear_comment",
+        "linear_issue": "CSL-213",
+        "comment_ids": [
+          "d2e957f0-e4a0-49d6-8bbd-95d03350209d",
+          "cda1f329-b9d2-4fcc-823e-a12aa33d4237"
+        ],
+        "author_name": "Samir",
+        "author_linear_user_id": "6fa16a6b-3dc8-46c0-9cd9-5a58f374bf92",
+        "authored_at": "2026-10-18T08:57:19.771Z",
+        "in_reply_to": "d85b8c7d-6803-41d4-8c4c-bbeb13bc0f6e",
+        "attribution": "Human-authored comments by Samir. d2e957f0 answers Lucas's precondition on owner, budget, and discretion. cda1f329 records D0 as Samir.",
+        "binds_exact_artifact_digest": false
+      }
+    },
+    {
+      "id": "D1",
+      "status": "human_decided",
+      "decided": true,
+      "owner": "Samir",
+      "owner_role": "founder",
+      "tier": "research_lane",
+      "question": "What is the primary economic metric?",
+      "selected_option": "Net yield versus a matched-cash baseline after transaction, latency, data, and model costs, per capital-day. The CSL-96 cost-coverage ratio is secondary.",
+      "rejected_options": [
+        "Gross P&L or win rate, because that breaks the yield-without-costs falsifier.",
+        "Cost coverage as the primary metric, because it rewards cutting spend over finding edge."
+      ],
+      "source": {
+        "kind": "human_linear_comment",
+        "linear_issue": "CSL-213",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "author_name": "Samir",
+        "author_linear_user_id": "6fa16a6b-3dc8-46c0-9cd9-5a58f374bf92",
+        "authored_at": "2026-10-18T08:57:35.660Z",
+        "attribution": "Human-authored Linear comment by Samir.",
+        "binds_exact_artifact_digest": false
+      }
+    },
+    {
+      "id": "D2",
+      "status": "human_decided",
+      "decided": true,
+      "owner": "Samir",
+      "owner_role": "founder",
+      "tier": "research_lane",
+      "question": "Which benchmarks apply?",
+      "selected_option": "Matched cash, plus a passive equity index total-return reference for the stock leg. Event-market legs use matched cash only.",
+      "rejected_options": [
+        "Per-strategy benchmarks, because per-strategy scorecards are on hold."
+      ],
+      "source": {
+        "kind": "human_linear_comment",
+        "linear_issue": "CSL-213",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "author_name": "Samir",
+        "author_linear_user_id": "6fa16a6b-3dc8-46c0-9cd9-5a58f374bf92",
+        "authored_at": "2026-10-18T08:57:35.660Z",
+        "attribution": "Human-authored Linear comment by Samir. The index name is D2-index and stays open.",
+        "binds_exact_artifact_digest": false
+      }
+    },
+    {
+      "id": "D2-index",
+      "status": "open",
+      "decided": false,
+      "owner": "any_founder",
+      "owner_role": "founder",
+      "tier": "research_lane",
+      "question": "Which passive equity index is the stock-leg total-return reference?",
+      "selected_option": null,
+      "rejected_options": [],
+      "candidate_action_not_selected": null,
+      "source": {
+        "kind": "left_open",
+        "linear_issue": "CSL-213",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "author_name": "Samir",
+        "attribution": "Samir said which index is a later sub-decision and named no owner. The any_founder role is the research-lane default in AGENTS.md, not a person Samir assigned. This packet does not name an index.",
+        "binds_exact_artifact_digest": false
+      }
+    },
+    {
+      "id": "D3",
+      "status": "human_decided",
+      "decided": true,
+      "owner": "Samir",
+      "owner_role": "founder",
+      "tier": "research_lane",
+      "question": "What evaluation horizon applies?",
+      "selected_option": "Hybrid: declared short and long buckets, each with its own population, split, and embargo, frozen before any results.",
+      "rejected_options": [
+        "Short-only.",
+        "Long-only."
+      ],
+      "source": {
+        "kind": "human_linear_comment",
+        "linear_issue": "CSL-213",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "author_name": "Samir",
+        "author_linear_user_id": "6fa16a6b-3dc8-46c0-9cd9-5a58f374bf92",
+        "authored_at": "2026-10-18T08:57:35.660Z",
+        "attribution": "Human-authored Linear comment by Samir.",
+        "binds_exact_artifact_digest": false
+      }
+    },
+    {
+      "id": "D4",
+      "status": "open",
+      "decided": false,
+      "owner": "Lucas",
+      "owner_linear_user_id": "8709c8bb-e7d2-429e-89f9-89a48b7187fa",
+      "owner_role": "reserved_authority",
+      "tier": 1,
+      "tier_reason": "capital",
+      "question": "What capital base is used for evaluation?",
+      "selected_option": null,
+      "rejected_options": [],
+      "candidate_action_not_selected": "A declared notional parameter with the value left owner_unset.",
+      "source": {
+        "kind": "left_open",
+        "linear_issue": "CSL-213",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "author_name": "Samir",
+        "attribution": "Samir left D4 to Lucas and recorded a suggested default. Lucas has not decided it. This packet does not select the default.",
+        "binds_exact_artifact_digest": false
+      }
+    },
+    {
+      "id": "D5",
+      "status": "human_decided",
+      "decided": true,
+      "owner": "Samir",
+      "owner_role": "founder",
+      "tier": "research_lane",
+      "question": "How is the loss and drawdown budget defined?",
+      "selected_option": "A fraction of declared notional. The value stays owner_unset, and promotion is blocked while it is unset.",
+      "rejected_options": [
+        "Picking a number now. That is a non-goal, and numeric limits live in risk/.",
+        "No budget. That breaks a falsifier."
+      ],
+      "source": {
+        "kind": "human_linear_comment",
+        "linear_issue": "CSL-213",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "author_name": "Samir",
+        "author_linear_user_id": "6fa16a6b-3dc8-46c0-9cd9-5a58f374bf92",
+        "authored_at": "2026-10-18T08:57:35.660Z",
+        "attribution": "Human-authored Linear comment by Samir. The fraction is not a number.",
+        "binds_exact_artifact_digest": false
+      }
+    },
+    {
+      "id": "D6",
+      "status": "human_decided",
+      "decided": true,
+      "owner": "Samir",
+      "owner_role": "founder",
+      "tier": "research_lane",
+      "question": "Which statistical bars apply to deflated Sharpe, probability of backtest overfitting, uncertainty, and embargo length?",
+      "selected_option": "All remain owner_unset in the O1 artifact. Literature conventions are a candidate list only and must be frozen before any results.",
+      "rejected_options": [
+        "Custom bars now."
+      ],
+      "source": {
+        "kind": "human_linear_comment",
+        "linear_issue": "CSL-213",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "author_name": "Samir",
+        "author_linear_user_id": "6fa16a6b-3dc8-46c0-9cd9-5a58f374bf92",
+        "authored_at": "2026-10-18T08:57:35.660Z",
+        "attribution": "Human-authored Linear comment by Samir. No literature number is promoted to a bar.",
+        "binds_exact_artifact_digest": false
+      }
+    },
+    {
+      "id": "D7",
+      "status": "human_decided",
+      "decided": true,
+      "owner": "Samir",
+      "owner_role": "founder",
+      "tier": "research_lane",
+      "question": "Are taxes inside the first net-yield metric?",
+      "selected_option": "Pre-tax net yield is primary. Tax impact is reported as unknown.",
+      "rejected_options": [
+        "An after-tax estimate or a tax engine first. Either would block the rest of the contract."
+      ],
+      "source": {
+        "kind": "human_linear_comment",
+        "linear_issue": "CSL-213",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "author_name": "Samir",
+        "author_linear_user_id": "6fa16a6b-3dc8-46c0-9cd9-5a58f374bf92",
+        "authored_at": "2026-10-18T08:57:35.660Z",
+        "attribution": "Human-authored Linear comment by Samir.",
+        "binds_exact_artifact_digest": false
+      }
+    },
+    {
+      "id": "D8",
+      "status": "human_decided",
+      "decided": true,
+      "owner": "Samir",
+      "owner_role": "founder",
+      "tier": "research_lane",
+      "question": "Are equity options in this contract's scope?",
+      "selected_option": "Deferred. Recorded in the non-goal ledger as owner direction, pending a versioned amendment to SUCCESSOR-PRODUCT, once the stock slice is stable.",
+      "rejected_options": [
+        "Admitting options now. That needs an accepted amendment and new O3 semantics."
+      ],
+      "source": {
+        "kind": "human_linear_comment",
+        "linear_issue": "CSL-213",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "author_name": "Samir",
+        "author_linear_user_id": "6fa16a6b-3dc8-46c0-9cd9-5a58f374bf92",
+        "authored_at": "2026-10-18T08:57:35.660Z",
+        "attribution": "Human-authored Linear comment by Samir. This packet does not amend SUCCESSOR-PRODUCT.",
+        "binds_exact_artifact_digest": false
+      }
+    },
+    {
+      "id": "D9",
+      "status": "human_decided",
+      "decided": true,
+      "owner": "Samir",
+      "owner_role": "founder",
+      "tier": "research_lane",
+      "question": "What is the first stock slice?",
+      "selected_option": "US-listed equities and ETFs, cash-funded, long-only, on the existing paper path. Any future live order still goes through risk, then mode, then approval, then OrderGateway.",
+      "rejected_options": [
+        "Shorting or margin, because O3 collateral semantics are not frozen.",
+        "A named strategy family, because that contradicts SUCCESSOR-PRODUCT."
+      ],
+      "source": {
+        "kind": "human_linear_comment",
+        "linear_issue": "CSL-213",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "author_name": "Samir",
+        "author_linear_user_id": "6fa16a6b-3dc8-46c0-9cd9-5a58f374bf92",
+        "authored_at": "2026-10-18T08:57:35.660Z",
+        "attribution": "Human-authored Linear comment by Samir. This is not a broker, production venue, or capital selection.",
+        "binds_exact_artifact_digest": false
+      }
+    },
+    {
+      "id": "D10",
+      "status": "open",
+      "decided": false,
+      "owner": "Lucas",
+      "owner_linear_user_id": "8709c8bb-e7d2-429e-89f9-89a48b7187fa",
+      "owner_role": "reserved_authority",
+      "tier": 1,
+      "tier_reason": "credentials",
+      "question": "Does the month slice use a Kalshi demo credential path, or is event-market work rescoped to replay and fixtures?",
+      "selected_option": null,
+      "rejected_options": [],
+      "candidate_action_not_selected": null,
+      "source": {
+        "kind": "left_open",
+        "linear_issue": "CSL-213",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "author_name": "Samir",
+        "attribution": "Samir left D10 to Lucas and did not recommend an option. Related Devin comment b3a45d9e and relay 509ec246 keep the same item open. Neither is a decision.",
+        "binds_exact_artifact_digest": false
+      }
+    },
+    {
+      "id": "D11",
+      "status": "open",
+      "decided": false,
+      "owner": "Lucas",
+      "owner_linear_user_id": "8709c8bb-e7d2-429e-89f9-89a48b7187fa",
+      "owner_role": "reserved_authority",
+      "tier": 1,
+      "tier_reason": "release_scope",
+      "question": "What is the R1 boundary for the capability matrix?",
+      "selected_option": null,
+      "rejected_options": [],
+      "candidate_action_not_selected": "The matrix lists every journey and marks each as in-R1, unmet, blocked, or no-claim.",
+      "source": {
+        "kind": "left_open",
+        "linear_issue": "CSL-213",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "author_name": "Samir",
+        "attribution": "Samir left D11 to Lucas and recorded a suggested default. Every matrix row stays r1_status undecided. CSL-237 is not decided here.",
+        "binds_exact_artifact_digest": false
+      }
+    },
+    {
+      "id": "D12",
+      "status": "human_decided",
+      "decided": true,
+      "owner": "Samir",
+      "owner_role": "founder",
+      "tier": "research_lane",
+      "question": "Which release and evidence vocabulary applies?",
+      "selected_option": "The ISSUE-CONTRACT maturity ladder and evidence classes, as they are, per capability cell.",
+      "rejected_options": [
+        "A new vocabulary."
+      ],
+      "source": {
+        "kind": "human_linear_comment",
+        "linear_issue": "CSL-213",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "author_name": "Samir",
+        "author_linear_user_id": "6fa16a6b-3dc8-46c0-9cd9-5a58f374bf92",
+        "authored_at": "2026-10-18T08:57:35.660Z",
+        "attribution": "Human-authored Linear comment by Samir. The ladder itself was accepted with CSL-212.",
+        "binds_exact_artifact_digest": false
+      }
+    },
+    {
+      "id": "D13",
+      "status": "human_decided",
+      "decided": true,
+      "owner": "Samir",
+      "owner_role": "founder",
+      "tier": "research_lane",
+      "question": "Does O1 require a live carry-over field on each journey?",
+      "selected_option": "Yes, as a required field only. Each journey says how it would reach bounded-direct authority through risk, then mode, then approval, then OrderGateway. Paper is marked interim. The field authorizes nothing. O6 owns the authority design.",
+      "rejected_options": [
+        "Leaving the field entirely to O6."
+      ],
+      "source": {
+        "kind": "human_linear_comment",
+        "linear_issue": "CSL-213",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "author_name": "Samir",
+        "author_linear_user_id": "6fa16a6b-3dc8-46c0-9cd9-5a58f374bf92",
+        "authored_at": "2026-10-18T08:57:35.660Z",
+        "attribution": "Human-authored Linear comment by Samir. The field is not live authority.",
+        "binds_exact_artifact_digest": false
+      }
+    },
+    {
+      "id": "D2b",
+      "status": "open",
+      "decided": false,
+      "owner": "Lucas",
+      "owner_linear_user_id": "8709c8bb-e7d2-429e-89f9-89a48b7187fa",
+      "owner_role": "reserved_authority",
+      "tier": "left_open_by_relay",
+      "question": "Is read-only real-account import in scope?",
+      "selected_option": null,
+      "rejected_options": [],
+      "candidate_action_not_selected": null,
+      "not_a_child_of": "D2",
+      "source": {
+        "kind": "attributed_relay",
+        "linear_issue": "CSL-213",
+        "comment_id": "509ec246-73de-487c-a305-163970e69da3",
+        "authored_at": "2026-10-16T22:58:22.386Z",
+        "attribution": "Attributed relay by Codex of Lucas Guerra's confirmation, posted under Lucas's Linear identity. The body says Lucas did not personally type the comment. It leaves D2b open and does not accept this artifact.",
+        "binds_exact_artifact_digest": false
+      }
+    }
+  ]
+}
