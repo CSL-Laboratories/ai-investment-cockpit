@@ -34,7 +34,7 @@ re-litigate the settled stack. It orchestrates them.
 
 Read order for a build operator: this file → [[build-scaffold-ultracode]] →
 [[cockpit-review-and-integrated-plan]] + [[draft-discord-control-plane]] (the spec) →
-[[security-architecture]] (the enforcement model) → [[research-report]] /
+[[security-architecture]] (the enforcement model) → [`research-report`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-research-report-source-history-01/result.md) /
 [[research-supplement]] (the constraint source). Never re-decide anything settled in
 those files inside a build agent.
 
@@ -50,7 +50,7 @@ dangerous if run naively.
 | **Modules are loosely coupled by design.** `schemas/`, `ingest/`, `risk/`, `storage/`, `bridge/`, `brokers/`, `workflows/` talk only through the WP1a data contracts. | Independent modules fan out cleanly — one agent per schema, one agent per connector — with the schemas as the merge contract. WP3∥WP4 and WP6∥WP7 are genuinely parallel. |
 | **The security-critical code is small and adversarial-review-shaped.** The order path is `risk-pass → mode-check → approval/veto → broker` and nothing else (Invariant 1). | A fan-out of *independent* skeptics who each never wrote the code is exactly the review this needs: many minds trying to construct one bypass beats one author re-reading their own logic. |
 | **The whole design is schema-first + verification-gated** — LLM output is untrusted until `jsonschema`-validated (Invariant 3); risk is pure functions with no LLM authority (Invariant 5). | Gated phases prevent the LLM-authority creep the invariants forbid: an agent can *propose* code, but a deterministic gate — not another agent's say-so — decides whether the phase advances. |
-| **Honest cost caveat: build agents burn plan limits too.** | This is a *dev-time* cost, separate from the runtime economics in [[upside-and-roi]]. Every fan-out spends the same Max-20x window the runtime copilot will later contend for. Batch, cap concurrency, and run the heavy adversarial passes **only** on the security-critical WPs. Gate accordingly — do not fan out 40 agents to write a `pyproject.toml`. |
+| **Honest cost caveat: build agents burn plan limits too.** | This is a *dev-time* cost, separate from the runtime economics in [`upside-and-roi`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-upside-and-roi-source-history-01/result.md). Every fan-out spends the same Max-20x window the runtime copilot will later contend for. Batch, cap concurrency, and run the heavy adversarial passes **only** on the security-critical WPs. Gate accordingly — do not fan out 40 agents to write a `pyproject.toml`. |
 
 The thesis in one line: **parallelize the independent modules, serialize the
 decision path, and let deterministic gates — not agents — decide when to advance.**
@@ -695,7 +695,7 @@ flagging; do not push commits.*
 ## 8. Cost & throughput discipline for the build itself
 
 Build agents burn the same Max-20x window the runtime copilot will later contend
-for — a **dev-time** cost, distinct from the runtime economics in [[upside-and-roi]].
+for — a **dev-time** cost, distinct from the runtime economics in [`upside-and-roi`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-upside-and-roi-source-history-01/result.md).
 Discipline:
 
 - **Batch, don't drip.** One fan-out per phase; don't spawn a fresh agent per file
@@ -747,4 +747,4 @@ Discipline:
 (settled decisions, CLI-vs-SDK) · [[draft-discord-control-plane]] (control plane +
 autonomy ladder) · [[security-architecture]] (enforcement model) ·
 [[prompt-injection-defense]] (untrusted-input boundary) · [[enhancements-and-additions]]
-(post-build roadmap). Constraint source: [[research-report]], [[research-supplement]].*
+(post-build roadmap). Constraint source: [`research-report`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-research-report-source-history-01/result.md), [[research-supplement]].*

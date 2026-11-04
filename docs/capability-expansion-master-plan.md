@@ -34,7 +34,7 @@ related:
 Three commitments carry over from the corpus and constrain everything below:
 
 1. **The reliable ROI is time, awareness, and discipline — not alpha.**
-   ([[upside-and-roi]] §2–4.) Every feature here is justified first by how much
+   ([`upside-and-roi`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-upside-and-roi-source-history-01/result.md) §2–4.) Every feature here is justified first by how much
    market-babysitting it removes, second by decision quality. Autonomous trading
    is the *gated endpoint*, priced as a capped option, never the headline.
 2. **The 9 invariants are non-negotiable.** New data feeds are UNTRUSTED input
@@ -244,7 +244,7 @@ informed — which *raises the quality of what flows through the gates* — but 
 ## Honesty ledger — what this plan does NOT do
 
 - It does **not** manufacture alpha. Better data improves inputs; there is still no
-  verified evidence LLM agents beat the market net of costs ([[upside-and-roi]] §3).
+  verified evidence LLM agents beat the market net of costs ([`upside-and-roi`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-upside-and-roi-source-history-01/result.md) §3).
   The win is time + awareness + discipline.
 - It does **not** shortcut the ladder. Autonomous trading stays behind SEC-11, the
   paper soak, and the performance gate — a smarter agent trading autonomously is

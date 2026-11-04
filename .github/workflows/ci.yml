@@ -491,6 +491,16 @@ jobs:
       - name: cockpit_spine tests against the pinned Recursion checkout
         if: hashFiles('cockpit_spine/tests/test_*.py') != ''
         run: python -X utf8 -B -m unittest discover -s cockpit_spine -t . -p 'test_*.py'
+      # CSL-601 (Rule CA, CP0-v2 section 6.1): engine/ is the X1 new tree (CX-NEW).
+      # Its tests count as a verifier only when this job runs them. The step is
+      # skipped while engine/tests/ holds no test_*.py file at any depth (the
+      # guard recurses, as pytest does). It runs pytest, not unittest: the X1
+      # parity-cutover amendment (csl-research, CSL-633) counts an engine/
+      # successor only when pytest collects it in this job. Pinned by
+      # tools/test_ci_engine_step.py.
+      - name: engine tests
+        if: hashFiles('engine/tests/**/test_*.py') != ''
+        run: python -X utf8 -B -m pytest -q -p no:cacheprovider engine/tests
       # CSL-166: the required linux gate runs pytest before any wheel exists, so
       # test_book_batch.py's skipif dropped the whole file. Build the extension
       # here and run that file. This is the existing linux job, not a new

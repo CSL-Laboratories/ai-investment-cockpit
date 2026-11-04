@@ -67,7 +67,7 @@ override.
 The implementation merged in PR #38. Its final BUG-106-integrated Windows gate is 2,274 passed /
 1 skipped with Ruff clean. This is code evidence, not a substitute for the external witness,
 prospective cohort, or cross-platform CI; see
-[[evidence/w24-merger-semantic-verifier-2026-08-17]].
+[`evidence/w24-merger-semantic-verifier-2026-08-17.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/w24-merger-semantic-verifier-2026-08-17.md).
 
 The minimum evaluation horizon means a qualifying real 30-deal cohort cannot be completed on the
 same day it is selected. Background/read-only and named live-feed evidence can run now; opening

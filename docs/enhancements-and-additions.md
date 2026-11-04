@@ -10,7 +10,7 @@ related: [research-report, research-supplement, cockpit-review-and-integrated-pl
 
 # Enhancements & additions
 
-Everything upstream of this file — [[research-report]], [[research-supplement]],
+Everything upstream of this file — [`research-report`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-research-report-source-history-01/result.md), [[research-supplement]],
 [[cockpit-review-and-integrated-plan]], [[draft-discord-control-plane]],
 [[build-scaffold-ultracode]] — is **settled spec**. This document does not
 re-open it. It adds a curated set of genuinely new value-adds, each concrete
@@ -63,7 +63,7 @@ with "Not beating SPY buy-and-hold (Δ = −X% over N trades)."
 
 **Why.** The performance gate in [[draft-discord-control-plane]] is defined in
 terms of drawdown-inside-limit and ≥80% approval concordance but has no canonical
-computation home. [[upside-and-roi]] §3 makes benchmark-relative reporting a
+computation home. [`upside-and-roi`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-upside-and-roi-source-history-01/result.md) §3 makes benchmark-relative reporting a
 load-bearing honesty commitment — "if the system can't beat the benchmark it must
 say so in its own scorecard." This module *is* that engine, and it is the source
 of the numbers the gate reads.
@@ -98,7 +98,7 @@ tokens.
 change ships without a regression guard — a behavior diff on a known day fails in
 CI; (3) prompt changes can be regressed against yesterday's real packets without
 re-billing the subscription (material given Fact 2 — headless burns normal plan
-limits, [[research-report]] §3).
+limits, [`research-report`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-research-report-source-history-01/result.md) §3).
 
 **Fits.** The `recorded` backend is config-selected in `agent_runner`.
 **Inv. 8** (raw inputs stored separately from summaries) is exactly what makes
@@ -204,7 +204,7 @@ invalidation into a structured `InvalidationTrigger` (e.g. `price < 142.00`,
 evaluates open positions' triggers each cycle; a fired trigger raises a `#alerts`
 embed with a pre-drafted exit proposal.
 
-**Why.** The discipline stream in [[upside-and-roi]] §4 is only real "if the
+**Why.** The discipline stream in [`upside-and-roi`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-upside-and-roi-source-history-01/result.md) §4 is only real "if the
 operator actually routes decisions through it." An invalidation string nobody
 watches is theater. Actively watching for the condition and pushing it back in
 front of the operator converts a pre-commitment into an *enforced* one.
@@ -264,10 +264,10 @@ an edit-in-place "state of the system" embed (like `#positions`). Queryable via
 
 **Why.** **Inv. 7** backpressure can only fire correctly if window state is
 measured and visible; the entire subscription-economics risk
-([[upside-and-roi]] §7; Fact 2 — SDK credit paused, headless burns normal limits)
+([`upside-and-roi`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-upside-and-roi-source-history-01/result.md) §7; Fact 2 — SDK credit paused, headless burns normal limits)
 is managed by watching the burn. Usage that isn't surfaced gets discovered as a
 surprise mid-market-day when the window empties — windows *can* empty fast (a
-ChatGPT-Pro window depleting in ~20 minutes was reported, [[research-report]] §3; the
+ChatGPT-Pro window depleting in ~20 minutes was reported, [`research-report`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-research-report-source-history-01/result.md) §3; the
 Claude Max-20x rate is opaque/unmeasured, **not** a Claude 20-minute figure).
 
 **Fits.** Reads `UsageWindow` / `BreakerState` / ingest metrics already modeled
@@ -276,7 +276,7 @@ in WP1a; render + thresholds live in `bridge/` + a small
 
 **Caveat.** Vendor windows are opaque and self-reported — the gauges are an
 *estimate* reconstructed from CLI responses and limit-hit errors
-([[research-report]] §3: "opaque… highly variable"), not a metered bill. Treat
+([`research-report`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-research-report-source-history-01/result.md) §3: "opaque… highly variable"), not a metered bill. Treat
 them as directional; the authoritative signal remains the real limit-hit response
 → breaker. A green gauge must never override a real 429.
 
@@ -312,7 +312,7 @@ correlated outages (both hosted, both API-key gated) are not truly independent �
 a partition at the box takes out both. The honest guarantee is **"detect
 staleness and refuse," not "always have a fresh quote."** A fully redundant *paid*
 feed (e.g. Polygon) was considered and set aside: it breaks the $0/mo thesis
-([[upside-and-roi]] §1) for a solo experiment whose downside is already capped —
+([`upside-and-roi`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-upside-and-roi-source-history-01/result.md) §1) for a solo experiment whose downside is already capped —
 the cheaper correct answer is refuse-on-stale. Revisit only if the soak shows a
 material outage rate. Cached-last-good is an input to the *refuse* decision,
 never a price shown to the model as current.
@@ -356,7 +356,7 @@ gate**.
 
 **Why.** The performance gate unlocks auto modes from paper / review_live
 history — but paper fills are frictionless and optimistic (LiveTradeBench:
-static/paper winners underperform live, [[upside-and-roi]] §3). Shadow-live
+static/paper winners underperform live, [`upside-and-roi`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-upside-and-roi-source-history-01/result.md) §3). Shadow-live
 quantifies exactly that gap on the operator's *own* decisions before real capital
 rides on the assumption that paper ≈ live. It is the empirical answer to "does the
 paper track record transfer?"
@@ -405,7 +405,7 @@ decides.
 
 ### E-12 — Personal-data minimization / redaction
 
-**What.** Operationalize the verified privacy fact (Fact 1; [[research-report]]
+**What.** Operationalize the verified privacy fact (Fact 1; [`research-report`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-research-report-source-history-01/result.md)
 §1 — the Robinhood MCP grants the agent **read access to ALL accounts**, and that
 data flows to the AI provider). Two levers: **(1) broker segregation as the
 default posture** — keep the main portfolio at a *different* broker so the
