@@ -1,0 +1,40 @@
+{
+  "kind": "route_comparison",
+  "schema_version": "o5.candidate.v1",
+  "issue": "CSL-217",
+  "claimed_maturity": "researched",
+  "not_claimed": [
+    "human_decided",
+    "contract_frozen",
+    "prototyped",
+    "implemented",
+    "provider_free_verified",
+    "demo_or_paper_qualified",
+    "shadow_qualified",
+    "limited_live_qualified",
+    "release_qualified"
+  ],
+  "qualification_claimed": false,
+  "empirical_pass_claimed": false,
+  "contract_frozen_claimed": false,
+  "baseline": {
+    "route_id": "current.decision",
+    "correctness": "0.800",
+    "grounding": "1.000",
+    "calibration_ece": "0.120",
+    "cost_usd": "0.100",
+    "latency_ms_p95": 800
+  },
+  "candidate": {
+    "route_id": "candidate.system_one",
+    "correctness": "0.800",
+    "grounding": "0.500",
+    "calibration_ece": "0.120",
+    "cost_usd": "0.100",
+    "latency_ms_p95": 50
+  },
+  "decision": "accept",
+  "qualification_claim": "none",
+  "measures_are_observed": false,
+  "reason": "Negative control. Faster, and accepted despite worse grounding."
+}

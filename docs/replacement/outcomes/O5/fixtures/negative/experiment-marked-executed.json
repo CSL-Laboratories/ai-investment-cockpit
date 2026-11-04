@@ -1,0 +1,39 @@
+{
+  "kind": "experiment_list",
+  "schema_version": "o5.candidate.v1",
+  "issue": "CSL-217",
+  "claimed_maturity": "researched",
+  "not_claimed": [
+    "human_decided",
+    "contract_frozen",
+    "prototyped",
+    "implemented",
+    "provider_free_verified",
+    "demo_or_paper_qualified",
+    "shadow_qualified",
+    "limited_live_qualified",
+    "release_qualified"
+  ],
+  "qualification_claimed": false,
+  "empirical_pass_claimed": false,
+  "contract_frozen_claimed": false,
+  "any_executed": true,
+  "experiments": [
+    {
+      "id": "exp.openai_decisions_installed_route",
+      "route_id": "candidate.openai_decisions",
+      "status": "executed",
+      "executed": true,
+      "uses_credentials": false,
+      "paid_call": false,
+      "uses_network": false,
+      "blocked_on": [
+        "spend"
+      ],
+      "would_measure": [
+        "value_correctness"
+      ],
+      "note": "Negative control. An experiment marked executed without a run."
+    }
+  ]
+}
