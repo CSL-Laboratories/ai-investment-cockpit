@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "o4.research.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "retrieved_on", "parallel_search_ids", "citations"],
+  "properties": {
+    "schema_version": {"const": "o4.research.v1"},
+    "retrieved_on": {"const": "2026-10-17"},
+    "parallel_search_ids": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        {"const": "search_a81ed0bcb8b97e64d4f958ef59dde38a"},
+        {"const": "search_73f6ee6002538aa601e083ab7169dee4"}
+      ]
+    },
+    "citations": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "url"],
+        "properties": {
+          "title": {"type": "string", "minLength": 1},
+          "url": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}
