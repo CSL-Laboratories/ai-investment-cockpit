@@ -55,7 +55,7 @@ The existing Hetzner VPS cannot be the authority because a host or snapshot roll
 the database and witness together. Cloudflare R2 cannot use this adapter's required AWS Object
 Lock/version-retention verification and remains a mirror. Sigstore Rekor and an independently
 administered device are research candidates, not configured witnesses. See
-[[../research/sec11-zero-cost-witness-feasibility-2026-08-18]].
+[`../research/sec11-zero-cost-witness-feasibility-2026-08-18`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-sec11-zero-cost-witness-feasibility-2026-08-18-source-history-01/result.md).
 
 ## One-time AWS provisioning — only after the activation hold closes
 
