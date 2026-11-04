@@ -1,0 +1,30 @@
+{
+  "outcome": "O3",
+  "linear_issue": "CSL-215",
+  "parallel_search_id": "search_17de480276f5deb848309a5562f1b43e",
+  "parallel_search_run": "Embedded results supplied with CSL-215. Search recorded as run on Dan's box on 2026-10-17. This session did not start a new Parallel search.",
+  "pages_read_on": "2026-10-17",
+  "maturity_claimed": "researched",
+  "sources": [
+    {
+      "title": "Kalshi market settlement",
+      "url": "https://docs.kalshi.com/getting_started/market_settlement"
+    },
+    {
+      "title": "Kalshi FIX market settlement",
+      "url": "http://docs.kalshi.com/fix/market-settlement"
+    },
+    {
+      "title": "Kalshi fee schedule",
+      "url": "https://kalshi.com/docs/kalshi-fee-schedule.pdf"
+    },
+    {
+      "title": "Kalshi rulebook CFTC filing",
+      "url": "https://www.cftc.gov/filings/orgrules/rules07012525155.pdf"
+    },
+    {
+      "title": "Cross-venue prediction-market accounting",
+      "url": "https://camusocpa.com/cross-venue-prediction-market-accounting/"
+    }
+  ]
+}
