@@ -39,7 +39,7 @@ feeds carry free-form text authored outside the system:
 |---|---|---|
 | Alpaca Benzinga news WS | `wss://stream.data.alpaca.markets/v1beta1/news`, wildcard `{"action":"subscribe","news":["*"]}` | Firehose. `headline`/`summary`/`content`/`author`/`symbols` are Benzinga-aggregated from many originators. **You cannot pre-vet senders** — the wildcard is the whole point (verified, [[research-supplement]] §2). |
 | Finnhub `/news` | REST, `minId` cursor, 60 calls/min | Same class of aggregated third-party headlines/summaries. |
-| Robinhood MCP tool responses | `https://agent.robinhood.com/mcp/trading` | Portfolio/quote payloads. **Read access to ALL accounts** is verified ([[research-report]] §1) — an indirect-injection and data-surface channel, §9. |
+| Robinhood MCP tool responses | `https://agent.robinhood.com/mcp/trading` | Portfolio/quote payloads. **Read access to ALL accounts** is verified ([`research-report`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-research-report-source-history-01/result.md) §1) — an indirect-injection and data-surface channel, §9. |
 | Filing / calendar text | earnings, macro, filing bodies | Long attacker-influenceable prose (an 8-K body, a press release) reaches the deep model verbatim. |
 
 **Two vectors:**
@@ -108,7 +108,7 @@ pipeline, from an honest bad idea — and the pipeline already assumes the model
 wrong. The injection does not get a shortcut around risk, mode, or approval, because
 **there is no code path from LLM output to `place_equity_order` that skips them.**
 
-This is the load-bearing defense. The `ai-hedge-fund` precedent ([[research-report]]
+This is the load-bearing defense. The `ai-hedge-fund` precedent ([`research-report`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-research-report-source-history-01/result.md)
 §4) is the same line drawn one step earlier — it deliberately places *no* trades;
 we place trades only through the deterministic gate. Keep that framing dominant and
 then refuse to let it excuse the residual harms in §3.
@@ -130,7 +130,7 @@ Structural containment stops *execution*. It does not stop these:
 
 H2, H3, and H6 are the sharpest. H2 is cheap for an attacker (any "breaking"-flavored
 headline) and directly taxes the subscription economics the whole design protects
-([[upside-and-roi]] §1). H3 is the path by which injection reaches a *real* order in
+([`upside-and-roi`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-upside-and-roi-source-history-01/result.md) §1). H3 is the path by which injection reaches a *real* order in
 the human-gated modes — not through code, but through a tired human tapping Approve.
 **H6 is the path in the auto modes, where no human stands between the injected
 proposal and the broker** — there the deterministic backstops in
@@ -364,7 +364,7 @@ make these mandatory, not optional:
 ## 9. Indirect injection via MCP (the read-all-accounts channel)
 
 Robinhood's Agentic MCP grants a connected client **read access to ALL accounts**
-(verified, [[research-report]] §1). In this design the **`brokers/` layer — not any
+(verified, [`research-report`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-research-report-source-history-01/result.md) §1). In this design the **`brokers/` layer — not any
 decision-stage agent — holds the MCP connection and performs the reads** (the
 triage/deep/verifier agents run with the provider-specific empty capability profile
 and have no MCP tool, M1); the
@@ -386,7 +386,7 @@ a `<untrusted-content>`-wrapped input packet. Two consequences follow:
 **Bounding rule:** the proposing/triage models see the **minimum** portfolio context
 needed for the task — prefer the Agentic account only. The "keep the main portfolio at
 a different broker" guidance is the [[cockpit-review-and-integrated-plan]] §3 privacy
-note, resting on the read-all-accounts fact ([[research-report]] §1). The MCP order tools themselves are reached **only** through the
+note, resting on the read-all-accounts fact ([`research-report`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-research-report-source-history-01/result.md) §1). The MCP order tools themselves are reached **only** through the
 Invariant-1 path in `brokers/`, never exposed as a tool the proposing model can
 invoke. `review_equity_order` is always called before `place_equity_order` even
 though the platform doesn't force it (WP7) — belt-and-suspenders on the one surface
