@@ -13,8 +13,8 @@ Start future work with the [Cloud handoff](../cursor-cloud-rdt-handoff-2026-09-1
 
 The RW-26 through RW-31 and smoke briefs preserved historical jobs and their original
 runtime/schema assumptions. They now live in csl-research as preservation records
-(`submissions/2026102*-cockpit-rw2*`, `-rw3*` and `-smoke-*` brief records, plus the two
-`20261105-csl700-rw28-*` records). Never redispatch them unchanged as current work.
+(`submissions/2026102*-cockpit-rw2*`, `-rw3*` and `-smoke-*` brief records). Never
+redispatch them unchanged as current work.
 Devin is retired. Current jobs need an available REGISTER claim, qualified route,
 approved disclosure, enforced reservation/deadline, exclusive output and receipt.
 No bulk inherit; no secret inputs; no independent-family claim based on a provider
