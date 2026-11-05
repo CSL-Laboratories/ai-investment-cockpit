@@ -134,7 +134,7 @@ and the claim board, not the specification.
 
 PR #88 merged into `cursor/cloud-devin-swarm-host-df89` (`b6748a0`), which is not an ancestor of main. The inventory note on main matches branch tip `490af111` and arrived in the RW-27 squash `179b40d` (PR #89). This is the first bounded REGISTER claim after the 2026-09-11 swarm pipeline smoke.
 It is not permission to implement slice C/D authority, start a paper soak, or
-fan out 30–40 agents. Briefs: `docs/research/swarm-briefs/rw26-*.md`.
+fan out 30–40 agents. Briefs: csl-research records [leaf](https://github.com/CSL-Laboratories/csl-research/blob/46b4ac7063e457686da5328948ee3d6152e4239a/submissions/20261023-cockpit-rw26-leaf-inventory-published-brief-history-01/result.md), [review](https://github.com/CSL-Laboratories/csl-research/blob/46b4ac7063e457686da5328948ee3d6152e4239a/submissions/20261023-cockpit-rw26-review-inventory-published-brief-history-01/result.md) and [Muse](https://github.com/CSL-Laboratories/csl-research/blob/46b4ac7063e457686da5328948ee3d6152e4239a/submissions/20261023-cockpit-rw26-muse-synthesis-published-brief-history-01/result.md).
 
 ## RW-25 product contract and grill — ratified 2026-09-09
 

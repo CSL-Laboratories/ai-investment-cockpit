@@ -188,7 +188,7 @@ No activation, no order-path edit. Claim: [[REGISTER]]. Code:
 
 First bounded slice A package after the swarm pipeline smoke. Research
 inventory only (paths + a proposed in-repo shortlist). Claim:
-[[REGISTER]]. Briefs: `docs/research/swarm-briefs/rw26-*.md`. No
+[[REGISTER]]. Briefs: csl-research records [leaf](https://github.com/CSL-Laboratories/csl-research/blob/46b4ac7063e457686da5328948ee3d6152e4239a/submissions/20261023-cockpit-rw26-leaf-inventory-published-brief-history-01/result.md), [review](https://github.com/CSL-Laboratories/csl-research/blob/46b4ac7063e457686da5328948ee3d6152e4239a/submissions/20261023-cockpit-rw26-review-inventory-published-brief-history-01/result.md) and [Muse](https://github.com/CSL-Laboratories/csl-research/blob/46b4ac7063e457686da5328948ee3d6152e4239a/submissions/20261023-cockpit-rw26-muse-synthesis-published-brief-history-01/result.md). No
 qualify/reject, no activation, no order-path edit, no empirical PASS.
 PR #88 merged into the swarm-host branch; the inventory note on main matches that branch tip and arrived with the RW-27 squash `179b40d`.
 
