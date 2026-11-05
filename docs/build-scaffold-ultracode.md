@@ -27,7 +27,7 @@ ultracode) can build the system without re-deriving design decisions — while
 leaving implementation detail to the builder. Every design decision referenced
 here is settled in [[cockpit-review-and-integrated-plan]] and
 [[draft-discord-control-plane]]; the builder should treat those two files plus
-this one as the spec, and [[research-report]]/[[research-supplement]] as the
+this one as the spec, and [`research-report`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-research-report-source-history-01/result.md)/[[research-supplement]] as the
 constraint source.
 
 ## Kickoff prompt (paste into the build session)
