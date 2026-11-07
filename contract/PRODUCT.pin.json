@@ -1,0 +1,10 @@
+{
+  "format": "csl-product-pin/v1",
+  "status": "pinned",
+  "repository": "CSL-Laboratories/csl-research",
+  "path": "contracts/PRODUCT.md",
+  "commit": "398cd812cb8a9cf0ef3d1950f1b15bd9a76e3dfa",
+  "sha256": "36666beeadacb2af741db0ee55022b2e3911513b4de329ec500d50badbb3a226",
+  "claim": "Lucas's exact-digest receipts of Nov 7 2026 19:42Z on CSL-703, CSL-542 and CSL-543 accept these PRODUCT.md bytes (csl-research #1074 head; vault pointer CSLR-D-004 on csl-research #1079). Values from CSL-770; pin issue CSL-796.",
+  "limitations": "A pin names exact bytes in csl-research; it does not accept, admit or bind them. The commit is the head of draft csl-research #1074; if #1074 is squashed or rebased on merge, the pin moves to the main commit that holds the same bytes. The earlier versions e3119b0b (SHA-256 916f3f6a34d4182b2963fe510894904c25a198b94a0c105c7b514448e77a2409) and 09d4e762 (SHA-256 1c029e5a5f70d4917ec7f3fa9b3d1e6c28f537ed45b97ec6549cf9682020d544) are superseded and not pinned. How a pinned contract binds Cockpit stays as PRODUCT.md and CSL-585 say."
+}

@@ -9,6 +9,8 @@ The [delivery plan](docs/product-delivery.md) maps the integrated work and requi
 reviews. The current runtime remains human-gated while that target is implemented;
 adopting the contract does not enable autonomous paper or live trading.
 
+Governing vault product spec pin: [contract/PRODUCT.pin.json](contract/PRODUCT.pin.json) names contracts/PRODUCT.md in CSL-Laboratories/csl-research at commit 398cd812cb8a9cf0ef3d1950f1b15bd9a76e3dfa, SHA-256 36666beeadacb2af741db0ee55022b2e3911513b4de329ec500d50badbb3a226.
+
 > **Status (2026-08-24): foundation and quant engine built; paper-reliability MVP not yet
 > complete; no live trading.** On PR #53's source tree, byte-identical to clean merged main
 > `ebda9b6691cfcfc72b76056d0190768e5f14cd66`, the required local Windows + Ubuntu/WSL2
