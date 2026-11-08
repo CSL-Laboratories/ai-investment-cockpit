@@ -21,6 +21,8 @@ class FakeCore:
         self.approvals: dict[str, dict] = {}
         self.calls: list[str] = []
         self.tripped = False
+        self.faulted_runs: set[str] = set()
+        self.tripped_connections: set[str] = set()
 
     def _reply(self, ok: bool, body: dict) -> bytes:
         key = "result" if ok else "refusal"
@@ -34,7 +36,9 @@ class FakeCore:
         digest = hashlib.sha256(canonical(effect)).hexdigest()
         if "order" not in self.permissions:
             return self._reply(False, {"code": "permission_required"})
-        if self.tripped:
+        if effect["run_id"] in self.faulted_runs:
+            return self._reply(False, {"code": "run_faulted"})
+        if self.tripped or effect["connection"] in self.tripped_connections:
             return self._reply(False, {"code": "connection_tripped"})
         if op == "effect.request":
             approval_id = "apr_%d" % len(self.approvals)
