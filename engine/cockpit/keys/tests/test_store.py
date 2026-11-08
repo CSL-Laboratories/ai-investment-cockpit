@@ -141,6 +141,16 @@ class StaticTests(unittest.TestCase):
             with self.subTest(file=py.name):
                 self.assertIsNone(pat.search(py.read_text()))
 
+    def test_only_detect_loads_the_keyring_library_lazily(self) -> None:
+        # The keyring library is optional and is loaded only by detect.py, lazily, through an injectable loader.
+        lazy = re.compile(r"import_module\(\s*['\"]([^'\"]+)['\"]")
+        for py in KEYS_DIR.rglob("*.py"):
+            if py.parent.name == "tests":
+                continue
+            with self.subTest(file=py.name):
+                found = lazy.findall(py.read_text())
+                self.assertEqual(found, ["keyring"] if py.name == "detect.py" else [])
+
 
 if __name__ == "__main__":
     unittest.main()
