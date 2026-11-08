@@ -29,7 +29,7 @@ def _book_path(test: unittest.TestCase) -> str:
     d = tempfile.mkdtemp(prefix="cockpit-paper-")
     test.addCleanup(shutil.rmtree, d, True)
     path = os.path.join(d, "book.db")
-    create_book(path)
+    create_book(path, cash_minor={"paper-acct": 10**15})
     return path
 
 

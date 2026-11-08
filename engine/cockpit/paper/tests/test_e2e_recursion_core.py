@@ -83,7 +83,7 @@ class EndToEndPaperTests(unittest.TestCase):
                            effect_permissions={"order": "order"}, authority_required=frozenset({"order"}))
         breaker.bind_run("run-1", "conn-a")
         book_path = os.path.join(d, "book.db")
-        create_book(book_path)
+        create_book(book_path, cash_minor={"paper-acct": 10**9})
         gateway = loaded.module.build(core.client_for(PLUGIN_ID), book_path, Caps(100_000, 50))
         body = {"schema": "csl-authority-profile/vNext", "profile_id": "cockpit-paper-1", "issuer": "installer",
                 "plugin_id": PLUGIN_ID, "artifact_sha256": digest,
