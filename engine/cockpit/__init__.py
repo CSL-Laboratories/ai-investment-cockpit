@@ -1,1 +1,1 @@
-"""Cockpit consumer engine package."""
+"""Cockpit paper-only engine components."""

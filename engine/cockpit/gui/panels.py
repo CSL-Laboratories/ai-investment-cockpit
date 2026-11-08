@@ -8,7 +8,13 @@ shared GUI two plain values:
 * ``REQUIRED``, the route classes Cockpit needs reported, passed as ``required=``;
   any it does not see the shared GUI lists as a beta gap.
 * ``PANELS``, Cockpit-specific screens. Each names the O7 reads it needs and the venue
-  use it covers. Recursion has no panel-mount API yet, so this is a registry, not HTML.
+  use it covers. The daemon composition root mounts these at /panel?id=<id> via
+  recursion_core.gui.compose(plugins=(registry(),)). Cockpit never imports that API.
+
+Configure the installed plugin with the daemon flag --plugin cockpit.gui:registry.
+The core root calls this factory and passes its plain required/panels mapping across;
+the shared renderer executes only the named O7 reads and filters venue data. The
+core inventory stays present when these venue classes are added (Nov 8 correction).
 
 Every panel is read-only: no intervention, no Stop and no order verb. Data is plain
 Python, so nothing here imports Recursion; the composition root passes it across.
