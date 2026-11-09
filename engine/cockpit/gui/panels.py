@@ -8,12 +8,14 @@ shared GUI two plain values:
 * ``REQUIRED``, the route classes Cockpit needs reported, passed as ``required=``;
   any it does not see the shared GUI lists as a beta gap.
 * ``PANELS``, Cockpit-specific screens. Each names the O7 reads it needs and the venue
-  use it covers. The daemon composition root mounts these at /panel?id=<id> via
+  use it covers. Its explicit ``venue`` is the post-read row filter, not a label.
+  The daemon composition root mounts these at /panel?id=<id> via
   recursion_core.gui.compose(plugins=(registry(),)). Cockpit never imports that API.
 
 Configure the installed plugin with the daemon flag --plugin cockpit.gui:registry.
 The core root calls this factory and passes its plain required/panels mapping across;
-the shared renderer executes only the named O7 reads and filters venue data. The
+the shared renderer must execute only the named, unscoped O7 reads, select rows matching
+the panel's declared ``venue``, then apply the venue-data switch (Recursion #330). The
 core inventory stays present when these venue classes are added (Nov 8 correction).
 
 Every panel is read-only: no intervention, no Stop and no order verb. Data is plain
@@ -33,19 +35,19 @@ REQUIRED = MappingProxyType({
 PANELS = (
     MappingProxyType({
         "id": "cockpit.paper_own_trading", "title": "Paper own trading: positions and collateral",
-        "venue_use": "paper:own_trading",
+        "venue": "paper", "venue_use": "paper:own_trading",
         "reads": ("operator.positions.inspect", "operator.decisions.inspect", "operator.budgets.inspect"),
         "withhold_venue_data": False,
     }),
     MappingProxyType({
         "id": "cockpit.kalshi_model_fed_read", "title": "Kalshi model-fed reads: evidence and provenance",
-        "venue_use": "kalshi:model_fed_read",
+        "venue": "kalshi", "venue_use": "kalshi:model_fed_read",
         "reads": ("operator.evidence.inspect", "operator.uncertainty.inspect"),
         "withhold_venue_data": True,
     }),
     MappingProxyType({
         "id": "cockpit.kalshi_model_fed_propose", "title": "Kalshi model-fed proposals (propose only)",
-        "venue_use": "kalshi:model_fed_propose",
+        "venue": "kalshi", "venue_use": "kalshi:model_fed_propose",
         "reads": ("operator.decisions.inspect", "operator.profiles.inspect"),
         "withhold_venue_data": True,
     }),

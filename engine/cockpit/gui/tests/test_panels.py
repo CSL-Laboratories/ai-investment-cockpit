@@ -40,10 +40,19 @@ class PanelTests(unittest.TestCase):
                 self.assertRegex(panel["id"], r"^cockpit\.[a-z0-9_]+$")
                 self.assertTrue(panel["title"].strip())
                 self.assertTrue(panel["reads"])
-                self.assertEqual(set(panel), {"id", "title", "venue_use", "reads", "withhold_venue_data"})
+                self.assertEqual(set(panel), {"id", "title", "venue", "venue_use", "reads", "withhold_venue_data"})
 
     def test_every_required_venue_use_has_one_panel(self) -> None:
         self.assertEqual(sorted(p["venue_use"] for p in PANELS), sorted(REQUIRED["venue_use"]))
+
+    def test_panels_declare_the_post_read_venue_filter(self) -> None:
+        expected = {"cockpit.paper_own_trading": "paper",
+                    "cockpit.kalshi_model_fed_read": "kalshi",
+                    "cockpit.kalshi_model_fed_propose": "kalshi"}
+        self.assertEqual({p["id"]: p["venue"] for p in PANELS}, expected)
+        self.assertEqual({p["id"]: p["venue"] for p in registry()["panels"]}, expected)
+        for panel in PANELS:
+            self.assertEqual(panel["venue_use"].split(":", 1)[0], panel["venue"])
 
     def test_panels_only_read(self) -> None:
         for panel in PANELS:
