@@ -919,6 +919,15 @@ def _check_floors(floors: Any, reasons: list[str], label: str = "candidate missi
                     reasons.append(f"missing floor test case: {locator}")
 
 
+def _json_list(value: Any) -> list:
+    """Return a JSON array. A non-array is empty so a schema failure stays an O8Error.
+
+    ``tuple(1)`` and ``for item in 1`` raise TypeError. The packet schema already
+    records that type error; later checks must not replace it with a traceback.
+    """
+    return value if isinstance(value, list) else []
+
+
 def validate_packet(document: Any) -> None:
     reasons: list[str] = []
     if not isinstance(document, dict):
@@ -930,9 +939,9 @@ def validate_packet(document: Any) -> None:
         if actual != digest:
             reasons.append(f"accepted CSL-212 document changed: {path}")
     research = document.get("research") if isinstance(document.get("research"), dict) else {}
-    if tuple(research.get("parallel_search_ids", ())) != SEARCH_IDS:
+    if tuple(_json_list(research.get("parallel_search_ids"))) != SEARCH_IDS:
         reasons.append("parallel search ids drifted")
-    if tuple(research.get("cited_urls", ())) != CITED_URLS:
+    if tuple(_json_list(research.get("cited_urls"))) != CITED_URLS:
         reasons.append("cited research URLs drifted")
     rows = document.get("disposition") if isinstance(document.get("disposition"), list) else []
     found = {}
@@ -944,9 +953,9 @@ def validate_packet(document: Any) -> None:
         found[component_id] = row.get("disposition")
         if row.get("disposition") == "replace":
             reasons.append("replace without tier-3 evidence")
-        for locator in row.get("paths") or []:
+        for locator in _json_list(row.get("paths")):
             _require_local(reasons, str(locator), "disposition path")
-        for item in row.get("evidence") or []:
+        for item in _json_list(row.get("evidence")):
             if isinstance(item, dict):
                 _require_local(reasons, str(item.get("locator", "")), "evidence locator")
     if found != EXPECTED_DISPOSITION:
@@ -958,17 +967,17 @@ def validate_packet(document: Any) -> None:
         reasons.append("candidate floors differ from the hard-floor registry")
     protocol = document.get("protocol") if isinstance(document.get("protocol"), dict) else {}
     tier1 = protocol.get("tier1") if isinstance(protocol.get("tier1"), dict) else {}
-    if tuple(tier1.get("cases", ())) != TIER1_CASES:
+    if tuple(_json_list(tier1.get("cases"))) != TIER1_CASES:
         reasons.append("tier-1 tripwire cases drifted")
     workloads = document.get("workloads") if isinstance(document.get("workloads"), list) else []
     workload_ids = [item.get("workload_id") for item in workloads if isinstance(item, dict)]
     if tuple(workload_ids) != WORKLOAD_IDS:
         reasons.append("tier-2 workload set drifted")
     tier2 = protocol.get("tier2") if isinstance(protocol.get("tier2"), dict) else {}
-    if tuple(tier2.get("workloads", ())) != WORKLOAD_IDS:
+    if tuple(_json_list(tier2.get("workloads"))) != WORKLOAD_IDS:
         reasons.append("tier-2 protocol workload list drifted")
     migration = document.get("migration") if isinstance(document.get("migration"), dict) else {}
-    if tuple(migration.get("seams", ())) != WORKLOAD_IDS:
+    if tuple(_json_list(migration.get("seams"))) != WORKLOAD_IDS:
         reasons.append("migration seams drifted")
     recovery = migration.get("mixed_version_recovery") if isinstance(migration.get("mixed_version_recovery"), dict) else {}
     replay_from = recovery.get("replay_from")
