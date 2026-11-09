@@ -12,8 +12,10 @@ import unittest
 from pathlib import Path
 
 import cockpit.gui
-from cockpit.gui.panels import (DEFAULT_SWITCH_STATES, PANELS, REQUIRED, panel_switch, redact_panel, registry,
-                                withhold_venue_data)
+from cockpit.gui.panels import (DEFAULT_SWITCH_STATES, KALSHI_PANELS, PANELS, REQUIRED, keep_venue_rows,
+                                panel_switch, redact_panel, registry, withhold_venue_data)
+
+ALL_PANELS = PANELS + KALSHI_PANELS
 
 GUI_DIR = Path(__file__).resolve().parents[1]
 # The O7 v0 read commands a panel may name (interventions and Stop are the shared page's).
@@ -35,39 +37,48 @@ class RequiredTests(unittest.TestCase):
 
 class PanelTests(unittest.TestCase):
     def test_panels_have_unique_ids_titles_and_reads(self) -> None:
-        ids = [p["id"] for p in PANELS]
+        ids = [p["id"] for p in ALL_PANELS]
         self.assertEqual(len(ids), len(set(ids)))
-        for panel in PANELS:
+        for panel in ALL_PANELS:
             with self.subTest(panel=panel["id"]):
                 self.assertRegex(panel["id"], r"^cockpit\.[a-z0-9_]+$")
                 self.assertTrue(panel["title"].strip())
                 self.assertTrue(panel["reads"])
-                # Exactly the keys Recursion #330's panel_registry accepts; venue_use is also the switch id.
+                # Exactly the keys Recursion #330's panel_registry accepts.
                 self.assertEqual(set(panel), {"id", "title", "venue", "venue_use", "reads", "withhold_venue_data"})
 
-    def test_every_required_venue_use_has_one_panel(self) -> None:
-        self.assertEqual(sorted(p["venue_use"] for p in PANELS), sorted(REQUIRED["venue_use"]))
+    def test_every_required_venue_use_has_one_defined_panel(self) -> None:
+        self.assertEqual(sorted(p["venue_use"] for p in ALL_PANELS), sorted(REQUIRED["venue_use"]))
 
     def test_panels_declare_the_post_read_venue_filter(self) -> None:
         expected = {"cockpit.paper_own_trading": "paper",
                     "cockpit.kalshi_model_fed_read": "kalshi",
                     "cockpit.kalshi_model_fed_propose": "kalshi"}
-        self.assertEqual({p["id"]: p["venue"] for p in PANELS}, expected)
-        self.assertEqual({p["id"]: p["venue"] for p in registry()["panels"]}, expected)
-        for panel in PANELS:
+        self.assertEqual({p["id"]: p["venue"] for p in ALL_PANELS}, expected)
+        self.assertEqual({p["id"]: p["venue"] for p in registry()["panels"]}, {"cockpit.paper_own_trading": "paper"})
+        for panel in ALL_PANELS:
             self.assertEqual(panel["venue_use"].split(":", 1)[0], panel["venue"])
 
     def test_panels_only_read(self) -> None:
-        for panel in PANELS:
+        for panel in ALL_PANELS:
             with self.subTest(panel=panel["id"]):
                 self.assertLessEqual(set(panel["reads"]), O7_READS)
                 for read in panel["reads"]:
                     self.assertNotRegex(read, r"intervention|stop|order|approve|size")
 
     def test_kalshi_panels_withhold_venue_data(self) -> None:
-        for panel in PANELS:
+        for panel in ALL_PANELS:
             with self.subTest(panel=panel["id"]):
-                self.assertEqual(panel["withhold_venue_data"], panel["venue_use"].startswith("kalshi:"))
+                self.assertEqual(panel["withhold_venue_data"], panel["venue"] == "kalshi")
+
+    def test_registry_exports_no_kalshi_panel(self) -> None:
+        # No switch-aware consumer on the Nov 11 path yet (Recursion #330 compose does not
+        # call redact_panel), so Kalshi panels stay defined but are not handed to the daemon.
+        panels = registry()["panels"]
+        self.assertTrue(panels)
+        for panel in panels:
+            self.assertNotIn("kalshi", repr(panel).lower())
+        self.assertEqual([p["id"] for p in panels], ["cockpit.paper_own_trading"])
 
     def test_registry_is_a_plain_copy(self) -> None:
         data = registry()
@@ -77,66 +88,83 @@ class PanelTests(unittest.TestCase):
         self.assertNotIn("operator.health.inspect", PANELS[0]["reads"])
 
 
-# A Kalshi-shaped read result that also tries to switch itself on from inside the payload.
+# A mixed read result: a Kalshi row, an unlabelled total and provenance, a paper row, and
+# keys that try to switch the payload on from inside.
 SMUGGLED = {"status_code": "ok", "kalshi_yes_price": "4242.17", "venue_data_switch": "on",
             "result": {"rows": [{"venue": "kalshi", "ticker": "KXSECRET", "venue_data_switch": "on",
-                                 "venue_data": {"price": "4242.17"}}],
+                                 "venue_data": {"price": "4242.17"}},
+                                {"venue": "paper", "symbol": "PAPER-OK", "qty": 3}],
+                       "total": "4242.17",
                        "provenance": {"venue_data": "KXSECRET", "venue_data_switch": "on"}}}
+KALSHI_ONLY = {"status_code": "ok", "result": {"rows": [{"venue": "kalshi", "ticker": "KXSHOWN"}]}}
+OFF_STATES = (DEFAULT_SWITCH_STATES, {}, None, "on", ["kalshi.model_input"],
+              {"kalshi.model_input": "off"}, {"kalshi.model_input": True}, {"kalshi.model_input": "ON"},
+              {"kalshi.model_input": "on "}, {"kalshi:model_fed_read": "on", "kalshi:model_fed_propose": "on"},
+              {"venue_data_switch": "on", "kalshi": "on"})
 
 
-def mount(switch_states: object) -> dict:
-    """Mount every registry() panel and redact each read result with the caller's switch state."""
-    return {p["id"]: redact_panel(p, {r: SMUGGLED for r in p["reads"]}, switch_states)
-            for p in registry()["panels"]}
+def mount(panels, switch_states: object, data: object = SMUGGLED) -> dict:
+    """Redact each panel's read results with the caller's switch state."""
+    return {p["id"]: redact_panel(p, {r: data for r in p["reads"]}, switch_states) for p in panels}
 
 
 class VenueDataTests(unittest.TestCase):
-    def test_each_panel_is_governed_by_its_own_venue_use_switch(self) -> None:
-        self.assertEqual({p["id"]: panel_switch(p) for p in registry()["panels"]},
+    def test_kalshi_panels_share_the_contract_switch(self) -> None:
+        self.assertEqual({p["id"]: panel_switch(p) for p in ALL_PANELS},
                          {"cockpit.paper_own_trading": None,
-                          "cockpit.kalshi_model_fed_read": "kalshi:model_fed_read",
-                          "cockpit.kalshi_model_fed_propose": "kalshi:model_fed_propose"})
+                          "cockpit.kalshi_model_fed_read": "kalshi.model_input",
+                          "cockpit.kalshi_model_fed_propose": "kalshi.model_input"})
 
-    def test_kalshi_panels_show_no_venue_data_with_switches_off(self) -> None:
-        for states in (DEFAULT_SWITCH_STATES, {}, None, "on", ["kalshi:model_fed_read"],
-                       {"kalshi:model_fed_read": "off", "kalshi:model_fed_propose": True},
-                       {"kalshi:model_fed_read": "ON", "kalshi:model_fed_propose": "on "},
-                       {"venue_data_switch": "on", "kalshi": "on"}):
-            views = mount(states)
-            for pid in ("cockpit.kalshi_model_fed_read", "cockpit.kalshi_model_fed_propose"):
-                with self.subTest(states=states, panel=pid):
-                    shown = repr(views[pid])
+    def test_paper_panel_shows_no_kalshi_row_with_switches_off(self) -> None:
+        for states in OFF_STATES + ({"kalshi.model_input": "on"},):
+            with self.subTest(states=states):
+                for view in mount(registry()["panels"], states)["cockpit.paper_own_trading"].values():
+                    shown = repr(view)
+                    self.assertNotIn("kalshi", shown.lower())
                     self.assertNotIn("4242.17", shown)
                     self.assertNotIn("KXSECRET", shown)
-                    for view in views[pid].values():
+                    self.assertEqual(view, {"status_code": "ok",
+                                            "result": {"rows": [{"venue": "paper", "symbol": "PAPER-OK", "qty": 3}]}})
+
+    def test_kalshi_panels_show_no_venue_data_with_switch_off(self) -> None:
+        for states in OFF_STATES:
+            views = mount(KALSHI_PANELS, states)
+            for pid, panel_views in views.items():
+                with self.subTest(states=states, panel=pid):
+                    self.assertNotIn("4242.17", repr(panel_views))
+                    self.assertNotIn("KXSECRET", repr(panel_views))
+                    for view in panel_views.values():
                         self.assertEqual(set(view), {"venue_data", "status_code"})
                         self.assertIn("[withheld:", view["venue_data"])
-                        self.assertEqual(view["status_code"], "ok")
-            self.assertEqual(views["cockpit.paper_own_trading"],
-                             {r: SMUGGLED for r in PANELS[0]["reads"]})
 
-    def test_clearing_read_does_not_clear_propose(self) -> None:
-        views = mount({"kalshi:model_fed_read": "on"})
-        self.assertEqual(views["cockpit.kalshi_model_fed_read"],
-                         {r: SMUGGLED for r in PANELS[1]["reads"]})
-        self.assertNotIn("4242.17", repr(views["cockpit.kalshi_model_fed_propose"]))
-        views = mount({"kalshi:model_fed_propose": "on"})
-        self.assertNotIn("4242.17", repr(views["cockpit.kalshi_model_fed_read"]))
-        self.assertEqual(views["cockpit.kalshi_model_fed_propose"],
-                         {r: SMUGGLED for r in PANELS[2]["reads"]})
+    def test_contract_switch_on_shows_only_kalshi_rows(self) -> None:
+        for panel_views in mount(KALSHI_PANELS, {"kalshi.model_input": "on"}).values():
+            for view in panel_views.values():
+                self.assertIn("KXSECRET", repr(view))
+                self.assertNotIn("PAPER-OK", repr(view))
+                self.assertNotIn("total", view["result"])
+                self.assertNotIn("kalshi_yes_price", view)
+
+    def test_unlabelled_rows_are_dropped(self) -> None:
+        self.assertEqual(keep_venue_rows({"rows": [{"qty": 1}], "n": 2}, "paper"), {})
+        self.assertEqual(keep_venue_rows([{"venue": "paper", "x": 1}, 5], "paper"), {"rows": [{"venue": "paper", "x": 1}]})
+        self.assertEqual(keep_venue_rows(KALSHI_ONLY, None), {"status_code": "ok"})
 
     def test_payload_cannot_switch_itself_on(self) -> None:
-        self.assertNotIn("4242.17", repr(withhold_venue_data(SMUGGLED, "kalshi:model_fed_read", {})))
-        self.assertNotIn("4242.17", repr(withhold_venue_data([SMUGGLED], "kalshi:model_fed_read",
+        self.assertNotIn("4242.17", repr(withhold_venue_data(SMUGGLED, "kalshi.model_input", {})))
+        self.assertNotIn("4242.17", repr(withhold_venue_data([SMUGGLED], "kalshi.model_input",
                                                              {"venue_data_switch": "on"})))
         self.assertIs(withhold_venue_data(SMUGGLED, None, {}), SMUGGLED)
 
-    def test_panel_without_a_switch_id_fails_closed(self) -> None:
-        for panel in ({"venue_use": None, "withhold_venue_data": True}, {"withhold_venue_data": "no"}, {}):
+    def test_panel_without_a_switch_fails_closed(self) -> None:
+        for panel in ({"venue": "kalshi", "withhold_venue_data": False}, {"venue": "coinbase"},
+                      {"venue": "paper", "withhold_venue_data": "no"}, {"venue": None}, {}):
             with self.subTest(panel=panel):
                 self.assertIsNotNone(panel_switch(panel))
-                shown = redact_panel(panel, {"operator.evidence.inspect": SMUGGLED}, {"None": "on", "": "on"})
+                shown = redact_panel(panel, {"operator.evidence.inspect": SMUGGLED},
+                                     {"None": "on", "": "on", "kalshi": "on", "coinbase": "on", "paper": "on"})
                 self.assertNotIn("4242.17", repr(shown))
+                self.assertNotIn("PAPER-OK", repr(shown))
 
 
 class BoundaryTests(unittest.TestCase):
