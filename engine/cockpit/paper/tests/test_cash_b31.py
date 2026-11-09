@@ -19,6 +19,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 
+import cockpit.paper.gateway as gateway_module
 from cockpit.paper.core_client import CoreClient, canonical
 from cockpit.paper.gateway import Caps, Intent, OrderGateway, PaperBook, Refused, create_book
 from cockpit.paper.tests.fakecore import AUTHORITY, FakeCore
@@ -137,7 +138,8 @@ class CashTests(unittest.TestCase):
 
         def spend_during_core_call(raw: bytes) -> bytes:
             other = PaperBook(self.path)  # another connection, as another process would
-            other.book(replace(intent, intent_id="racer", quantity=1))
+            # Test-only: stands in for another process's gateway booking (#317's capability).
+            other._book(replace(intent, intent_id="racer", quantity=1), gateway_module._GATEWAY_ONLY)
             other.close()
             return original(raw)
         self.gw._core = CoreClient(spend_during_core_call)
@@ -153,7 +155,8 @@ class CashTests(unittest.TestCase):
                           quantity=quantity, limit_price_minor=10_000, run_id="run-1", connection="conn-a")
             with self.subTest(quantity=quantity):
                 self._refused("cash_insufficient", self.gw.request_approval, over)
-                self._refused("cash_insufficient", self.book.book, over)
+                # The booking's own send-time check, reached with the gateway's capability (test-only).
+                self._refused("cash_insufficient", self.book._book, over, gateway_module._GATEWAY_ONLY)
         self.assertEqual(self.core.calls, [])
         self.assertEqual(self.book.orders(), [])
         self.assertEqual(self.book.available_cash_minor(ACCT), 50_000)

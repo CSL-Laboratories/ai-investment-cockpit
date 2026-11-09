@@ -201,20 +201,40 @@ class GatewayTests(unittest.TestCase):
         self._refused("intent_duplicate", self.gw.submit, INTENT, self._approved(INTENT), AUTHORITY)
 
     def test_only_the_gateway_books_orders(self) -> None:
-        """Static check: no other file in engine/cockpit writes the order book or calls a venue."""
-        engine = PAPER_DIR.parent
+        """Static check: no other file in engine/ (plugin and loader callers included) writes the
+        order book or calls a venue."""
+        engine = PAPER_DIR.parents[1]
         writers, venue_io = [], []
         for path in engine.rglob("*.py"):
             if "tests" in path.parts:
                 continue
             text = path.read_text(encoding="utf-8")
-            if re.search(r"INSERT INTO orders|\.book\(", text) and path.name != "gateway.py":
+            if (re.search(r"INSERT INTO orders|UPDATE orders SET status = 'working'|\._book\(|\.book\(|_GATEWAY_ONLY",
+                          text) and path != PAPER_DIR / "gateway.py"):
                 writers.append(str(path))
             if re.search(r"^\s*(import|from)\s+(urllib|http|requests|httpx|socket|ssl|keyring|subprocess)\b",
                          text, re.MULTILINE):
                 venue_io.append(str(path))
         self.assertEqual(writers, [])
         self.assertEqual(venue_io, [])
+
+    def test_paper_book_has_no_public_booking_path(self) -> None:
+        """Red-team round 2 finding 6: holding a PaperBook (or the gateway's) books nothing."""
+        public = {name for name in vars(PaperBook) if not name.startswith("_")}
+        # B15/B31 (#320) add read-only cash/holding reads, the funds check and the refusal audit
+        # write; none of them writes the orders table.
+        self.assertEqual(public, {"halt", "halted", "cancel_all", "working", "orders", "halt_seq", "close",
+                                  "audit", "available_cash_minor", "held_shares", "check_funds", "record_refusal"})
+        self.assertFalse(hasattr(self.book, "book"))
+        for token in (None, object(), "gateway", True):
+            with self.subTest(token=token):
+                self._refused("book_direct_refused", self.book._book, INTENT, token)
+                self._refused("book_direct_refused", self.gw._book._book, INTENT, token)
+        self.assertEqual(self.book.orders(), [])
+        import cockpit.paper.gateway as gateway_module
+        self.assertNotIn("_GATEWAY_ONLY", gateway_module.__all__)
+        self.gw.submit(INTENT, self._approved(INTENT), AUTHORITY)  # the gateway still books
+        self.assertEqual(self.book.orders(), [("i-1", 1, "working")])
 
 
 if __name__ == "__main__":
