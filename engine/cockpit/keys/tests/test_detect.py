@@ -159,6 +159,9 @@ class DoctorTests(unittest.TestCase):
         self.assertIn("[owner_only]", line)
         self.assertNotIn(FAKE, line)
         self.assertNotIn("acme", line)
+        before = set(os.listdir(self.dir))
+        doctor(self.none, self.path)
+        self.assertEqual(set(os.listdir(self.dir)), before)
 
     def test_loose_file_or_dir_is_fail(self) -> None:
         with open(self.path, "w") as fh:
@@ -169,6 +172,18 @@ class DoctorTests(unittest.TestCase):
         os.chmod(self.dir, 0o755)
         self.assertEqual(doctor(self.none, self.path)["level"], "fail")
         os.chmod(self.dir, 0o700)
+
+    def test_writable_ancestor_is_fail_and_creates_nothing(self) -> None:
+        outer = os.path.join(self.dir, "open")
+        os.mkdir(outer)
+        os.chmod(outer, 0o777)  # mkdir applies umask, so 0o777 there would still be 0755
+        inner = os.path.join(outer, "inner")
+        os.mkdir(inner, 0o700)
+        path = os.path.join(inner, "model-keys.json")
+        result = doctor(self.none, path)
+        self.assertEqual(result["level"], "fail")
+        self.assertTrue(result["key_file"].startswith("dir_not_owner_only"))
+        self.assertEqual(os.listdir(inner), [])
 
     def test_symlinked_key_file_is_fail(self) -> None:
         target = os.path.join(self.dir, "elsewhere.json")

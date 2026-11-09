@@ -12,6 +12,7 @@ import re
 import shutil
 import stat
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -78,6 +79,10 @@ class NoKeychainTests(unittest.TestCase):
         self.assertIsNone(self.store.get("model_provider", "openai"))
         self.assertEqual(self.store.get("model_provider", "refuseless"), FAKE + "2")
         self.assertEqual([n for n in os.listdir(self.dir) if n.startswith(".keys-")], [])
+        lock = os.lstat(os.path.join(self.dir, ".keys.lock"))
+        self.assertEqual(stat.S_IMODE(lock.st_mode), 0o600)
+        self.assertEqual(lock.st_uid, os.geteuid())
+        self.assertTrue(stat.S_ISREG(lock.st_mode))
 
     def test_broker_and_venue_keys_never_go_to_a_file(self) -> None:
         for kind in ("broker", "venue"):
@@ -127,6 +132,68 @@ class NoKeychainTests(unittest.TestCase):
         self.refused("key_name_malformed", self.store.put, "model_provider", "../etc", FAKE)
         self.refused("secret_malformed", self.store.put, "model_provider", "openai", "")
         self.refused("key_file_not_configured", KeyStore(keyring=None).put, "model_provider", "openai", FAKE)
+
+    def test_concurrent_puts_keep_every_key(self) -> None:
+        names = [f"k{i:02d}" for i in range(32)]
+        barrier = threading.Barrier(len(names))
+        errors: list[BaseException] = []
+
+        def work(entry: str) -> None:
+            try:
+                barrier.wait(timeout=10)
+                KeyStore(keyring=None, key_file=self.path).put("model_provider", entry, FAKE)
+            except BaseException as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=work, args=(entry,)) for entry in names]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(errors, [])
+        fresh = KeyStore(keyring=None, key_file=self.path)
+        self.assertEqual(
+            {entry: fresh.get("model_provider", entry) for entry in names},
+            {entry: FAKE for entry in names},
+        )
+
+    def test_writable_ancestor_is_refused(self) -> None:
+        outer = os.path.join(self.dir, "open")
+        os.mkdir(outer)
+        os.chmod(outer, 0o777)  # mkdir applies umask, so 0o777 there would still be 0755
+        inner = os.path.join(outer, "inner")
+        os.mkdir(inner, 0o700)
+        path = os.path.join(inner, "k.json")
+        store = KeyStore(keyring=None, key_file=path)
+        self.refused("key_dir_not_owner_only", store.put, "model_provider", "openai", FAKE)
+        self.refused("key_dir_not_owner_only", store.get, "model_provider", "openai")
+        self.assertFalse(os.path.exists(path))
+        self.assertNotIn(".keys.lock", os.listdir(inner))
+
+    def test_symlink_in_the_directory_chain_is_refused(self) -> None:
+        real = os.path.join(self.dir, "real")
+        os.mkdir(real, 0o700)
+        link = os.path.join(self.dir, "link")
+        os.symlink(real, link)
+        inner = os.path.join(link, "inner")
+        os.mkdir(inner, 0o700)
+        path = os.path.join(inner, "k.json")
+        store = KeyStore(keyring=None, key_file=path)
+        self.refused("key_dir_not_owner_only", store.put, "model_provider", "openai", FAKE)
+        self.assertFalse(os.path.exists(os.path.join(real, "inner", "k.json")))
+
+    def test_loose_or_symlinked_lock_is_refused_not_repaired(self) -> None:
+        self.store.put("model_provider", "openai", FAKE)
+        lock = os.path.join(self.dir, ".keys.lock")
+        os.chmod(lock, 0o644)
+        self.refused("key_file_not_owner_only", self.store.put, "model_provider", "other", FAKE)
+        self.assertEqual(stat.S_IMODE(os.lstat(lock).st_mode), 0o644)
+        self.assertEqual(self.store.get("model_provider", "openai"), FAKE)
+        os.unlink(lock)
+        os.symlink(self.path, lock)
+        self.refused("key_file_not_owner_only", self.store.put, "model_provider", "other", FAKE)
+        self.assertTrue(stat.S_ISLNK(os.lstat(lock).st_mode))
+        self.assertIsNone(self.store.get("model_provider", "other"))
 
     def test_file_body_names_kind_and_holds_no_broker_key(self) -> None:
         self.store.put("model_provider", "openai", FAKE)

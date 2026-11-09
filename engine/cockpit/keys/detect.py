@@ -1,4 +1,4 @@
-"""Keychain detection and the ``doctor`` line for Cockpit keys (CSL-59, candidate).
+"""Keychain detection and the ``doctor`` line for Cockpit keys (CSL-59, candidate; CSLR-D-011).
 
 PRODUCT.md 055cc7a5, A44, 3.8 and 5.4: a host with an OS keychain keeps every saved key there; a host
 with none keeps user-entered model-provider keys in an owner-only file and refuses broker and venue keys.
@@ -16,12 +16,11 @@ from __future__ import annotations
 
 import importlib
 import os
-import stat
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from cockpit.keys.store import KeyStore
+from cockpit.keys.store import KeyStore, key_file_state
 
 __all__ = ["KeychainStatus", "OsKeyring", "default_key_file", "detect_keychain", "doctor", "doctor_line", "store_for_host"]
 
@@ -117,22 +116,8 @@ def store_for_host(key_file: str | os.PathLike[str] | None = None,
 
 
 def _file_state(path: str) -> str:
-    parent = os.path.dirname(os.path.abspath(path))
-    try:
-        dst = os.lstat(parent)
-    except FileNotFoundError:
-        return "dir_missing"
-    if stat.S_ISLNK(dst.st_mode) or not stat.S_ISDIR(dst.st_mode):
-        return "dir_not_owner_only"
-    if dst.st_uid != os.geteuid() or dst.st_mode & 0o077:
-        return f"dir_not_owner_only({oct(dst.st_mode & 0o777)})"
-    try:
-        fst = os.lstat(path)
-    except FileNotFoundError:
-        return "no_file_yet"
-    if not stat.S_ISREG(fst.st_mode) or fst.st_uid != os.geteuid() or fst.st_mode & 0o077:
-        return f"file_not_owner_only({oct(fst.st_mode & 0o777)})"
-    return "owner_only"
+    # Same owned-chain and directory-fd check as the store. Read-only.
+    return key_file_state(path)
 
 
 def doctor(status: KeychainStatus, key_file: str | os.PathLike[str] | None) -> dict[str, str]:
