@@ -118,12 +118,16 @@ class KillSwitchTests(unittest.TestCase):
                 return 2
             def working(self):
                 return book.working()
+            def halted(self):
+                return True
 
         class Broken:
             def cancel_all(self):
                 raise OSError("disk")
             def working(self):
                 raise OSError("disk")
+            def halted(self):
+                return True
         for paper, detail in ((Stuck(), "remaining:2"), (Broken(), "error:OSError")):
             with self.subTest(detail=detail):
                 out = KillSwitch(self.book.halt, [], paper_book=paper).kill()
@@ -136,6 +140,39 @@ class KillSwitchTests(unittest.TestCase):
     def test_paper_book_is_required(self) -> None:
         with self.assertRaises(TypeError):
             KillSwitch(self.book.halt, [])
+
+    def test_halt_confirms_only_when_this_book_reads_halted(self) -> None:
+        """A halt callable that returns is not confirmation. The book read is."""
+        class Quiet:
+            def __init__(self, halted):
+                self._halted = halted
+            def cancel_all(self):
+                return 0
+            def working(self):
+                return 0
+            def halted(self):
+                return self._halted
+
+        for read, halt in ((False, "not_halted"), (1, "not_halted"), (True, "confirmed")):
+            with self.subTest(read=read):
+                out = KillSwitch(lambda: None, [], paper_book=Quiet(read)).kill()
+                status = "confirmed" if halt == "confirmed" else "pending"
+                self.assertEqual((out["status"], out["halt"]), (status, halt))
+
+        other_dir = tempfile.mkdtemp(prefix="cockpit-kill-other-")
+        self.addCleanup(shutil.rmtree, other_dir, True)
+        other_path = os.path.join(other_dir, "other.db")
+        create_book(other_path)
+        other = PaperBook(other_path)
+        self.addCleanup(other.close)
+        out = KillSwitch(other.halt, [], paper_book=self.book).kill()
+        self.assertTrue(other.halted())
+        self.assertFalse(self.book.halted())
+        self.assertEqual((out["status"], out["halt"]), ("pending", "not_halted"))
+
+        out = KillSwitch(self.book.halt, [], paper_book=self.book).kill()
+        self.assertTrue(self.book.halted())
+        self.assertEqual((out["status"], out["halt"]), ("confirmed", "confirmed"))
 
 
 if __name__ == "__main__":

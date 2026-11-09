@@ -13,9 +13,11 @@ Kill. The order halt is set first, in one committed step. Then one cancel-all AP
 operation and one API-key revoke operation are attempted; a failure of either never
 skips the other. Status is truthful:
 
-* cancel-all is ``confirmed`` only when the venue reports zero orders remaining. A
-  timeout or error is ``pending`` (unknown), and a capped cancel that leaves orders is
-  ``pending`` with the remaining count;
+* cancel-all is ``confirmed`` only when a fresh listing after the cancel-all
+  shows no open order. The cancel-all reply's own ``remaining: 0`` is not
+  confirmation (PRODUCT.md 4.2, K1). A timeout or error is ``pending``
+  (unknown), a capped cancel that leaves orders is ``pending`` with the
+  remaining count, and any order the listing still shows is ``pending``;
 * the key revoke is ``confirmed`` only when an authenticated call made after it is
   refused as unauthorized. Otherwise it is ``pending``.
 
@@ -68,6 +70,7 @@ class KalshiKillTransport(Protocol):
     """Supplied only by the credential-owning host. Each method is one venue API operation."""
 
     def cancel_all(self) -> dict: ...          # {"remaining": int}
+    def list_open_orders(self) -> dict: ...    # {"order_ids": [str]}
     def revoke_api_key(self) -> dict: ...      # {"accepted": bool}
     def probe_authenticated(self) -> str: ...  # "unauthorized" | "authorized"
 
@@ -87,13 +90,27 @@ class KalshiKill:
             self._detail["cancel_all"] = "error:" + type(exc).__name__
             return
         remaining = out.get("remaining") if type(out) is dict else None
-        if type(remaining) is int and remaining == 0:
-            self._state["cancel_all"] = "confirmed"
-            self._detail.pop("cancel_all", None)
-        elif type(remaining) is int and remaining > 0:
-            self._detail["cancel_all"] = "remaining:%d" % remaining
-        else:
+        if type(remaining) is not int or remaining < 0:
             self._detail["cancel_all"] = "unreadable_response"
+            return
+        if remaining > 0:
+            self._detail["cancel_all"] = "remaining:%d" % remaining
+            return
+        # remaining == 0 is the cancel reply, not confirmation. Re-list.
+        try:
+            listed = self._transport.list_open_orders()
+        except Exception as exc:  # noqa: BLE001
+            self._detail["cancel_all"] = "list_error:" + type(exc).__name__
+            return
+        ids = listed.get("order_ids") if type(listed) is dict else None
+        if type(ids) is not list or not all(type(i) is str and i for i in ids):
+            self._detail["cancel_all"] = "unreadable_list"
+            return
+        if ids:
+            self._detail["cancel_all"] = "remaining:%d" % len(ids)
+            return
+        self._state["cancel_all"] = "confirmed"
+        self._detail.pop("cancel_all", None)
 
     def _revoke(self) -> None:
         try:

@@ -61,8 +61,10 @@ _DEFAULT = object()
 
 
 class FakeTransport:
-    def __init__(self, cancel=_DEFAULT, revoke=_DEFAULT, probe="unauthorized", log=None):
+    def __init__(self, cancel=_DEFAULT, revoke=_DEFAULT, probe="unauthorized",
+                 orders=_DEFAULT, log=None):
         self.cancel, self.revoke, self.probe = cancel, revoke, probe
+        self.orders = [] if orders is _DEFAULT else orders
         self.log = log if log is not None else []
 
     def _do(self, name, outcome):
@@ -73,6 +75,12 @@ class FakeTransport:
 
     def cancel_all(self):
         return self._do("cancel_all", {"remaining": 0} if self.cancel is _DEFAULT else self.cancel)
+
+    def list_open_orders(self):
+        outcome = self.orders
+        if type(outcome) is list:
+            outcome = {"order_ids": list(outcome)}
+        return self._do("list_open_orders", outcome)
 
     def revoke_api_key(self):
         return self._do("revoke_api_key", {"accepted": True} if self.revoke is _DEFAULT else self.revoke)
@@ -90,7 +98,7 @@ class KillTests(unittest.TestCase):
     def test_halt_first_then_one_cancel_and_one_revoke(self) -> None:
         kill, log = self._kill()
         out = kill.kill()
-        self.assertEqual(log, ["halt", "cancel_all", "revoke_api_key", "probe"])
+        self.assertEqual(log, ["halt", "cancel_all", "list_open_orders", "revoke_api_key", "probe"])
         self.assertEqual((out["status"], out["cancel_all"], out["revoke_key"]), ("confirmed", "confirmed", "confirmed"))
 
     def test_cancel_failure_still_revokes_and_reports_pending(self) -> None:
@@ -126,14 +134,38 @@ class KillTests(unittest.TestCase):
         transport.cancel = {"remaining": 0}
         log.clear()
         self.assertEqual(kill.kill()["status"], "confirmed")
-        self.assertEqual(log, ["halt", "cancel_all"])
+        self.assertEqual(log, ["halt", "cancel_all", "list_open_orders"])
+
+    def test_zero_remaining_reply_is_not_confirmation(self) -> None:
+        """A cancel-all reply of remaining 0 confirms nothing until the re-list is empty."""
+        log = []
+        transport = FakeTransport(cancel={"remaining": 0}, orders=["k1"], log=log)
+        kill = KalshiKill(lambda: log.append("halt"), transport)
+        out = kill.kill()
+        self.assertEqual((out["status"], out["cancel_all"]), ("pending", "pending"))
+        self.assertEqual(out["detail"]["cancel_all"], "remaining:1")
+        self.assertIn("list_open_orders", log)
+        transport.orders = []
+        log.clear()
+        self.assertEqual(kill.kill()["status"], "confirmed")
+        self.assertEqual(log, ["halt", "cancel_all", "list_open_orders"])
+
+    def test_relist_failure_keeps_cancel_pending(self) -> None:
+        for orders, detail in ((TimeoutError(), "list_error:TimeoutError"),
+                               ({"order_ids": [1]}, "unreadable_list"),
+                               ({}, "unreadable_list"),
+                               (None, "unreadable_list")):
+            with self.subTest(detail=detail):
+                out = self._kill(orders=orders)[0].kill()
+                self.assertEqual((out["status"], out["cancel_all"]), ("pending", "pending"))
+                self.assertEqual(out["detail"]["cancel_all"], detail)
 
     def test_halt_failure_still_attempts_risk_reducing_calls(self) -> None:
         log = []
         def broken_halt():
             raise OSError("disk")
         out = KalshiKill(broken_halt, FakeTransport(log=log)).kill()
-        self.assertEqual(log, ["cancel_all", "revoke_api_key", "probe"])
+        self.assertEqual(log, ["cancel_all", "list_open_orders", "revoke_api_key", "probe"])
         self.assertEqual((out["status"], out["halt"]), ("pending", "pending"))
 
 
