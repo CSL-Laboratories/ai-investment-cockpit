@@ -235,22 +235,22 @@ class B31RaceStress(unittest.TestCase):
 
     def test_sensitivity_dropped_send_time_check_is_caught(self) -> None:
         original = PaperBook._check_funds
-        original_book = PaperBook.book
+        original_book = PaperBook._book  # capability-gated since #317 (merged into #320 at 31aa87a6)
         in_book = threading.local()
 
         def check_outside_booking(cls, db, intent):
             if not getattr(in_book, "on", False):
                 original(db, intent)
 
-        def book_without_send_check(self, intent, audit=None):
+        def book_without_send_check(self, intent, token, audit=None):
             in_book.on = True
             try:
-                return original_book(self, intent, audit)
+                return original_book(self, intent, token, audit)
             finally:
                 in_book.on = False
 
         with mock.patch.object(gw_mod.PaperBook, "_check_funds", classmethod(check_outside_booking)), \
-                mock.patch.object(gw_mod.PaperBook, "book", book_without_send_check):
+                mock.patch.object(gw_mod.PaperBook, "_book", book_without_send_check):
             violations, _ = run(max(3, self.iters // 2), self.seed)
         self.assertTrue(violations, f"mutant not caught, seed {self.seed}")
 
