@@ -6,12 +6,14 @@ The shared page is Recursion's and is tested there. Plain data; no socket, provi
 
 from __future__ import annotations
 
+import importlib
 import re
 import unittest
 from pathlib import Path
 
 import cockpit.gui
-from cockpit.gui.panels import PANELS, REQUIRED, registry, withhold_venue_data
+from cockpit.gui.panels import (DEFAULT_SWITCH_STATES, PANELS, REQUIRED, panel_switch, redact_panel, registry,
+                                withhold_venue_data)
 
 GUI_DIR = Path(__file__).resolve().parents[1]
 # The O7 v0 read commands a panel may name (interventions and Stop are the shared page's).
@@ -40,6 +42,7 @@ class PanelTests(unittest.TestCase):
                 self.assertRegex(panel["id"], r"^cockpit\.[a-z0-9_]+$")
                 self.assertTrue(panel["title"].strip())
                 self.assertTrue(panel["reads"])
+                # Exactly the keys Recursion #330's panel_registry accepts; venue_use is also the switch id.
                 self.assertEqual(set(panel), {"id", "title", "venue", "venue_use", "reads", "withhold_venue_data"})
 
     def test_every_required_venue_use_has_one_panel(self) -> None:
@@ -74,19 +77,76 @@ class PanelTests(unittest.TestCase):
         self.assertNotIn("operator.health.inspect", PANELS[0]["reads"])
 
 
+# A Kalshi-shaped read result that also tries to switch itself on from inside the payload.
+SMUGGLED = {"status_code": "ok", "kalshi_yes_price": "4242.17", "venue_data_switch": "on",
+            "result": {"rows": [{"venue": "kalshi", "ticker": "KXSECRET", "venue_data_switch": "on",
+                                 "venue_data": {"price": "4242.17"}}],
+                       "provenance": {"venue_data": "KXSECRET", "venue_data_switch": "on"}}}
+
+
+def mount(switch_states: object) -> dict:
+    """Mount every registry() panel and redact each read result with the caller's switch state."""
+    return {p["id"]: redact_panel(p, {r: SMUGGLED for r in p["reads"]}, switch_states)
+            for p in registry()["panels"]}
+
+
 class VenueDataTests(unittest.TestCase):
-    def test_venue_data_withheld_unless_switch_is_on(self) -> None:
-        hidden = "[withheld: venue data switch is off]"
-        self.assertEqual(withhold_venue_data({"venue_data": 1})["venue_data"], hidden)
-        self.assertEqual(withhold_venue_data({"venue_data": 1, "venue_data_switch": "on"})["venue_data"], 1)
-        self.assertEqual(withhold_venue_data([{"venue_data": 1, "venue_data_switch": True}])[0]["venue_data"],
-                         hidden)
-        nested = {"result": {"provenance": {"venue_data": {"kalshi_yes_price": "4242.17"},
-                                            "venue_data_switch": "off"}}}
-        self.assertNotIn("4242.17", repr(withhold_venue_data(nested)))
+    def test_each_panel_is_governed_by_its_own_venue_use_switch(self) -> None:
+        self.assertEqual({p["id"]: panel_switch(p) for p in registry()["panels"]},
+                         {"cockpit.paper_own_trading": None,
+                          "cockpit.kalshi_model_fed_read": "kalshi:model_fed_read",
+                          "cockpit.kalshi_model_fed_propose": "kalshi:model_fed_propose"})
+
+    def test_kalshi_panels_show_no_venue_data_with_switches_off(self) -> None:
+        for states in (DEFAULT_SWITCH_STATES, {}, None, "on", ["kalshi:model_fed_read"],
+                       {"kalshi:model_fed_read": "off", "kalshi:model_fed_propose": True},
+                       {"kalshi:model_fed_read": "ON", "kalshi:model_fed_propose": "on "},
+                       {"venue_data_switch": "on", "kalshi": "on"}):
+            views = mount(states)
+            for pid in ("cockpit.kalshi_model_fed_read", "cockpit.kalshi_model_fed_propose"):
+                with self.subTest(states=states, panel=pid):
+                    shown = repr(views[pid])
+                    self.assertNotIn("4242.17", shown)
+                    self.assertNotIn("KXSECRET", shown)
+                    for view in views[pid].values():
+                        self.assertEqual(set(view), {"venue_data", "status_code"})
+                        self.assertIn("[withheld:", view["venue_data"])
+                        self.assertEqual(view["status_code"], "ok")
+            self.assertEqual(views["cockpit.paper_own_trading"],
+                             {r: SMUGGLED for r in PANELS[0]["reads"]})
+
+    def test_clearing_read_does_not_clear_propose(self) -> None:
+        views = mount({"kalshi:model_fed_read": "on"})
+        self.assertEqual(views["cockpit.kalshi_model_fed_read"],
+                         {r: SMUGGLED for r in PANELS[1]["reads"]})
+        self.assertNotIn("4242.17", repr(views["cockpit.kalshi_model_fed_propose"]))
+        views = mount({"kalshi:model_fed_propose": "on"})
+        self.assertNotIn("4242.17", repr(views["cockpit.kalshi_model_fed_read"]))
+        self.assertEqual(views["cockpit.kalshi_model_fed_propose"],
+                         {r: SMUGGLED for r in PANELS[2]["reads"]})
+
+    def test_payload_cannot_switch_itself_on(self) -> None:
+        self.assertNotIn("4242.17", repr(withhold_venue_data(SMUGGLED, "kalshi:model_fed_read", {})))
+        self.assertNotIn("4242.17", repr(withhold_venue_data([SMUGGLED], "kalshi:model_fed_read",
+                                                             {"venue_data_switch": "on"})))
+        self.assertIs(withhold_venue_data(SMUGGLED, None, {}), SMUGGLED)
+
+    def test_panel_without_a_switch_id_fails_closed(self) -> None:
+        for panel in ({"venue_use": None, "withhold_venue_data": True}, {"withhold_venue_data": "no"}, {}):
+            with self.subTest(panel=panel):
+                self.assertIsNotNone(panel_switch(panel))
+                shown = redact_panel(panel, {"operator.evidence.inspect": SMUGGLED}, {"None": "on", "": "on"})
+                self.assertNotIn("4242.17", repr(shown))
 
 
 class BoundaryTests(unittest.TestCase):
+    def test_daemon_plugin_flag_resolves(self) -> None:
+        # The daemon is configured with --plugin cockpit.gui:registry (CSL-802 dry run).
+        module, _, attr = "cockpit.gui:registry".partition(":")
+        factory = getattr(importlib.import_module(module), attr)
+        self.assertIs(factory, registry)
+        self.assertEqual(factory(), registry())
+
     def test_no_shared_page_left_here(self) -> None:
         for name in ("client.py", "inventory.py", "surface.py"):
             self.assertFalse((GUI_DIR / name).exists(), name)

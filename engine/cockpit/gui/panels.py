@@ -18,15 +18,25 @@ the shared renderer must execute only the named, unscoped O7 reads, select rows 
 the panel's declared ``venue``, then apply the venue-data switch (Recursion #330). The
 core inventory stays present when these venue classes are added (Nov 8 correction).
 
+Each panel's venue data is governed by its own per-venue, per-use switch, named by its
+``venue_use`` (``panel_switch``). ``withhold_venue_data``/``redact_panel`` take the switch
+state from the caller, never from the read payload, and withhold everything when the
+switch is not exactly ``on``.
+
 Every panel is read-only: no intervention, no Stop and no order verb. Data is plain
 Python, so nothing here imports Recursion; the composition root passes it across.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from types import MappingProxyType
 
-__all__ = ["PANELS", "REQUIRED", "registry", "withhold_venue_data"]
+__all__ = ["DEFAULT_SWITCH_STATES", "PANELS", "REQUIRED", "panel_switch", "redact_panel", "registry", "withhold_venue_data"]
+
+# Default switch state: every venue-use switch off (Kalshi model-fed off by default, 5.3).
+DEFAULT_SWITCH_STATES = MappingProxyType({})
+WITHHELD_NO_SWITCH = "[no switch declared]"
 
 REQUIRED = MappingProxyType({
     "venue_use": ("paper:own_trading", "kalshi:model_fed_read", "kalshi:model_fed_propose"),
@@ -60,13 +70,42 @@ def registry() -> dict:
             "panels": [{**p, "reads": list(p["reads"])} for p in PANELS]}
 
 
-def withhold_venue_data(value: object) -> object:
-    """Hide venue data unless the control API marks its switch exactly ``on``."""
-    if type(value) is dict:
-        out = {k: withhold_venue_data(v) for k, v in value.items()}
-        if "venue_data" in value and value.get("venue_data_switch") != "on":
-            out["venue_data"] = "[withheld: venue data switch is off]"
-        return out
-    if type(value) is list:
-        return [withhold_venue_data(v) for v in value]
-    return value
+def panel_switch(panel: Mapping) -> str | None:
+    """The switch id governing a panel's venue data, or None if it is not behind one.
+
+    The switch is per venue and per use (lane T4): a panel that withholds venue data is
+    governed by the switch named exactly by its ``venue_use`` (``kalshi:model_fed_read``
+    and ``kalshi:model_fed_propose`` are separate switches). ``venue_use`` doubles as the
+    switch id because the shared panel validator accepts no other panel keys. A panel
+    whose ``withhold_venue_data`` is not exactly ``False`` fails closed onto its switch.
+    """
+    if panel.get("withhold_venue_data", True) is False:
+        return None
+    switch = panel.get("venue_use")
+    return switch if type(switch) is str and switch else WITHHELD_NO_SWITCH
+
+
+def withhold_venue_data(value: object, switch: str | None, switch_states: object) -> object:
+    """Show ``value`` only if the caller-supplied state of ``switch`` is exactly ``"on"``.
+
+    ``switch_states`` is the control API's switch state, passed by the caller; it maps a
+    switch id (``venue:use``) to its state. Nothing inside ``value`` is consulted, so a
+    payload cannot switch itself on. Fails closed: an unknown switch, a missing or non-"on"
+    state, or a ``switch_states`` that is not a mapping withholds the whole value except
+    its string ``status_code``. ``switch=None`` means the value is not behind a switch.
+    """
+    if switch is None:
+        return value
+    if (switch != WITHHELD_NO_SWITCH and isinstance(switch_states, Mapping)
+            and type(switch_states.get(switch)) is str and switch_states.get(switch) == "on"):
+        return value
+    out: dict = {"venue_data": "[withheld: venue data switch %s is not on]" % switch}
+    if type(value) is dict and type(value.get("status_code")) is str:
+        out["status_code"] = value["status_code"]
+    return out
+
+
+def redact_panel(panel: Mapping, reads: Mapping, switch_states: object) -> dict:
+    """Apply a panel's own switch to each of its read results (``command -> response``)."""
+    switch = panel_switch(panel)
+    return {command: withhold_venue_data(data, switch, switch_states) for command, data in reads.items()}
