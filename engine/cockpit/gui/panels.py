@@ -8,7 +8,8 @@ shared GUI two plain values:
 * ``REQUIRED``, the route classes Cockpit needs reported, passed as ``required=``;
   any it does not see the shared GUI lists as a beta gap.
 * ``PANELS``, Cockpit-specific screens. Each names the O7 reads it needs and the venue
-  use it covers. Its explicit ``venue`` is the post-read row filter, not a label.
+  use it covers. Its explicit ``venue`` is the post-read row filter, not a label; it is
+  the O7 venue id (``O7_VENUE``: paper -> ``stock``, kalshi -> ``kalshi_demo``).
   The daemon composition root mounts these at /panel?id=<id> via
   recursion_core.gui.compose(plugins=(registry(),)). Cockpit never imports that API.
 
@@ -39,17 +40,27 @@ from __future__ import annotations
 from collections.abc import Mapping
 from types import MappingProxyType
 
-__all__ = ["DEFAULT_SWITCH_STATES", "KALSHI_PANELS", "PANELS", "REQUIRED", "VENUE_SWITCHES",
+__all__ = ["DEFAULT_SWITCH_STATES", "KALSHI_PANELS", "O7_VENUE", "PANELS", "REQUIRED", "VENUE_SWITCHES",
            "R1_PAPER", "keep_venue_rows", "panel_switch", "redact_panel", "registry", "withhold_venue_data"]
 
 # Default switch state: every switch off (Kalshi's model-fed switch is off by default, 5.3).
 DEFAULT_SWITCH_STATES = MappingProxyType({})
 # The contract's switch per venue (PRODUCT.md 5.3). Which uses each switch covers is the
 # per-use map for Lucas and counsel; both Kalshi panels sit behind the one contract switch.
-VENUE_SWITCHES = MappingProxyType({"kalshi": "kalshi.model_input"})
+# Cockpit venue class (the ``venue`` half of ``venue_use``) -> the venue id O7 v0 reads put
+# on rows. The O7 oracle (docs/replacement/outcomes/O7/fixtures/oracle/responses.json) labels
+# paper-book positions ``stock`` and Kalshi demo positions ``kalshi_demo``; a panel's declared
+# ``venue`` is matched exactly against row labels (here and in Recursion #330), so panels
+# declare the O7 id. Declaring ``paper`` would show zero positions on the O7 oracle, hiding
+# them (PRODUCT.md 3.5 "Nothing is hidden").
+O7_VENUE = MappingProxyType({"paper": "stock", "kalshi": "kalshi_demo"})
+# Keyed by the O7 venue id a panel declares. ``kalshi`` stays listed so a panel declaring the
+# bare Kalshi id still sits behind the contract switch rather than failing open.
+VENUE_SWITCHES = MappingProxyType({"kalshi_demo": "kalshi.model_input", "kalshi": "kalshi.model_input"})
 NO_SWITCH = None
 WITHHELD_NO_SWITCH = "[no switch declared]"
-OWN_TRADING_VENUES = frozenset({"paper"})
+# The paper book's O7 venue id. Cockpit has no other own-trading venue (paper first, 5.2).
+OWN_TRADING_VENUES = frozenset({O7_VENUE["paper"]})
 # PRODUCT.md 5.4 display rule R1, carried in the paper panel title the shared GUI shows.
 R1_PAPER = "PAPER (SIMULATED) \u2014 NOT REAL MONEY"
 
@@ -60,7 +71,7 @@ REQUIRED = MappingProxyType({
 PANELS = (
     MappingProxyType({
         "id": "cockpit.paper_own_trading", "title": R1_PAPER + ": paper own trading, positions and collateral",
-        "venue": "paper", "venue_use": "paper:own_trading",
+        "venue": O7_VENUE["paper"], "venue_use": "paper:own_trading",
         "reads": ("operator.positions.inspect", "operator.decisions.inspect", "operator.budgets.inspect"),
         "withhold_venue_data": False,
     }),
@@ -70,13 +81,13 @@ PANELS = (
 KALSHI_PANELS = (
     MappingProxyType({
         "id": "cockpit.kalshi_model_fed_read", "title": "Kalshi model-fed reads: evidence and provenance",
-        "venue": "kalshi", "venue_use": "kalshi:model_fed_read",
+        "venue": O7_VENUE["kalshi"], "venue_use": "kalshi:model_fed_read",
         "reads": ("operator.evidence.inspect", "operator.uncertainty.inspect"),
         "withhold_venue_data": True,
     }),
     MappingProxyType({
         "id": "cockpit.kalshi_model_fed_propose", "title": "Kalshi model-fed proposals (propose only)",
-        "venue": "kalshi", "venue_use": "kalshi:model_fed_propose",
+        "venue": O7_VENUE["kalshi"], "venue_use": "kalshi:model_fed_propose",
         "reads": ("operator.decisions.inspect", "operator.profiles.inspect"),
         "withhold_venue_data": True,
     }),
@@ -93,8 +104,8 @@ def panel_switch(panel: Mapping) -> str | None:
     """The switch id governing a panel's venue data, or None if it is not behind one.
 
     Only an own-trading venue panel that sets ``withhold_venue_data`` exactly ``False`` is
-    outside a switch. Any other panel uses its venue's contract switch (``kalshi`` ->
-    ``kalshi.model_input``) and fails closed when its venue has none.
+    outside a switch. Any other panel uses its venue's contract switch (``kalshi_demo`` or
+    ``kalshi`` -> ``kalshi.model_input``) and fails closed when its venue has none.
     """
     venue = panel.get("venue")
     if panel.get("withhold_venue_data", True) is False and venue in OWN_TRADING_VENUES:
@@ -124,7 +135,7 @@ def withhold_venue_data(value: object, switch: str | None, switch_states: object
 
 _DROP = object()
 # Known venue ids. A key named ``<venue>_...`` for another venue is that venue's data.
-KNOWN_VENUES = frozenset({"paper", "kalshi", "coinbase", "stock", "kalshi_demo"})
+KNOWN_VENUES = frozenset({"paper", "kalshi", "coinbase", "gemini", "stock", "kalshi_demo"})
 # Keys that identify a venue row (a market, instrument or quote). An unlabelled dict that
 # carries any of them cannot be attributed to a venue, so it is dropped (fail closed).
 VENUE_ROW_KEYS = frozenset({
