@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 
 import cockpit.gui
-from cockpit.gui.panels import (DEFAULT_SWITCH_STATES, KALSHI_PANELS, PANELS, REQUIRED, keep_venue_rows,
+from cockpit.gui.panels import (DEFAULT_SWITCH_STATES, KALSHI_PANELS, PANELS, R1_PAPER, REQUIRED, keep_venue_rows,
                                 panel_switch, redact_panel, registry, withhold_venue_data)
 
 ALL_PANELS = PANELS + KALSHI_PANELS
@@ -94,7 +94,7 @@ SMUGGLED = {"status_code": "ok", "kalshi_yes_price": "4242.17", "venue_data_swit
             "result": {"rows": [{"venue": "kalshi", "ticker": "KXSECRET", "venue_data_switch": "on",
                                  "venue_data": {"price": "4242.17"}},
                                 {"venue": "paper", "symbol": "PAPER-OK", "qty": 3}],
-                       "total": "4242.17",
+                       "total_usd": "10.00",
                        "provenance": {"venue_data": "KXSECRET", "venue_data_switch": "on"}}}
 KALSHI_ONLY = {"status_code": "ok", "result": {"rows": [{"venue": "kalshi", "ticker": "KXSHOWN"}]}}
 OFF_STATES = (DEFAULT_SWITCH_STATES, {}, None, "on", ["kalshi.model_input"],
@@ -123,8 +123,9 @@ class VenueDataTests(unittest.TestCase):
                     self.assertNotIn("kalshi", shown.lower())
                     self.assertNotIn("4242.17", shown)
                     self.assertNotIn("KXSECRET", shown)
-                    self.assertEqual(view, {"status_code": "ok",
-                                            "result": {"rows": [{"venue": "paper", "symbol": "PAPER-OK", "qty": 3}]}})
+                    self.assertEqual(view, {"status_code": "ok", "venue_data_switch": "on",
+                                            "result": {"rows": [{"venue": "paper", "symbol": "PAPER-OK", "qty": 3}],
+                                                       "total_usd": "10.00"}})
 
     def test_kalshi_panels_show_no_venue_data_with_switch_off(self) -> None:
         for states in OFF_STATES:
@@ -142,13 +143,47 @@ class VenueDataTests(unittest.TestCase):
             for view in panel_views.values():
                 self.assertIn("KXSECRET", repr(view))
                 self.assertNotIn("PAPER-OK", repr(view))
-                self.assertNotIn("total", view["result"])
-                self.assertNotIn("kalshi_yes_price", view)
+                self.assertNotIn("provenance", view["result"])  # venue_data with no venue label
 
-    def test_unlabelled_rows_are_dropped(self) -> None:
-        self.assertEqual(keep_venue_rows({"rows": [{"qty": 1}], "n": 2}, "paper"), {})
-        self.assertEqual(keep_venue_rows([{"venue": "paper", "x": 1}, 5], "paper"), {"rows": [{"venue": "paper", "x": 1}]})
-        self.assertEqual(keep_venue_rows(KALSHI_ONLY, None), {"status_code": "ok"})
+    def test_o7_states_stay_visible_on_the_paper_panel(self) -> None:
+        # Red-team round 3 probe: refusal, stale, unreconciled, uncertainty and empty results
+        # must not collapse to a bare "ok" (PRODUCT.md 3.5 "Nothing is hidden"; 5.4).
+        budgets = {"status_code": "ok", "result": {"stale": True, "unreconciled": True,
+                                                   "refusal": "daily loss limit reached",
+                                                   "remaining_usd": "0.00", "uncertainty": "high"}}
+        positions = {"status_code": "ok", "result": {"rows": [], "empty_reason": "no fills yet"}}
+        decisions = {"status_code": "refused", "errors": [{"code": "stale_read"}], "result": {}}
+        panel = registry()["panels"][0]
+        for states in OFF_STATES:
+            with self.subTest(states=states):
+                shown = redact_panel(panel, {"operator.budgets.inspect": budgets,
+                                             "operator.positions.inspect": positions,
+                                             "operator.decisions.inspect": decisions}, states)
+                self.assertEqual(shown, {"operator.budgets.inspect": budgets,
+                                         "operator.positions.inspect": positions,
+                                         "operator.decisions.inspect": decisions})
+
+    def test_only_other_venue_and_unattributable_rows_are_dropped(self) -> None:
+        mixed = {"status_code": "ok", "stale": True,
+                 "result": {"rows": [{"venue": "kalshi", "ticker": "KXSECRET"},
+                                     {"ticker": "KXUNLABELLED", "price": "0.42"},
+                                     {"venue": "paper", "symbol": "PAPER-OK"},
+                                     {"qty": 1, "note": "unlabelled non-venue row"}],
+                            "kalshi_yes_price": "4242.17", "summary": {"market": "KXNEST"},
+                            "n": 4, "uncertainty": "low", "empty_reason": None}}
+        self.assertEqual(keep_venue_rows(mixed, "paper"), {
+            "status_code": "ok", "stale": True,
+            "result": {"rows": [{"venue": "paper", "symbol": "PAPER-OK"},
+                                {"qty": 1, "note": "unlabelled non-venue row"}],
+                       "n": 4, "uncertainty": "low", "empty_reason": None}})
+        kalshi = keep_venue_rows(mixed, "kalshi")
+        self.assertEqual(kalshi["result"]["rows"], [{"venue": "kalshi", "ticker": "KXSECRET"},
+                                                    {"qty": 1, "note": "unlabelled non-venue row"}])
+        self.assertEqual(kalshi["result"]["kalshi_yes_price"], "4242.17")
+        self.assertNotIn("KXUNLABELLED", repr(kalshi))
+        self.assertNotIn("KX", repr(keep_venue_rows(mixed, None)))
+        self.assertEqual(keep_venue_rows({"ticker": "KX", "status_code": "ok"}, "paper"), {"status_code": "ok"})
+        self.assertEqual(keep_venue_rows([], "paper"), [])
 
     def test_payload_cannot_switch_itself_on(self) -> None:
         self.assertNotIn("4242.17", repr(withhold_venue_data(SMUGGLED, "kalshi.model_input", {})))
@@ -174,6 +209,12 @@ class BoundaryTests(unittest.TestCase):
         factory = getattr(importlib.import_module(module), attr)
         self.assertIs(factory, registry)
         self.assertEqual(factory(), registry())
+
+    def test_paper_panel_title_carries_r1(self) -> None:
+        # PRODUCT.md 5.4 R1, in the title so #330's fixed panel key set still accepts it.
+        self.assertEqual(R1_PAPER, "PAPER (SIMULATED) \u2014 NOT REAL MONEY")
+        for panel in registry()["panels"]:
+            self.assertTrue(panel["title"].startswith(R1_PAPER), panel["title"])
 
     def test_no_shared_page_left_here(self) -> None:
         for name in ("client.py", "inventory.py", "surface.py"):

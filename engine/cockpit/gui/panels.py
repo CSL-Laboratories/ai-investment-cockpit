@@ -24,9 +24,10 @@ the shared renderer does not yet apply a venue-data switch keyed to the contract
 switch-aware consumer exists. ``REQUIRED`` still names the Kalshi venue classes so the
 shared GUI reports them as beta gaps; that is route status, not venue data.
 
-``redact_panel`` is Cockpit's fail-closed view of a panel's reads: it keeps only rows
-labelled with the panel's ``venue`` (anything unlabelled or labelled otherwise is dropped),
-then, for a venue behind a switch, withholds everything unless the caller-supplied switch
+``redact_panel`` is Cockpit's fail-closed view of a panel's reads: it drops rows labelled
+with another venue and venue-like rows with no label, keeps O7 status, refusal, stale,
+unreconciled, uncertainty and empty states visible (``keep_venue_rows``), then, for a
+venue behind a switch, withholds everything unless the caller-supplied switch
 state is exactly ``on``. The switch state never comes from the read payload.
 
 Every panel is read-only: no intervention, no Stop and no order verb. Data is plain
@@ -39,7 +40,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 
 __all__ = ["DEFAULT_SWITCH_STATES", "KALSHI_PANELS", "PANELS", "REQUIRED", "VENUE_SWITCHES",
-           "keep_venue_rows", "panel_switch", "redact_panel", "registry", "withhold_venue_data"]
+           "R1_PAPER", "keep_venue_rows", "panel_switch", "redact_panel", "registry", "withhold_venue_data"]
 
 # Default switch state: every switch off (Kalshi's model-fed switch is off by default, 5.3).
 DEFAULT_SWITCH_STATES = MappingProxyType({})
@@ -49,6 +50,8 @@ VENUE_SWITCHES = MappingProxyType({"kalshi": "kalshi.model_input"})
 NO_SWITCH = None
 WITHHELD_NO_SWITCH = "[no switch declared]"
 OWN_TRADING_VENUES = frozenset({"paper"})
+# PRODUCT.md 5.4 display rule R1, carried in the paper panel title the shared GUI shows.
+R1_PAPER = "PAPER (SIMULATED) \u2014 NOT REAL MONEY"
 
 REQUIRED = MappingProxyType({
     "venue_use": ("paper:own_trading", "kalshi:model_fed_read", "kalshi:model_fed_propose"),
@@ -56,7 +59,7 @@ REQUIRED = MappingProxyType({
 
 PANELS = (
     MappingProxyType({
-        "id": "cockpit.paper_own_trading", "title": "Paper own trading: positions and collateral",
+        "id": "cockpit.paper_own_trading", "title": R1_PAPER + ": paper own trading, positions and collateral",
         "venue": "paper", "venue_use": "paper:own_trading",
         "reads": ("operator.positions.inspect", "operator.decisions.inspect", "operator.budgets.inspect"),
         "withhold_venue_data": False,
@@ -120,42 +123,75 @@ def withhold_venue_data(value: object, switch: str | None, switch_states: object
 
 
 _DROP = object()
+# Known venue ids. A key named ``<venue>_...`` for another venue is that venue's data.
+KNOWN_VENUES = frozenset({"paper", "kalshi", "coinbase", "stock", "kalshi_demo"})
+# Keys that identify a venue row (a market, instrument or quote). An unlabelled dict that
+# carries any of them cannot be attributed to a venue, so it is dropped (fail closed).
+VENUE_ROW_KEYS = frozenset({
+    "venue_data", "ticker", "market", "market_id", "market_ticker", "event_ticker", "series_ticker",
+    "symbol", "instrument", "contract", "price", "yes_price", "no_price", "yes_bid", "yes_ask",
+    "no_bid", "no_ask", "bid", "ask", "last_price", "orderbook", "quote", "quotes"})
 
 
 def keep_venue_rows(value: object, venue: object) -> object:
-    """Keep only data inside dicts labelled ``venue`` == ``venue``; fail closed on the rest.
+    """Drop data from other venues and unattributable venue rows; keep everything else.
 
-    A dict labelled with another venue is dropped; unlabelled scalars outside a matching
-    dict are dropped; unlabelled containers stay only as the path to kept data. A string
-    top-level ``status_code`` is kept. A non-string ``venue`` keeps nothing.
+    The rule, applied recursively (``venue`` is the panel's declared venue):
+
+    * A dict with a ``venue`` key is kept whole if it equals ``venue`` and dropped otherwise.
+    * A dict without a ``venue`` key, outside a kept venue dict, is dropped if it carries any
+      ``VENUE_ROW_KEYS`` key (venue-like data with no label); otherwise it is kept and its
+      values are filtered by the same rule.
+    * Outside a kept venue dict, a key named ``<v>_...`` for a known venue ``v`` other than
+      ``venue`` is dropped (e.g. ``kalshi_yes_price`` on a paper panel).
+    * Everything else passes through unchanged: O7 status, refusal, stale, unreconciled,
+      uncertainty and error fields, empty results (``[]``, ``{}``) and ``empty_reason``,
+      and non-venue reads such as budgets (PRODUCT.md 3.5 "Nothing is hidden", 5.4).
+
+    A non-string ``venue`` drops every venue-labelled dict and venue row. A response the
+    rule drops entirely keeps only its string ``status_code``.
     """
-    kept = _rows(value, venue, False) if type(venue) is str else _DROP
-    out = {} if kept is _DROP or type(kept) is not dict else kept
-    if kept is not _DROP and type(kept) is not dict:
-        out = {"rows": kept}
+    venue = venue if type(venue) is str else None
+    kept = _rows(value, venue, False)
+    if kept is not _DROP:
+        return kept
     if type(value) is dict and type(value.get("status_code")) is str:
-        out["status_code"] = value["status_code"]
-    return out
+        return {"status_code": value["status_code"]}
+    return {}
 
 
-def _rows(value: object, venue: str, scoped: bool) -> object:
+def _other_venue_key(key: object, venue: str | None) -> bool:
+    if type(key) is not str or (venue is not None and key.startswith(venue + "_")):
+        return False
+    return any(key.startswith(v + "_") for v in KNOWN_VENUES if v != venue)
+
+
+def _rows(value: object, venue: str | None, scoped: bool) -> object:
+    if scoped:
+        return value
     if type(value) is dict:
         if "venue" in value:
-            if value["venue"] != venue:
-                return _DROP
-            scoped = True
-        out = {k: v for k, v in ((k, _rows(v, venue, scoped)) for k, v in value.items()) if v is not _DROP}
-    elif type(value) is list:
-        out = [v for v in (_rows(v, venue, scoped) for v in value) if v is not _DROP]
-    else:
-        return value if scoped else _DROP
-    return out if out or scoped else _DROP
+            return value if venue is not None and value["venue"] == venue else _DROP
+        if VENUE_ROW_KEYS.intersection(value):
+            return _DROP
+        out = {}
+        for key, item in value.items():
+            if _other_venue_key(key, venue):
+                continue
+            item = _rows(item, venue, False)
+            if item is not _DROP:
+                out[key] = item
+        return out
+    if type(value) is list:
+        return [v for v in (_rows(v, venue, False) for v in value) if v is not _DROP]
+    return value
 
 
 def redact_panel(panel: Mapping, reads: Mapping, switch_states: object) -> dict:
     """A panel's fail-closed view of its reads (``command -> response``).
 
-    Rows not labelled with the panel's ``venue`` are dropped first, then the panel's switch
+    Other-venue and unattributable venue rows are dropped first (``keep_venue_rows``), then
+    the panel's switch
     (``panel_switch``) is applied with the caller-supplied ``switch_states``.
     """
     switch = panel_switch(panel)
