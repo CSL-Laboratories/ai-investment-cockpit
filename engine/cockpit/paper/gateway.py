@@ -11,7 +11,7 @@ The only path that books an order in ``engine/``. Every order goes, in this orde
 4. booking, in one SQLite ``BEGIN IMMEDIATE`` transaction that re-reads the halt flag,
    so a halt committed by any process before the booking wins.
 
-Every refusal on ``request_approval`` and ``submit`` is written to the book's append-only
+Every refusal on ``size_buy``, ``request_approval`` and ``submit`` is written to the book's append-only
 ``audit`` table (stage, typed code, intent, run, connection, effect digest) before the
 typed ``Refused`` is raised, and every booking writes a ``booked`` row in the booking's
 own transaction (B15). An intent whose run ended in a fault, or whose connection the
@@ -337,7 +337,10 @@ class OrderGateway:
             if shares < 1:
                 raise Refused("size_zero")
         except Refused as exc:
-            raise self._refuse(exc, "size", None, None) from None
+            proposal = Intent(intent_id=intent_id, account=account, instrument=instrument, side="buy",
+                              quantity=None, limit_price_minor=limit_price_minor,
+                              run_id=run_id, connection=connection)
+            raise self._refuse(exc, "size", proposal, None) from None
         return Intent(intent_id=intent_id, account=account, instrument=instrument, side="buy", quantity=shares,
                       limit_price_minor=limit_price_minor, run_id=run_id, connection=connection)
 

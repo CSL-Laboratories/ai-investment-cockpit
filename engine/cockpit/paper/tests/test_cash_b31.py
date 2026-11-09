@@ -78,8 +78,39 @@ class CashTests(unittest.TestCase):
         exc = self._refused("size_zero", self._size)
         self.assertEqual([(r["seq"], r["stage"], r["code"]) for r in self.book.audit()],
                          [(exc.audit_seq, "size", "size_zero")])
+        row = self.book.audit()[0]
+        self.assertEqual((row["intent_id"], row["run_id"], row["connection"]),
+                         ("b31", "run-1", "conn-a"))
+        self.assertIsNone(row["effect_sha256"])  # no sized effect exists on refusal
         self.assertEqual(self.core.calls, [])
         self.assertEqual(self.book.orders(), [])
+
+    def test_size_refusals_audit_the_callers_ids(self) -> None:
+        self._gateway(100_000)
+        cases = (("conviction_invalid", {"conviction_bps": 0}),
+                 ("money_invalid", {"limit_price_minor": 0}),
+                 ("intent_invalid", {"account": "not an account"}),
+                 ("account_unknown", {"account": "missing"}),
+                 ("size_zero", {"limit_price_minor": 100_001}))
+        for n, (code, changes) in enumerate(cases):
+            args = dict(intent_id="proposal-%d" % n, account=ACCT, instrument="AAPL",
+                        limit_price_minor=10_000, conviction_bps=10_000,
+                        run_id="caller-run-%d" % n, connection="caller-conn-%d" % n)
+            args.update(changes)
+            with self.subTest(code=code):
+                exc = self._refused(code, self.gw.size_buy, **args)
+                row = self.book.audit()[-1]
+                self.assertEqual((row["seq"], row["event"], row["stage"], row["code"]),
+                                 (exc.audit_seq, "refused", "size", code))
+                self.assertEqual((row["intent_id"], row["run_id"], row["connection"]),
+                                 (args["intent_id"], args["run_id"], args["connection"]))
+                self.assertIsNone(row["effect_sha256"])
+        reopened = PaperBook(self.path)
+        self.addCleanup(reopened.close)
+        self.assertEqual(reopened.audit(), self.book.audit())
+        self.assertEqual(self.core.calls, [])
+        self.assertEqual(self.book.orders(), [])
+        self.assertEqual(self.book.available_cash_minor(ACCT), 100_000)
 
     def test_cash_drop_between_size_and_send_refused_without_resizing(self) -> None:
         self._gateway(100_000)

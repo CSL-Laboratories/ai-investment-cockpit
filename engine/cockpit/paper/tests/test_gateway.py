@@ -19,6 +19,7 @@ from pathlib import Path
 from cockpit.paper.core_client import CoreClient
 from cockpit.paper.gateway import Caps, Intent, OrderGateway, PaperBook, Refused, create_book
 from cockpit.paper.tests.fakecore import AUTHORITY, FakeCore
+from cockpit.paper.plugin import build
 
 PAPER_DIR = Path(__file__).resolve().parents[1]
 INTENT = Intent(intent_id="i-1", account="paper-acct", instrument="AAPL", side="buy", quantity=10,
@@ -125,11 +126,30 @@ class GatewayTests(unittest.TestCase):
             with self.subTest(cap=cap):
                 self.assertRaises(Refused, Caps, *cap)
 
-    def test_paper_only_and_no_kalshi_orders(self) -> None:
-        for change in (dict(venue="kalshi"), dict(venue="kalshi-demo"), dict(venue="coinbase"), dict(mode="live"),
-                       dict(mode="demo")):
-            with self.subTest(change=change):
-                self._refused("paper_only", self.gw.request_approval, replace(INTENT, **change))
+    def test_in_process_plugin_refuses_non_paper_orders_before_core(self) -> None:
+        gateway = build(self.core, self.path, Caps(500_000, 100))
+        self.addCleanup(gateway._book.close)
+        for change in (dict(venue="kalshi"), dict(venue="kalshi-demo"), dict(venue="coinbase"),
+                       dict(venue=""), dict(venue=None), dict(mode="live"), dict(mode="demo")):
+            intent = replace(INTENT, **change)
+            for stage in ("request", "submit"):
+                with self.subTest(change=change, stage=stage):
+                    with self.assertRaises(Refused) as ctx:
+                        if stage == "request":
+                            gateway.request_approval(intent)
+                        else:
+                            gateway.submit(intent, "not-an-approval", AUTHORITY)
+                    self.assertEqual(ctx.exception.code, "paper_only")
+                    row = self.book.audit()[-1]
+                    self.assertEqual((row["seq"], row["stage"], row["code"]),
+                                     (ctx.exception.audit_seq, "risk", "paper_only"))
+                    self.assertEqual((row["intent_id"], row["run_id"], row["connection"]),
+                                     (intent.intent_id, intent.run_id, intent.connection))
+        self.assertEqual(self.core.calls, [])
+        self.assertEqual(self.book.orders(), [])
+        self.assertEqual(self.book.available_cash_minor(INTENT.account), 10**15)
+        out = gateway.submit(INTENT, self._approved(INTENT), AUTHORITY)
+        self.assertEqual(out["status"], "paper_working")
 
     def test_halt_blocks_new_risk_and_allows_cancels(self) -> None:
         self.gw.submit(INTENT, self._approved(INTENT), AUTHORITY)
