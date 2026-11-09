@@ -13,7 +13,9 @@ committed step:
   A failed or unreadable cancel never skips the others;
 * the open orders are then listed again. Cancel is ``confirmed`` only when every order
   listed was confirmed cancelled and the venue lists none open. An order placed between
-  the two listings, a list error, or a page cap reached keeps it ``pending``;
+  the two listings, a list error, or a page cap reached keeps it ``pending``. An order
+  the venue still lists after a success reply is dropped from ``cancelled`` and is
+  cancelled again on the next ``kill``;
 * the OAuth grant is revoked, and the revoke is ``confirmed`` only when an authenticated
   call made after it is refused as unauthorized. Otherwise it is ``pending``.
 
@@ -80,8 +82,8 @@ class CoinbaseKill:
             return
         failed = 0
         for order_id in listed:
-            if order_id in self._cancelled:
-                continue
+            # The venue listing it open outranks any earlier success reply: cancel it again.
+            self._cancelled.discard(order_id)
             try:
                 out = self._transport.cancel_order(order_id)
             except Exception:  # noqa: BLE001 - one failure never skips the other orders
@@ -104,6 +106,8 @@ class CoinbaseKill:
             self._detail["cancel_orders"] = "relist_error:" + type(exc).__name__
             return
         if remaining:
+            # A success reply for an order the venue still lists is not a cancel.
+            self._cancelled.difference_update(remaining)
             self._detail["cancel_orders"] = "remaining:%d" % len(remaining)
             return
         self._state["cancel_orders"] = "confirmed"

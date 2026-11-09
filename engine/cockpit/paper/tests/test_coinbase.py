@@ -165,6 +165,37 @@ class CoinbaseKillTests(unittest.TestCase):
         self.assertEqual(venue.log, ["halt", "list", "cancel:o2", "list"])
         self.assertEqual(out["cancelled"], ["o1", "o2"])
 
+    def test_success_reply_but_still_listed_is_retried(self) -> None:
+        """Red-team round 2 finding 2: a venue that still lists the order wins over its reply."""
+        venue = MockCoinbase(orders=["o1", "o2"])
+        venue.fail_cancel["o2"] = {"order_id": "o2", "success": True}  # says yes, stays open
+        kill = self._kill(venue)
+        out = kill.kill()
+        self.assertEqual((out["status"], out["cancel_orders"]), ("pending", "pending"))
+        self.assertEqual(out["detail"]["cancel_orders"], "remaining:1")
+        self.assertEqual(out["cancelled"], ["o1"])  # never names an order the venue lists open
+        self.assertEqual(venue.open, ["o2"])
+        # Next kill cancels o2 again rather than skipping it.
+        del venue.fail_cancel["o2"]
+        venue.granted = True  # the revoke gap (finding 3) is left for Lucas
+        venue.log.clear()
+        out = kill.kill()
+        self.assertIn("cancel:o2", venue.log)
+        self.assertEqual((out["status"], out["cancel_orders"], out["cancelled"]), ("confirmed", "confirmed", ["o1", "o2"]))
+        self.assertEqual(venue.open, [])
+
+    def test_still_listed_every_time_never_confirms(self) -> None:
+        venue = MockCoinbase(orders=["o1"])
+        venue.fail_cancel["o1"] = {"order_id": "o1", "success": True}
+        kill = self._kill(venue)
+        for _ in range(3):
+            venue.granted = True
+            venue.log.clear()
+            out = kill.kill()
+            self.assertIn("cancel:o1", venue.log)
+            self.assertEqual((out["status"], out["cancelled"], out["detail"]["cancel_orders"]),
+                             ("pending", [], "remaining:1"))
+
     def test_halt_failure_still_attempts_risk_reducing_calls(self) -> None:
         venue = MockCoinbase(orders=["o1"])
         def broken_halt():

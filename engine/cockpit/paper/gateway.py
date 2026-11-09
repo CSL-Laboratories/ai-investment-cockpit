@@ -11,6 +11,10 @@ The only path that books an order in ``engine/``. Every order goes, in this orde
 4. booking, in one SQLite ``BEGIN IMMEDIATE`` transaction that re-reads the halt flag,
    so a halt committed by any process before the booking wins.
 
+``PaperBook`` has no public booking method: its private ``_book`` refuses unless handed a
+capability object that only ``OrderGateway.submit`` passes, and a static test refuses any
+other reference to either name in ``engine/``.
+
 Paper only. There is no broker, venue transport, credential or network code here, and
 no Kalshi order code at all (not even demo). Risk logic uses no model, I/O beyond the
 local book, or subprocess. The cap values are injected; they are not sourced yet (F12).
@@ -31,6 +35,7 @@ __all__ = ["Caps", "Intent", "OrderGateway", "PaperBook", "Refused", "create_boo
 PAPER_VENUE = "paper"
 _ID = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
 _INSTRUMENT = re.compile(r"[A-Z0-9][A-Z0-9._-]{0,31}")
+_GATEWAY_ONLY = object()  # booking capability; never exported or passed outside this module
 
 
 class Refused(Exception):
@@ -123,7 +128,12 @@ class PaperBook:
         with self._lock:
             return bool(self._db.execute("SELECT v FROM state WHERE k = 'halted'").fetchone()[0])
 
-    def book(self, intent: Intent) -> int:
+    def _book(self, intent: Intent, token: object) -> int:
+        """Write a working order. Not a public API: only ``OrderGateway.submit`` holds the token,
+        after the risk pass and the core's checks (PRODUCT.md 4.2 "One way in")."""
+        if token is not _GATEWAY_ONLY:
+            raise Refused("book_direct_refused")
+
         def run(db):
             if db.execute("SELECT v FROM state WHERE k = 'halted'").fetchone()[0]:
                 raise Refused("order_halted")
@@ -140,6 +150,11 @@ class PaperBook:
         """Cancel every working paper order. Allowed while halted (risk-reducing)."""
         return self._tx(lambda db: db.execute(
             "UPDATE orders SET status = 'cancelled' WHERE status = 'working'").rowcount)
+
+    def working(self) -> int:
+        """How many paper orders are still working."""
+        with self._lock:
+            return self._db.execute("SELECT COUNT(*) FROM orders WHERE status = 'working'").fetchone()[0]
 
     def orders(self) -> list[tuple]:
         with self._lock:
@@ -220,6 +235,6 @@ class OrderGateway:
             core = self._core.authorize(effect, approval_id, authority)
         except CoreRefused as exc:
             raise Refused("core:" + exc.code) from None
-        seq = self._book.book(intent)
+        seq = self._book._book(intent, _GATEWAY_ONLY)
         return {"status": "paper_working", "intent_id": intent.intent_id, "seq": seq,
                 "notional_minor": effect["amount_minor"], "digest": core.get("digest")}
