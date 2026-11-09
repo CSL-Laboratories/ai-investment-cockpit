@@ -13,8 +13,9 @@ import unittest
 from pathlib import Path
 
 import cockpit.gui
-from cockpit.gui.panels import (DEFAULT_SWITCH_STATES, KALSHI_PANELS, KNOWN_VENUES, O7_VENUE, PANELS, R1_PAPER,
-                                REQUIRED, keep_venue_rows, panel_switch, redact_panel, registry, withhold_venue_data)
+from cockpit.gui.panels import (DEFAULT_SWITCH_STATES, KALSHI_PANELS, KNOWN_VENUES, O7_VENUE, OWN_TRADING_VENUES,
+                                PANELS, PAPER_BOOK, R1_PAPER, REQUIRED, keep_venue_rows, panel_switch, redact_panel,
+                                registry, withhold_venue_data)
 
 ALL_PANELS = PANELS + KALSHI_PANELS
 
@@ -249,10 +250,14 @@ class O7OracleTests(unittest.TestCase):
             shown_total += len(expected)
         self.assertEqual(shown_total, 3)  # AAPL; AAPL and MSFT (signed); empty response shows []
 
-    def test_declaring_cockpit_paper_would_hide_every_oracle_position(self) -> None:
-        # The bug this mapping fixes: rows are labelled "stock", so "paper" matches none.
+    def test_either_paper_book_id_shows_every_oracle_stock_position(self) -> None:
+        # "stock" and "paper" are one book (PaperBookTests), so neither id hides the oracle's
+        # "stock" rows. Before the O7 mapping, declaring "paper" matched none of them.
         for response in _oracle_positions():
-            self.assertEqual(_venue_rows(keep_venue_rows(response, "paper")), [])
+            expected = [row for row in response["result"]["positions"] if row["venue"] == "stock"]
+            for declared in ("stock", "paper"):
+                with self.subTest(request=response["request_id"], declared=declared):
+                    self.assertEqual(_venue_rows(keep_venue_rows(response, declared)), expected)
 
     def test_kalshi_panels_show_only_kalshi_demo_rows_behind_the_switch(self) -> None:
         response = _oracle_positions()[0]
@@ -269,6 +274,133 @@ class O7OracleTests(unittest.TestCase):
     def test_gemini_keys_are_another_venue(self) -> None:
         view = keep_venue_rows({"status_code": "ok", "gemini_balance": "9.99", "coinbase_x": 1, "n": 1}, "stock")
         self.assertEqual(view, {"status_code": "ok", "n": 1})
+
+
+def _positions(*rows: dict, **extra: object) -> dict:
+    """The oracle's first positions response with its rows replaced and ``extra`` keys added."""
+    response = json.loads(json.dumps(_oracle_positions()[0]))
+    response["result"]["positions"] = [dict(row) for row in rows]
+    response.update(extra)
+    return response
+
+
+class PaperBookTests(unittest.TestCase):
+    """Lucas's Nov 9 call: "paper" rows, "stock" rows and paper_* keys are the paper panel's book.
+
+    O7 v0 labels paper-book positions "stock"; the paper OrderGateway (#320) keeps venue
+    "paper" on its orders. PRODUCT.md 3.5 "Nothing is hidden"; 5.2 paper first.
+    """
+
+    ALL_STATES = OFF_STATES + ({"kalshi.model_input": "on"},)
+    PAPER_ROW = {"instrument_id": "MSFT", "venue": "paper", "quantity": "2", "currency": "USD"}
+    STOCK_ROW = {"instrument_id": "AAPL", "venue": "stock", "quantity": "1", "currency": "USD"}
+    KALSHI_ROW = {"instrument_id": "KXDEMO-1", "venue": "kalshi_demo", "quantity": "0", "currency": "USD"}
+
+    def _shown(self, response: dict, states: object = DEFAULT_SWITCH_STATES) -> dict:
+        panel = registry()["panels"][0]
+        self.assertEqual(panel["id"], "cockpit.paper_own_trading")
+        return redact_panel(panel, {"operator.positions.inspect": response}, states)["operator.positions.inspect"]
+
+    def test_the_paper_book_is_paper_and_stock(self) -> None:
+        self.assertEqual(PAPER_BOOK, frozenset({"paper", "stock"}))
+        self.assertIn(registry()["panels"][0]["venue"], PAPER_BOOK)
+        self.assertLessEqual(PAPER_BOOK, KNOWN_VENUES)
+        for panel in KALSHI_PANELS:
+            self.assertNotIn(panel["venue"], PAPER_BOOK)
+
+    def test_a_paper_row_shows(self) -> None:
+        for states in self.ALL_STATES:
+            with self.subTest(states=states):
+                self.assertEqual(_venue_rows(self._shown(_positions(self.PAPER_ROW), states)), [self.PAPER_ROW])
+
+    def test_a_stock_row_shows(self) -> None:
+        for states in self.ALL_STATES:
+            with self.subTest(states=states):
+                self.assertEqual(_venue_rows(self._shown(_positions(self.STOCK_ROW), states)), [self.STOCK_ROW])
+
+    def test_paper_and_stock_rows_count_as_one_book(self) -> None:
+        response = _positions(self.STOCK_ROW, self.KALSHI_ROW, self.PAPER_ROW)
+        shown = self._shown(response)
+        self.assertEqual(_venue_rows(shown), [self.STOCK_ROW, self.PAPER_ROW])
+        # Everything but the Kalshi row is unchanged, and the response is not mutated.
+        response["result"]["positions"].pop(1)
+        self.assertEqual(shown, response)
+
+    def test_a_paper_key_shows(self) -> None:
+        response = _positions(self.PAPER_ROW, paper_cash_minor=100_000)
+        response["result"]["paper_open_orders"] = 2
+        response["result"]["stock_buying_power_minor"] = 50_000
+        for states in self.ALL_STATES:
+            with self.subTest(states=states):
+                shown = self._shown(response, states)
+                self.assertEqual(shown["paper_cash_minor"], 100_000)
+                self.assertEqual(shown["result"]["paper_open_orders"], 2)
+                self.assertEqual(shown["result"]["stock_buying_power_minor"], 50_000)
+                self.assertEqual(shown, response)
+        self.assertEqual(keep_venue_rows({"paper_cash_minor": 100, "status_code": "ok"}, "stock"),
+                         {"paper_cash_minor": 100, "status_code": "ok"})
+
+    def test_a_kalshi_demo_row_stays_out_of_the_paper_book(self) -> None:
+        response = _positions(self.KALSHI_ROW, self.PAPER_ROW, {**self.KALSHI_ROW, "venue": "kalshi"},
+                              {**self.KALSHI_ROW, "venue": "coinbase"}, {**self.KALSHI_ROW, "venue": "gemini"},
+                              kalshi_demo_yes_price="4242.17", kalshi_yes_price="4242.17")
+        for states in self.ALL_STATES:
+            with self.subTest(states=states):
+                shown = self._shown(response, states)
+                self.assertEqual(_venue_rows(shown), [self.PAPER_ROW])
+                self.assertNotIn("kalshi", repr(shown).lower())
+                self.assertNotIn("KXDEMO", repr(shown))
+                self.assertNotIn("4242.17", repr(shown))
+        only_kalshi = self._shown(_positions(self.KALSHI_ROW))
+        self.assertEqual(_venue_rows(only_kalshi), [])
+        self.assertEqual(only_kalshi["status_code"], "ok")
+        # A paper_* key is kept, but what sits under it is still filtered row by row.
+        self.assertEqual(keep_venue_rows({"paper_rows": [self.KALSHI_ROW, self.PAPER_ROW]}, "stock"),
+                         {"paper_rows": [self.PAPER_ROW]})
+
+    def test_a_row_with_no_usable_label_is_not_in_the_book(self) -> None:
+        # Near misses and non-string labels are dropped, never matched and never an error.
+        for label in ("Paper", "STOCK", "paper ", "paper_", "papers", "", None, True, 1, ["paper"], {"paper": 1}):
+            with self.subTest(label=label):
+                rows = _venue_rows(self._shown(_positions({**self.PAPER_ROW, "venue": label}, self.STOCK_ROW)))
+                self.assertEqual(rows, [self.STOCK_ROW])
+
+    def test_kalshi_panels_do_not_get_the_paper_book(self) -> None:
+        response = _positions(self.STOCK_ROW, self.KALSHI_ROW, self.PAPER_ROW, paper_cash_minor=100_000)
+        for panel in KALSHI_PANELS:
+            with self.subTest(panel=panel["id"]):
+                on = redact_panel(panel, {"operator.positions.inspect": response}, {"kalshi.model_input": "on"})
+                shown = on["operator.positions.inspect"]
+                self.assertEqual(_venue_rows(shown), [self.KALSHI_ROW])
+                self.assertNotIn("paper_cash_minor", shown)
+                for states in OFF_STATES:
+                    off = redact_panel(panel, {"operator.positions.inspect": response}, states)
+                    self.assertNotIn("AAPL", repr(off))
+                    self.assertNotIn("MSFT", repr(off))
+                    self.assertNotIn("100000", repr(off))
+
+    def test_unlabelled_errors_and_provenance_stay_visible(self) -> None:
+        # Lucas, Nov 9: response-level errors and provenance with no venue label keep showing
+        # on a venue panel. Values are not read as venue ids ("paper_book", "kalshi_demo").
+        extra = {"status_code": "refused", "error": {"code": "stale_read", "message": "book read is stale"},
+                 "errors": [{"code": "unreconciled", "detail": "kalshi_demo feed lagging"}],
+                 "provenance": ["paper_book", {"source": "o7.operator.v0", "read_at": "2026-11-09T21:00:00Z"}]}
+        response = _positions(self.PAPER_ROW, self.KALSHI_ROW, self.STOCK_ROW, **extra)
+        for panel in (registry()["panels"][0],) + tuple(dict(p, reads=("operator.positions.inspect",))
+                                                        for p in KALSHI_PANELS):
+            with self.subTest(panel=panel["id"]):
+                shown = redact_panel(panel, {"operator.positions.inspect": response},
+                                     {"kalshi.model_input": "on"})["operator.positions.inspect"]
+                for key, value in extra.items():
+                    self.assertEqual(shown[key], value)
+                self.assertEqual(shown["visibility"], response["visibility"])
+        self.assertEqual(_venue_rows(self._shown(response)), [self.PAPER_ROW, self.STOCK_ROW])
+
+    def test_only_the_o7_id_panel_is_outside_a_switch(self) -> None:
+        # Counting "paper" rows does not make a panel declaring "paper" an own-trading panel.
+        self.assertEqual(OWN_TRADING_VENUES, frozenset({"stock"}))
+        self.assertIsNone(panel_switch(registry()["panels"][0]))
+        self.assertIsNotNone(panel_switch({"venue": "paper", "withhold_venue_data": False}))
 
 
 class BoundaryTests(unittest.TestCase):

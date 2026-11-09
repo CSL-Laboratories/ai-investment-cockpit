@@ -9,7 +9,8 @@ shared GUI two plain values:
   any it does not see the shared GUI lists as a beta gap.
 * ``PANELS``, Cockpit-specific screens. Each names the O7 reads it needs and the venue
   use it covers. Its explicit ``venue`` is the post-read row filter, not a label; it is
-  the O7 venue id (``O7_VENUE``: paper -> ``stock``, kalshi -> ``kalshi_demo``).
+  the O7 venue id (``O7_VENUE``: paper -> ``stock``, kalshi -> ``kalshi_demo``). The paper
+  panel's book is ``PAPER_BOOK``: rows labelled ``stock`` or ``paper``, and ``paper_*`` keys.
   The daemon composition root mounts these at /panel?id=<id> via
   recursion_core.gui.compose(plugins=(registry(),)). Cockpit never imports that API.
 
@@ -40,8 +41,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from types import MappingProxyType
 
-__all__ = ["DEFAULT_SWITCH_STATES", "KALSHI_PANELS", "O7_VENUE", "PANELS", "REQUIRED", "VENUE_SWITCHES",
-           "R1_PAPER", "keep_venue_rows", "panel_switch", "redact_panel", "registry", "withhold_venue_data"]
+__all__ = ["DEFAULT_SWITCH_STATES", "KALSHI_PANELS", "O7_VENUE", "PANELS", "PAPER_BOOK", "REQUIRED",
+           "VENUE_SWITCHES", "R1_PAPER", "keep_venue_rows", "panel_switch", "redact_panel", "registry",
+           "withhold_venue_data"]
 
 # Default switch state: every switch off (Kalshi's model-fed switch is off by default, 5.3).
 DEFAULT_SWITCH_STATES = MappingProxyType({})
@@ -50,16 +52,22 @@ DEFAULT_SWITCH_STATES = MappingProxyType({})
 # Cockpit venue class (the ``venue`` half of ``venue_use``) -> the venue id O7 v0 reads put
 # on rows. The O7 oracle (docs/replacement/outcomes/O7/fixtures/oracle/responses.json) labels
 # paper-book positions ``stock`` and Kalshi demo positions ``kalshi_demo``; a panel's declared
-# ``venue`` is matched exactly against row labels (here and in Recursion #330), so panels
-# declare the O7 id. Declaring ``paper`` would show zero positions on the O7 oracle, hiding
-# them (PRODUCT.md 3.5 "Nothing is hidden").
+# ``venue`` is matched against row labels (exactly in Recursion #330), so panels declare the
+# O7 id. Declaring ``paper`` there would show zero positions on the O7 oracle, hiding them
+# (PRODUCT.md 3.5 "Nothing is hidden").
 O7_VENUE = MappingProxyType({"paper": "stock", "kalshi": "kalshi_demo"})
+# Row labels of the one paper book. O7 v0 labels its positions ``stock``; the paper
+# OrderGateway (#320) keeps venue ``paper`` on its orders. The paper panel counts both labels,
+# and ``paper_*`` / ``stock_*`` keys, as its own book (owner call, Nov 9). Kalshi ids are not
+# paired: ``kalshi`` and ``kalshi_demo`` stay separate labels.
+PAPER_BOOK = frozenset({O7_VENUE["paper"], "paper"})
 # Keyed by the O7 venue id a panel declares. ``kalshi`` stays listed so a panel declaring the
 # bare Kalshi id still sits behind the contract switch rather than failing open.
 VENUE_SWITCHES = MappingProxyType({"kalshi_demo": "kalshi.model_input", "kalshi": "kalshi.model_input"})
 NO_SWITCH = None
 WITHHELD_NO_SWITCH = "[no switch declared]"
 # The paper book's O7 venue id. Cockpit has no other own-trading venue (paper first, 5.2).
+# Only a panel declaring this id is outside a switch; ``PAPER_BOOK`` widens rows, not this.
 OWN_TRADING_VENUES = frozenset({O7_VENUE["paper"]})
 # PRODUCT.md 5.4 display rule R1, carried in the paper panel title the shared GUI shows.
 R1_PAPER = "PAPER (SIMULATED) \u2014 NOT REAL MONEY"
@@ -147,14 +155,17 @@ VENUE_ROW_KEYS = frozenset({
 def keep_venue_rows(value: object, venue: object) -> object:
     """Drop data from other venues and unattributable venue rows; keep everything else.
 
-    The rule, applied recursively (``venue`` is the panel's declared venue):
+    The rule, applied recursively (``venue`` is the panel's declared venue; a venue in
+    ``PAPER_BOOK`` owns both of its labels, ``stock`` and ``paper``, any other venue only itself):
 
-    * A dict with a ``venue`` key is kept whole if it equals ``venue`` and dropped otherwise.
+    * A dict with a ``venue`` key is kept whole if the label is one the panel's venue owns and
+      dropped otherwise.
     * A dict without a ``venue`` key, outside a kept venue dict, is dropped if it carries any
       ``VENUE_ROW_KEYS`` key (venue-like data with no label); otherwise it is kept and its
       values are filtered by the same rule.
-    * Outside a kept venue dict, a key named ``<v>_...`` for a known venue ``v`` other than
-      ``venue`` is dropped (e.g. ``kalshi_yes_price`` on a paper panel).
+    * Outside a kept venue dict, a key named ``<v>_...`` for a known venue ``v`` the panel's
+      venue does not own is dropped (e.g. ``kalshi_yes_price`` on a paper panel); ``paper_*``
+      and ``stock_*`` keys stay on the paper panel.
     * Everything else passes through unchanged: O7 status, refusal, stale, unreconciled,
       uncertainty and error fields, empty results (``[]``, ``{}``) and ``empty_reason``,
       and non-venue reads such as budgets (PRODUCT.md 3.5 "Nothing is hidden", 5.4).
@@ -162,8 +173,7 @@ def keep_venue_rows(value: object, venue: object) -> object:
     A non-string ``venue`` drops every venue-labelled dict and venue row. A response the
     rule drops entirely keeps only its string ``status_code``.
     """
-    venue = venue if type(venue) is str else None
-    kept = _rows(value, venue, False)
+    kept = _rows(value, _owned(venue), False)
     if kept is not _DROP:
         return kept
     if type(value) is dict and type(value.get("status_code")) is str:
@@ -171,30 +181,37 @@ def keep_venue_rows(value: object, venue: object) -> object:
     return {}
 
 
-def _other_venue_key(key: object, venue: str | None) -> bool:
-    if type(key) is not str or (venue is not None and key.startswith(venue + "_")):
+def _owned(venue: object) -> frozenset:
+    """The row labels and key prefixes a declared venue owns; none for a non-string venue."""
+    if type(venue) is not str:
+        return frozenset()
+    return PAPER_BOOK if venue in PAPER_BOOK else frozenset({venue})
+
+
+def _other_venue_key(key: object, owned: frozenset) -> bool:
+    if type(key) is not str or any(key.startswith(v + "_") for v in owned):
         return False
-    return any(key.startswith(v + "_") for v in KNOWN_VENUES if v != venue)
+    return any(key.startswith(v + "_") for v in KNOWN_VENUES - owned)
 
 
-def _rows(value: object, venue: str | None, scoped: bool) -> object:
+def _rows(value: object, owned: frozenset, scoped: bool) -> object:
     if scoped:
         return value
     if type(value) is dict:
         if "venue" in value:
-            return value if venue is not None and value["venue"] == venue else _DROP
+            return value if type(value["venue"]) is str and value["venue"] in owned else _DROP
         if VENUE_ROW_KEYS.intersection(value):
             return _DROP
         out = {}
         for key, item in value.items():
-            if _other_venue_key(key, venue):
+            if _other_venue_key(key, owned):
                 continue
-            item = _rows(item, venue, False)
+            item = _rows(item, owned, False)
             if item is not _DROP:
                 out[key] = item
         return out
     if type(value) is list:
-        return [v for v in (_rows(v, venue, False) for v in value) if v is not _DROP]
+        return [v for v in (_rows(v, owned, False) for v in value) if v is not _DROP]
     return value
 
 
