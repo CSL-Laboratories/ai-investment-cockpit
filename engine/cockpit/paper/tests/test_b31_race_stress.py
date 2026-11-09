@@ -1,7 +1,7 @@
 """B31 race and stress: cash refused at send time, never clamped, under many threads (CSL-801).
 
 Lane CSL-801 (3.14t race and stress), measured on this branch's base, Cockpit #320 head
-f6611bf3. B31 (Lucas t1414u; PRODUCT.md 055cc7a5, 4.2): "size to cash, refuse at the gateway
+31aa87a6e935dd8bceeaa7fa7b4097b24b0366a4. B31 (Lucas t1414u; PRODUCT.md 055cc7a5, 4.2): "size to cash, refuse at the gateway
 ... it never clamps or resizes."
 
 Each iteration gives every thread its own ``PaperBook`` connection to one book file (as
@@ -252,7 +252,11 @@ class B31RaceStress(unittest.TestCase):
         with mock.patch.object(gw_mod.PaperBook, "_check_funds", classmethod(check_outside_booking)), \
                 mock.patch.object(gw_mod.PaperBook, "_book", book_without_send_check):
             violations, _ = run(max(3, self.iters // 2), self.seed)
-        self.assertTrue(violations, f"mutant not caught, seed {self.seed}")
+        # B31: the mutant must be caught by the database CHECK, not by any other flag.
+        caught = [item for item in violations if "CHECK constraint failed" in item]
+        other = [item for item in violations if "CHECK constraint failed" not in item]
+        self.assertTrue(caught, f"mutant not caught as a CHECK violation, seed {self.seed}: {violations}")
+        self.assertEqual(other, [], f"seed {self.seed}")
 
 
 if __name__ == "__main__":
