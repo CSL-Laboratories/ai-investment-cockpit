@@ -43,13 +43,18 @@ class SwitchTests(unittest.TestCase):
         self.assertRaises(Refused, KalshiModelFeed, {"model_fed_read": True})
         self.assertEqual(KalshiModelFeed(KalshiUseSwitches(model_fed_read=True)).model_read(lambda: "ok"), "ok")
 
-    def test_no_kalshi_order_code_and_no_other_venue_kill(self) -> None:
+    def test_no_venue_order_code_and_kalshi_kill_is_kalshi_only(self) -> None:
+        # Coinbase and Gemini have their own kill modules (F44); none of them places orders.
         for path in PAPER_DIR.glob("*.py"):
             text = path.read_text(encoding="utf-8").lower()
             with self.subTest(path=path.name):
                 self.assertNotRegex(text, r"def (place|submit|create)_?order.*kalshi|kalshi.*place_order")
-                self.assertNotIn("coinbase", text.replace("venue=\"coinbase\"", ""))
-                self.assertNotIn("gemini", text)
+            if path.name in ("kalshi.py", "coinbase.py", "gemini.py", "killswitch.py"):
+                with self.subTest(path=path.name, check="no order placement"):
+                    self.assertNotRegex(text, r"(place|submit|create)_?order")
+        kalshi = PAPER_DIR.joinpath("kalshi.py").read_text(encoding="utf-8").lower()
+        self.assertNotIn("coinbase", kalshi)
+        self.assertNotIn("gemini", kalshi)
 
 
 _DEFAULT = object()
