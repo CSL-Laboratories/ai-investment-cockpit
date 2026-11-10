@@ -1209,5 +1209,5 @@ owner-operated (Grok Bot or another service). Grok Bot is still an operator
 procedure, not a selected product integration (PD-007). Invariants, PLAN
 delivery order, and paper/live gates are unchanged.
 
-Record: [research/agent-swarm-cloud-host-2026-09-11.md](research/agent-swarm-cloud-host-2026-09-11.md).
-Pipeline pin: [research/agent-swarm-pipeline-2026-09-11.md](research/agent-swarm-pipeline-2026-09-11.md).
+Record: [research/agent-swarm-cloud-host-2026-09-11.md](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-agent-swarm-cloud-host-2026-09-11-source-history-01/result.md).
+Pipeline pin: [research/agent-swarm-pipeline-2026-09-11.md](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-agent-swarm-pipeline-2026-09-11-source-history-01/result.md).

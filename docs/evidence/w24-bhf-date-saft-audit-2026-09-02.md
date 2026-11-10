@@ -139,6 +139,6 @@ Fail-closed: **do not** forge edges, **do not** seed `COCKPIT_MERGER_WATCHLIST`,
 
 - This note: `/workspace/w24-evidence/w24-bhf-date-saft-audit-2026-09-02.md`
 - Prior: `w24-bhf-date-audit-2026-09-01.md`, `w24-natural-head-rescreen-2026-09-02.md`, `w24-post62-rescreen-2026-09-01.md`, `w24-parser-miss-audit-2026-09-01.md`
-- JSON: `w24-prospective-intake-natural-head-rescreen-2026-09-02.json`
+- JSON: `w24-prospective-intake-natural-head-rescreen-2026-09-02.json`, now in csl-research at [`contracts/ai-investment-cockpit/evidence/legacy/w24-prospective-intake-natural-head-rescreen-2026-09-02.json`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/w24-prospective-intake-natural-head-rescreen-2026-09-02.json) (merge of csl-research #314)
 - Filings: `rescreen-raw/docs/BHF__*028*`, `BHF__*031*`, `SAFT__*023*`, FSEA/SLP/CCO primaries under same tree
 - Grammar: `/workspace/ai-investment-cockpit/app/strategies/merger_semantics.py` (`_EXPECTED_DATE`, `_OUTSIDE_DATE`, `_CASH`, `_STOCK_CONSIDERATION`, `_verify_deal`)
