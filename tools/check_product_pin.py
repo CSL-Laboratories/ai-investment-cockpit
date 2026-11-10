@@ -32,6 +32,7 @@ KEYS = {"format", "status", "repository", "path", "commit", "sha256", "claim", "
 PINNED_FIELDS = ("path", "commit", "sha256", "claim")
 COMMIT = re.compile(r"[0-9a-f]{40}")
 SHA256 = re.compile(r"[0-9a-f]{64}")
+UNSAFE_PATH = re.compile(r"[\x00-\x1f\x7f\ud800-\udfff]")
 
 
 def errors(pin: object) -> list[str]:
@@ -66,6 +67,8 @@ def errors(pin: object) -> list[str]:
             parts = path.split("/")
             if path.startswith("/") or "\\" in path or {"", ".", ".."} & set(parts):
                 out.append("path must be a relative posix path inside the repository")
+            if UNSAFE_PATH.search(path):
+                out.append("path must not contain NUL, control characters or lone surrogates")
         if not isinstance(pin.get("commit"), str) or not COMMIT.fullmatch(pin["commit"]):
             out.append("commit must be a full 40-hex lowercase SHA")
         if not isinstance(pin.get("sha256"), str) or not SHA256.fullmatch(pin["sha256"]):
@@ -92,6 +95,9 @@ def vault_errors(pin: dict, vault: Path) -> list[str]:
     except (OSError, subprocess.CalledProcessError) as exc:
         detail = exc.stderr.decode("utf-8", "replace").strip() if hasattr(exc, "stderr") else exc
         return [f"cannot read {spec} from {vault}: {detail}"]
+    except ValueError as exc:
+        # NUL or a lone surrogate in an argument; escape so the message prints on UTF-8 stdout.
+        return [f"cannot read {spec!a} from {str(vault)!a}: {str(exc)!a}"]
     digest = hashlib.sha256(blob).hexdigest()
     if digest != pin["sha256"]:
         return [f"sha256 mismatch for {spec}: pinned {pin['sha256']}, vault has {digest}"]

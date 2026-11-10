@@ -2,9 +2,11 @@
 """Tests for tools/check_product_pin.py, plus a check of the committed pin (CSL-585, CSL-796)."""
 from __future__ import annotations
 
+import contextlib
 import copy
 import hashlib
 import importlib.util
+import io
 import json
 import subprocess
 import tempfile
@@ -36,6 +38,7 @@ PINNED = {
     "sha256": "b" * 64,
     "claim": "Recursion product contract, candidate.",
 }
+UNSAFE_PATHS = {"NUL": "contracts/a\u0000b.md", "lone surrogate": "contracts/a\ud800b.md"}
 
 
 class ShapeTests(unittest.TestCase):
@@ -87,6 +90,14 @@ class ShapeTests(unittest.TestCase):
                     pin_check.errors({**PINNED, "path": path}),
                 )
 
+    def test_pinned_rejects_nul_control_and_surrogate_paths(self) -> None:
+        for path in (*UNSAFE_PATHS.values(), "a\nb.md", "a\x1fb.md", "a\x7fb.md", "a\udfffb.md"):
+            with self.subTest(path=ascii(path)):
+                self.assertIn(
+                    "path must not contain NUL, control characters or lone surrogates",
+                    pin_check.errors({**PINNED, "path": path}),
+                )
+
     def test_rejects_other_repository_unknown_keys_and_status(self) -> None:
         pin = copy.deepcopy(PINNED)
         pin["repository"] = "CSL-Laboratories/recursion"
@@ -132,6 +143,27 @@ class VaultTests(unittest.TestCase):
 
     def test_awaiting_needs_no_vault(self) -> None:
         self.assertEqual(pin_check.vault_errors(AWAITING, self.vault / "absent"), [])
+
+    def test_nul_and_surrogate_paths_fail_without_raising(self) -> None:
+        for name, path in UNSAFE_PATHS.items():
+            with self.subTest(path=name):
+                problems = pin_check.vault_errors({**self.pin("0" * 64), "path": path}, self.vault)
+                self.assertEqual(len(problems), 1)
+                self.assertTrue(problems[0].startswith("cannot read"))
+                problems[0].encode("utf-8")  # printable on a UTF-8 stdout
+
+    def test_main_fails_cleanly_on_nul_and_surrogate_paths(self) -> None:
+        for name, path in UNSAFE_PATHS.items():
+            pin_file = self.vault / "bad.pin.json"
+            pin_file.write_text(json.dumps({**self.pin("0" * 64), "path": path}), encoding="utf-8")
+            for extra in ([], ["--vault", str(self.vault)]):
+                with self.subTest(path=name, extra=extra):
+                    stdout = io.StringIO()
+                    with contextlib.redirect_stdout(stdout):
+                        code = pin_check.main(["--pin", str(pin_file), *extra])
+                    self.assertEqual(code, 1)
+                    self.assertTrue(stdout.getvalue().startswith("FAIL: "))
+                    stdout.getvalue().encode("utf-8")
 
 
 if __name__ == "__main__":
