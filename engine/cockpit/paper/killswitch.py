@@ -4,7 +4,9 @@ The order halt is set first, in one committed step, before any venue is called. 
 paper book's working orders are cancelled (the paper book is a venue too: O42, K1), and
 each venue kill runs (Kalshi, Coinbase, Gemini, or any object with the same ``kill()``
 contract); one venue failing or raising never skips the others. The paper cancel is
-``confirmed`` only when the book re-read after it lists no working order. The switch is
+``confirmed`` only when the book re-read after it lists no working order. The halt is
+``confirmed`` only when ``paper_book.halted()`` reads ``True`` after the halt call; a
+callable that returns without this book reading halted stays pending. The switch is
 ``confirmed`` only when the halt, the paper cancel and every venue are; otherwise it is
 ``pending`` and calling ``kill`` again retries.
 """
@@ -24,6 +26,7 @@ class VenueKill(Protocol):
 class _PaperBook(Protocol):
     def cancel_all(self) -> int: ...
     def working(self) -> int: ...
+    def halted(self) -> bool: ...
 
 
 class PaperBookKill:
@@ -54,17 +57,25 @@ class PaperBookKill:
 class KillSwitch:
     def __init__(self, halt: Callable[[], object], venues: Sequence[VenueKill], *, paper_book: _PaperBook) -> None:
         self._halt = halt
+        self._paper_book = paper_book
         self._paper = PaperBookKill(paper_book)
         self._venues = tuple(venues)
         self._lock = threading.Lock()
 
     def kill(self) -> dict:
         with self._lock:
-            halt = "confirmed"
+            halt_error = None
             try:
                 self._halt()
             except Exception as exc:  # noqa: BLE001 - still reach every venue
-                halt = "error:" + type(exc).__name__
+                halt_error = "error:" + type(exc).__name__
+            try:
+                read = self._paper_book.halted()
+            except Exception as exc:  # noqa: BLE001
+                halt = halt_error or ("error:" + type(exc).__name__)
+            else:
+                # Confirm on the book read, not on the callable returning.
+                halt = "confirmed" if read is True else (halt_error or "not_halted")
             venues = []
             for venue in (self._paper, *self._venues):
                 try:

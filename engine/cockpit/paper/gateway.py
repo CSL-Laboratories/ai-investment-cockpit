@@ -28,6 +28,15 @@ held shares. A sell of held shares is allowed at any book size, including below 
 $2,000 equity floor that frozen ``app/`` enforces; there is no buy floor either
 (PRODUCT.md 4.2, "Size cap in the new engine"; O47).
 
+Step 3 is the charge. Every local refusal that does not need the core (steps 1 and 2,
+a duplicate intent id, and the early funds read) is checked before it. If the booking
+still refuses after a successful charge because of a halt or the same intent committed
+during the core call, ``submit`` raises ``Refused`` with code ``leftover_charge`` and the
+booking refusal in ``.cause``. Nothing is booked and the charge is not reversed: the core
+exposes no reverse. A funds refusal at the booking (cash or shares that dropped during the
+core call) keeps its own code (``cash_insufficient``, ``holding_insufficient``), as B31's
+tests require; it also follows the charge and is not reversed.
+
 ``PaperBook`` has no public booking method: its private ``_book`` refuses unless handed a
 capability object that only ``OrderGateway.submit`` passes, and a static test refuses any
 other reference to either name in ``engine/``.
@@ -58,9 +67,12 @@ _GATEWAY_ONLY = object()  # booking capability; never exported or passed outside
 
 
 class Refused(Exception):
-    def __init__(self, code: str) -> None:
-        super().__init__(code)
+    """``cause`` is set only on ``leftover_charge``: the booking refusal that followed the charge."""
+
+    def __init__(self, code: str, cause: str | None = None) -> None:
+        super().__init__(code if cause is None else code + ":" + cause)
         self.code = code
+        self.cause = cause
         self.audit_seq: int | None = None
 
 
@@ -239,6 +251,10 @@ class PaperBook:
         with self._lock:
             self._check_funds(self._db, intent)
 
+    def _has_intent(self, intent_id: str) -> bool:
+        with self._lock:
+            return self._db.execute("SELECT 1 FROM orders WHERE intent_id = ?", (intent_id,)).fetchone() is not None
+
     def _book(self, intent: Intent, token: object, audit: dict | None = None) -> int:
         """Write a working order. Not a public API: only ``OrderGateway.submit`` holds the token,
         after the risk pass, the funds check and the core's checks (PRODUCT.md 4.2 "One way in")."""
@@ -403,7 +419,7 @@ class OrderGateway:
         """Audit a refusal before it is raised. The refusal stands even if the audit write fails."""
         try:
             exc.audit_seq = self._book.record_refusal(dict(self._audit_base(intent, effect), stage=stage,
-                                                           code=exc.code))
+                                                           code=str(exc)))  # a leftover charge keeps its cause
         except Exception:  # noqa: BLE001 - an audit failure never turns a refusal into a pass
             exc.audit_seq = None
         return exc
@@ -429,6 +445,10 @@ class OrderGateway:
         stage = "risk"
         try:
             effect = self.risk_pass(intent)
+            # Every local refusal that does not need the core comes before the charge.
+            stage = "duplicate"
+            if self._book._has_intent(intent.intent_id):
+                raise Refused("intent_duplicate")
             stage = "funds"
             self._book.check_funds(intent)  # early read; the booking re-checks in its own transaction
             stage = "authorize"
@@ -437,7 +457,14 @@ class OrderGateway:
             except CoreRefused as exc:
                 raise Refused("core:" + exc.code) from None
             stage = "book"
-            seq = self._book._book(intent, _GATEWAY_ONLY, self._audit_base(intent, effect))
+            try:
+                seq = self._book._book(intent, _GATEWAY_ONLY, self._audit_base(intent, effect))
+            except Refused as exc:
+                if exc.code not in ("order_halted", "intent_duplicate"):
+                    raise  # a funds refusal at the booking keeps its own code (B31)
+                # The core has charged and nothing was booked (a halt or the same intent committed
+                # during the core call). There is no reverse: say so, never a clean refusal.
+                raise Refused("leftover_charge", exc.code) from None
         except Refused as exc:
             raise self._refuse(exc, stage, intent, effect) from None
         return {"status": "paper_working", "intent_id": intent.intent_id, "seq": seq,
