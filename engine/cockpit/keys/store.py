@@ -10,14 +10,19 @@ allowed for user-entered model-provider keys only; broker and venue keys stay ke
   owner-only file (``0600`` file in a ``0700`` directory, both owned by the running user, neither a
   symlink). Every directory from ``/`` to that directory is root-owned or the running user's, and
   no other user can rename an entry along that chain (a root-owned sticky directory such as ``/tmp``
-  may be world-writable; same rule as Recursion ``_owned_chain``). Each component is opened with
-  ``O_DIRECTORY|O_NOFOLLOW`` and the file is read and replaced through that directory fd;
+  may be world-writable; same rule as Recursion ``_owned_chain``). Each directory component is
+  opened with ``O_DIRECTORY|O_NOFOLLOW``. The key file and the lock are opened with ``O_NOFOLLOW`` and
+  ``O_NONBLOCK`` after an ``lstat`` that refuses a symlink, fifo, socket, or device. The fd is
+  checked again after open. Secret bytes are written only after the mode is ``0600``. A failed
+  save wipes and unlinks its temp file and fsyncs the directory; a successful rename fsyncs it too;
 * saves and deletes take an exclusive ``fcntl.flock`` on ``.keys.lock`` in that directory around the
   read-modify-write, so one save cannot drop a key another save just wrote;
 * a ``broker`` or ``venue`` key goes only in the OS keyring; with no keyring it is refused, never
   written to a file;
-* an existing key file, lock or directory that is not owner-only is refused on read and on write,
-  and is never repaired silently.
+* an existing key file or directory that is not owner-only is refused on read and on write.
+  ``put`` and ``delete`` also refuse a lock that is not owner-only. ``get`` does not open the lock.
+  Whether a loose lock should refuse a read is an open owner question (package README); this
+  module does not choose. Nothing here repairs a loose file, lock, or directory.
 
 The keyring is injected (``get``/``set``/``delete``); this module imports no keyring library and makes
 no provider, venue or network call. Error messages name the key, never its value. Frozen ``app/`` keeps
@@ -145,18 +150,30 @@ class KeyStore:
 
     def _read_file(self, dir_fd: int) -> dict[str, str]:
         _require_final_dir(dir_fd)
-        flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+        name = _entry_name(self._path)
         try:
-            fd = os.open(_entry_name(self._path), flags, dir_fd=dir_fd)
+            st = os.lstat(name, dir_fd=dir_fd)
         except FileNotFoundError:
             return {}
+        problem = _entry_problem(st)
+        if problem is not None:
+            raise KeyRefused("key_file_not_owner_only", problem)
+        try:
+            fd = os.open(name, _file_flags(os.O_RDONLY), dir_fd=dir_fd)
         except OSError as exc:
             raise KeyRefused("key_file_not_owner_only", _errno_name(exc)) from None
-        with os.fdopen(fd, "rb") as fh:
-            st = os.fstat(fh.fileno())
-            if not stat.S_ISREG(st.st_mode) or st.st_uid != os.geteuid() or st.st_mode & 0o077:
-                raise KeyRefused("key_file_not_owner_only", oct(st.st_mode & 0o777))
-            raw = fh.read()
+        try:
+            problem = _entry_problem(os.fstat(fd))
+            if problem is not None:
+                raise KeyRefused("key_file_not_owner_only", problem)
+            raw = bytearray()
+            while True:
+                block = os.read(fd, 65536)
+                if not block:
+                    break
+                raw += block
+        finally:
+            os.close(fd)
         try:
             data = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, ValueError):
@@ -179,28 +196,28 @@ class KeyStore:
         }
         body = json.dumps(payload, indent=1).encode("utf-8")
         tmp = f".keys-{os.getpid()}-{secrets.token_hex(8)}"
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
-        fd = os.open(tmp, flags, 0o600, dir_fd=dir_fd)
+        fd = -1
+        renamed = False
         try:
+            fd = os.open(tmp, _file_flags(os.O_WRONLY | os.O_CREAT | os.O_EXCL), 0o600, dir_fd=dir_fd)
             os.fchmod(fd, 0o600)
-            view = memoryview(body)
-            while view:
-                wrote = os.write(fd, view)
-                if wrote <= 0:
-                    raise OSError(errno.EIO, "short write")
-                view = view[wrote:]
+            problem = _entry_problem(os.fstat(fd))
+            if problem is not None:
+                raise KeyRefused("key_file_not_owner_only", problem)
+            _write_all(fd, body)
             os.fsync(fd)
-        except BaseException:
-            os.close(fd)
-            _unlink_quiet(dir_fd, tmp)
-            raise
-        os.close(fd)
-        try:
             _refuse_existing_unless_owner_only(dir_fd, name)
             os.rename(tmp, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
-        except BaseException:
-            _unlink_quiet(dir_fd, tmp)
-            raise
+            renamed = True
+            _fsync_dir(dir_fd)
+        finally:
+            if fd >= 0 and not renamed:
+                _discard_temp(dir_fd, fd, tmp)
+            elif fd >= 0:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
 
 
 def key_file_state(path: str) -> str:
@@ -222,9 +239,10 @@ def key_file_state(path: str) -> str:
             return "no_file_yet"
         except OSError:
             return "file_not_owner_only"
-        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.geteuid() or st.st_mode & 0o077:
-            return f"file_not_owner_only({oct(st.st_mode & 0o777)})"
-        return "owner_only"
+        problem = _entry_problem(st)
+        if problem is None:
+            return "owner_only"
+        return _problem_state(problem)
     finally:
         os.close(fd)
 
@@ -288,31 +306,47 @@ def _require_final_dir(fd: int) -> None:
 
 
 def _open_lock(dir_fd: int) -> int:
-    flags = os.O_RDWR | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
-    created = False
-    try:
+    flags = _file_flags(os.O_RDWR)
+    for _ in range(2):
         try:
-            fd = os.open(_LOCK_NAME, flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=dir_fd)
-            created = True
-        except FileExistsError:
+            st = os.lstat(_LOCK_NAME, dir_fd=dir_fd)
+        except FileNotFoundError:
+            try:
+                fd = os.open(_LOCK_NAME, flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=dir_fd)
+            except FileExistsError:
+                continue
+            except OSError as exc:
+                raise KeyRefused("key_file_not_owner_only", _errno_name(exc)) from None
+            return _checked_lock(dir_fd, fd, created=True)
+        problem = _entry_problem(st)
+        if problem is not None:
+            raise KeyRefused("key_file_not_owner_only", problem)
+        try:
             fd = os.open(_LOCK_NAME, flags, dir_fd=dir_fd)
-    except OSError as exc:
-        raise KeyRefused("key_file_not_owner_only", _errno_name(exc)) from None
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise KeyRefused("key_file_not_owner_only", _errno_name(exc)) from None
+        return _checked_lock(dir_fd, fd, created=False)
+    raise KeyRefused("key_file_not_owner_only", "lock")
+
+
+def _checked_lock(dir_fd: int, fd: int, created: bool) -> int:
     try:
         if created:
             os.fchmod(fd, 0o600)
-        st = os.fstat(fd)
-    except OSError as exc:
-        os.close(fd)
+        problem = _entry_problem(os.fstat(fd))
+        if problem is not None:
+            raise KeyRefused("key_file_not_owner_only", problem)
+        return fd
+    except BaseException:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
         if created:
             _unlink_quiet(dir_fd, _LOCK_NAME)
-        raise KeyRefused("key_file_not_owner_only", _errno_name(exc)) from None
-    if not stat.S_ISREG(st.st_mode) or st.st_uid != os.geteuid() or st.st_mode & 0o077:
-        os.close(fd)
-        if created:
-            _unlink_quiet(dir_fd, _LOCK_NAME)
-        raise KeyRefused("key_file_not_owner_only", oct(st.st_mode & 0o777))
-    return fd
+        raise
 
 
 def _refuse_existing_unless_owner_only(dir_fd: int, name: str) -> None:
@@ -320,8 +354,98 @@ def _refuse_existing_unless_owner_only(dir_fd: int, name: str) -> None:
         st = os.lstat(name, dir_fd=dir_fd)
     except FileNotFoundError:
         return
-    if not stat.S_ISREG(st.st_mode) or st.st_uid != os.geteuid() or st.st_mode & 0o077:
-        raise KeyRefused("key_file_not_owner_only", oct(st.st_mode & 0o777))
+    problem = _entry_problem(st)
+    if problem is not None:
+        raise KeyRefused("key_file_not_owner_only", problem)
+
+
+def _file_flags(base: int) -> int:
+    return base | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+
+
+def _entry_problem(st: os.stat_result) -> str | None:
+    """None when ``st`` is a regular ``0600`` file owned by us. Otherwise a short reason.
+
+    Type is decided from ``lstat``/``fstat`` mode bits. A symlink is not followed, and a fifo,
+    socket, or device is not reported as merely a mode.
+    """
+
+    if stat.S_ISLNK(st.st_mode):
+        return "symlink"
+    if stat.S_ISFIFO(st.st_mode):
+        return "fifo"
+    if stat.S_ISCHR(st.st_mode) or stat.S_ISBLK(st.st_mode):
+        return "device"
+    if stat.S_ISSOCK(st.st_mode):
+        return "socket"
+    if stat.S_ISDIR(st.st_mode):
+        return "directory"
+    if not stat.S_ISREG(st.st_mode):
+        return "special"
+    if st.st_uid != os.geteuid():
+        return "uid"
+    if st.st_mode & 0o077:
+        return oct(st.st_mode & 0o777)
+    return None
+
+
+def _problem_state(problem: str) -> str:
+    if problem.startswith("0o"):
+        return f"file_not_owner_only({problem})"
+    return f"file_not_owner_only:{problem}"
+
+
+def _write_all(fd: int, body: bytes) -> None:
+    view = memoryview(body)
+    while view:
+        wrote = os.write(fd, view)
+        if wrote <= 0:
+            raise OSError(errno.EIO, "short write")
+        view = view[wrote:]
+
+
+def _wipe_fd(fd: int) -> None:
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode) or st.st_size <= 0:
+        return
+    os.lseek(fd, 0, os.SEEK_SET)
+    remaining = st.st_size
+    zeros = b"\0" * 4096
+    while remaining > 0:
+        chunk = zeros if remaining >= len(zeros) else zeros[:remaining]
+        wrote = os.write(fd, chunk)
+        if wrote <= 0:
+            raise OSError(errno.EIO, "short wipe")
+        remaining -= wrote
+    os.fsync(fd)
+
+
+def _fsync_dir(dir_fd: int) -> None:
+    try:
+        os.fsync(dir_fd)
+    except OSError as exc:
+        # Some filesystems cannot fsync a directory. A real I/O error still fails the save.
+        if exc.errno not in (errno.EINVAL, errno.ENOTSUP, getattr(errno, "EOPNOTSUPP", 0)):
+            raise
+
+
+def _discard_temp(dir_fd: int, fd: int, name: str) -> None:
+    try:
+        _wipe_fd(fd)
+    except OSError:
+        pass
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+    try:
+        os.unlink(name, dir_fd=dir_fd)
+    except OSError:
+        pass
+    try:
+        _fsync_dir(dir_fd)
+    except OSError:
+        pass
 
 
 def _unlink_quiet(dir_fd: int, name: str) -> None:

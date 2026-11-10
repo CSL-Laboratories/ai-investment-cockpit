@@ -6,6 +6,7 @@ Fakes only: an in-memory keyring and temp directories. No provider, venue, netwo
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import re
@@ -16,7 +17,9 @@ import threading
 import unittest
 from pathlib import Path
 
-from cockpit.keys import KeyRefused, KeyStore
+from cockpit.keys import KeyRefused, KeyStore, KeychainStatus
+from cockpit.keys.detect import doctor
+from cockpit.keys.store import key_file_state
 
 FAKE = "fake-key-not-real-0123"
 KEYS_DIR = Path(__file__).resolve().parents[1]
@@ -199,6 +202,250 @@ class NoKeychainTests(unittest.TestCase):
         self.store.put("model_provider", "openai", FAKE)
         body = json.loads(Path(self.path).read_text())
         self.assertEqual((body["version"], body["kind"], sorted(body["keys"])), (1, "model_provider", ["openai"]))
+
+    def test_fifo_read_does_not_block(self) -> None:
+        os.mkfifo(self.path, 0o600)
+        err = self._returns_within(1.5, lambda: self.store.get("model_provider", "openai"), self.path)
+        self.assertIsInstance(err, KeyRefused)
+        self.assertEqual(err.cause, "key_file_not_owner_only")
+        self.assertEqual(key_file_state(self.path), "file_not_owner_only:fifo")
+        none = KeychainStatus(False, "", "no_keychain_backend")
+        self.assertEqual(doctor(none, self.path)["level"], "fail")
+
+    def test_fifo_lock_save_does_not_block(self) -> None:
+        lock = os.path.join(self.dir, ".keys.lock")
+        os.mkfifo(lock, 0o600)
+        err = self._returns_within(1.5, lambda: self.store.put("model_provider", "openai", FAKE), lock)
+        self.assertIsInstance(err, KeyRefused)
+        self.assertEqual(err.cause, "key_file_not_owner_only")
+        self.assertFalse(os.path.lexists(self.path))
+        self._assert_no_secret_leftover()
+
+    def test_symlink_and_socket_are_classified_from_lstat(self) -> None:
+        target = os.path.join(self.dir, "elsewhere.json")
+        payload = json.dumps({"version": 1, "kind": "model_provider", "keys": {"openai": FAKE}}).encode()
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.write(fd, payload)
+        os.close(fd)
+        os.symlink(target, self.path)
+        self.assertEqual(key_file_state(self.path), "file_not_owner_only:symlink")
+        err = self._returns_within(1.5, lambda: self.store.get("model_provider", "openai"), None)
+        self.assertIsInstance(err, KeyRefused)
+        self.assertEqual(err.cause, "key_file_not_owner_only")
+        self.assertNotIn(FAKE, str(err))
+        os.unlink(self.path)
+
+        os.mknod(self.path, stat.S_IFSOCK | 0o600)
+        self.assertTrue(stat.S_ISSOCK(os.lstat(self.path).st_mode))
+        self.assertEqual(key_file_state(self.path), "file_not_owner_only:socket")
+        err = self._returns_within(1.5, lambda: self.store.get("model_provider", "openai"), None)
+        self.assertIsInstance(err, KeyRefused)
+        self.assertEqual(err.cause, "key_file_not_owner_only")
+
+    def test_character_device_is_not_classified_as_a_regular_file(self) -> None:
+        import cockpit.keys.store as store_mod
+
+        self.assertTrue(hasattr(store_mod, "_entry_problem"), "classifier missing")
+        st = os.lstat("/dev/null")
+        if not stat.S_ISCHR(st.st_mode):
+            self.skipTest("/dev/null is not a character device")
+        self.assertEqual(store_mod._entry_problem(st), "device")
+        node = os.path.join(self.dir, "node")
+        try:
+            os.mknod(node, stat.S_IFCHR | 0o600, os.makedev(1, 3))
+        except OSError as exc:
+            if exc.errno != errno.EPERM:
+                raise
+        else:
+            self.assertEqual(key_file_state(node), "file_not_owner_only:device")
+
+    def test_close_error_does_not_leave_a_temp_key(self) -> None:
+        import cockpit.keys.store as store_mod
+
+        real_close = store_mod.os.close
+
+        def close(fd: int) -> None:
+            try:
+                target = os.readlink(f"/proc/self/fd/{fd}")
+            except OSError:
+                target = ""
+            real_close(fd)
+            if ".keys-" in target:
+                raise OSError(errno.EIO, "simulated close failure")
+
+        store_mod.os.close = close
+        old = os.umask(0)
+        try:
+            try:
+                self.store.put("model_provider", "openai", FAKE)
+            except OSError:
+                pass
+        finally:
+            os.umask(old)
+            store_mod.os.close = real_close
+        temps = [name for name in os.listdir(self.dir) if name.startswith(".keys-")]
+        self.assertEqual(temps, [])
+        self._assert_no_secret_leftover()
+        if os.path.lexists(self.path):
+            self.assertEqual(stat.S_IMODE(os.lstat(self.path).st_mode), 0o600)
+
+    def test_failed_save_does_not_leave_a_readable_secret(self) -> None:
+        import cockpit.keys.store as store_mod
+
+        real_rename = store_mod.os.rename
+        real_unlink = store_mod.os.unlink
+        real_fsync = store_mod.os.fsync
+        events: list[str] = []
+
+        def rename(*args: object, **kwargs: object) -> None:
+            raise OSError(errno.EIO, "simulated rename failure")
+
+        def unlink(path: str, *args: object, **kwargs: object) -> None:
+            if isinstance(path, str) and path.startswith(".keys-"):
+                raise OSError(errno.EPERM, "simulated unlink failure")
+            real_unlink(path, *args, **kwargs)
+
+        def fsync(fd: int) -> None:
+            kind = "dir" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file"
+            events.append("fsync-" + kind)
+            real_fsync(fd)
+
+        store_mod.os.rename = rename
+        store_mod.os.unlink = unlink
+        store_mod.os.fsync = fsync
+        old = os.umask(0)
+        try:
+            with self.assertRaises(OSError):
+                self.store.put("model_provider", "openai", FAKE)
+        finally:
+            os.umask(old)
+            store_mod.os.rename = real_rename
+            store_mod.os.unlink = real_unlink
+            store_mod.os.fsync = real_fsync
+        temps = [name for name in os.listdir(self.dir) if name.startswith(".keys-")]
+        self.assertTrue(temps)
+        for name in temps:
+            path = os.path.join(self.dir, name)
+            st = os.lstat(path)
+            self.assertTrue(stat.S_ISREG(st.st_mode))
+            self.assertEqual(stat.S_IMODE(st.st_mode), 0o600)
+            data = _read_nofollow(path)
+            self.assertIsNotNone(data)
+            self.assertNotIn(FAKE.encode(), data or b"")
+        self.assertIn("fsync-dir", events)
+
+    def test_save_fsyncs_the_directory_after_rename(self) -> None:
+        import cockpit.keys.store as store_mod
+
+        real_rename = store_mod.os.rename
+        real_fsync = store_mod.os.fsync
+        events: list[str] = []
+
+        def rename(*args: object, **kwargs: object) -> None:
+            events.append("rename")
+            real_rename(*args, **kwargs)
+
+        def fsync(fd: int) -> None:
+            kind = "dir" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file"
+            events.append("fsync-" + kind)
+            real_fsync(fd)
+
+        store_mod.os.rename = rename
+        store_mod.os.fsync = fsync
+        try:
+            self.assertEqual(self.store.put("model_provider", "openai", FAKE), "owner_only_file")
+        finally:
+            store_mod.os.rename = real_rename
+            store_mod.os.fsync = real_fsync
+        self.assertIn("rename", events)
+        self.assertIn("fsync-dir", events)
+        self.assertGreater(events.index("fsync-dir"), events.index("rename"))
+        self.assertEqual(stat.S_IMODE(os.lstat(self.path).st_mode), 0o600)
+
+    def test_key_file_opens_are_nofollow_nonblock_and_0600(self) -> None:
+        import cockpit.keys.store as store_mod
+
+        real_open = store_mod.os.open
+        seen: list[int] = []
+
+        def opened(path: str, flags: int, mode: int = 0o777, *, dir_fd: int | None = None) -> int:
+            if not flags & os.O_DIRECTORY:
+                seen.append(flags)
+            return real_open(path, flags, mode, dir_fd=dir_fd)
+
+        store_mod.os.open = opened
+        old = os.umask(0)
+        try:
+            self.store.put("model_provider", "openai", FAKE)
+            self.assertEqual(self.store.get("model_provider", "openai"), FAKE)
+        finally:
+            os.umask(old)
+            store_mod.os.open = real_open
+        self.assertTrue(seen)
+        for flags in seen:
+            self.assertTrue(flags & os.O_NOFOLLOW, oct(flags))
+            self.assertTrue(flags & os.O_NONBLOCK, oct(flags))
+        self.assertEqual(stat.S_IMODE(os.lstat(self.path).st_mode), 0o600)
+        lock = os.lstat(os.path.join(self.dir, ".keys.lock"))
+        self.assertEqual(stat.S_IMODE(lock.st_mode), 0o600)
+        self.assertTrue(stat.S_ISREG(lock.st_mode))
+
+    def _returns_within(self, seconds: float, fn, unblock: str | None):
+        box: list[BaseException] = []
+
+        def run() -> None:
+            try:
+                fn()
+            except BaseException as exc:  # thread boundary; the caller asserts the type
+                box.append(exc)
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        thread.join(seconds)
+        if thread.is_alive():
+            if unblock is not None:
+                try:
+                    fd = os.open(unblock, os.O_WRONLY | os.O_NONBLOCK)
+                    os.close(fd)
+                except OSError:
+                    pass
+                thread.join(seconds)
+            self.fail("call blocked on a special file")
+        return box[0] if box else None
+
+    def _assert_no_secret_leftover(self) -> None:
+        marker = FAKE.encode()
+        for name in os.listdir(self.dir):
+            if name == "model-keys.json":
+                continue
+            path = os.path.join(self.dir, name)
+            if not stat.S_ISREG(os.lstat(path).st_mode):
+                continue
+            data = _read_nofollow(path)
+            self.assertNotIn(marker, data or b"", name)
+            self.assertEqual(stat.S_IMODE(os.lstat(path).st_mode) & 0o077, 0, name)
+
+
+def _read_nofollow(path: str) -> bytes | None:
+    flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        chunks: list[bytes] = []
+        while True:
+            block = os.read(fd, 65536)
+            if not block:
+                break
+            chunks.append(block)
+            if sum(len(part) for part in chunks) > 1_000_000:
+                break
+        return b"".join(chunks)
+    finally:
+        os.close(fd)
 
 
 class StaticTests(unittest.TestCase):
