@@ -151,8 +151,8 @@ separate bounded package with this official positive frozen alongside conditiona
 mixed-consideration, multi-value, amendment, and cross-document negative cases. The independent
 held-out ≥95% precision audit and zero-false-positive eligibility requirement remain unchanged.
 The repair and its adversarial/full-suite evidence are recorded in
-[[bug109-w24-real-sec-grammar-2026-08-18]]. It merged in PR #43; the strict post-merge result is
-separately recorded in [[w24-post-bug109-rescreen-2026-08-18]].
+[`evidence/bug109-w24-real-sec-grammar-2026-08-18.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/bug109-w24-real-sec-grammar-2026-08-18.md). It merged in PR #43; the strict post-merge result is
+separately recorded in [`evidence/w24-post-bug109-rescreen-2026-08-18.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/w24-post-bug109-rescreen-2026-08-18.md).
 
 ## Gate status
 

@@ -8,7 +8,13 @@
     "current_runtime_invariants_preserved": true,
     "live_authority_granted": false,
     "contract_acceptance": "accepted_human_digest_receipt",
+    "founder_github_allowlist": [
+      "CDanTheMan",
+      "NotSkittlz",
+      "samir-shah-ahmed"
+    ],
     "acceptance_receipt": {
+      "kind": "linear_digest",
       "linear_issue": "CSL-212",
       "human_linear_comment_id": "25c50b43-6de4-4f6d-9652-47a649ccc5ae",
       "mirror_comment_id": "6aafae80-2f96-449c-947c-90bcaf8380b6",
@@ -36,6 +42,7 @@
       ]
     },
     "superseded_acceptance_receipt": {
+      "kind": "linear_digest",
       "linear_issue": "CSL-212",
       "human_linear_comment_id": "736a6b55-2b20-463c-86e1-9553a5692996",
       "mirror_comment_id": "15c6f540-3686-49eb-a9e7-d93083313e85",

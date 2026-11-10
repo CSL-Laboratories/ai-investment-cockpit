@@ -15,7 +15,15 @@ For the replacement program, read
 [SUCCESSOR-PRODUCT.md](docs/replacement/SUCCESSOR-PRODUCT.md),
 [MONTH-PROGRAM.md](docs/replacement/MONTH-PROGRAM.md) and the exact acceptance
 record in [program.json](docs/replacement/program.json). Accepted bytes and scoped
-gates remain controlling. Follow [AGENTS.md's founder decision and integration rules](AGENTS.md#founder-decisions-and-integration)
+gates remain controlling. Until the ISSUE-CONTRACT amendment of 2026-10-25 is accepted
+and promoted, only the Lucas Linear digest receipt recorded in `program.json` is exact
+acceptance; once it is, a checker-pinned founder GitHub PR approval will also count, as
+defined in [AGENTS.md](AGENTS.md#founder-decisions-and-integration). That amendment is
+proposed, not accepted, in `CSL-Laboratories/csl-research` commit
+`d885c2de7228ab4e886b93165d30013e4c8bc5fd`, path
+`contracts/ai-investment-cockpit/amendments/ISSUE-CONTRACT-2026-10-25.md`, SHA-256
+`0b756e0777520f7b8a83d518b6b5887e96ed98eb8481d9d3840ddf4418c9b345`, via
+[csl-research #58](https://github.com/CSL-Laboratories/csl-research/pull/58) (not merged). Follow [AGENTS.md's founder decision and integration rules](AGENTS.md#founder-decisions-and-integration)
 for operational authority; they do not amend accepted contracts, activate R2a or
 unlock live capital. Founders merge after the required current-head reviews and checks;
 agents never merge. A founder's own PR requires another founder's approval before merge,
@@ -36,7 +44,9 @@ the paper/live switch. The lists in AGENTS.md are examples, not a boundary; a
 failing test there is not a clear defect to fix alone.
 
 Current implementation:
-A solo-developer, subscription-powered, **human-gated** AI investing copilot.
+A three-founder, subscription-powered, **human-gated** AI investing copilot.
+The three founders are Lucas (NotSkittlz), Chaandan (CDanTheMan), and
+Samir (samir-shah-ahmed).
 **Paper-first** — no live capital moves until the pre-live gates pass. Think of it
 as **two engines**:
 1. **Awareness + discipline** — the reliable value (time saved, not missing things,
@@ -72,7 +82,8 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 ## Current load-bearing rules
 - **New data feeds are UNTRUSTED input** — wrap in `<untrusted-content>`,
   canary-scan (SEC-02). Inv 3 validates model *output*; this governs tool/feed *input*.
-- **The current operator surface is Discord + loopback API.** A general
+- **The current operator surface is Discord + loopback API** (current state,
+  pending the CP0 amendment on CSL-511 / #274; not the product target). A general
   `OperatorSurface` abstraction is planned, not merged; do not create new order authority or
   assume another adapter already exists.
 - **The current order universe is a static operator-approved allowlist.** Dynamic discovery is
@@ -80,11 +91,13 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 - **Execution stays model-free.** Models serve awareness/reasoning only.
 - **Research/dev host is Cursor Cloud Agent Linux VM.** Cursor-native fresh
   sessions are preferred; Codex/OpenCode development routes require exact-host
-  qualification and admitted budgets. Devin is retired from research/dev swarm dispatch;
-  its GitHub PR-review role in `AGENTS.md` remains active. Muse synthesis requires
+  qualification and admitted budgets. Devin is retired from this cockpit's
+  research/dev swarm dispatch only; its GitHub PR-review role in `AGENTS.md`
+  remains active. Devin may still post research briefs, which, like all
+  research, land in CSL-Laboratories/csl-research. Muse synthesis requires
   a different model family; OpenRouter/Hive are capped fallback synthesis only.
-  Current process: `docs/research/agent-swarm-rebase-2026-09-14.md`.
-  Cloud handoff: `docs/research/cursor-cloud-rdt-handoff-2026-09-14.md`.
+  Historical Cloud process (legacy, frozen): `docs/research/agent-swarm-rebase-2026-09-14.md`.
+  Historical Cloud handoff (legacy, frozen): `docs/research/cursor-cloud-rdt-handoff-2026-09-14.md`.
   No swarm broker tools, secrets or soak starts. Product authority is unchanged.
 
 ## Session workflow
@@ -99,8 +112,28 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
    production). For process-only work, use one admitted CSL issue with
    `REGISTER: none`; do not allocate a package solely for that work. Confirm
    the chosen scope and its deterministic gate before writing code. Decision
-   or direction work: see `AGENTS.md` Linear-first (assignee or claimant
-   Parallel Task API brief; Grok Bots do not research or resolve those issues).
+   or direction work: see `AGENTS.md` Linear-first. A Grok Bot coordinator may
+   research and recommend; attribute the brief as
+   `Grok Bot, preparing research for <owner>`. Only the designated human
+   decision-maker, or an explicitly authorized research team, decides.
+   Publishing a brief never marks the issue decided, never clears a hold, and
+   never authorizes implementation. Every research pass posts a digest on the
+   Linear issue and a `submissions/<record_id>/` record in
+   CSL-Laboratories/csl-research (README, AGENTS.md, templates,
+   `tools/check_submission.py`) and opens a PR there before releasing the
+   issue claim. Research may use any deep-research source the team has, such
+   as Parallel, Exa, Claude Deep Research, Open Deep Research, ChatGPT Deep
+   Research or the web. Each run records its tool, its run id and its cost
+   (or `unknown` plus a reason) in its csl-research record. Every new
+   non-public doc goes to csl-research through a PR there; this repo only
+   links to it. Gate and operational evidence that code or a runbook in this repo already reads
+   stays in `docs/evidence/` until the CSL-536 move round that lists it
+   (csl-research #263, approved by Lucas on Oct 30 in his CSL-536
+   [receipt 95789ee9](https://linear.app/csl-laboratories/issue/CSL-536#comment-95789ee9)), and no earlier than
+   the date the list gives it. Contract fixtures under
+   `docs/replacement/outcomes/**` stay. Existing files stay until the
+   CSL-536 move round that lists them, and no earlier than the date the list gives them.
+   `docs/research/**` is legacy (no new files).
 3. Implement. Preserve the invariants. Add tests alongside.
 4. Run the gates (below). Green before you stop.
 5. **Do not re-litigate settled decisions** — the corpus is a one-way pipeline
@@ -119,6 +152,10 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
    Never edit `.github/workflows/**` unless a Linear issue
    explicitly assigned by a human asks for it; bots mark ready with their own
    identity, never `GITHUB_TOKEN`.
+
+Before writing on a shared PR branch, check the current Linear owner/claim and
+active writers. For a confirmed collision, follow the
+[per-PR pause procedure](docs/ci-runbook.md#5-stop-or-roll-back-automation).
 
 ## Hard rules
 - Never put an LLM on the order or risk path.
@@ -169,10 +206,13 @@ decision.
 - **Data feeds:** `app/ingest/`. **LLM pipelines:** `app/workflows/`.
 - **Operator surfaces:** `app/bridge/` (Discord) and `app/orchestrator/app.py` (loopback API).
   A general `app/surfaces/` abstraction is not merged.
-- **Design corpus:** `docs/` — index at `docs/README.md`. Current Cloud process:
-  `docs/research/agent-swarm-rebase-2026-09-14.md`.
+- **Design corpus:** `docs/` — index at `docs/README.md`. Historical Cloud
+  process (legacy, frozen): `docs/research/agent-swarm-rebase-2026-09-14.md`.
+  Current research landing: CSL-Laboratories/csl-research.
 
 ## Review loop
+
+For writer collisions, use the [pause and resumption checklist](docs/ci-runbook.md#5-stop-or-roll-back-automation).
 
 Devin reviews → Claude fixes (`claude.yml`) → stuck threads are picked up by
 [`.github/workflows/stuck-thread-watch.yml`](.github/workflows/stuck-thread-watch.yml),
