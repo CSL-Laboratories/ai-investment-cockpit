@@ -113,7 +113,9 @@ class GeminiKillTests(unittest.TestCase):
                   {"revoke_grant": "rejected", "revoke_probe": "unauthorized"}),
                  (dict(probe_reply=TimeoutError()), "pending", {"revoke_probe": "error:TimeoutError"}),
                  (dict(probe_reply={"unauthorized": True}), "pending", {"revoke_probe": "unreadable_probe"}),
-                 (dict(probe_reply="x" * 40), "pending", {"revoke_probe": "x" * 32}),
+                 # Any undeclared string is unreadable; no prefix of it is stored.
+                 *((dict(probe_reply=reply), "pending", {"revoke_probe": "unreadable_probe"})
+                   for reply in ("x" * 40, "confirmed", "cancelled", "UNAUTHORIZED", "unauthorized ")),
                  (dict(), "confirmed", {"revoke_probe": "unauthorized"}))
         for attrs, state, detail in cases:
             with self.subTest(attrs=attrs):
