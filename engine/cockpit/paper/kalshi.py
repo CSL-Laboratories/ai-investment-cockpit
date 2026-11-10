@@ -24,10 +24,10 @@ skips the other. Status is truthful:
   (``accepted`` exactly ``True``) and an authenticated call made after it is refused as
   unauthorized. Otherwise it is ``pending``. The ``revoke_key`` detail holds only the
   revoke attempt (``rejected``, ``error:<Exc>`` or ``unreadable_response``; absent after
-  an accepted revoke). The last probe is reported apart, under ``revoke_probe``: the
-  probe's reply (``unauthorized``, ``authorized``), ``unreadable_probe`` or
-  ``error:<Exc>``. It stays in the detail after a confirm, and an unauthorized probe
-  after a rejected or raised revoke confirms nothing.
+  an accepted revoke). The last probe is reported apart, under ``revoke_probe``:
+  ``unauthorized``, ``authorized``, ``unreadable_probe`` (any other reply; no part of it
+  is stored) or ``error:<Exc>``. It stays in the detail after a confirm, and an
+  unauthorized probe after a rejected or raised revoke confirms nothing.
 
 The overall status is ``confirmed`` only when both are. Calling ``kill`` again keeps
 the halt and retries what is not yet confirmed. A cancel confirm is kept only once the
@@ -161,7 +161,8 @@ class KalshiKill:
         if type(probe) is not str:
             self._detail["revoke_probe"] = "unreadable_probe"
             return
-        self._detail["revoke_probe"] = probe[:32]
+        # Only a declared reply is stored; no part of any other string is.
+        self._detail["revoke_probe"] = probe if probe in ("unauthorized", "authorized") else "unreadable_probe"
         if accepted and probe == "unauthorized":
             self._state["revoke_key"] = "confirmed"
 

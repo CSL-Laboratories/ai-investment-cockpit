@@ -33,13 +33,15 @@ $2,000 equity floor that frozen ``app/`` enforces; there is no buy floor either
 Step 3 is the charge. Every local refusal that does not need the core (steps 1 and 2,
 a duplicate intent id, and the early funds read) is checked before it. An intent id
 already in the book is refused at ``request_approval`` too, before an approval is drawn.
-Any booking refusal after a successful charge (a halt, the same intent, or funds: cash or
-shares that dropped during the core call) makes ``submit`` raise ``Refused`` with code
-``leftover_charge`` and the booking refusal in ``.cause`` (``order_halted``,
-``intent_duplicate``, ``cash_insufficient``, ``holding_insufficient``). Any other booking
-exception after the charge (a locked book, say) is a ``leftover_charge`` as well, with
-``.cause`` ``booking_error:<Class>``. Nothing is booked and the charge is not reversed:
-the core exposes no reverse. A retry needs a new approval and will charge again.
+Any booking refusal after a successful charge, whatever its code, makes ``submit`` raise
+``Refused`` with code ``leftover_charge`` and that refusal's code in ``.cause`` (for example
+``order_halted``, ``intent_duplicate``, ``cash_insufficient``, ``holding_insufficient`` or
+``account_unknown``, when a halt, the same intent or a funds change lands during the core
+call). Any other booking exception after the charge (a locked book, say) is a
+``leftover_charge`` as well, with ``.cause`` ``booking_error:<Class>``. Nothing is booked
+and the charge is not reversed: the core exposes no reverse. A retry needs a new approval
+and will charge again. The audit stage ``book`` alone does not say whether the core
+charged; only a ``leftover_charge`` code does.
 
 ``PaperBook`` has no public booking method: its private ``_book`` refuses unless handed a
 capability object that only ``OrderGateway.submit`` passes, and a static test refuses any
@@ -71,8 +73,8 @@ _GATEWAY_ONLY = object()  # booking capability; never exported or passed outside
 
 
 class Refused(Exception):
-    """``cause`` is set only on ``leftover_charge``: the booking refusal that followed the charge,
-    or ``booking_error:<Class>`` for any other booking exception."""
+    """``cause`` is set only on ``leftover_charge``: the code of whichever booking refusal followed
+    the charge, or ``booking_error:<Class>`` for any other booking exception."""
 
     def __init__(self, code: str, cause: str | None = None) -> None:
         super().__init__(code if cause is None else code + ":" + cause)
@@ -470,9 +472,9 @@ class OrderGateway:
             try:
                 seq = self._book._book(intent, _GATEWAY_ONLY, audit)
             except Refused as exc:
-                # The core has charged and nothing was booked (a halt, the same intent, or cash or
-                # shares that dropped during the core call). There is no reverse: say so, never a
-                # clean refusal.
+                # The core has charged and nothing was booked. Any booking refusal lands here, with
+                # its code as the cause (a halt, the same intent or a funds change during the core
+                # call, for example). There is no reverse: say so, never a clean refusal.
                 raise Refused("leftover_charge", exc.code) from None
             except Exception as exc:
                 raise Refused("leftover_charge", "booking_error:" + type(exc).__name__) from exc

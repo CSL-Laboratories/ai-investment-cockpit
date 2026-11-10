@@ -235,6 +235,24 @@ class GatewayTests(unittest.TestCase):
         # Refused before the core: no request reached it and no approval was drawn.
         self.assertEqual((self.core.calls, len(self.core.approvals)), (calls, drawn))
 
+    def test_cancelled_intent_id_is_spent(self) -> None:
+        """A cancelled row stays in the book, so its intent id is refused at request and at
+        submit alike; a new order needs a new intent id."""
+        approval = self._approved(INTENT)  # drawn before the booking; none can be drawn after it
+        self.gw.submit(INTENT, self._approved(INTENT), AUTHORITY)
+        self.assertEqual(self.gw.cancel_all(), 1)
+        self.assertEqual(self.book.orders(), [("i-1", 1, "cancelled")])
+        spent, calls, drawn = self.core.spent, list(self.core.calls), len(self.core.approvals)
+        self._refused("intent_duplicate", self.gw.request_approval, INTENT)
+        self._refused("intent_duplicate", self.gw.submit, INTENT, approval, AUTHORITY)
+        # Both refused before the core: no request, no approval drawn or used, no charge.
+        self.assertEqual((self.core.spent, self.core.calls, len(self.core.approvals)), (spent, calls, drawn))
+        self.assertEqual(self.core.approvals[approval]["state"], "approved")
+        self.assertEqual(self.book.orders(), [("i-1", 1, "cancelled")])
+        fresh = replace(INTENT, intent_id="i-2")
+        self.assertEqual(self.gw.submit(fresh, self._approved(fresh), AUTHORITY)["status"], "paper_working")
+        self.assertEqual(self.book.orders(), [("i-1", 1, "cancelled"), ("i-2", 2, "working")])
+
     def test_unbooked_intent_stays_requestable(self) -> None:
         """Only the book decides: an approval that was never granted (the fake core's stand-in
         for expired or vetoed), refused, or used without a booking leaves the id requestable."""
@@ -286,6 +304,25 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(spent, 100_000)
         self.assertEqual(self.core.approvals[approval]["state"], "approved")
         self.assertEqual(self.book.orders(), [("i-1", 1, "working")])
+
+    def test_pre_charge_duplicate_audit_stages(self) -> None:
+        """An intent id already in the book is refused before the core at submit (stage ``book``)
+        and at request (stage ``request``), both plain ``intent_duplicate``. Stage ``book`` alone
+        does not say the core charged; only a ``leftover_charge`` code does."""
+        approval = self._approved(INTENT)  # drawn before the booking; none can be drawn after it
+        self.gw.submit(INTENT, self._approved(INTENT), AUTHORITY)
+        spent, calls = self.core.spent, list(self.core.calls)
+        for stage, fn, args in (("book", self.gw.submit, (INTENT, approval, AUTHORITY)),
+                                ("request", self.gw.request_approval, (INTENT,))):
+            with self.subTest(stage=stage):
+                with self.assertRaises(Refused) as ctx:
+                    fn(*args)
+                self.assertEqual((ctx.exception.code, ctx.exception.cause, str(ctx.exception)),
+                                 ("intent_duplicate", None, "intent_duplicate"))
+                self.assertEqual([(r["event"], r["stage"], r["code"], r["intent_id"])
+                                  for r in self.book.audit() if r["seq"] == ctx.exception.audit_seq],
+                                 [("refused", stage, "intent_duplicate", "i-1")])
+        self.assertEqual((self.core.spent, self.core.calls), (spent, calls))  # neither reached the core
 
     def test_only_the_gateway_books_orders(self) -> None:
         """Static check: no other file in engine/ (plugin and loader callers included) writes the
