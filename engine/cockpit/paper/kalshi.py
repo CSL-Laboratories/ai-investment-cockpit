@@ -20,8 +20,10 @@ skips the other. Status is truthful:
   remaining count, and any order the listing still shows is ``pending``. An
   empty listing that still carries a ``cursor``, a ``truncated`` other than
   ``False`` or a ``remaining`` other than ``0`` is unfinished, so ``pending``;
-* the key revoke is ``confirmed`` only when an authenticated call made after it is
-  refused as unauthorized. Otherwise it is ``pending``.
+* the key revoke is ``confirmed`` only when the revoke call itself was accepted
+  (``accepted`` exactly ``True``) and an authenticated call made after it is refused as
+  unauthorized. Otherwise it is ``pending``: a rejected or raised revoke keeps its
+  ``rejected`` or ``error:`` detail even when the probe says unauthorized.
 
 The overall status is ``confirmed`` only when both are. Calling ``kill`` again keeps
 the halt and retries what is not yet confirmed. A cancel confirm is kept only once the
@@ -131,24 +133,31 @@ class KalshiKill:
         self._detail.pop("cancel_all", None)
 
     def _revoke(self) -> None:
+        accepted = False
         try:
             out = self._transport.revoke_api_key()
         except Exception as exc:  # noqa: BLE001
             self._detail["revoke_key"] = "error:" + type(exc).__name__
-            out = None
-        if type(out) is dict and out.get("accepted") is False:
-            self._detail["revoke_key"] = "rejected"
-        # Confirmation is only an authenticated call refused after the revoke.
+        else:
+            accepted = type(out) is dict and out.get("accepted") is True
+            if accepted:
+                self._detail.pop("revoke_key", None)  # an earlier attempt's detail is not this one's
+            elif type(out) is dict and out.get("accepted") is False:
+                self._detail["revoke_key"] = "rejected"
+            else:
+                self._detail["revoke_key"] = "unreadable_response"
+        # Confirmation needs both: this revoke accepted, and an authenticated call refused
+        # after it. An unauthorized probe after a rejected or raised revoke confirms nothing.
         try:
             probe = self._transport.probe_authenticated()
         except Exception as exc:  # noqa: BLE001
             self._detail.setdefault("revoke_key", "probe_error:" + type(exc).__name__)
             return
-        if probe == "unauthorized":
+        if probe != "unauthorized":
+            self._detail.setdefault("revoke_key", "probe:" + str(probe)[:32])
+        elif accepted:
             self._state["revoke_key"] = "confirmed"
             self._detail.pop("revoke_key", None)
-        else:
-            self._detail.setdefault("revoke_key", "probe:" + str(probe)[:32])
 
     def kill(self) -> dict:
         with self._lock:

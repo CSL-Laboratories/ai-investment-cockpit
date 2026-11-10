@@ -99,6 +99,37 @@ class GeminiKillTests(unittest.TestCase):
                                  ("pending", "confirmed", "pending"))
                 self.assertEqual(out["detail"]["revoke_grant"], detail)
 
+    def test_unauthorized_probe_after_a_failed_revoke_confirms_nothing(self) -> None:
+        """Finding 3: confirm only when the revoke was accepted and the probe is unauthorized."""
+        class ProbeUnauthorized(MockGemini):
+            def probe_authenticated(self):
+                self.log.append("probe")
+                return "unauthorized"
+        for reply, detail in (({"accepted": False}, "rejected"),
+                              (ConnectionError(), "error:ConnectionError"),
+                              ({}, "unreadable_response"), ({"accepted": 1}, "unreadable_response"),
+                              (None, "unreadable_response")):
+            with self.subTest(reply=reply):
+                venue = ProbeUnauthorized(orders=["g1"])
+                venue.revoke_works = False  # the grant still lists and cancels; only the probe says no
+                venue.revoke_reply = reply
+                out = self._kill(venue).kill()
+                self.assertEqual(venue.log, ["halt", "cancel_all", "list", "revoke", "probe"])
+                self.assertEqual((out["status"], out["cancel_all"], out["revoke_grant"]),
+                                 ("pending", "confirmed", "pending"))
+                self.assertEqual(out["detail"], {"revoke_grant": detail})
+
+    def test_cancel_timeout_still_revokes_after_it_and_stays_pending(self) -> None:
+        """O70: halt, cancel, revoke in one kill; a confirmed revoke never confirms a timed-out cancel."""
+        venue = MockGemini(orders=["g1"])
+        venue.cancel_error = TimeoutError()
+        out = self._kill(venue).kill()
+        self.assertEqual(venue.log, ["halt", "cancel_all", "revoke", "probe"])
+        self.assertEqual((out["status"], out["halt"], out["cancel_all"], out["revoke_grant"]),
+                         ("pending", "confirmed", "pending", "confirmed"))
+        self.assertEqual(out["detail"], {"cancel_all": "error:TimeoutError"})
+        self.assertEqual(venue.open, ["g1"])
+
     def test_retry_only_what_is_not_confirmed(self) -> None:
         venue = MockGemini(orders=["g1"])
         venue.revoke_works = False

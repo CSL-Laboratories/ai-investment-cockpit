@@ -98,6 +98,42 @@ class KillSwitchTests(unittest.TestCase):
         self.assertEqual((out["status"], out["halt"]), ("pending", "error:OSError"))
         self.assertEqual(len(out["venues"]), 4)
 
+    def test_cancel_timeout_with_confirmed_revoke_keeps_the_switch_pending(self) -> None:
+        """O70: a venue whose cancel timed out is pending, and so is the switch, whatever its revoke says."""
+        cases = (
+            ("kalshi", "cancel_all", "revoke_key", "error:TimeoutError",
+             lambda halt, log: KalshiKill(halt, FakeTransport(cancel=TimeoutError(), log=log))),
+            ("coinbase", "cancel_orders", "revoke_grant", "unconfirmed:1",
+             lambda halt, log: CoinbaseKill(halt, self._coinbase_timing_out(log))),
+            ("gemini", "cancel_all", "revoke_grant", "error:TimeoutError",
+             lambda halt, log: GeminiKill(halt, self._gemini_timing_out(log))),
+        )
+        for index, (name, cancel_key, revoke_key, detail, make) in enumerate(cases, start=1):
+            with self.subTest(venue=name):
+                log = []
+                halt, venues = self._venues(log)
+                venues[index - 1] = make(halt, log)
+                out = self._switch(halt, venues).kill()
+                venue = out["venues"][index]
+                self.assertEqual((venue["venue"], venue["status"], venue[cancel_key], venue[revoke_key]),
+                                 (name, "pending", "pending", "confirmed"))
+                self.assertEqual(venue["detail"], {cancel_key: detail})
+                self.assertEqual((out["status"], out["halt"]), ("pending", "confirmed"))
+                others = [v["status"] for i, v in enumerate(out["venues"]) if i != index]
+                self.assertEqual(others, ["confirmed"] * 3)
+
+    @staticmethod
+    def _coinbase_timing_out(log):
+        venue = MockCoinbase(orders=["c1", "c2"], log=log)
+        venue.fail_cancel["c2"] = TimeoutError()
+        return venue
+
+    @staticmethod
+    def _gemini_timing_out(log):
+        venue = MockGemini(orders=["g1"], log=log)
+        venue.cancel_error = TimeoutError()
+        return venue
+
     def test_gemini_order_listed_after_a_pending_revoke_keeps_the_switch_pending(self) -> None:
         log = []
         venue = MockGemini(orders=["g1"], log=log)

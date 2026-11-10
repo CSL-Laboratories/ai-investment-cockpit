@@ -11,6 +11,12 @@ The only path that books an order in ``engine/``. Every order goes, in this orde
 4. booking, in one SQLite ``BEGIN IMMEDIATE`` transaction that re-reads the halt flag,
    so a halt committed by any process before the booking wins.
 
+Step 3 is the charge. Every local refusal that does not need the core (steps 1 and 2,
+and a duplicate intent id) is checked before it. If the booking still refuses after a
+successful charge (a halt or the same intent committed during the core call), ``submit``
+raises ``Refused`` with code ``leftover_charge`` and the booking refusal in ``.cause``.
+Nothing is booked and the charge is not reversed: the core exposes no reverse.
+
 ``PaperBook`` has no public booking method: its private ``_book`` refuses unless handed a
 capability object that only ``OrderGateway.submit`` passes, and a static test refuses any
 other reference to either name in ``engine/``.
@@ -39,9 +45,12 @@ _GATEWAY_ONLY = object()  # booking capability; never exported or passed outside
 
 
 class Refused(Exception):
-    def __init__(self, code: str) -> None:
-        super().__init__(code)
+    """``cause`` is set only on ``leftover_charge``: the booking refusal that followed the charge."""
+
+    def __init__(self, code: str, cause: str | None = None) -> None:
+        super().__init__(code if cause is None else code + ":" + cause)
         self.code = code
+        self.cause = cause
 
 
 @dataclass(frozen=True)
@@ -127,6 +136,10 @@ class PaperBook:
     def halted(self) -> bool:
         with self._lock:
             return bool(self._db.execute("SELECT v FROM state WHERE k = 'halted'").fetchone()[0])
+
+    def _has_intent(self, intent_id: str) -> bool:
+        with self._lock:
+            return self._db.execute("SELECT 1 FROM orders WHERE intent_id = ?", (intent_id,)).fetchone() is not None
 
     def _book(self, intent: Intent, token: object) -> int:
         """Write a working order. Not a public API: only ``OrderGateway.submit`` holds the token,
@@ -231,10 +244,18 @@ class OrderGateway:
 
     def submit(self, intent: Intent, approval_id: str, authority: dict | None) -> dict:
         effect = self.risk_pass(intent)
+        # Every local refusal that does not need the core comes before the charge.
+        if self._book._has_intent(intent.intent_id):
+            raise Refused("intent_duplicate")
         try:
             core = self._core.authorize(effect, approval_id, authority)
         except CoreRefused as exc:
             raise Refused("core:" + exc.code) from None
-        seq = self._book._book(intent, _GATEWAY_ONLY)
+        try:
+            seq = self._book._book(intent, _GATEWAY_ONLY)
+        except Refused as exc:
+            # The core has charged and nothing was booked (a halt or the same intent committed
+            # during the core call). There is no reverse: say so, never a clean refusal.
+            raise Refused("leftover_charge", exc.code) from None
         return {"status": "paper_working", "intent_id": intent.intent_id, "seq": seq,
                 "notional_minor": effect["amount_minor"], "digest": core.get("digest")}

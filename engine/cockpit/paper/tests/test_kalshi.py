@@ -108,6 +108,43 @@ class KillTests(unittest.TestCase):
         self.assertEqual((out["status"], out["cancel_all"], out["revoke_key"]), ("pending", "pending", "confirmed"))
         self.assertEqual(out["detail"]["cancel_all"], "error:TimeoutError")
 
+    def test_cancel_timeout_still_revokes_after_it_and_stays_pending(self) -> None:
+        """O70: halt, cancel, revoke in one kill; a confirmed revoke never confirms a timed-out cancel."""
+        kill, log = self._kill(cancel=TimeoutError())
+        out = kill.kill()
+        self.assertEqual(log, ["halt", "cancel_all", "revoke_api_key", "probe"])
+        self.assertEqual((out["status"], out["halt"], out["cancel_all"], out["revoke_key"]),
+                         ("pending", "confirmed", "pending", "confirmed"))
+        self.assertEqual(out["detail"], {"cancel_all": "error:TimeoutError"})
+        # Still pending on the next kill while the cancel keeps timing out; no second revoke.
+        log.clear()
+        out = kill.kill()
+        self.assertEqual(log, ["halt", "cancel_all"])
+        self.assertEqual((out["status"], out["cancel_all"], out["revoke_key"]), ("pending", "pending", "confirmed"))
+
+    def test_unauthorized_probe_after_a_failed_revoke_confirms_nothing(self) -> None:
+        """Finding 3: confirm only when the revoke was accepted and the probe is unauthorized."""
+        for revoke, detail in (({"accepted": False}, "rejected"),
+                               (ConnectionError(), "error:ConnectionError"),
+                               ({}, "unreadable_response"), ({"accepted": 1}, "unreadable_response"),
+                               ({"accepted": "true"}, "unreadable_response"), (None, "unreadable_response")):
+            with self.subTest(revoke=revoke):
+                kill, log = self._kill(revoke=revoke, probe="unauthorized")
+                out = kill.kill()
+                self.assertEqual(log, ["halt", "cancel_all", "list_open_orders", "revoke_api_key", "probe"])
+                self.assertEqual((out["status"], out["cancel_all"], out["revoke_key"]),
+                                 ("pending", "confirmed", "pending"))
+                self.assertEqual(out["detail"], {"revoke_key": detail})
+
+    def test_accepted_revoke_after_a_rejected_one_confirms_and_drops_the_detail(self) -> None:
+        log = []
+        transport = FakeTransport(revoke={"accepted": False}, probe="unauthorized", log=log)
+        kill = KalshiKill(lambda: log.append("halt"), transport)
+        self.assertEqual(kill.kill()["detail"], {"revoke_key": "rejected"})
+        transport.revoke = {"accepted": True}
+        out = kill.kill()
+        self.assertEqual((out["status"], out["revoke_key"], out["detail"]), ("confirmed", "confirmed", {}))
+
     def test_revoke_failure_after_cancel_reports_pending(self) -> None:
         for transport, detail in ((dict(revoke=ConnectionError(), probe="authorized"), "error:ConnectionError"),
                                   (dict(revoke={"accepted": False}, probe="authorized"), "rejected"),

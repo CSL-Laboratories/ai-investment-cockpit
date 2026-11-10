@@ -12,8 +12,10 @@ the kill cancels working orders. After the order halt is set in one committed st
   or any order still listed keeps it ``pending``. So does an empty listing that still
   carries a ``cursor``, a ``truncated`` other than ``False`` or a ``remaining`` other
   than ``0`` (unfinished). A failure never skips the revoke;
-* the OAuth grant is revoked, and the revoke is ``confirmed`` only when an authenticated
-  call made after it is refused as unauthorized. Otherwise it is ``pending``.
+* the OAuth grant is revoked, and the revoke is ``confirmed`` only when the revoke call
+  itself was accepted (``accepted`` exactly ``True``) and an authenticated call made
+  after it is refused as unauthorized. Otherwise it is ``pending``: a rejected or raised
+  revoke keeps its ``rejected`` or ``error:`` detail even when the probe says unauthorized.
 
 Which Gemini API operations back ``cancel_all`` and ``list_open_orders`` under an OAuth
 grant is not verified here; the transport is a mock (see the PR's gaps).
@@ -84,24 +86,31 @@ class GeminiKill:
             self._detail.pop("cancel_all", None)
 
     def _revoke(self) -> None:
+        accepted = False
         try:
             out = self._transport.revoke_oauth_grant()
         except Exception as exc:  # noqa: BLE001
             self._detail["revoke_grant"] = "error:" + type(exc).__name__
-            out = None
-        if type(out) is dict and out.get("accepted") is False:
-            self._detail["revoke_grant"] = "rejected"
-        # Confirmation is only an authenticated call refused after the revoke.
+        else:
+            accepted = type(out) is dict and out.get("accepted") is True
+            if accepted:
+                self._detail.pop("revoke_grant", None)  # an earlier attempt's detail is not this one's
+            elif type(out) is dict and out.get("accepted") is False:
+                self._detail["revoke_grant"] = "rejected"
+            else:
+                self._detail["revoke_grant"] = "unreadable_response"
+        # Confirmation needs both: this revoke accepted, and an authenticated call refused
+        # after it. An unauthorized probe after a rejected or raised revoke confirms nothing.
         try:
             probe = self._transport.probe_authenticated()
         except Exception as exc:  # noqa: BLE001
             self._detail.setdefault("revoke_grant", "probe_error:" + type(exc).__name__)
             return
-        if probe == "unauthorized":
+        if probe != "unauthorized":
+            self._detail.setdefault("revoke_grant", "probe:" + str(probe)[:32])
+        elif accepted:
             self._state["revoke_grant"] = "confirmed"
             self._detail.pop("revoke_grant", None)
-        else:
-            self._detail.setdefault("revoke_grant", "probe:" + str(probe)[:32])
 
     def kill(self) -> dict:
         with self._lock:

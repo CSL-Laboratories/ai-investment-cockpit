@@ -152,8 +152,42 @@ class GatewayTests(unittest.TestCase):
             other.close()
             return original(raw)
         self.gw._core = CoreClient(halt_during_core_call)
-        self._refused("order_halted", self.gw.submit, second, approval, AUTHORITY)
+        # The halt landed after the charge: a typed leftover charge, never a clean refusal.
+        with self.assertRaises(Refused) as ctx:
+            self.gw.submit(second, approval, AUTHORITY)
+        self.assertEqual((ctx.exception.code, ctx.exception.cause), ("leftover_charge", "order_halted"))
+        self.assertEqual(str(ctx.exception), "leftover_charge:order_halted")
         self.assertEqual(self.book.orders(), [])
+        self.assertEqual(self.core.spent, 100_000)  # the core charged, and nothing reversed it
+        self.assertEqual(self.core.calls.count("effect.authorize"), 1)
+
+    def test_same_intent_booked_during_the_core_call_is_a_leftover_charge(self) -> None:
+        approval = self._approved(INTENT)
+        original = self.core.__call__
+        other_core = FakeCore(budget_minor=10**9)
+
+        def book_same_intent_during_core_call(raw: bytes) -> bytes:
+            other = PaperBook(self.path)  # another gateway on the same book, as another process would
+            gw = OrderGateway(plugin_id="csl.cockpit.paper", book=other, core=CoreClient(other_core),
+                              caps=Caps(max_notional_minor=500_000, max_quantity=100))
+            other_approval = gw.request_approval(INTENT)["approval_id"]
+            other_core.operator_approves(other_approval)
+            gw.submit(INTENT, other_approval, AUTHORITY)
+            other.close()
+            return original(raw)
+        self.gw._core = CoreClient(book_same_intent_during_core_call)
+        with self.assertRaises(Refused) as ctx:
+            self.gw.submit(INTENT, approval, AUTHORITY)
+        self.assertEqual((ctx.exception.code, ctx.exception.cause), ("leftover_charge", "intent_duplicate"))
+        self.assertIn("intent_duplicate", str(ctx.exception))
+        self.assertEqual(self.book.orders(), [("i-1", 1, "working")])  # only the other gateway's order
+        self.assertEqual(self.core.spent, 100_000)  # this core charged for an order that never booked
+
+    def test_clean_refusals_carry_no_cause(self) -> None:
+        with self.assertRaises(Refused) as ctx:
+            self.gw.request_approval(replace(INTENT, side="short"))
+        self.assertEqual((ctx.exception.code, ctx.exception.cause, str(ctx.exception)),
+                         ("side_invalid", None, "side_invalid"))
 
     def test_halt_race_across_processes(self) -> None:
         """Three processes submit while this one halts: nothing books after the halt commits."""
@@ -178,7 +212,14 @@ class GatewayTests(unittest.TestCase):
 
     def test_duplicate_intent_refused(self) -> None:
         self.gw.submit(INTENT, self._approved(INTENT), AUTHORITY)
-        self._refused("intent_duplicate", self.gw.submit, INTENT, self._approved(INTENT), AUTHORITY)
+        approval = self._approved(INTENT)
+        spent, calls = self.core.spent, list(self.core.calls)
+        self._refused("intent_duplicate", self.gw.submit, INTENT, approval, AUTHORITY)
+        # Caught before the core: no second charge, and the approval is not used up.
+        self.assertEqual((self.core.spent, self.core.calls), (spent, calls))
+        self.assertEqual(spent, 100_000)
+        self.assertEqual(self.core.approvals[approval]["state"], "approved")
+        self.assertEqual(self.book.orders(), [("i-1", 1, "working")])
 
     def test_only_the_gateway_books_orders(self) -> None:
         """Static check: no other file in engine/ (plugin and loader callers included) writes the
