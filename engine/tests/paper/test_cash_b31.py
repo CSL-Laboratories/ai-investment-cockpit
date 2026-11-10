@@ -5,7 +5,7 @@ the approved order already fits. The gateway still checks cash at send time and 
 anything over it; it never clamps or resizes." A held-share sell below the $2,000 equity floor
 is allowed; only buys are sized to cash.
 
-Run: ``PYTHONPATH=engine python3 -B -m unittest discover -s engine/cockpit/paper/tests -t engine -v``.
+Run: ``PYTHONPATH=engine python3 -B -m unittest discover -s engine/tests/paper -t engine -v``.
 No provider, venue, network, credential or keyring is touched.
 """
 
@@ -22,7 +22,7 @@ from dataclasses import replace
 import cockpit.paper.gateway as gateway_module
 from cockpit.paper.core_client import CoreClient, canonical
 from cockpit.paper.gateway import Caps, Intent, OrderGateway, PaperBook, Refused, create_book
-from cockpit.paper.tests.fakecore import AUTHORITY, FakeCore
+from tests.paper.fakecore import AUTHORITY, FakeCore
 
 ACCT = "paper-acct"
 
@@ -47,6 +47,18 @@ class CashTests(unittest.TestCase):
         approval = self.gw.request_approval(intent)["approval_id"]
         self.core.operator_approves(approval)
         return approval
+
+    def _racer_books(self, intent: Intent) -> None:
+        """Another process's gateway books ``intent`` on the same book file, through its own
+        risk pass, core and one-shot grant (#317: the bare ``_GATEWAY_ONLY`` books nothing)."""
+        other = PaperBook(self.path)  # another connection, as another process would
+        core = FakeCore(budget_minor=10**12)
+        gw = OrderGateway(plugin_id="csl.cockpit.paper", book=other, core=CoreClient(core),
+                          caps=Caps(10**9, 10**6))
+        approval = gw.request_approval(intent)["approval_id"]
+        core.operator_approves(approval)
+        gw.submit(intent, approval, AUTHORITY)
+        other.close()
 
     def _refused(self, code: str, fn, *args, **kwargs) -> Refused:
         with self.assertRaises(Refused) as ctx:
@@ -138,10 +150,7 @@ class CashTests(unittest.TestCase):
         original = self.core.__call__
 
         def spend_during_core_call(raw: bytes) -> bytes:
-            other = PaperBook(self.path)  # another connection, as another process would
-            # Test-only: stands in for another process's gateway booking (#317's capability).
-            other._book(replace(intent, intent_id="racer", quantity=1), gateway_module._GATEWAY_ONLY)
-            other.close()
+            self._racer_books(replace(intent, intent_id="racer", quantity=1))
             return original(raw)
         self.gw._core = CoreClient(spend_during_core_call)
         # The early funds read passed and the core charged; the booking's own check then refused.
@@ -163,10 +172,7 @@ class CashTests(unittest.TestCase):
         original = self.core.__call__
 
         def sell_during_core_call(raw: bytes) -> bytes:
-            other = PaperBook(self.path)  # another connection, as another process would
-            # Test-only: stands in for another process's gateway booking (#317's capability).
-            other._book(replace(sell, intent_id="racer", quantity=1), gateway_module._GATEWAY_ONLY)
-            other.close()
+            self._racer_books(replace(sell, intent_id="racer", quantity=1))
             return original(raw)
         self.gw._core = CoreClient(sell_during_core_call)
         exc = self._refused("leftover_charge", self.gw.submit, sell, approval, AUTHORITY)
@@ -209,8 +215,12 @@ class CashTests(unittest.TestCase):
                           quantity=quantity, limit_price_minor=10_000, run_id="run-1", connection="conn-a")
             with self.subTest(quantity=quantity):
                 self._refused("cash_insufficient", self.gw.request_approval, over)
-                # The booking's own send-time check, reached with the gateway's capability (test-only).
-                self._refused("cash_insufficient", self.book._book, over, gateway_module._GATEWAY_ONLY)
+                # The booking's own send-time check, reached with a grant forged for this gateway
+                # (test-only): it passes the grant checks and the risk pass, then cash refuses it.
+                grant = gateway_module._Grant(gateway_module._GATEWAY_ONLY, gateway=self.gw, book=self.book,
+                                              intent=over, effect=self.gw.risk_pass(over))
+                self._refused("cash_insufficient", self.book._book, over, grant)
+                self._refused("book_direct_refused", self.book._book, over, gateway_module._GATEWAY_ONLY)
         self.assertEqual(self.core.calls, [])
         self.assertEqual(self.book.orders(), [])
         self.assertEqual(self.book.available_cash_minor(ACCT), 50_000)
@@ -287,11 +297,16 @@ class CashTests(unittest.TestCase):
     def test_book_without_cash_tables_refused(self) -> None:
         d = tempfile.mkdtemp(prefix="cockpit-cash-")
         self.addCleanup(shutil.rmtree, d, True)
-        path = os.path.join(d, "old.db")
-        db = sqlite3.connect(path)
-        db.execute("CREATE TABLE audit (seq INTEGER PRIMARY KEY)")
-        db.close()
-        self._refused("book_without_cash", PaperBook, path)
+        # A real book whose only fault is a missing cash or holdings table (from before B31).
+        for table in ("cash", "holdings"):
+            with self.subTest(table=table):
+                path = os.path.join(d, "no-%s.db" % table)
+                create_book(path, cash_minor={ACCT: 1})
+                db = sqlite3.connect(path)
+                db.execute("DROP TABLE " + table)
+                db.commit()
+                db.close()
+                self._refused("book_without_cash", PaperBook, path)
 
 
 if __name__ == "__main__":

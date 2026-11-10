@@ -501,13 +501,6 @@ jobs:
       - name: engine tests
         if: hashFiles('engine/tests/**/test_*.py') != ''
         run: python -X utf8 -B -m pytest -q -p no:cacheprovider engine/tests
-      # CSL-743 (Rule CA, CP0-v2 section 6.1): the paper gateway tests under
-      # engine/cockpit/paper/tests/ count only when this job runs them. Same
-      # shape as the engine tests step above: pytest, skipped while the tree
-      # holds no test_*.py file at any depth.
-      - name: engine paper tests
-        if: hashFiles('engine/cockpit/paper/tests/**/test_*.py') != ''
-        run: python -X utf8 -B -m pytest -q -p no:cacheprovider engine/cockpit/paper/tests
       # CSL-166: the required linux gate runs pytest before any wheel exists, so
       # test_book_batch.py's skipif dropped the whole file. Build the extension
       # here and run that file. This is the existing linux job, not a new

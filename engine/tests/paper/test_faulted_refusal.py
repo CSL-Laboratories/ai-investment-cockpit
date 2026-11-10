@@ -15,7 +15,7 @@ Two layers, each a real loop of N cells:
   ``cryptography`` are importable.
 
 Run: ``PYTHONPATH=engine:/path/to/recursion/core python3 -B -m unittest discover -s
-engine/cockpit/paper/tests -t engine -v``. Paper only: no provider, venue, network,
+engine/tests/paper -t engine -v``. Paper only: no provider, venue, network,
 credential or keyring is touched.
 """
 
@@ -23,16 +23,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import sqlite3
 import unittest
 from dataclasses import replace
 
 from cockpit.paper.core_client import CoreClient, canonical
 from cockpit.paper.gateway import Caps, Intent, OrderGateway, PaperBook, Refused
-from cockpit.paper.tests import test_e2e_recursion_core as e2e
-from cockpit.paper.tests.fakecore import AUTHORITY, FakeCore
-from cockpit.paper.tests.test_gateway import _book_path
+from tests.paper import test_e2e_recursion_core as e2e
+from tests.paper.fakecore import AUTHORITY, FakeCore
+from tests.paper.test_gateway import _book_path
 
 N = 10  # cells per refusal kind; B15 asks for n >= 5
 BASE = Intent(intent_id="b15", account="paper-acct", instrument="AAPL", side="buy", quantity=1,
@@ -248,9 +247,11 @@ class FakeCoreCells(unittest.TestCase):
         self.assertEqual(self.book.orders(), [])
 
     def test_book_without_audit_table_refused(self) -> None:
-        path = os.path.join(os.path.dirname(self.path), "old.db")
+        """A real book whose only fault is the missing audit table (from before B15)."""
+        path = _book_path(self)
         db = sqlite3.connect(path)
-        db.execute("CREATE TABLE state (k TEXT PRIMARY KEY, v INTEGER NOT NULL)")
+        db.execute("DROP TABLE audit")
+        db.commit()
         db.close()
         with self.assertRaises(Refused) as ctx:
             PaperBook(path)

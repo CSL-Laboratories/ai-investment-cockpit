@@ -1,6 +1,6 @@
 """Paper OrderGateway: risk pass, cap, money, halt, cancels, core order of checks, one path.
 
-Run: ``PYTHONPATH=engine python3 -B -m unittest discover -s engine/cockpit/paper/tests -t engine -v``.
+Run: ``PYTHONPATH=engine python3 -B -m unittest discover -s engine/tests/paper -t engine -v``.
 No provider, venue, network, credential or keyring is touched.
 """
 
@@ -20,10 +20,10 @@ from unittest import mock
 
 from cockpit.paper.core_client import CoreClient
 from cockpit.paper.gateway import Caps, Intent, OrderGateway, PaperBook, Refused, create_book
-from cockpit.paper.tests.fakecore import AUTHORITY, FakeCore
 from cockpit.paper.plugin import build
+from tests.paper.fakecore import AUTHORITY, FakeCore
 
-PAPER_DIR = Path(__file__).resolve().parents[1]
+PAPER_DIR = Path(__file__).resolve().parents[2] / "cockpit" / "paper"
 INTENT = Intent(intent_id="i-1", account="paper-acct", instrument="AAPL", side="buy", quantity=10,
                 limit_price_minor=10_000, run_id="run-1", connection="conn-a")
 

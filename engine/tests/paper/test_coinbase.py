@@ -12,7 +12,7 @@ from cockpit.paper.coinbase import MAX_LIST_PAGES, CoinbaseKill
 from cockpit.paper.gateway import PaperBook, create_book
 from cockpit.paper.revoke import RevokeReply
 
-PAPER_DIR = Path(__file__).resolve().parents[1]
+PAPER_DIR = Path(__file__).resolve().parents[2] / "cockpit" / "paper"
 NO_AMBIENT = (r"(?m)os\.environ|getenv|\bopen\(|^\s*(import|from)\s+"
               r"(os|socket|ssl|urllib|http|requests|keyring|subprocess)\b")
 UNAUTH = {"revoke_probe_api": "unauthorized", "revoke_probe_refresh": "unauthorized"}
@@ -90,9 +90,22 @@ class MockCoinbase:
         return "authorized" if self.granted or self.refresh_live else "unauthorized"
 
 
+def _halting(log, errors=()):
+    """The test's own halt flag: a halt callable that logs, raises each given error once, then
+    sets the flag; and the read-back of that flag."""
+    errors, flag = list(errors), []
+    def halt():
+        log.append("halt")
+        if errors:
+            raise errors.pop()
+        flag.append(True)
+    return halt, lambda: bool(flag)
+
+
 class CoinbaseKillTests(unittest.TestCase):
-    def _kill(self, venue):
-        return CoinbaseKill(lambda: venue.log.append("halt"), venue)
+    def _kill(self, venue, errors=()):
+        halt, halted = _halting(venue.log, errors)
+        return CoinbaseKill(halt, venue, halted=halted)
 
     def test_halt_then_list_and_cancel_each_then_revoke_confirmed(self) -> None:
         venue = MockCoinbase(orders=["o1", "o2", "o3"])
@@ -358,17 +371,9 @@ class CoinbaseKillTests(unittest.TestCase):
         self.assertEqual(venue.log, ["list", "cancel:o1", "list", "revoke", "probe_api", "probe_refresh"])
         self.assertEqual((out["status"], out["halt"], out["detail"]["halt"]), ("pending", "pending", "error:OSError"))
 
-    def _failing_once_halt(self, venue):
-        errors = [OSError("disk")]
-        def halt():
-            venue.log.append("halt")
-            if errors:
-                raise errors.pop()
-        return halt
-
     def test_cancel_confirm_is_not_kept_when_the_halt_call_failed(self) -> None:
         venue = MockCoinbase(orders=["o1"])
-        kill = CoinbaseKill(self._failing_once_halt(venue), venue)
+        kill = self._kill(venue, errors=[OSError("disk")])
         out = kill.kill()
         self.assertEqual(venue.log, ["halt", "list", "cancel:o1", "list", "revoke", "probe_api", "probe_refresh"])
         self.assertEqual((out["status"], out["halt"], out["cancel_orders"], out["revoke_grant"]),
@@ -384,7 +389,9 @@ class CoinbaseKillTests(unittest.TestCase):
         venue.log.clear()
         out = kill.kill()
         self.assertEqual(venue.log, ["halt", "list", "cancel:c-new", "list"])
-        self.assertEqual((out["status"], out["halt"], out["cancel_orders"]), ("pending", "confirmed", "pending"))
+        # The revoke was confirmed before this cancel: still pending, with its own typed reason.
+        self.assertEqual((out["status"], out["halt"], out["cancel_orders"]),
+                         ("pending", "confirmed", "pending_credential_revoked"))
         self.assertEqual(out["detail"], {"cancel_orders": "remaining:1", **UNAUTH})
         self.assertEqual(venue.open, ["c-new"])
 
@@ -423,7 +430,7 @@ class CoinbaseKillTests(unittest.TestCase):
     def test_successful_halt_drops_the_stored_halt_error(self) -> None:
         venue = MockCoinbase()
         venue.revoke_works = False  # the grant stays, so the second kill can list
-        kill = CoinbaseKill(self._failing_once_halt(venue), venue)
+        kill = self._kill(venue, errors=[OSError("disk")])
         out = kill.kill()
         self.assertEqual((out["halt"], out["detail"]["halt"]), ("pending", "error:OSError"))
         venue.revoke_works = True
@@ -438,7 +445,7 @@ class CoinbaseKillTests(unittest.TestCase):
         create_book(path, cash_minor={"paper-acct": 10**15})
         book = PaperBook(path)
         self.addCleanup(book.close)
-        out = CoinbaseKill(book.halt, MockCoinbase(orders=["o1"])).kill()
+        out = CoinbaseKill(book.halt, MockCoinbase(orders=["o1"]), halted=book.halted).kill()
         self.assertEqual(out["status"], "confirmed")
         self.assertTrue(book.halted())
 

@@ -43,9 +43,23 @@ and the charge is not reversed: the core exposes no reverse. A retry needs a new
 and will charge again. The audit stage ``book`` alone does not say whether the core
 charged; only a ``leftover_charge`` code does.
 
-``PaperBook`` has no public booking method: its private ``_book`` refuses unless handed a
-capability object that only ``OrderGateway.submit`` passes, and a static test refuses any
-other reference to either name in ``engine/``.
+``PaperBook`` has no public booking method. Its private ``_book`` refuses unless handed a
+one-shot ``_Grant`` that ``OrderGateway.submit`` mints after the risk pass and the core's
+authorize, bound to that gateway, this book, that intent object and the approved effect.
+At booking, ``_book`` runs that gateway's risk pass again (halt and caps included) and
+refuses unless it returns exactly the granted effect. The module attribute
+``_GATEWAY_ONLY`` is only the grant's mint key: handing it to ``_book`` books nothing.
+
+In-process Python cannot make a capability unforgeable: code in this process can still
+reach ``_Grant`` and its mint key and forge a grant, and a forged grant does not prove
+the core's approval. What this closes is the import-the-token path, and any grant,
+forged or not, meets a gateway's risk pass and caps again at booking (a forger can
+still name a gateway it built with its own caps). A static test refuses any reference
+to ``_book`` or ``_GATEWAY_ONLY`` elsewhere in ``engine/``.
+
+``PaperBook(path)`` refuses a missing path with ``book_missing`` and a file that is not a
+paper book (zero bytes, not SQLite, or without the tables, columns and state rows that
+``create_book`` makes) with ``book_invalid``.
 
 Paper only. There is no broker, venue transport, credential or network code here, and
 no Kalshi order code at all (not even demo). Risk logic uses no model, I/O beyond the
@@ -69,7 +83,7 @@ PAPER_VENUE = "paper"
 _ID = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
 _INSTRUMENT = re.compile(r"[A-Z0-9][A-Z0-9._-]{0,31}")
 CONVICTION_FULL_BPS = 10_000  # conviction is an integer in basis points, 1..10_000
-_GATEWAY_ONLY = object()  # booking capability; never exported or passed outside this module
+_GATEWAY_ONLY = object()  # private mint key of ``_Grant``; on its own it books nothing
 
 
 class Refused(Exception):
@@ -113,6 +127,90 @@ AUDIT_SCHEMA = ("CREATE TABLE audit (seq INTEGER PRIMARY KEY, event TEXT NOT NUL
                 " run_id TEXT, connection TEXT, effect_sha256 TEXT, halt_seq INTEGER NOT NULL)")
 AUDIT_COLUMNS = ("seq", "event", "stage", "code", "plugin_id", "intent_id", "run_id", "connection",
                  "effect_sha256", "halt_seq")
+# Every table of a paper book. ``create_book`` runs exactly these and the schema check on
+# open derives its expected columns from them, so the two cannot drift.
+_TABLE_SCHEMAS = (
+    "CREATE TABLE state (k TEXT PRIMARY KEY, v INTEGER NOT NULL)",
+    "CREATE TABLE orders (intent_id TEXT PRIMARY KEY, seq INTEGER NOT NULL,"
+    " account TEXT NOT NULL, instrument TEXT NOT NULL, side TEXT NOT NULL,"
+    " quantity INTEGER NOT NULL, limit_price_minor INTEGER NOT NULL,"
+    " status TEXT NOT NULL)",
+    AUDIT_SCHEMA,
+    "CREATE TABLE cash (account TEXT PRIMARY KEY,"
+    " available_minor INTEGER NOT NULL CHECK (available_minor >= 0))",
+    "CREATE TABLE holdings (account TEXT NOT NULL, instrument TEXT NOT NULL,"
+    " available INTEGER NOT NULL CHECK (available >= 0), PRIMARY KEY (account, instrument))",
+)
+_STATE_KEYS = ("halted", "seq", "halt_seq")  # every row of ``state``; each starts at integer 0
+
+
+class _Grant:
+    """One-shot booking grant, minted only by ``OrderGateway.submit``. Not exported.
+
+    Not unforgeable (nothing in-process is): ``PaperBook._book`` re-runs the named
+    gateway's risk pass and caps before it books on any grant.
+    """
+
+    __slots__ = ("gateway", "book", "intent", "effect", "used")
+
+    def __init__(self, key: object, *, gateway: object, book: object, intent: object, effect: object) -> None:
+        if key is not _GATEWAY_ONLY:
+            raise Refused("book_direct_refused")
+        self.gateway = gateway
+        self.book = book
+        self.intent = intent
+        self.effect = effect
+        self.used = False
+
+
+def _table_columns(db: sqlite3.Connection, table: str) -> list[tuple]:
+    return [(row[1], row[2]) for row in db.execute("PRAGMA table_info(%s)" % table)]
+
+
+def _schema_columns() -> dict:
+    """Each book table's ``(name, type)`` columns, in order, read back from ``_TABLE_SCHEMAS``."""
+    db = sqlite3.connect(":memory:")
+    try:
+        for schema in _TABLE_SCHEMAS:
+            db.execute(schema)
+        tables = [row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
+        return {table: _table_columns(db, table) for table in tables}
+    finally:
+        db.close()
+
+
+_BOOK_COLUMNS = _schema_columns()
+_STATE_ROWS = sorted((key, "integer") for key in _STATE_KEYS)
+
+
+def _check_book_schema(db: sqlite3.Connection) -> None:
+    """Refuse a file that does not hold the tables, columns and state rows ``create_book`` makes.
+
+    A file without the core book (``state`` and ``orders`` exactly as ``create_book`` makes
+    them, with every state row) is ``book_invalid``. A core book from before the audit
+    table (B15) is ``book_without_audit``; one from before the cash tables (B31) is
+    ``book_without_cash``. Any other column difference is ``book_invalid``."""
+    for table in ("state", "orders"):
+        if _table_columns(db, table) != _BOOK_COLUMNS[table]:
+            raise Refused("book_invalid")
+    rows = db.execute("SELECT k, typeof(v) FROM state WHERE k IN (%s) ORDER BY k"
+                      % ", ".join("?" * len(_STATE_KEYS)), _STATE_KEYS).fetchall()
+    if rows != _STATE_ROWS:
+        raise Refused("book_invalid")
+    have = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    if "audit" not in have:
+        raise Refused("book_without_audit")
+    if not {"cash", "holdings"} <= have:
+        raise Refused("book_without_cash")
+    for table, expected in _BOOK_COLUMNS.items():
+        if _table_columns(db, table) != expected:
+            raise Refused("book_invalid")
+    if [name for name, _ in _table_columns(db, "audit")] != list(AUDIT_COLUMNS):
+        raise Refused("book_invalid")
+    rows = db.execute("SELECT k, typeof(v) FROM state WHERE k IN (%s) ORDER BY k"
+                      % ", ".join("?" * len(_STATE_KEYS)), _STATE_KEYS).fetchall()
+    if rows != _STATE_ROWS:
+        raise Refused("book_invalid")
 
 
 def create_book(path: str, *, cash_minor: dict, holdings: dict | None = None) -> None:
@@ -139,21 +237,13 @@ def create_book(path: str, *, cash_minor: dict, holdings: dict | None = None) ->
     try:
         db.execute("PRAGMA journal_mode=WAL")
         db.execute("BEGIN IMMEDIATE")  # one commit: a crash never leaves a book without its cash rows
-        db.execute("CREATE TABLE state (k TEXT PRIMARY KEY, v INTEGER NOT NULL)")
-        db.execute("INSERT INTO state VALUES ('halted', 0), ('seq', 0), ('halt_seq', 0)")
-        db.execute("CREATE TABLE orders (intent_id TEXT PRIMARY KEY, seq INTEGER NOT NULL,"
-                   " account TEXT NOT NULL, instrument TEXT NOT NULL, side TEXT NOT NULL,"
-                   " quantity INTEGER NOT NULL, limit_price_minor INTEGER NOT NULL,"
-                   " status TEXT NOT NULL)")
-        db.execute(AUDIT_SCHEMA)
+        for schema in _TABLE_SCHEMAS:
+            db.execute(schema)
+        db.executemany("INSERT INTO state VALUES (?, 0)", [(key,) for key in _STATE_KEYS])
         db.execute("CREATE TRIGGER audit_no_update BEFORE UPDATE ON audit"
                    " BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END")
         db.execute("CREATE TRIGGER audit_no_delete BEFORE DELETE ON audit"
                    " BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END")
-        db.execute("CREATE TABLE cash (account TEXT PRIMARY KEY,"
-                   " available_minor INTEGER NOT NULL CHECK (available_minor >= 0))")
-        db.execute("CREATE TABLE holdings (account TEXT NOT NULL, instrument TEXT NOT NULL,"
-                   " available INTEGER NOT NULL CHECK (available >= 0), PRIMARY KEY (account, instrument))")
         db.executemany("INSERT INTO cash VALUES (?, ?)", sorted(cash_minor.items()))
         db.executemany("INSERT INTO holdings VALUES (?, ?, ?)",
                        sorted((a, i, n) for (a, i), n in holdings.items()))
@@ -168,17 +258,22 @@ class PaperBook:
     def __init__(self, path: str) -> None:
         if not os.path.isfile(path):
             raise Refused("book_missing")
-        self._db = sqlite3.connect(path, isolation_level=None, check_same_thread=False, timeout=30)
-        self._db.execute("PRAGMA synchronous=FULL")
-        self._db.execute("PRAGMA busy_timeout=30000")
+        try:
+            db = sqlite3.connect(path, isolation_level=None, check_same_thread=False, timeout=30)
+        except sqlite3.DatabaseError:
+            raise Refused("book_invalid") from None
+        try:
+            db.execute("PRAGMA synchronous=FULL")
+            db.execute("PRAGMA busy_timeout=30000")
+            _check_book_schema(db)
+        except Refused:
+            db.close()
+            raise
+        except Exception:  # noqa: BLE001 - not SQLite, or not a paper book: never a raw error later
+            db.close()
+            raise Refused("book_invalid") from None
+        self._db = db
         self._lock = threading.Lock()
-        if not self._db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audit'").fetchone():
-            self._db.close()
-            raise Refused("book_without_audit")
-        have = {r[0] for r in self._db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-        if not {"cash", "holdings"} <= have:
-            self._db.close()
-            raise Refused("book_without_cash")
 
     def _tx(self, fn):
         with self._lock:
@@ -263,9 +358,23 @@ class PaperBook:
             return self._db.execute("SELECT 1 FROM orders WHERE intent_id = ?", (intent_id,)).fetchone() is not None
 
     def _book(self, intent: Intent, token: object, audit: dict | None = None) -> int:
-        """Write a working order. Not a public API: only ``OrderGateway.submit`` holds the token,
-        after the risk pass, the funds check and the core's checks (PRODUCT.md 4.2 "One way in")."""
-        if token is not _GATEWAY_ONLY:
+        """Write a working order. Not a public API: ``token`` must be the unused ``_Grant`` that
+        ``OrderGateway.submit`` minted for this book and this intent object, after the risk pass,
+        the funds check and the core's checks (PRODUCT.md 4.2 "One way in"). The grant is spent
+        here, and the gateway's risk pass and caps are run again before anything is written; a
+        refusal from that re-check is raised as it is. A grant can be forged in-process; see the
+        module doc."""
+        if type(token) is not _Grant:
+            raise Refused("book_direct_refused")
+        with self._lock:
+            if token.used:
+                raise Refused("book_direct_refused")
+            token.used = True  # one-shot: spent before the booking, whatever follows
+        gateway = token.gateway
+        if (token.book is not self or token.intent is not intent or type(gateway) is not OrderGateway
+                or gateway._book is not self):
+            raise Refused("book_direct_refused")
+        if gateway.risk_pass(intent) != token.effect:
             raise Refused("book_direct_refused")
 
         def run(db):
@@ -470,11 +579,14 @@ class OrderGateway:
             stage = "book"
             audit = self._audit_base(intent, effect)
             try:
-                seq = self._book._book(intent, _GATEWAY_ONLY, audit)
+                # The grant carries exactly the effect the risk pass returned and the core charged.
+                grant = _Grant(_GATEWAY_ONLY, gateway=self, book=self._book, intent=intent, effect=effect)
+                seq = self._book._book(intent, grant, audit)
             except Refused as exc:
                 # The core has charged and nothing was booked. Any booking refusal lands here, with
                 # its code as the cause (a halt, the same intent or a funds change during the core
-                # call, for example). There is no reverse: say so, never a clean refusal.
+                # call, or the risk pass re-run at booking refused, for example). There is no
+                # reverse: say so, never a clean refusal.
                 raise Refused("leftover_charge", exc.code) from None
             except Exception as exc:
                 raise Refused("leftover_charge", "booking_error:" + type(exc).__name__) from exc

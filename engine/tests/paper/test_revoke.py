@@ -9,7 +9,7 @@ from pathlib import Path
 from cockpit.paper import revoke
 from cockpit.paper.revoke import PROBE_VALUES, RevokeReply, classify_probe
 
-PAPER_DIR = Path(__file__).resolve().parents[1]
+PAPER_DIR = Path(__file__).resolve().parents[2] / "cockpit" / "paper"
 NO_AMBIENT = (r"(?m)os\.environ|getenv|\bopen\(|^\s*(import|from)\s+"
               r"(os|socket|ssl|urllib|http|requests|keyring|subprocess)\b")
 
