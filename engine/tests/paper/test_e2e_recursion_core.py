@@ -1,7 +1,8 @@
 """Cross-repo paper flow against the real Recursion core (build-order item 9). Fakes for UI only.
 
-Skipped unless the Recursion core package and ``cryptography`` are importable. Run with
-both trees on the path, for example::
+Skipped only when ``recursion_core`` or ``recursion_core.plugin_security`` itself is absent
+(awaiting recursion #328); any other import failure, including a missing ``cryptography``
+once the core imports, is an error. Run with both trees on the path, for example::
 
     PYTHONPATH=engine:/path/to/recursion/core python3 -B -m unittest \\
         discover -s engine/tests/paper -t engine -v
@@ -23,17 +24,25 @@ from pathlib import Path
 
 from cockpit.paper.gateway import Caps, Intent, PaperBook, Refused, create_book
 
+AWAITING_328 = ("awaiting recursion #328 (recursion_core.plugin_security not importable here; "
+                "pinned core aa34e9a7 has none)")
+SKIPPABLE_MISSING = frozenset({"recursion_core", "recursion_core.plugin_security"})
+CORE_SKIP = None
+
+# This skip is removed once Cockpit pins a core that includes recursion #328.
 try:
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
     from recursion_core.plugin_security import (
         ApprovalGate, Authority, ConnectionBreaker, CoreHealth, CoreService, Grant, PluginLoader,
         ReservedEffects, TrustStore, canonical, create_ledger,
     )
     from recursion_core.plugin_security.signing import key_id
-    CORE = True
-except ImportError:
-    CORE = False
+except ModuleNotFoundError as exc:
+    if exc.name not in SKIPPABLE_MISSING:
+        raise
+    CORE_SKIP = AWAITING_328
+else:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 PLUGIN_SOURCE = (Path(__file__).resolve().parents[2] / "cockpit" / "paper").joinpath("plugin.py").read_bytes()
 PLUGIN_ID = "csl.cockpit.paper"
@@ -51,7 +60,7 @@ class _Key:
         return self._k.sign(raw).hex()
 
 
-@unittest.skipUnless(CORE, "Recursion core or cryptography not importable")
+@unittest.skipIf(CORE_SKIP is not None, AWAITING_328)
 class EndToEndPaperTests(unittest.TestCase):
     def _world(self, grant_order: bool = True):
         d = tempfile.mkdtemp(prefix="cockpit-e2e-")
