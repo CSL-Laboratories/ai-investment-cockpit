@@ -265,8 +265,10 @@ type ReplayTuple = (
     i64,
 );
 
-impl<'py> FromPyObject<'py> for ReplayRow {
-    fn extract_bound(obj: &Bound<'py, PyAny>) -> PyResult<Self> {
+impl<'a, 'py> FromPyObject<'a, 'py> for ReplayRow {
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
         let (
             kind,
             mid_ticks,

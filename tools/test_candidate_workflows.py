@@ -203,7 +203,13 @@ class CandidateWorkflowTests(unittest.TestCase):
                 self.assertEqual(checkout['uses'], 'actions/checkout@v4')
                 self.assertNotIn('if', checkout)
                 self.assertEqual(evaluate(checkout['with']['ref'], **CONTEXT), FIELDS['merge_sha'])
-                self.assertEqual(checkout['with']['fetch-depth'], '2')
+                # CSL-544: only the Python run-gates jobs (linux/windows/macos)
+                # need full history for replacement-program receipt git show.
+                # filter and rust-book stay at depth 2.
+                if name == 'ci.yml' and job in ('linux', 'windows', 'macos'):
+                    self.assertEqual(checkout['with']['fetch-depth'], '0')
+                else:
+                    self.assertEqual(checkout['with']['fetch-depth'], '2')
                 self.assertTrue(evaluate(validation['if'], **CONTEXT))
                 self.assertFalse(evaluate(validation['if']))
                 # No pip cache: no cache key is derived from candidate files before validation.

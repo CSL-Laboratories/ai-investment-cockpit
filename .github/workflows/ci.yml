@@ -301,7 +301,7 @@ jobs:
               break
             fi
             if printf '%s\n' "$f" | grep -Eq \
-              '^app/|^docs/replacement/|^docs/evidence/|^docs/setup/|^docs/PLAN\.md$|^docs/research/gate-feasibility-|^\.gitignore$'; then
+              '^app/|^docs/replacement/|^docs/evidence/|^docs/setup/|^docs/PLAN\.md$|^CLAUDE\.md$|^AGENTS\.md$|^\.claude/skills/proceed-or-escalate/SKILL\.md$|^docs/research/gate-feasibility-|^\.gitignore$|^docs/ci-runbook\.md$'; then
               run_tests=true
               break
             fi
@@ -402,7 +402,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.merge_sha || github.sha }}
-          fetch-depth: 2
+          # CSL-544: these jobs run check_replacement_program.py (linux also
+          # invokes it directly; all three via run-gates/pytest). Once #275
+          # pins GitHub receipts, git show <approved_sha>:<path> needs that
+          # SHA in history. Depth 2 cannot see SHAs more than two commits back.
+          fetch-depth: 0
           persist-credentials: false
       - name: Validate exact full candidate
         if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
@@ -441,6 +445,62 @@ jobs:
           python -X utf8 -B tools/test_ci_cancel_controller.py
           python -X utf8 -B tools/test_candidate_workflows.py
           python -X utf8 -B tools/test_ci_docs_filter.py
+          python -X utf8 -B tools/test_workflow_size.py
+          python -X utf8 -B tools/test_sandbox_e3.py
+      # CSL-511 WP4: run the replacement-program and O7 checkers directly so the
+      # acceptance pins no longer depend only on the app/tests wrappers that a
+      # later app/ deletion could remove. The floor fails closed when a pinned
+      # test file is deleted, symlinked, uncollectable or thinned. Same linux
+      # job, same venv and interpreter; no new action, secret or network use.
+      - name: Replacement program checkers and test-inventory floor
+        run: |
+          python -X utf8 -B tools/check_replacement_program.py
+          python -X utf8 -B tools/check_o7_operator_contract.py
+          python -X utf8 -B -m unittest -q tools.test_replacement_program
+          python -X utf8 -B tools/check_checker_test_floor.py
+      # CSL-515 WP12: the successor/ route-consumer tests replay Recursion's Route
+      # Contract v0 conformance cases against a read-only checkout of the public
+      # CSL-Laboratories/recursion repository at the commit pinned in
+      # successor/route_consumer/contract/PIN.json (source.head_sha), which is the
+      # only place the SHA is written. A plain anonymous git fetch (no token, no
+      # credential helper, no extra action) keeps this out of the actions/checkout
+      # set whose merge-context contract tools/test_ci_dispatch_scope.py pins. The
+      # tests verify every imported file's sha256 against that pin and fail closed
+      # if the checkout is absent or altered.
+      - name: Fetch the pinned Recursion route contract (read-only, outside the workspace)
+        shell: bash
+        run: |
+          set -euo pipefail
+          pin="$(python -P -c "import json; print(json.load(open('successor/route_consumer/contract/PIN.json', encoding='utf-8'))['source']['head_sha'])")"
+          dest="$RUNNER_TEMP/recursion-route-contract"
+          rm -rf "$dest"
+          git init -q "$dest"
+          if ! git -C "$dest" fetch -q --depth 1 https://github.com/CSL-Laboratories/recursion.git "$pin" \
+            || ! git -C "$dest" checkout -q --detach FETCH_HEAD \
+            || [ "$(git -C "$dest" rev-parse HEAD)" != "$pin" ]; then
+            echo "::error::Cannot fetch the pinned Recursion route contract commit $pin (successor/route_consumer/contract/PIN.json, source.head_sha). The pin must be reachable from CSL-Laboratories/recursion master or a protected tag; a draft PR head can disappear after a push, rebase or squash-merge. Re-pin PIN.json to a commit on recursion master."
+            exit 1
+          fi
+          echo "RECURSION_ROUTE_CONTRACT_CHECKOUT=$dest" >> "$GITHUB_ENV"
+      - name: successor route-consumer tests against the pinned Recursion checkout
+        run: python -X utf8 -B -m unittest discover -s successor -t . -p 'test_*.py'
+      # CSL-512 WP17: cockpit_spine/ (PRs #290-#294) imports successor.route_consumer
+      # and its recorded-session tests need the same verified Recursion checkout.
+      # The tree is not in this branch's base, so the step runs only once it exists;
+      # until then it is skipped, and the successor step above is unconditional.
+      - name: cockpit_spine tests against the pinned Recursion checkout
+        if: hashFiles('cockpit_spine/tests/test_*.py') != ''
+        run: python -X utf8 -B -m unittest discover -s cockpit_spine -t . -p 'test_*.py'
+      # CSL-601 (Rule CA, CP0-v2 section 6.1): engine/ is the X1 new tree (CX-NEW).
+      # Its tests count as a verifier only when this job runs them. The step is
+      # skipped while engine/tests/ holds no test_*.py file at any depth (the
+      # guard recurses, as pytest does). It runs pytest, not unittest: the X1
+      # parity-cutover amendment (csl-research, CSL-633) counts an engine/
+      # successor only when pytest collects it in this job. Pinned by
+      # tools/test_ci_engine_step.py.
+      - name: engine tests
+        if: hashFiles('engine/tests/**/test_*.py') != ''
+        run: python -X utf8 -B -m pytest -q -p no:cacheprovider engine/tests
       # CSL-166: the required linux gate runs pytest before any wheel exists, so
       # test_book_batch.py's skipif dropped the whole file. Build the extension
       # here and run that file. This is the existing linux job, not a new
@@ -450,15 +510,18 @@ jobs:
         uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master 2026-10-09
         with:
           toolchain: "1.83.0"
+      - name: Install maturin for batch parity
+        if: hashFiles('rust/cockpit-py/Cargo.toml') != ''
+        working-directory: ${{ runner.temp }}
+        run: python -P -m pip install -U maturin
       - name: Batch parity against the Rust extension
         if: hashFiles('rust/cockpit-py/Cargo.toml') != ''
         run: |
           set -euo pipefail
-          python -m pip install -U maturin
-          python -m maturin build --release --manifest-path rust/cockpit-py/Cargo.toml
-          python -c "import glob, subprocess, sys; wheels = glob.glob('rust/target/wheels/cockpit_quant-*.whl'); assert wheels, 'no wheel built'; subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--force-reinstall', *wheels])"
+          python -P -m maturin build --release --manifest-path rust/cockpit-py/Cargo.toml
+          python -P -c "import glob, os, subprocess, sys; root = os.environ['GITHUB_WORKSPACE']; wheels = glob.glob(os.path.join(root, 'rust', 'target', 'wheels', 'cockpit_quant-*.whl')); assert wheels, 'no wheel built'; subprocess.check_call([sys.executable, '-P', '-m', 'pip', 'install', '--force-reinstall', *wheels], cwd=os.environ['RUNNER_TEMP'])"
           cd app
-          python -m pytest -q tests/quant/book/test_book_batch.py -ra | tee "$RUNNER_TEMP/batch-parity.txt"
+          python -P -m pytest -q tests/quant/book/test_book_batch.py -ra | tee "$RUNNER_TEMP/batch-parity.txt"
           if grep -q 'skipped' "$RUNNER_TEMP/batch-parity.txt"; then
             echo "batch parity skipped; cockpit_quant did not load"
             exit 1
@@ -660,7 +723,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.merge_sha || github.sha }}
-          fetch-depth: 2
+          # CSL-544: these jobs run check_replacement_program.py (linux also
+          # invokes it directly; all three via run-gates/pytest). Once #275
+          # pins GitHub receipts, git show <approved_sha>:<path> needs that
+          # SHA in history. Depth 2 cannot see SHAs more than two commits back.
+          fetch-depth: 0
           persist-credentials: false
       - name: Validate exact full candidate
         if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
@@ -769,7 +836,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.merge_sha || github.sha }}
-          fetch-depth: 2
+          # CSL-544: these jobs run check_replacement_program.py (linux also
+          # invokes it directly; all three via run-gates/pytest). Once #275
+          # pins GitHub receipts, git show <approved_sha>:<path> needs that
+          # SHA in history. Depth 2 cannot see SHAs more than two commits back.
+          fetch-depth: 0
           persist-credentials: false
       - name: Validate exact full candidate
         if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
@@ -835,10 +906,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: app/benchmarks/requirements.txt
       - name: Install benchmark dependencies
-        run: python -m pip install -r app/benchmarks/requirements.txt
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          req="${RUNNER_TEMP}/bench-requirements.txt"
+          # CSL-471 / REVIEW-D7 I5: the PR checkout must not choose packages.
+          cp "${GITHUB_WORKSPACE}/_bench_base/app/benchmarks/requirements.txt" "$req"
+          python -P -m pip install -r "$req"
       - name: Compare hot paths with the base tree
         working-directory: app
         run: |

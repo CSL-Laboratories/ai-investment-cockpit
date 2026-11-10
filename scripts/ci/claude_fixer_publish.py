@@ -65,9 +65,18 @@ WORKFLOW_VALIDATION_CODES = frozenset({"workflow_not_found_on_default_branch"})
 RECORD_KEYS = {"comment": {"op", "body"}, "reply": {"op", "comment_id", "body"},
                "label": {"op", "label"}, "receipt": {"op", "root", "status"}}
 # Exact or basename matches anywhere in the tree (casefolded, fail closed).
-PROTECTED_FILES = frozenset({"tools/ci_gate.py", "tools/required_ci_gate.py", "tools/test_claude_pr_fixer.py"})
-PROTECTED_NAMES = frozenset({"codeowners", "agents.md", "claude.md", ".mcp.json"})
-PROTECTED_DIRS = frozenset({".claude", ".claude-fixer-out", ".claude-fixer-replies"})
+# CSL-430 (Lucas's receipt, 2026-10-21): the fixer's own test suites, and credential filenames at any depth.
+PROTECTED_FILES = frozenset({"tools/ci_gate.py", "tools/required_ci_gate.py", "tools/test_claude_pr_fixer.py",
+                             "tools/test_claude_fixer_guard.py", "tools/test_claude_fixer_publish.py",
+                             "tools/test_claude_fixer_receipts.py"})
+PROTECTED_NAMES = frozenset({"codeowners", "agents.md", "claude.md", ".mcp.json",
+                             ".netrc", "_netrc", ".npmrc", ".pypirc",
+                             # CSL-471: interpreter start-up and pip-module shadows.
+                             "sitecustomize.py", "sitecustomize.pyc", "sitecustomize",
+                             "usercustomize.py", "usercustomize.pyc", "usercustomize",
+                             "pip.py", "pip.pyc"})
+PROTECTED_DIRS = frozenset({".claude", ".claude-fixer-out", ".claude-fixer-replies",
+                            "pip"})
 # GitHub and Anthropic token shapes. The model job can read its own read-only job token
 # (the helper's read-token); a copy in the candidate or outbox is refused, not redacted.
 CREDENTIAL = re.compile(r"gh[opsuvr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}|sk-ant-[A-Za-z0-9_-]{20,}")
@@ -368,6 +377,9 @@ def is_protected(path):
     if any(part.startswith(".git") or part.startswith(".env") or part in PROTECTED_DIRS for part in parts):
         return True
     if parts[-1] in PROTECTED_NAMES:
+        return True
+    # CSL-471: a checkout `.pth` is imported on interpreter start.
+    if any(part.endswith(".pth") for part in parts):
         return True
     return folded.startswith("scripts/ci/") or folded in PROTECTED_FILES
 

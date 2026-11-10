@@ -30,7 +30,7 @@ pub(crate) fn raise(err: BookError) -> PyErr {
             touched,
         } => {
             let err = raise(*source);
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let _ = err.value(py).setattr("stp_cancelled", stp_cancelled);
                 let _ = err.value(py).setattr("touched", touched);
             });
@@ -43,8 +43,10 @@ pub(crate) fn raise(err: BookError) -> PyErr {
 /// PyO3's `OverflowError`. The book domain is signed 64-bit.
 pub(crate) struct FitI64(pub(crate) i64);
 
-impl<'py> FromPyObject<'py> for FitI64 {
-    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+impl<'a, 'py> FromPyObject<'a, 'py> for FitI64 {
+    type Error = PyErr;
+
+    fn extract(ob: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
         if let Ok(value) = ob.extract::<i64>() {
             return Ok(Self(value));
         }
@@ -355,7 +357,10 @@ impl BookCore {
     }
 }
 
-#[pymodule]
+// `gil_used = true` keeps the 0.23 default: on a free-threaded interpreter this
+// module re-enables the GIL instead of claiming thread-safety it has not been
+// audited for. The GIL-enabled 3.11/3.12 builds are unaffected.
+#[pymodule(gil_used = true)]
 fn cockpit_quant(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<BookCore>()?;
     m.add("NotFound", m.py().get_type::<NotFound>())?;

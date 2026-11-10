@@ -125,13 +125,37 @@ which you find only by its `<!-- stuck-pr-threads:owner/repo#N -->` marker (neve
 title), writing inside your own block. Product and architecture questions stay on
 the work issue.
 
-If you are the assignee of a decision or direction issue, the Parallel Task API
-brief in AGENTS.md "Linear-first workflow" still comes first. Grok Bots do not
-research or resolve decision issues.
+If you are the assignee or the claimant of a decision or direction issue, the research
+requirement in AGENTS.md "Linear-first workflow" still comes first. A Grok Bot
+coordinator may research and recommend. Attribute the brief explicitly as
+`Grok Bot, preparing research for <owner>`; never phrase it as if the owner
+personally authored or endorsed the recommendation. Only the designated human
+decision-maker, or an explicitly authorized research team, decides. Publishing a
+brief never marks the issue decided, never clears a hold, and never authorizes
+implementation. Research may use any deep-research source the team has, such
+as Parallel, Exa, Claude Deep Research, Open Deep Research, ChatGPT Deep
+Research or the web. Each run records its tool, its run id and its cost (or
+`unknown` plus a reason) in its csl-research record. All research output
+(notes, briefs, findings, source tables, competitor or frontier writeups,
+research registers or indexes) goes to CSL-Laboratories/csl-research as
+`submissions/<record_id>/`, through a PR in that repo, with a digest on the
+Linear issue. Never commit research content
+to this repo; specs, amendments and code only link to the vault record.
+If csl-research is not accessible, stop and post a blocker on the Linear
+issue; do not fall back to this repo. Every new non-public doc goes to
+csl-research through a PR there; this repo only links to it.
+Gate and operational evidence that code or a runbook in this repo already reads
+stays in `docs/evidence/` until the CSL-536 move round that lists it
+(csl-research #263, approved by Lucas on Oct 30 in his CSL-536
+[receipt 95789ee9](https://linear.app/csl-laboratories/issue/CSL-536#comment-95789ee9)), and no earlier than
+the date the list gives it. Contract fixtures under
+`docs/replacement/outcomes/**` stay. Existing files stay until the
+CSL-536 move round that lists them, and no earlier than the date the list gives them.
+`docs/research/**` is legacy (no new files).
 
-Then stop that line of work, release your claim under the repo's existing
-convention, and take only other admitted work that is next under the
-human-approved order. If there is no such order, propose one and wait. Do not ask
+Then stop that line of work, release your claim, if you hold one, with a release record (AGENTS.md)
+"Bounded issue execution and shared evidence"), and take only other admitted work
+that is next under the human-approved order. If there is no such order, propose one and wait. Do not ask
 again until something changes.
 
 ## Speaking for a developer

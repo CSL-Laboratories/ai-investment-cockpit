@@ -11,8 +11,10 @@ Start future work with the [Cloud handoff](../cursor-cloud-rdt-handoff-2026-09-1
 - `../swarm-tools/spawn_scoped_leaf.py`: preview only; cannot dispatch any runtime.
 - Filings live in gitignored `.swarm-runs/<run>/<job>/<attempt>/`.
 
-RW-26 through RW-31 and smoke briefs preserve historical jobs and their original
-runtime/schema assumptions. Never redispatch them unchanged as current work.
+The RW-26 through RW-31 and smoke briefs preserved historical jobs and their original
+runtime/schema assumptions. They now live in csl-research as preservation records
+(`submissions/2026102*-cockpit-rw2*`, `-rw3*` and `-smoke-*` brief records). Never
+redispatch them unchanged as current work.
 Devin is retired. Current jobs need an available REGISTER claim, qualified route,
 approved disclosure, enforced reservation/deadline, exclusive output and receipt.
 No bulk inherit; no secret inputs; no independent-family claim based on a provider
