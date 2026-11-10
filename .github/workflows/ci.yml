@@ -447,6 +447,7 @@ jobs:
           python -X utf8 -B tools/test_ci_docs_filter.py
           python -X utf8 -B tools/test_workflow_size.py
           python -X utf8 -B tools/test_sandbox_e3.py
+          python -X utf8 -B tools/test_o3_settlement_and_corrections.py
       # CSL-511 WP4: run the replacement-program and O7 checkers directly so the
       # acceptance pins no longer depend only on the app/tests wrappers that a
       # later app/ deletion could remove. The floor fails closed when a pinned

@@ -288,7 +288,12 @@ def _ordinary_settlement(entry: dict) -> bool:
     )
 
 
-def _linked_reversal_ids(fixture: dict, repeated_ids: set[str]) -> tuple[set[str], set[str]]:
+def _linked_reversal_ids(
+    fixture: dict,
+    repeated_ids: set[str],
+    *,
+    require_replacement: bool = False,
+) -> tuple[set[str], set[str]]:
     """Entry ids of a settlement and the correction-linked mirror that reverses it.
 
     The original is an ordinary positive ``settlement_payout``: collateral is
@@ -303,6 +308,13 @@ def _linked_reversal_ids(fixture: dict, repeated_ids: set[str]) -> tuple[set[str
 
     The first set is the pair, dropped from the gain/loss identity. The
     second set is the mirror only, which may debit collateral.
+
+    When ``require_replacement`` is true, the pair is exempted only if a
+    qualifying later replacement settlement is posted strictly after the
+    mirror. That is the original → reversal → replacement order. A
+    replacement that lands before the mirror does not count. Void
+    supersession keeps the default, which still pairs an original with
+    its later mirror alone.
     """
     paired: set[str] = set()
     mirrors: set[str] = set()
@@ -366,6 +378,48 @@ def _linked_reversal_ids(fixture: dict, repeated_ids: set[str]) -> tuple[set[str
                 partner_tie = True
         if partner_id is None or partner_tie:
             continue
+        if require_replacement:
+            replacement_id = None
+            replacement_sequence_best: int | None = None
+            replacement_tie = False
+            original_key = _causal_key(original)
+            for entry in journal:
+                entry_id = entry.get("entry_id")
+                if (
+                    not isinstance(entry_id, str)
+                    or entry_id in {original_id, partner_id}
+                    or entry_id in used
+                    or entry_id in repeated_ids
+                ):
+                    continue
+                if entry.get("reason") != "settlement_payout":
+                    continue
+                if not _only_instrument(entry, instrument_id):
+                    continue
+                replacement_sequence = entry.get("sequence")
+                if (
+                    type(replacement_sequence) is not int
+                    or partner_sequence_best is None
+                    or replacement_sequence <= partner_sequence_best
+                ):
+                    continue
+                if _causal_key(entry) != original_key:
+                    continue
+                signature = _line_signature(entry, reverse=False)
+                if not _signature_positive(signature) or signature == wanted:
+                    continue
+                if (
+                    replacement_sequence_best is None
+                    or replacement_sequence < replacement_sequence_best
+                ):
+                    replacement_id = entry_id
+                    replacement_sequence_best = replacement_sequence
+                    replacement_tie = False
+                elif replacement_sequence == replacement_sequence_best:
+                    replacement_tie = True
+            if replacement_id is None or replacement_tie:
+                continue
+            used.add(replacement_id)
         paired.add(original_id)
         paired.add(partner_id)
         mirrors.add(partner_id)
@@ -562,7 +616,9 @@ def _posted_correction_facts(fixture: dict) -> tuple[set[str], set[str], set[str
     return supported, mirrors, reversed_order_reserves
 
 
-def _reject_void_unwind_shape(fixture: dict, failures: set[str]) -> None:
+def _reject_void_unwind_shape(
+    fixture: dict, failures: set[str], mirrors: set[str] | None = None
+) -> None:
     """Direction and cause of a void_unwind, without reading market-state rows."""
     void_evidence = {
         item["instrument_id"]
@@ -574,6 +630,7 @@ def _reject_void_unwind_shape(fixture: dict, failures: set[str]) -> None:
             continue
         if entry.get("fill_id"):
             failures.add("balance_mismatch")
+        is_mirror = entry.get("entry_id") in (mirrors or ())
         per_instrument: dict[str, list[int]] = {}
         other = False
         instruments: set[str] = set()
@@ -592,6 +649,19 @@ def _reject_void_unwind_shape(fixture: dict, failures: set[str]) -> None:
             if line.get("account") == "cash_available" and line.get("side") == "dr":
                 bucket[0] += amount
             elif line.get("account") == "collateral_reserved" and line.get("side") == "cr":
+                bucket[1] += amount
+            elif (
+                is_mirror
+                and line.get("account") == "cash_available"
+                and line.get("side") == "cr"
+            ):
+                # Validated correction mirrors swap the ordinary release sides.
+                bucket[0] += amount
+            elif (
+                is_mirror
+                and line.get("account") == "collateral_reserved"
+                and line.get("side") == "dr"
+            ):
                 bucket[1] += amount
             else:
                 other = True
@@ -989,7 +1059,9 @@ def evaluate_semantics(fixture: dict) -> set[str]:
     if repeated_entry_ids:
         # A second row with the same id must not inherit a reversal exemption.
         failures.add("schema_invalid")
-    linked_reversals, reversal_mirrors = _linked_reversal_ids(fixture, repeated_entry_ids)
+    linked_reversals, reversal_mirrors = _linked_reversal_ids(
+        fixture, repeated_entry_ids, require_replacement=True
+    )
 
     # Sequence is the only clock. Two collateral postings for one instrument
     # at one sequence would be applied in array order.
@@ -1166,6 +1238,25 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             and (reserve_after_fill or reserve_after_terminal)
         ):
             failures.add("position_divergence")
+        if entry["reason"] == "reserve_collateral":
+            # A new reservation after this instrument has already paid out
+            # is rejected. It is excluded from reserved_presettle already;
+            # that is not enough. The reservation itself must fail.
+            for line in entry["lines"]:
+                instrument_id = line.get("instrument_id")
+                settled_seq = (
+                    settlement_seq.get(instrument_id)
+                    if isinstance(instrument_id, str)
+                    else None
+                )
+                if (
+                    settled_seq is not None
+                    and type(entry.get("sequence")) is int
+                    and entry["sequence"] > settled_seq
+                    and line.get("account") == "collateral_reserved"
+                    and line.get("side") == "dr"
+                ):
+                    failures.add("settlement_unreconciled")
         if entry["reason"] == "fill" and fill_ref is None:
             failures.add("balance_mismatch")
         if entry["reason"] == "reserve_collateral" and fill_ref is None and order_ref is None:
@@ -1449,7 +1540,7 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         ):
             failures.add("void_unreconciled")
 
-    _reject_void_unwind_shape(fixture, failures)
+    _reject_void_unwind_shape(fixture, failures, correction_mirrors)
     market_state = {market["instrument_id"]: market["state"] for market in fixture["markets"]}
     for item in fixture["evidence"]:
         kind = item.get("kind")
@@ -1492,6 +1583,11 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         instruments_by_id = {i["instrument_id"]: i for i in fixture["instruments"]}
         for market in settled:
             instrument_id = market["instrument_id"]
+            if reserved_end.get(instrument_id, 0) != 0 or any(
+                row["instrument_id"] == instrument_id
+                for row in fixture["reported"]["open_reservations"]
+            ):
+                failures.add("settlement_unreconciled")
             evidence = [
                 item
                 for item in fixture["evidence"]
