@@ -12,15 +12,22 @@ the kill cancels working orders. After the order halt is set in one committed st
   or any order still listed keeps it ``pending``. So does an empty listing that still
   carries a ``cursor``, a ``truncated`` other than ``False`` or a ``remaining`` other
   than ``0`` (unfinished). A failure never skips the revoke;
-* the OAuth grant is revoked, and the revoke is ``confirmed`` only when the revoke call
-  itself was accepted (``accepted`` exactly ``True``) and an authenticated call made
-  after it is refused as unauthorized. Otherwise it is ``pending``. The ``revoke_grant``
-  detail holds only the revoke attempt (``rejected``, ``error:<Exc>`` or
-  ``unreadable_response``; absent after an accepted revoke). The last probe is reported
-  apart, under ``revoke_probe``: ``unauthorized``, ``authorized``, ``unreadable_probe``
-  (any other reply; no part of it is stored) or ``error:<Exc>``. It stays in the detail
-  after a confirm, and an unauthorized probe after a rejected or raised revoke confirms
-  nothing.
+* the OAuth grant is revoked by the RFC 7009 token revocation
+  ``POST https://exchange.gemini.com/auth/token/revoke`` (``REVOKE_ENDPOINT``; the legacy
+  revoke-by-token call is not used). The transport returns a typed ``RevokeReply``
+  carrying the venue's HTTP status. A 200 is not proof that access is gone (RFC 7009
+  servers answer 200 even for an invalid or already-revoked token), so two probes always
+  run after the revoke call, each on its own: an authenticated API call, then a
+  refresh-token exchange with the grant's refresh token. The revoke is ``confirmed``
+  only when the reply answered 200 and both probes are refused as unauthorized.
+  Otherwise it is ``pending``: the 200 alone, one unauthorized probe, or two
+  unauthorized probes after a rejected, unreadable or raised revoke confirm nothing.
+  The ``revoke_grant`` detail holds only the revoke attempt (``rejected`` for any other
+  status, ``unreadable_response`` for a reply that is not a ``RevokeReply``, or
+  ``error:<Exc>``; absent after a 200). The last probes are reported apart, under
+  ``revoke_probe_api`` and ``revoke_probe_refresh``, each one of ``unauthorized``,
+  ``authorized``, ``unreadable_probe`` (any other reply; no part of it is stored) or
+  ``error:<Exc>``. Both stay in the detail after a confirm.
 
 Which Gemini API operations back ``cancel_all`` and ``list_open_orders`` under an OAuth
 grant is not verified here; the transport is a mock (see the PR's gaps).
@@ -37,16 +44,27 @@ from __future__ import annotations
 import threading
 from typing import Callable, Protocol
 
-__all__ = ["GeminiKill", "GeminiKillTransport"]
+from .revoke import RevokeReply, classify_probe
+
+__all__ = ["GeminiKill", "GeminiKillTransport", "REVOKE_ENDPOINT"]
+
+# Documented only: the host's transport makes the call. No network code here.
+REVOKE_ENDPOINT = "https://exchange.gemini.com/auth/token/revoke"
 
 
 class GeminiKillTransport(Protocol):
-    """Supplied only by the credential-owning host. Each method is one venue API operation."""
+    """Supplied only by the credential-owning host. Each method is one venue API operation.
 
-    def cancel_all(self) -> dict: ...          # {"cancelled": [str]}
-    def list_open_orders(self) -> dict: ...    # {"order_ids": [str]}
-    def revoke_oauth_grant(self) -> dict: ...  # {"accepted": bool}
-    def probe_authenticated(self) -> str: ...  # "unauthorized" | "authorized"
+    ``revoke_oauth_grant`` is the RFC 7009 token revocation ``POST`` to ``REVOKE_ENDPOINT``
+    (``https://exchange.gemini.com/auth/token/revoke``), not the legacy revoke-by-token
+    call. Its reply carries the HTTP status; a 200 is not proof that access is gone.
+    """
+
+    def cancel_all(self) -> dict: ...                   # {"cancelled": [str]}
+    def list_open_orders(self) -> dict: ...             # {"order_ids": [str]}
+    def revoke_oauth_grant(self) -> RevokeReply: ...    # RevokeReply(http_status)
+    def probe_api_call(self) -> str: ...                # "unauthorized" | "authorized"
+    def probe_refresh_token_exchange(self) -> str: ...  # "unauthorized" | "authorized"
 
 
 def _list_finished(listed: dict) -> bool:
@@ -91,33 +109,28 @@ class GeminiKill:
             self._detail.pop("cancel_all", None)
 
     def _revoke(self) -> None:
-        accepted = False
+        answered_200 = False
         try:
             out = self._transport.revoke_oauth_grant()
         except Exception as exc:  # noqa: BLE001
             self._detail["revoke_grant"] = "error:" + type(exc).__name__
         else:
-            accepted = type(out) is dict and out.get("accepted") is True
-            if accepted:
-                self._detail.pop("revoke_grant", None)  # an earlier attempt's detail is not this one's
-            elif type(out) is dict and out.get("accepted") is False:
-                self._detail["revoke_grant"] = "rejected"
-            else:
+            if type(out) is not RevokeReply:
                 self._detail["revoke_grant"] = "unreadable_response"
-        # Confirmation needs both: this revoke accepted, and an authenticated call refused
-        # after it. An unauthorized probe after a rejected or raised revoke confirms nothing.
-        # The last probe result is reported under its own key, apart from the revoke attempt's.
-        try:
-            probe = self._transport.probe_authenticated()
-        except Exception as exc:  # noqa: BLE001
-            self._detail["revoke_probe"] = "error:" + type(exc).__name__
-            return
-        if type(probe) is not str:
-            self._detail["revoke_probe"] = "unreadable_probe"
-            return
-        # Only a declared reply is stored; no part of any other string is.
-        self._detail["revoke_probe"] = probe if probe in ("unauthorized", "authorized") else "unreadable_probe"
-        if accepted and probe == "unauthorized":
+            elif out.answered_200:
+                answered_200 = True
+                self._detail.pop("revoke_grant", None)  # an earlier attempt's detail is not this one's
+            else:
+                self._detail["revoke_grant"] = "rejected"
+        # The 200 is not proof (RFC 7009 answers 200 for a dead token too). Confirmation needs
+        # all three: this revoke answered 200, and after it both an authenticated API call and
+        # a refresh-token exchange are refused. Both probes always run, each on its own, and
+        # each last result is reported under its own key, apart from the revoke attempt's.
+        api = classify_probe(lambda: self._transport.probe_api_call())
+        refresh = classify_probe(lambda: self._transport.probe_refresh_token_exchange())
+        self._detail["revoke_probe_api"] = api
+        self._detail["revoke_probe_refresh"] = refresh
+        if answered_200 and api == "unauthorized" and refresh == "unauthorized":
             self._state["revoke_grant"] = "confirmed"
 
     def kill(self) -> dict:
