@@ -260,19 +260,17 @@ A packet whose maturity is anything other than `researched` is rejected. Promoti
 
 ## Research (Parallel)
 
-Embedded Parallel searches run on Dan's box on 2026-10-17. The pages below were retrieved and the protocol follows them.
+The research body that used to sit in this section is in the vault, not in this repository.
 
-Search ids: `search_8afa65003c515c3b57197de5f5cd25c4`, `search_902e146c8a56d6e091750abdb2b9d763`, `search_b6290caf1f31d7a8a710db6b71f76c7e`, `search_86967d451c3ce6e3c60de7a6868def47`, `search_4b647f1aa2547fad5b4062554a71c354`, `search_41e4072e4bc070139371640730ea2eb3`.
+- Repository: `CSL-Laboratories/csl-research`
+- Record: `20261110-csl220-o8-phase-a-embedded-research-01`
+- Path: `submissions/20261110-csl220-o8-phase-a-embedded-research-01/result.md`
+- Commit: `dda56c9a3e450d0176786bb93cbfd56c54ba46ff` (draft [csl-research #1165](https://github.com/CSL-Laboratories/csl-research/pull/1165); this pointer will move to the merge commit once #1165 merges)
+- SHA-256 of the verbatim passage (2693 bytes): `459192a97236c44f8c9ecddca50e64fde076ab7c2ca12e8c92f07428ab7fac8d`
+- Claim: the embedded Parallel search records and source-to-claim summaries that previously appeared in this section, used as the research basis of this phase A candidate.
+- Limitations: candidate-only; not reviewed knowledge; not a human decision; not an acceptance receipt; not a PRODUCT.md or contract change. CSL Research recorded the passage verbatim and did not re-run the searches or re-fetch the cited pages.
 
-- [Strangler Fig pattern](https://learn.microsoft.com/en-us/azure/architecture/patterns/strangler-fig) — Microsoft Azure Architecture Center. Incremental façade, shared-store coexistence, anti-corruption layer, rollback while legacy objects remain.
-- [Strangler fig migration guide](https://adaptive-enforcement-lab.com/patterns/architecture/strangler-fig/migration-guide/) — Adaptive Enforcement Lab (`search_86967d451c3ce6e3c60de7a6868def47`). Every seam needs a defined rollback path and mixed-version coexistence; the basis for the required per-candidate `seam` and `rollback` fields and the `seam-missing-rollback` negative control.
-- [Parallel Change](https://martinfowler.com/bliki/ParallelChange.html) — Martin Fowler's bliki (`search_41e4072e4bc070139371640730ea2eb3`). Expand-and-contract: old and new versions coexist through expand, migrate, and contract phases, each independently releasable, so rollback stays available while a seam is exercised. Supports the per-seam rollback control and the `seam-missing-rollback` negative control.
-- [Run a benchmark](https://pyperf.readthedocs.io/en/stable/run_benchmark.html) — pyperf worker processes, warmup, and instability warnings. Python 3.9 or newer.
-- [Analyze benchmark results](https://pyperf.readthedocs.io/en/latest/analyze.html) — quartiles, median, and median absolute deviation; `compare_to` uses a two-sample t-test.
-- [psf/pyperf](https://github.com/psf/pyperf) — toolkit repository for those documents.
-- [Writing benchmarks](https://asv.readthedocs.io/en/stable/writing_benchmarks.html) — airspeed velocity (`search_b6290caf1f31d7a8a710db6b71f76c7e`). Report warmup, repeats, and variance, and isolate external I/O — the reason `provider_latency` is measured or explicitly excluded with a reason, never silently folded in.
-- [hyperfine](https://github.com/sharkdp/hyperfine) — command-line benchmarking tool (`search_b6290caf1f31d7a8a710db6b71f76c7e`). Warmup runs, repetition counts, and statistical outlier handling; not installed by this packet.
-- [Strangler fig, Python to Rust](https://enersys.co.th/en/insights/strangler-fig-migration-python-to-rust-2026) — Enersys, 18 Apr 2026. Case-study argument for incremental cuts. Other companies' speed claims are not local evidence.
+The recorded passage is at [result.md @ dda56c9a](https://github.com/CSL-Laboratories/csl-research/blob/dda56c9a3e450d0176786bb93cbfd56c54ba46ff/submissions/20261110-csl220-o8-phase-a-embedded-research-01/result.md).
 
 ## Unresolved decisions (owner: release owner)
 
