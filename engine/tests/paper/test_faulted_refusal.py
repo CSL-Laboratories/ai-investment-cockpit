@@ -258,7 +258,7 @@ class FakeCoreCells(unittest.TestCase):
         self.assertEqual(ctx.exception.code, "book_without_audit")
 
 
-@unittest.skipUnless(e2e.CORE, "Recursion core or cryptography not importable")
+@unittest.skipIf(e2e.CORE_SKIP is not None, e2e.AWAITING_328)
 class RealCoreCells(unittest.TestCase):
     def test_real_core_faulted_tripped_and_healthy_cells(self) -> None:
         world = e2e.EndToEndPaperTests("test_paper_order_through_permission_approval_profile_gateway")
