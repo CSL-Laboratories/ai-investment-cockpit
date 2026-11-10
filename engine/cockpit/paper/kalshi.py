@@ -19,15 +19,24 @@ skips the other. Status is truthful:
   (unknown), a capped cancel that leaves orders is ``pending`` with the
   remaining count, and any order the listing still shows is ``pending``. An
   empty listing that still carries a ``cursor``, a ``truncated`` other than
-  ``False`` or a ``remaining`` other than ``0`` is unfinished, so ``pending``;
+  ``False`` or a ``remaining`` other than ``0`` is unfinished, so ``pending``.
+  Each reply has to be exactly the contracted shape. The cancel reply is only
+  ``remaining`` as an int. The listing is only ``order_ids`` plus an optional
+  ``cursor``, ``truncated`` and ``remaining``.   Anything else stays ``pending``:
+  a fill fragment or an order record missing fill fields, an error body
+  (including one that also says HTTP 200), an order id, a client id, a status,
+  or a late body after a timeout.
+  A body carried on the timeout itself is not read;
 * the key revoke is ``confirmed`` only when the revoke call itself was accepted
-  (``accepted`` exactly ``True``) and an authenticated call made after it is refused as
-  unauthorized. Otherwise it is ``pending``. The ``revoke_key`` detail holds only the
-  revoke attempt (``rejected``, ``error:<Exc>`` or ``unreadable_response``; absent after
-  an accepted revoke). The last probe is reported apart, under ``revoke_probe``:
-  ``unauthorized``, ``authorized``, ``unreadable_probe`` (any other reply; no part of it
-  is stored) or ``error:<Exc>``. It stays in the detail after a confirm, and an
-  unauthorized probe after a rejected or raised revoke confirms nothing.
+  (the reply is exactly ``{"accepted": True}``) and an authenticated call made after
+  it is refused as unauthorized. Otherwise it is ``pending``. The ``revoke_key``
+  detail holds only the revoke attempt (``rejected``, ``error:<Exc>`` or
+  ``unreadable_response``; absent after an accepted revoke). The last probe is
+  reported apart, under ``revoke_probe``: ``unauthorized``, ``authorized``,
+  ``unreadable_probe`` (any other reply, including a non-string whose equality
+  method claims otherwise; no part of it is stored) or ``error:<Exc>``. It stays
+  in the detail after a confirm, and an unauthorized probe after a rejected or
+  raised revoke confirms nothing.
 
 The overall status is ``confirmed`` only when both are. Calling ``kill`` again keeps
 the halt and retries what is not yet confirmed. A cancel confirm is kept only once the
@@ -86,6 +95,11 @@ class KalshiKillTransport(Protocol):
     def probe_authenticated(self) -> str: ...  # "unauthorized" | "authorized"
 
 
+_CANCEL_KEYS = frozenset({"remaining"})
+_LIST_KEYS = frozenset({"order_ids", "cursor", "truncated", "remaining"})
+_REVOKE_KEYS = frozenset({"accepted"})
+
+
 def _list_finished(listed: dict) -> bool:
     """True only when the list payload does not say more orders may follow."""
     if listed.get("cursor") is not None:
@@ -110,7 +124,12 @@ class KalshiKill:
         except Exception as exc:  # noqa: BLE001 - any failure is "unknown", never "done"
             self._detail["cancel_all"] = "error:" + type(exc).__name__
             return
-        remaining = out.get("remaining") if type(out) is dict else None
+        # Only ``{"remaining": <int>}``. An error body, a 200, an order id, a client
+        # id, a status or a late-after-timeout flag is not an acceptance.
+        if type(out) is not dict or set(out) != _CANCEL_KEYS:
+            self._detail["cancel_all"] = "unreadable_response"
+            return
+        remaining = out["remaining"]
         if type(remaining) is not int or remaining < 0:
             self._detail["cancel_all"] = "unreadable_response"
             return
@@ -123,7 +142,12 @@ class KalshiKill:
         except Exception as exc:  # noqa: BLE001
             self._detail["cancel_all"] = "list_error:" + type(exc).__name__
             return
-        ids = listed.get("order_ids") if type(listed) is dict else None
+        # Fill fragments, an error body, a status, an order id or a client id are
+        # not a finished empty listing, even when ``order_ids`` is empty.
+        if type(listed) is not dict or "order_ids" not in listed or not set(listed) <= _LIST_KEYS:
+            self._detail["cancel_all"] = "unreadable_list"
+            return
+        ids = listed["order_ids"]
         if type(ids) is not list or not all(type(i) is str and i for i in ids):
             self._detail["cancel_all"] = "unreadable_list"
             return
@@ -143,10 +167,12 @@ class KalshiKill:
         except Exception as exc:  # noqa: BLE001
             self._detail["revoke_key"] = "error:" + type(exc).__name__
         else:
-            accepted = type(out) is dict and out.get("accepted") is True
-            if accepted:
+            # Only ``{"accepted": true|false}``. A 200, an error body or a client id
+            # beside ``accepted`` is not an acceptance.
+            if type(out) is dict and set(out) == _REVOKE_KEYS and out["accepted"] is True:
+                accepted = True
                 self._detail.pop("revoke_key", None)  # an earlier attempt's detail is not this one's
-            elif type(out) is dict and out.get("accepted") is False:
+            elif type(out) is dict and set(out) == _REVOKE_KEYS and out["accepted"] is False:
                 self._detail["revoke_key"] = "rejected"
             else:
                 self._detail["revoke_key"] = "unreadable_response"

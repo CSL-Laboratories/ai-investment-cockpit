@@ -91,6 +91,31 @@ class KillSwitchTests(unittest.TestCase):
         out = self._switch(self.book.halt, [Odd()]).kill()
         self.assertEqual((out["status"], out["venues"][1]["status"]), ("pending", "pending"))
 
+    def test_status_equality_object_does_not_confirm(self) -> None:
+        """A Kalshi-shaped result whose status only claims to equal 'confirmed' stays pending."""
+
+        class FakeStatus:
+            def __eq__(self, other):
+                return other == "confirmed"
+
+        class FakeVenue:
+            def kill(self):
+                return {"venue": "kalshi", "status": FakeStatus()}
+
+        class ConfirmedStr(str):
+            pass
+
+        class SubclassVenue:
+            def kill(self):
+                return {"venue": "kalshi", "status": ConfirmedStr("confirmed")}
+
+        for venue in (FakeVenue(), SubclassVenue()):
+            with self.subTest(venue=type(venue).__name__):
+                out = self._switch(self.book.halt, [venue]).kill()
+                self.assertEqual(out["status"], "pending")
+                self.assertEqual(out["venues"][1]["status"], "pending")
+                self.assertIs(type(out["venues"][1]["status"]), str)
+
     def test_halt_failure_is_pending_and_still_reaches_venues(self) -> None:
         log = []
         _, venues = self._venues(log)

@@ -83,9 +83,13 @@ class KillSwitch:
                 except Exception as exc:  # noqa: BLE001 - one venue never skips another
                     out = {"venue": type(venue).__name__, "status": "pending",
                            "detail": {"kill": "error:" + type(exc).__name__}}
-                if type(out) is not dict or out.get("status") != "confirmed":
+                status = out.get("status") if type(out) is dict else None
+                # Equality alone is not enough: a non-string can claim to equal "confirmed".
+                if type(status) is not str or status != "confirmed":
                     out = dict(out) if type(out) is dict else {"venue": type(venue).__name__}
                     out["status"] = "pending"
                 venues.append(out)
-            done = halt == "confirmed" and all(v["status"] == "confirmed" for v in venues)
+            done = halt == "confirmed" and all(
+                type(v.get("status")) is str and v["status"] == "confirmed" for v in venues
+            )
             return {"status": "confirmed" if done else "pending", "halt": halt, "venues": venues}

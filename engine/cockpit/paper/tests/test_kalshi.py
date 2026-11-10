@@ -337,5 +337,148 @@ class KillTests(unittest.TestCase):
         self.assertEqual(out["detail"], {"revoke_probe": "unauthorized"})
 
 
+class _Equals:
+    """A non-string that claims to equal one value. Equality must not confirm it."""
+
+    def __init__(self, value: object) -> None:
+        self._value = value
+
+    def __eq__(self, other: object) -> bool:
+        return other == self._value
+
+    def __hash__(self) -> int:
+        return 0
+
+
+class FalseConfirmTests(unittest.TestCase):
+    """A mock reply confirms only when it is the contracted acceptance, and nothing else."""
+
+    def _out(self, **transport):
+        log = []
+        out = KalshiKill(lambda: log.append("halt"), FakeTransport(log=log, **transport)).kill()
+        return out, log
+
+    def assert_cancel_pending(self, out, detail) -> None:
+        self.assertEqual((out["status"], out["cancel_all"]), ("pending", "pending"))
+        self.assertEqual(out["detail"]["cancel_all"], detail)
+        self.assertNotEqual(out["status"], "confirmed")
+
+    def test_missing_or_partial_fill_fields_do_not_confirm(self) -> None:
+        payloads = (
+            {"order_ids": [], "orders": [{"order_id": "k1"}]},
+            {"order_ids": [], "orders": [{"order_id": "k1", "fill_count": 1}]},
+            {"order_ids": [], "fill_count": 1, "remaining_count": 1},
+            {"order_ids": [], "fill_count": "0", "remaining_count": "0"},
+        )
+        for orders in payloads:
+            with self.subTest(orders=orders):
+                out, log = self._out(orders=orders)
+                self.assert_cancel_pending(out, "unreadable_list")
+                self.assertIn("list_open_orders", log)
+
+    def test_error_payload_with_200_does_not_confirm(self) -> None:
+        cases = (
+            ("list", dict(orders={"order_ids": [], "status": 200, "error": {"code": "rejected"}}),
+             "cancel_all", "unreadable_list"),
+            ("cancel", dict(cancel={"remaining": 0, "status": 200, "error": "rejected"}),
+             "cancel_all", "unreadable_response"),
+            ("revoke", dict(revoke={"accepted": True, "status": 200,
+                                     "error": {"code": "rejected"}}),
+             "revoke_key", "unreadable_response"),
+        )
+        for name, transport, key, detail in cases:
+            with self.subTest(part=name):
+                out, _log = self._out(**transport)
+                self.assertEqual(out["status"], "pending")
+                self.assertEqual(out[key], "pending")
+                self.assertEqual(out["detail"][key], detail)
+
+    def test_mismatched_order_id_does_not_confirm(self) -> None:
+        out, log = self._out(cancel={"remaining": 0, "order_id": "other-order"})
+        self.assert_cancel_pending(out, "unreadable_response")
+        self.assertNotIn("list_open_orders", log)
+
+    def test_stale_status_does_not_confirm(self) -> None:
+        for status in ("resting", "open", "executed", "canceled"):
+            with self.subTest(status=status):
+                out, _log = self._out(orders={"order_ids": [], "status": status})
+                self.assert_cancel_pending(out, "unreadable_list")
+
+    def test_duplicate_client_id_does_not_confirm(self) -> None:
+        listed, _log = self._out(orders={
+            "order_ids": [], "client_order_id": "c-1", "duplicate": True})
+        self.assert_cancel_pending(listed, "unreadable_list")
+        revoked, _log = self._out(revoke={
+            "accepted": True, "client_order_id": "c-1", "code": "duplicate"})
+        self.assertEqual((revoked["status"], revoked["revoke_key"]), ("pending", "pending"))
+        self.assertEqual(revoked["detail"]["revoke_key"], "unreadable_response")
+
+    def test_timeout_then_late_reply_does_not_confirm(self) -> None:
+        """A body on the timeout, and that late body delivered next, confirm nothing."""
+        late = {"remaining": 0, "late": True}
+
+        class LateTransport(FakeTransport):
+            def __init__(self) -> None:
+                super().__init__(log=[])
+                self.calls = 0
+
+            def cancel_all(self):
+                self.calls += 1
+                self.log.append("cancel_all")
+                if self.calls == 1:
+                    err = TimeoutError()
+                    err.reply = {"remaining": 0}
+                    raise err
+                return dict(late)
+
+        log: list = []
+        transport = LateTransport()
+        transport.log = log
+        kill = KalshiKill(lambda: log.append("halt"), transport)
+        first = kill.kill()
+        self.assertEqual(first["detail"]["cancel_all"], "error:TimeoutError")
+        self.assertEqual((first["status"], first["cancel_all"]), ("pending", "pending"))
+        second = kill.kill()
+        self.assert_cancel_pending(second, "unreadable_response")
+
+        def fresh_cancel():
+            log.append("cancel_all")
+            return {"remaining": 0}
+
+        # A later reply that is only the contracted acceptance can still confirm.
+        transport.cancel_all = fresh_cancel
+        self.assertEqual(kill.kill()["status"], "confirmed")
+
+    def test_wrong_type_fields_do_not_confirm(self) -> None:
+        cases = (
+            (dict(cancel={"remaining": True}), "cancel_all", "unreadable_response"),
+            (dict(cancel={"remaining": 0.0}), "cancel_all", "unreadable_response"),
+            (dict(cancel={"remaining": "0"}), "cancel_all", "unreadable_response"),
+            (dict(orders={"order_ids": ()}), "cancel_all", "unreadable_list"),
+            (dict(orders={"order_ids": [_Equals("k1")]}), "cancel_all", "unreadable_list"),
+            (dict(orders={"order_ids": [b"k1"]}), "cancel_all", "unreadable_list"),
+            (dict(revoke={"accepted": _Equals(True)}), "revoke_key", "unreadable_response"),
+            (dict(revoke={"accepted": 1}), "revoke_key", "unreadable_response"),
+            (dict(revoke={"accepted": "true"}), "revoke_key", "unreadable_response"),
+        )
+        for transport, key, detail in cases:
+            with self.subTest(transport=transport):
+                out, _log = self._out(**transport)
+                self.assertEqual(out["status"], "pending")
+                self.assertEqual(out[key], "pending")
+                self.assertEqual(out["detail"][key], detail)
+
+    def test_probe_comparison_rejects_a_fake_unauthorized_object(self) -> None:
+        class Probe:
+            def __eq__(self, other: object) -> bool:
+                if other == "unauthorized":
+                    return True
+                raise RuntimeError("probe compared against an unexpected value")
+
+        out, _log = self._out(probe=Probe())
+        self.assertEqual((out["status"], out["revoke_key"]), ("pending", "pending"))
+        self.assertEqual(out["detail"]["revoke_probe"], "unreadable_probe")
+
+
 if __name__ == "__main__":
     unittest.main()
