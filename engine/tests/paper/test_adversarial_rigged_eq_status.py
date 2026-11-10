@@ -1,4 +1,4 @@
-"""Devin adversarial: a venue status that only *compares* equal to "confirmed" is not confirmed.
+"""Adversarial: a venue status that only *compares* equal to "confirmed" is not confirmed.
 
 killswitch.py normalizes each venue dict with ``out.get("status") != "confirmed"`` (``__eq__``),
 not the exact-type closed set used elsewhere (``type(x) is str``). Mocks only.
@@ -41,7 +41,7 @@ class HostileVenue:
 
 class RiggedEqStatusTests(unittest.TestCase):
     def setUp(self) -> None:
-        d = tempfile.mkdtemp(prefix="devin-adv-eq-")
+        d = tempfile.mkdtemp(prefix="adv-eq-")
         self.addCleanup(shutil.rmtree, d, True)
         path = os.path.join(d, "book.db")
         create_book(path)

@@ -1,11 +1,11 @@
-"""Devin adversarial: revoke confirmed while cancel pending must reach a distinguishable state.
+"""Adversarial: revoke confirmed while cancel pending must reach a distinguishable state.
 
 Once ``revoke_grant`` / ``revoke_key`` is ``confirmed`` with the cancel leg still pending, every
 later ``kill()`` re-runs the cancel against a revoked credential (PermissionError), so the venue
 reports the same retryable ``pending`` forever. A monitor polling for ``confirmed`` cannot tell
 "retry may help" from "credential dead, orders unverifiable". This test requires the later kills
-to expose a terminal / non-retryable cancel state (e.g. ``cancel_unverifiable``) rather than the
-identical retryable ``pending``. Mocks only.
+to expose a typed pending cancel state (``pending_credential_revoked``) rather than the identical
+plain ``pending``; the cancel stays pending and is still retried. Mocks only.
 """
 
 from __future__ import annotations

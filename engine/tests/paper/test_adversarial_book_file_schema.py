@@ -1,4 +1,4 @@
-"""Devin adversarial: PaperBook on a file that is not a paper book raises Refused("book_invalid").
+"""Adversarial: PaperBook on a file that is not a paper book raises Refused("book_invalid").
 
 ``PaperBook.__init__`` only checks ``os.path.isfile``. A zero-byte file, a garbage file, a SQLite
 file without the book schema, or one with a ``state`` table missing the ``halted`` row is
@@ -20,7 +20,7 @@ from cockpit.paper.gateway import PaperBook, Refused
 
 class BookFileSchemaTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.dir = tempfile.mkdtemp(prefix="devin-adv-book-")
+        self.dir = tempfile.mkdtemp(prefix="adv-book-")
         self.addCleanup(shutil.rmtree, self.dir, True)
 
     def _path(self, name: str) -> str:

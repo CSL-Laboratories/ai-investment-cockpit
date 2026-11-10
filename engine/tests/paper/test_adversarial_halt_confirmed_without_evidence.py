@@ -1,4 +1,4 @@
-"""Devin adversarial: a venue kill must not report halt "confirmed" from a no-op halt callable.
+"""Adversarial: a venue kill must not report halt "confirmed" from a no-op halt callable.
 
 GeminiKill / CoinbaseKill / KalshiKill set ``halt = "confirmed"`` when the halt callable merely
 returns; there is no verified read-back (KillSwitch, by contrast, confirms on

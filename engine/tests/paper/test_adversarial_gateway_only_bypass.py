@@ -1,4 +1,4 @@
-"""Devin adversarial: importing gateway._GATEWAY_ONLY must not let a caller book past every check.
+"""Adversarial: importing gateway._GATEWAY_ONLY must not let a caller book past every check.
 
 ``_GATEWAY_ONLY`` is a plain module attribute; ``book._book(intent, gateway._GATEWAY_ONLY)``
 books with no halt-free risk pass, caps, core permission, approval or authority check.
@@ -22,7 +22,7 @@ from tests.paper.test_gateway import INTENT
 
 class GatewayOnlyBypassTests(unittest.TestCase):
     def setUp(self) -> None:
-        d = tempfile.mkdtemp(prefix="devin-adv-gw-")
+        d = tempfile.mkdtemp(prefix="adv-gw-")
         self.addCleanup(shutil.rmtree, d, True)
         path = os.path.join(d, "book.db")
         create_book(path)
