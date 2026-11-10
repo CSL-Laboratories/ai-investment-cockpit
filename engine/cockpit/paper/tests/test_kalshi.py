@@ -167,7 +167,9 @@ class KillTests(unittest.TestCase):
                  (dict(probe=TimeoutError()), "pending", {"revoke_probe": "error:TimeoutError"}),
                  (dict(probe=None), "pending", {"revoke_probe": "unreadable_probe"}),
                  (dict(probe={"unauthorized": True}), "pending", {"revoke_probe": "unreadable_probe"}),
-                 (dict(probe="x" * 40), "pending", {"revoke_probe": "x" * 32}),
+                 # Any undeclared string is unreadable; no prefix of it is stored.
+                 *((dict(probe=reply), "pending", {"revoke_probe": "unreadable_probe"})
+                   for reply in ("x" * 40, "confirmed", "cancelled", "UNAUTHORIZED", "unauthorized ")),
                  (dict(probe="unauthorized"), "confirmed", {"revoke_probe": "unauthorized"}))
         for transport, state, detail in cases:
             with self.subTest(transport=transport):
