@@ -1,6 +1,6 @@
 """B15: faulted runs and tripped connections refused at the OrderGateway, refusals audited.
 
-PRODUCT.md 4.2 (055cc7a5): "an order intent whose proposal came from a run on a route the
+PRODUCT.md 4.2 (d84cdd26a4de2366f3c5d34c4aec5215f822a494, CSLR-D-012): "an order intent whose proposal came from a run on a route the
 engine breaker had tripped, or from a run that ended in a fault, is refused at the
 `OrderGateway`." Fleet briefing B15: typed code, n>=5, healthy run passes, refusal audited.
 
