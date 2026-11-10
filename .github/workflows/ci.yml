@@ -440,6 +440,7 @@ jobs:
       - name: CI dispatch scope regressions
         run: |
           python -X utf8 -B tools/test_ci_dispatch_scope.py
+          python -X utf8 -B tools/test_check_o8_phase_a_schema_guard.py
           python -X utf8 -B tools/test_ci_settle.py
           python -X utf8 -B -m unittest tools.test_review_gate tools.test_queue_gates
           python -X utf8 -B tools/test_ci_cancel_controller.py
