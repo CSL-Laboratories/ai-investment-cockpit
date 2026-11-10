@@ -10,7 +10,7 @@ from unittest import mock
 from cockpit.paper.gateway import Refused
 from cockpit.paper.kalshi import KalshiKill, KalshiModelFeed, KalshiUseSwitches
 
-PAPER_DIR = Path(__file__).resolve().parents[1]
+PAPER_DIR = Path(__file__).resolve().parents[2] / "cockpit" / "paper"
 
 
 class SwitchTests(unittest.TestCase):

@@ -14,11 +14,11 @@ from cockpit.paper.gateway import Caps, OrderGateway, PaperBook, create_book
 from cockpit.paper.gemini import GeminiKill
 from cockpit.paper.kalshi import KalshiKill
 from cockpit.paper.killswitch import KillSwitch
-from cockpit.paper.tests.fakecore import AUTHORITY, FakeCore
-from cockpit.paper.tests.test_coinbase import MockCoinbase
-from cockpit.paper.tests.test_gateway import INTENT
-from cockpit.paper.tests.test_gemini import MockGemini
-from cockpit.paper.tests.test_kalshi import FakeTransport
+from tests.paper.fakecore import AUTHORITY, FakeCore
+from tests.paper.test_coinbase import MockCoinbase
+from tests.paper.test_gateway import INTENT
+from tests.paper.test_gemini import MockGemini
+from tests.paper.test_kalshi import FakeTransport
 
 OAUTH_PROBES = {"revoke_probe_api": "unauthorized", "revoke_probe_refresh": "unauthorized"}
 

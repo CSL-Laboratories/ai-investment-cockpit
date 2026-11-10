@@ -8,7 +8,7 @@ from pathlib import Path
 from cockpit.paper.gemini import REVOKE_ENDPOINT, GeminiKill
 from cockpit.paper.revoke import RevokeReply
 
-PAPER_DIR = Path(__file__).resolve().parents[1]
+PAPER_DIR = Path(__file__).resolve().parents[2] / "cockpit" / "paper"
 NO_AMBIENT = (r"(?m)os\.environ|getenv|\bopen\(|^\s*(import|from)\s+"
               r"(os|socket|ssl|urllib|http|requests|keyring|subprocess)\b")
 UNAUTH = {"revoke_probe_api": "unauthorized", "revoke_probe_refresh": "unauthorized"}
