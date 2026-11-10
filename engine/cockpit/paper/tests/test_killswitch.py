@@ -98,6 +98,28 @@ class KillSwitchTests(unittest.TestCase):
         self.assertEqual((out["status"], out["halt"]), ("pending", "error:OSError"))
         self.assertEqual(len(out["venues"]), 4)
 
+    def test_gemini_order_listed_after_a_pending_revoke_keeps_the_switch_pending(self) -> None:
+        log = []
+        venue = MockGemini(orders=["g1"], log=log)
+        venue.revoke_works = False
+        switch = self._switch(self.book.halt, [GeminiKill(self.book.halt, venue)])
+        out = switch.kill()
+        gemini = out["venues"][1]
+        self.assertEqual((out["status"], out["halt"], gemini["cancel_all"], gemini["revoke_grant"]),
+                         ("pending", "confirmed", "confirmed", "pending"))
+        # The grant still worked, so an order could be placed after the first listing.
+        venue.open = ["g-new"]
+        venue.cancel_leaves = 1  # the venue still lists it after the cancel
+        venue.revoke_works = True
+        log.clear()
+        out = switch.kill()
+        gemini = out["venues"][1]
+        self.assertEqual(log, ["cancel_all", "list", "revoke", "probe"])
+        self.assertEqual(venue.open, ["g-new"])
+        self.assertEqual((out["status"], gemini["status"], gemini["cancel_all"], gemini["revoke_grant"]),
+                         ("pending", "pending", "pending", "confirmed"))
+        self.assertEqual(gemini["detail"], {"cancel_all": "remaining:1"})
+
     def test_kill_cancels_working_paper_orders(self) -> None:
         """Red-team round 2 finding 1: a confirmed kill leaves no working paper order (O42, K1)."""
         self._working_orders(3)

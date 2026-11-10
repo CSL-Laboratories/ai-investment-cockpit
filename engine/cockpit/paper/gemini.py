@@ -9,7 +9,9 @@ the kill cancels working orders. After the order halt is set in one committed st
 
 * one cancel-all operation is attempted, then the open orders are listed. Cancel is
   ``confirmed`` only when the venue lists none open. A timeout, error, unreadable reply
-  or any order still listed keeps it ``pending``. A failure never skips the revoke;
+  or any order still listed keeps it ``pending``. So does an empty listing that still
+  carries a ``cursor``, a ``truncated`` other than ``False`` or a ``remaining`` other
+  than ``0`` (unfinished). A failure never skips the revoke;
 * the OAuth grant is revoked, and the revoke is ``confirmed`` only when an authenticated
   call made after it is refused as unauthorized. Otherwise it is ``pending``.
 
@@ -17,7 +19,10 @@ Which Gemini API operations back ``cancel_all`` and ``list_open_orders`` under a
 grant is not verified here; the transport is a mock (see the PR's gaps).
 
 The overall status is ``confirmed`` only when halt, cancel and revoke all are. Calling
-``kill`` again keeps the halt and retries only what is not yet confirmed.
+``kill`` again keeps the halt and retries what is not yet confirmed. A cancel confirm is
+kept only once the revoke is confirmed too: while the revoke is pending, each ``kill``
+cancels and lists again before the revoke. A cancel that confirms in a ``kill`` whose
+halt call failed is not kept either.
 """
 
 from __future__ import annotations
@@ -35,6 +40,16 @@ class GeminiKillTransport(Protocol):
     def list_open_orders(self) -> dict: ...    # {"order_ids": [str]}
     def revoke_oauth_grant(self) -> dict: ...  # {"accepted": bool}
     def probe_authenticated(self) -> str: ...  # "unauthorized" | "authorized"
+
+
+def _list_finished(listed: dict) -> bool:
+    """True only when the list payload does not say more orders may follow."""
+    if listed.get("cursor") is not None:
+        return False
+    if listed.get("truncated", False) is not False:
+        return False
+    remaining = listed.get("remaining", 0)
+    return type(remaining) is int and remaining == 0
 
 
 class GeminiKill:
@@ -62,6 +77,8 @@ class GeminiKill:
             self._detail["cancel_all"] = "unreadable_list"
         elif ids:
             self._detail["cancel_all"] = "remaining:%d" % len(ids)
+        elif not _list_finished(out):
+            self._detail["cancel_all"] = "unfinished_list"
         else:
             self._state["cancel_all"] = "confirmed"
             self._detail.pop("cancel_all", None)
@@ -88,13 +105,22 @@ class GeminiKill:
 
     def kill(self) -> dict:
         with self._lock:
+            halt_failed = False
             try:
                 self._halt()
                 self._state["halt"] = "confirmed"
+                self._detail.pop("halt", None)
             except Exception as exc:  # noqa: BLE001 - still try the risk-reducing calls
+                halt_failed = True
                 self._detail["halt"] = "error:" + type(exc).__name__
-            if self._state["cancel_all"] != "confirmed":
+            # An earlier cancel confirm is kept only once the revoke is confirmed too.
+            if self._state["cancel_all"] != "confirmed" or self._state["revoke_grant"] != "confirmed":
+                self._state["cancel_all"] = "pending"
                 self._cancel()
+                if halt_failed and self._state["cancel_all"] == "confirmed":
+                    # The halt call failed in this kill: do not keep the confirm.
+                    self._state["cancel_all"] = "pending"
+                    self._detail["cancel_all"] = "halt_failed"
             if self._state["revoke_grant"] != "confirmed":
                 self._revoke()
             status = "confirmed" if all(v == "confirmed" for v in self._state.values()) else "pending"

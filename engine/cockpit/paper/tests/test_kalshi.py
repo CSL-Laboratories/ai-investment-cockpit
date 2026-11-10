@@ -168,6 +168,103 @@ class KillTests(unittest.TestCase):
         self.assertEqual(log, ["cancel_all", "list_open_orders", "revoke_api_key", "probe"])
         self.assertEqual((out["status"], out["halt"]), ("pending", "pending"))
 
+    def test_empty_list_that_is_not_finished_keeps_cancel_pending(self) -> None:
+        """An empty page that says more may follow confirms nothing."""
+        for extra in ({"cursor": "page-2"}, {"cursor": ""}, {"cursor": 0}, {"truncated": True},
+                      {"truncated": None}, {"truncated": 1}, {"remaining": 2}, {"remaining": "0"},
+                      {"remaining": None}, {"remaining": False}):
+            with self.subTest(extra=extra):
+                kill, log = self._kill(orders={"order_ids": [], **extra})
+                out = kill.kill()
+                self.assertEqual((out["status"], out["cancel_all"]), ("pending", "pending"))
+                self.assertEqual(out["detail"]["cancel_all"], "unfinished_list")
+                self.assertIn("revoke_api_key", log)  # an unfinished list never skips the revoke
+
+    def test_finished_empty_list_confirms(self) -> None:
+        for payload in ({"order_ids": []}, {"order_ids": [], "cursor": None},
+                        {"order_ids": [], "truncated": False}, {"order_ids": [], "remaining": 0},
+                        {"order_ids": [], "cursor": None, "truncated": False, "remaining": 0}):
+            with self.subTest(payload=payload):
+                out = self._kill(orders=payload)[0].kill()
+                self.assertEqual((out["status"], out["cancel_all"]), ("confirmed", "confirmed"))
+                self.assertEqual(out["detail"], {})
+
+    def _failing_once_halt(self, log):
+        errors = [OSError("disk")]
+        def halt():
+            log.append("halt")
+            if errors:
+                raise errors.pop()
+        return halt
+
+    def test_cancel_confirm_is_not_kept_when_the_halt_call_failed(self) -> None:
+        log = []
+        transport = FakeTransport(log=log)
+        kill = KalshiKill(self._failing_once_halt(log), transport)
+        out = kill.kill()
+        self.assertEqual(log, ["halt", "cancel_all", "list_open_orders", "revoke_api_key", "probe"])
+        self.assertEqual((out["status"], out["halt"], out["cancel_all"], out["revoke_key"]),
+                         ("pending", "pending", "pending", "confirmed"))
+        self.assertEqual(out["detail"], {"halt": "error:OSError", "cancel_all": "halt_failed"})
+        # An order placed while the halt was not set: the next kill cancels and lists again.
+        transport.orders = ["k-new"]
+        log.clear()
+        out = kill.kill()
+        self.assertEqual(log, ["halt", "cancel_all", "list_open_orders"])
+        self.assertEqual((out["status"], out["halt"], out["cancel_all"]), ("pending", "confirmed", "pending"))
+        self.assertEqual(out["detail"], {"cancel_all": "remaining:1"})
+        transport.orders = []
+        self.assertEqual(kill.kill()["status"], "confirmed")
+
+    def test_pending_revoke_cancels_and_lists_again(self) -> None:
+        log = []
+        transport = FakeTransport(revoke={"accepted": False}, probe="authorized", log=log)
+        kill = KalshiKill(lambda: log.append("halt"), transport)
+        out = kill.kill()
+        self.assertEqual((out["status"], out["cancel_all"], out["revoke_key"]), ("pending", "confirmed", "pending"))
+        # The key still worked, so an order could be placed after the first listing.
+        transport.orders = ["late"]
+        transport.revoke, transport.probe = {"accepted": True}, "unauthorized"
+        log.clear()
+        out = kill.kill()
+        self.assertEqual(log, ["halt", "cancel_all", "list_open_orders", "revoke_api_key", "probe"])
+        self.assertEqual((out["status"], out["cancel_all"], out["revoke_key"]), ("pending", "pending", "confirmed"))
+        self.assertEqual(out["detail"], {"cancel_all": "remaining:1"})
+
+    def test_pending_revoke_recancel_failure_still_revokes(self) -> None:
+        log = []
+        transport = FakeTransport(probe="authorized", log=log)
+        kill = KalshiKill(lambda: log.append("halt"), transport)
+        self.assertEqual(kill.kill()["cancel_all"], "confirmed")
+        transport.cancel, transport.probe = TimeoutError(), "unauthorized"
+        log.clear()
+        out = kill.kill()
+        self.assertEqual(log, ["halt", "cancel_all", "revoke_api_key", "probe"])
+        self.assertEqual((out["status"], out["cancel_all"], out["revoke_key"]), ("pending", "pending", "confirmed"))
+        self.assertEqual(out["detail"], {"cancel_all": "error:TimeoutError"})
+
+    def test_confirmed_cancel_and_revoke_are_not_retried(self) -> None:
+        log = []
+        transport = FakeTransport(log=log)
+        kill = KalshiKill(lambda: log.append("halt"), transport)
+        self.assertEqual(kill.kill()["status"], "confirmed")
+        # The revoked key can no longer cancel or list; that must not demote the cancel.
+        transport.cancel = transport.orders = PermissionError()
+        log.clear()
+        out = kill.kill()
+        self.assertEqual(log, ["halt"])
+        self.assertEqual((out["status"], out["cancel_all"], out["revoke_key"]), ("confirmed", "confirmed", "confirmed"))
+        self.assertEqual(out["detail"], {})
+
+    def test_successful_halt_drops_the_stored_halt_error(self) -> None:
+        log = []
+        kill = KalshiKill(self._failing_once_halt(log), FakeTransport(log=log))
+        out = kill.kill()
+        self.assertEqual((out["halt"], out["detail"]["halt"]), ("pending", "error:OSError"))
+        out = kill.kill()
+        self.assertEqual((out["status"], out["halt"]), ("confirmed", "confirmed"))
+        self.assertEqual(out["detail"], {})
+
 
 if __name__ == "__main__":
     unittest.main()

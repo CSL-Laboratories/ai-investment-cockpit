@@ -20,7 +20,10 @@ committed step:
   call made after it is refused as unauthorized. Otherwise it is ``pending``.
 
 The overall status is ``confirmed`` only when halt, cancel and revoke all are. Calling
-``kill`` again keeps the halt and retries only what is not yet confirmed.
+``kill`` again keeps the halt and retries what is not yet confirmed. A cancel confirm is
+kept only once the revoke is confirmed too: while the revoke is pending, each ``kill``
+lists and cancels again before the revoke. A cancel that confirms in a ``kill`` whose
+halt call failed is not kept either.
 """
 
 from __future__ import annotations
@@ -135,13 +138,22 @@ class CoinbaseKill:
 
     def kill(self) -> dict:
         with self._lock:
+            halt_failed = False
             try:
                 self._halt()
                 self._state["halt"] = "confirmed"
+                self._detail.pop("halt", None)
             except Exception as exc:  # noqa: BLE001 - still try the risk-reducing calls
+                halt_failed = True
                 self._detail["halt"] = "error:" + type(exc).__name__
-            if self._state["cancel_orders"] != "confirmed":
+            # An earlier cancel confirm is kept only once the revoke is confirmed too.
+            if self._state["cancel_orders"] != "confirmed" or self._state["revoke_grant"] != "confirmed":
+                self._state["cancel_orders"] = "pending"
                 self._cancel()
+                if halt_failed and self._state["cancel_orders"] == "confirmed":
+                    # The halt call failed in this kill: do not keep the confirm.
+                    self._state["cancel_orders"] = "pending"
+                    self._detail["cancel_orders"] = "halt_failed"
             if self._state["revoke_grant"] != "confirmed":
                 self._revoke()
             status = "confirmed" if all(v == "confirmed" for v in self._state.values()) else "pending"

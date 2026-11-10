@@ -17,12 +17,17 @@ skips the other. Status is truthful:
   shows no open order. The cancel-all reply's own ``remaining: 0`` is not
   confirmation (PRODUCT.md 4.2, K1). A timeout or error is ``pending``
   (unknown), a capped cancel that leaves orders is ``pending`` with the
-  remaining count, and any order the listing still shows is ``pending``;
+  remaining count, and any order the listing still shows is ``pending``. An
+  empty listing that still carries a ``cursor``, a ``truncated`` other than
+  ``False`` or a ``remaining`` other than ``0`` is unfinished, so ``pending``;
 * the key revoke is ``confirmed`` only when an authenticated call made after it is
   refused as unauthorized. Otherwise it is ``pending``.
 
 The overall status is ``confirmed`` only when both are. Calling ``kill`` again keeps
-the halt and retries only what is not yet confirmed.
+the halt and retries what is not yet confirmed. A cancel confirm is kept only once the
+revoke is confirmed too: while the revoke is pending, each ``kill`` cancels and lists
+again before the revoke. A cancel that confirms in a ``kill`` whose halt call failed is
+not kept either.
 """
 
 from __future__ import annotations
@@ -75,6 +80,16 @@ class KalshiKillTransport(Protocol):
     def probe_authenticated(self) -> str: ...  # "unauthorized" | "authorized"
 
 
+def _list_finished(listed: dict) -> bool:
+    """True only when the list payload does not say more orders may follow."""
+    if listed.get("cursor") is not None:
+        return False
+    if listed.get("truncated", False) is not False:
+        return False
+    remaining = listed.get("remaining", 0)
+    return type(remaining) is int and remaining == 0
+
+
 class KalshiKill:
     def __init__(self, halt: Callable[[], object], transport: KalshiKillTransport) -> None:
         self._halt = halt
@@ -109,6 +124,9 @@ class KalshiKill:
         if ids:
             self._detail["cancel_all"] = "remaining:%d" % len(ids)
             return
+        if not _list_finished(listed):
+            self._detail["cancel_all"] = "unfinished_list"
+            return
         self._state["cancel_all"] = "confirmed"
         self._detail.pop("cancel_all", None)
 
@@ -134,13 +152,22 @@ class KalshiKill:
 
     def kill(self) -> dict:
         with self._lock:
+            halt_failed = False
             try:
                 self._halt()
                 self._state["halt"] = "confirmed"
+                self._detail.pop("halt", None)
             except Exception as exc:  # noqa: BLE001 - still try the risk-reducing calls
+                halt_failed = True
                 self._detail["halt"] = "error:" + type(exc).__name__
-            if self._state["cancel_all"] != "confirmed":
+            # An earlier cancel confirm is kept only once the revoke is confirmed too.
+            if self._state["cancel_all"] != "confirmed" or self._state["revoke_key"] != "confirmed":
+                self._state["cancel_all"] = "pending"
                 self._cancel()
+                if halt_failed and self._state["cancel_all"] == "confirmed":
+                    # The halt call failed in this kill: do not keep the confirm.
+                    self._state["cancel_all"] = "pending"
+                    self._detail["cancel_all"] = "halt_failed"
             if self._state["revoke_key"] != "confirmed":
                 self._revoke()
             status = "confirmed" if all(v == "confirmed" for v in self._state.values()) else "pending"
