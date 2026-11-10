@@ -48,6 +48,8 @@
       "Bash(python3 -X utf8 -B tools/test_fixer_failure_watcher.py)",
       "Bash(python -X utf8 -B tools/test_merge_candidate.py)",
       "Bash(python3 -X utf8 -B tools/test_merge_candidate.py)",
+      "Bash(python -X utf8 -B tools/test_o3_settlement_and_corrections.py)",
+      "Bash(python3 -X utf8 -B tools/test_o3_settlement_and_corrections.py)",
       "Bash(python -X utf8 -B tools/test_queue_gates.py)",
       "Bash(python3 -X utf8 -B tools/test_queue_gates.py)",
       "Bash(python -X utf8 -B tools/test_recursion_route_pin_fetch.py)",
