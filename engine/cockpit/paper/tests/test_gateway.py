@@ -183,10 +183,16 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(self.core.spent, 100_000)  # the core charged, and nothing reversed it
         self.assertEqual(self.core.calls.count("effect.authorize"), 1)
 
-    def test_same_intent_booked_during_the_core_call_is_a_leftover_charge(self) -> None:
+    def test_same_intent_armed_during_the_core_call_is_not_charged_twice(self) -> None:
+        """The in-flight idempotency key blocks a second gateway from charging or booking.
+
+        The caller that armed the key is the one that books. The other submit is
+        ``charge_uncertain`` and its core is not asked to authorize.
+        """
         approval = self._approved(INTENT)
         original = self.core.__call__
         other_core = FakeCore(budget_minor=10**9)
+        seen: dict[str, str] = {}
 
         def book_same_intent_during_core_call(raw: bytes) -> bytes:
             other = PaperBook(self.path)  # another gateway on the same book, as another process would
@@ -194,16 +200,22 @@ class GatewayTests(unittest.TestCase):
                               caps=Caps(max_notional_minor=500_000, max_quantity=100))
             other_approval = gw.request_approval(INTENT)["approval_id"]
             other_core.operator_approves(other_approval)
-            gw.submit(INTENT, other_approval, AUTHORITY)
+            try:
+                gw.submit(INTENT, other_approval, AUTHORITY)
+            except Refused as exc:
+                seen["code"] = exc.code
+            else:
+                seen["code"] = "booked"
             other.close()
             return original(raw)
         self.gw._core = CoreClient(book_same_intent_during_core_call)
-        with self.assertRaises(Refused) as ctx:
-            self.gw.submit(INTENT, approval, AUTHORITY)
-        self.assertEqual((ctx.exception.code, ctx.exception.cause), ("leftover_charge", "intent_duplicate"))
-        self.assertIn("intent_duplicate", str(ctx.exception))
-        self.assertEqual(self.book.orders(), [("i-1", 1, "working")])  # only the other gateway's order
-        self.assertEqual(self.core.spent, 100_000)  # this core charged for an order that never booked
+        out = self.gw.submit(INTENT, approval, AUTHORITY)
+        self.assertEqual(out["status"], "paper_working")
+        self.assertEqual(seen["code"], "charge_uncertain")
+        self.assertEqual(self.book.orders(), [("i-1", 1, "working")])
+        self.assertEqual(self.core.spent, 100_000)  # the arming core charged once
+        self.assertEqual(other_core.spent, 0)
+        self.assertEqual(other_core.calls.count("effect.authorize"), 0)
 
     def test_booking_error_after_the_charge_is_a_leftover_charge(self) -> None:
         """A locked book after the charge must not hide the charge behind a raw exception."""

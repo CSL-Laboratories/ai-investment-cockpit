@@ -39,9 +39,16 @@ Any booking refusal after a successful charge, whatever its code, makes ``submit
 ``account_unknown``, when a halt, the same intent or a funds change lands during the core
 call). Any other booking exception after the charge (a locked book, say) is a
 ``leftover_charge`` as well, with ``.cause`` ``booking_error:<Class>``. Nothing is booked
-and the charge is not reversed: the core exposes no reverse. A retry needs a new approval
-and will charge again. The audit stage ``book`` alone does not say whether the core
-charged; only a ``leftover_charge`` code does.
+and the charge is not reversed: the core exposes no reverse. The effect's SHA-256 is an
+idempotency key in the book's ``idempotency`` table, written with ``INSERT`` / ``UPDATE``
+inside an explicit ``BEGIN IMMEDIATE`` (never ``REPLACE``, and not on sqlite3's default
+connection, whose implicit transaction rolls back if the process is killed). A retry of
+that effect does not call the core again. If the charge row committed and the booking did
+not, the retry finishes the booking. If the process died during the core call, the row
+stays ``armed`` and the retry is ``charge_uncertain``. A run fault the core has already
+refused is stored in ``fault_state`` in the same transaction as its audit row, so a
+restarted core does not forget it. The audit stage ``book`` alone does not say whether
+the core charged; a ``leftover_charge`` code, or a committed idempotency row, does.
 
 ``PaperBook`` has no public booking method: its private ``_book`` refuses unless handed a
 capability object that only ``OrderGateway.submit`` passes, and a static test refuses any
@@ -113,6 +120,53 @@ AUDIT_SCHEMA = ("CREATE TABLE audit (seq INTEGER PRIMARY KEY, event TEXT NOT NUL
                 " run_id TEXT, connection TEXT, effect_sha256 TEXT, halt_seq INTEGER NOT NULL)")
 AUDIT_COLUMNS = ("seq", "event", "stage", "code", "plugin_id", "intent_id", "run_id", "connection",
                  "effect_sha256", "halt_seq")
+# SQLite shows an unassigned INTEGER PRIMARY KEY as -1 inside BEFORE INSERT. An explicit seq
+# (what INSERT OR REPLACE uses to overwrite a row) is any other value. recursive_triggers
+# defaults off, so a BEFORE DELETE trigger does not fire for that REPLACE.
+AUDIT_NO_EXPLICIT = ("CREATE TRIGGER audit_no_explicit_seq BEFORE INSERT ON audit"
+                     " WHEN NEW.seq != -1 BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END")
+FAULT_SCHEMA = ("CREATE TABLE fault_state (kind TEXT NOT NULL CHECK (kind = 'run'),"
+                " subject TEXT NOT NULL, code TEXT NOT NULL, PRIMARY KEY (kind, subject))")
+FAULT_SEEN_SCHEMA = ("CREATE TABLE fault_seen (seq INTEGER PRIMARY KEY, kind TEXT NOT NULL,"
+                     " subject TEXT NOT NULL)")
+FAULT_NO_UPDATE = ("CREATE TRIGGER fault_state_no_update BEFORE UPDATE ON fault_state"
+                   " BEGIN SELECT RAISE(ABORT, 'fault state is append-only'); END")
+FAULT_NO_DELETE = ("CREATE TRIGGER fault_state_no_delete BEFORE DELETE ON fault_state"
+                   " BEGIN SELECT RAISE(ABORT, 'fault state is append-only'); END")
+FAULT_NO_REPLACE = ("CREATE TRIGGER fault_state_no_replace BEFORE INSERT ON fault_state"
+                    " WHEN EXISTS (SELECT 1 FROM fault_seen WHERE kind = NEW.kind AND subject = NEW.subject)"
+                    " BEGIN SELECT RAISE(ABORT, 'fault state is append-only'); END")
+FAULT_REMEMBER = ("CREATE TRIGGER fault_state_remember AFTER INSERT ON fault_state"
+                  " BEGIN INSERT INTO fault_seen (kind, subject) VALUES (NEW.kind, NEW.subject); END")
+FAULT_SEEN_NO_EXPLICIT = ("CREATE TRIGGER fault_seen_no_explicit_seq BEFORE INSERT ON fault_seen"
+                          " WHEN NEW.seq != -1"
+                          " BEGIN SELECT RAISE(ABORT, 'fault state is append-only'); END")
+FAULT_SEEN_NO_UPDATE = ("CREATE TRIGGER fault_seen_no_update BEFORE UPDATE ON fault_seen"
+                        " BEGIN SELECT RAISE(ABORT, 'fault state is append-only'); END")
+FAULT_SEEN_NO_DELETE = ("CREATE TRIGGER fault_seen_no_delete BEFORE DELETE ON fault_seen"
+                        " BEGIN SELECT RAISE(ABORT, 'fault state is append-only'); END")
+IDEMPOTENCY_SCHEMA = ("CREATE TABLE idempotency (idempotency_key TEXT PRIMARY KEY,"
+                      " intent_id TEXT NOT NULL UNIQUE, effect_sha256 TEXT NOT NULL, approval_id TEXT,"
+                      " status TEXT NOT NULL CHECK (status IN ('armed', 'charged', 'booked', 'void')),"
+                      " order_seq INTEGER, notional_minor INTEGER, digest TEXT)")
+IDEMPOTENCY_SEEN_SCHEMA = ("CREATE TABLE idempotency_seen (seq INTEGER PRIMARY KEY,"
+                           " intent_id TEXT NOT NULL)")
+IDEMPOTENCY_NO_REPLACE = ("CREATE TRIGGER idempotency_no_replace BEFORE INSERT ON idempotency"
+                          " WHEN EXISTS (SELECT 1 FROM idempotency_seen WHERE intent_id = NEW.intent_id)"
+                          " BEGIN SELECT RAISE(ABORT, 'idempotency key is already recorded'); END")
+IDEMPOTENCY_REMEMBER = ("CREATE TRIGGER idempotency_remember AFTER INSERT ON idempotency"
+                        " BEGIN INSERT INTO idempotency_seen (intent_id) VALUES (NEW.intent_id); END")
+IDEMPOTENCY_SEEN_NO_EXPLICIT = ("CREATE TRIGGER idempotency_seen_no_explicit_seq BEFORE INSERT ON idempotency_seen"
+                                " WHEN NEW.seq != -1"
+                                " BEGIN SELECT RAISE(ABORT, 'idempotency key is already recorded'); END")
+IDEMPOTENCY_SEEN_NO_UPDATE = ("CREATE TRIGGER idempotency_seen_no_update BEFORE UPDATE ON idempotency_seen"
+                              " BEGIN SELECT RAISE(ABORT, 'idempotency key is already recorded'); END")
+IDEMPOTENCY_SEEN_NO_DELETE = ("CREATE TRIGGER idempotency_seen_no_delete BEFORE DELETE ON idempotency_seen"
+                              " BEGIN SELECT RAISE(ABORT, 'idempotency key is already recorded'); END")
+_CRASH_TRIGGERS = (AUDIT_NO_EXPLICIT, FAULT_NO_UPDATE, FAULT_NO_DELETE, FAULT_NO_REPLACE, FAULT_REMEMBER,
+                   FAULT_SEEN_NO_EXPLICIT, FAULT_SEEN_NO_UPDATE, FAULT_SEEN_NO_DELETE,
+                   IDEMPOTENCY_NO_REPLACE, IDEMPOTENCY_REMEMBER, IDEMPOTENCY_SEEN_NO_EXPLICIT,
+                   IDEMPOTENCY_SEEN_NO_UPDATE, IDEMPOTENCY_SEEN_NO_DELETE)
 
 
 def create_book(path: str, *, cash_minor: dict, holdings: dict | None = None) -> None:
@@ -138,6 +192,7 @@ def create_book(path: str, *, cash_minor: dict, holdings: dict | None = None) ->
     db = sqlite3.connect(path, isolation_level=None)
     try:
         db.execute("PRAGMA journal_mode=WAL")
+        db.execute("PRAGMA recursive_triggers=ON")
         db.execute("BEGIN IMMEDIATE")  # one commit: a crash never leaves a book without its cash rows
         db.execute("CREATE TABLE state (k TEXT PRIMARY KEY, v INTEGER NOT NULL)")
         db.execute("INSERT INTO state VALUES ('halted', 0), ('seq', 0), ('halt_seq', 0)")
@@ -150,6 +205,14 @@ def create_book(path: str, *, cash_minor: dict, holdings: dict | None = None) ->
                    " BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END")
         db.execute("CREATE TRIGGER audit_no_delete BEFORE DELETE ON audit"
                    " BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END")
+        db.execute(AUDIT_NO_EXPLICIT)
+        db.execute(FAULT_SCHEMA)
+        db.execute(FAULT_SEEN_SCHEMA)
+        db.execute(IDEMPOTENCY_SCHEMA)
+        db.execute(IDEMPOTENCY_SEEN_SCHEMA)
+        for statement in _CRASH_TRIGGERS:
+            if statement != AUDIT_NO_EXPLICIT:
+                db.execute(statement)
         db.execute("CREATE TABLE cash (account TEXT PRIMARY KEY,"
                    " available_minor INTEGER NOT NULL CHECK (available_minor >= 0))")
         db.execute("CREATE TABLE holdings (account TEXT NOT NULL, instrument TEXT NOT NULL,"
@@ -171,6 +234,7 @@ class PaperBook:
         self._db = sqlite3.connect(path, isolation_level=None, check_same_thread=False, timeout=30)
         self._db.execute("PRAGMA synchronous=FULL")
         self._db.execute("PRAGMA busy_timeout=30000")
+        self._db.execute("PRAGMA recursive_triggers=ON")
         self._lock = threading.Lock()
         if not self._db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audit'").fetchone():
             self._db.close()
@@ -179,6 +243,11 @@ class PaperBook:
         if not {"cash", "holdings"} <= have:
             self._db.close()
             raise Refused("book_without_cash")
+        try:
+            self._ensure_crash_tables()
+        except BaseException:
+            self._db.close()
+            raise
 
     def _tx(self, fn):
         with self._lock:
@@ -190,6 +259,25 @@ class PaperBook:
             except BaseException:
                 self._db.execute("ROLLBACK")
                 raise
+
+    def _ensure_crash_tables(self) -> None:
+        """Add the fault and idempotency tables to a book created before they existed."""
+        def run(db):
+            have = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+            triggers = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'")}
+            if "fault_state" not in have:
+                db.execute(FAULT_SCHEMA)
+            if "fault_seen" not in have:
+                db.execute(FAULT_SEEN_SCHEMA)
+            if "idempotency" not in have:
+                db.execute(IDEMPOTENCY_SCHEMA)
+            if "idempotency_seen" not in have:
+                db.execute(IDEMPOTENCY_SEEN_SCHEMA)
+            for statement in _CRASH_TRIGGERS:
+                name = statement.split("CREATE TRIGGER ", 1)[1].split(" ", 1)[0]
+                if name not in triggers:
+                    db.execute(statement)
+        self._tx(run)
 
     @staticmethod
     def _next_seq(db) -> int:
@@ -213,6 +301,8 @@ class PaperBook:
 
     @staticmethod
     def _audit_row(db, row: dict) -> int:
+        # INSERT only. REPLACE deletes the prior row first, and a default sqlite3 connection
+        # (isolation_level "") would roll the write back if the process were killed before commit.
         halt_seq = db.execute("SELECT v FROM state WHERE k = 'halt_seq'").fetchone()[0]
         cur = db.execute("INSERT INTO audit (event, stage, code, plugin_id, intent_id, run_id, connection,"
                          " effect_sha256, halt_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -262,7 +352,8 @@ class PaperBook:
         with self._lock:
             return self._db.execute("SELECT 1 FROM orders WHERE intent_id = ?", (intent_id,)).fetchone() is not None
 
-    def _book(self, intent: Intent, token: object, audit: dict | None = None) -> int:
+    def _book(self, intent: Intent, token: object, audit: dict | None = None, *,
+              charge_key: str | None = None) -> int:
         """Write a working order. Not a public API: only ``OrderGateway.submit`` holds the token,
         after the risk pass, the funds check and the core's checks (PRODUCT.md 4.2 "One way in")."""
         if token is not _GATEWAY_ONLY:
@@ -286,12 +377,107 @@ class PaperBook:
                         intent.quantity, intent.limit_price_minor))
             if audit is not None:
                 self._audit_row(db, dict(audit, event="booked", stage="book", code=None))
+            if charge_key is not None:
+                # Same commit as the order. A crash before this COMMIT leaves status 'charged'.
+                cur = db.execute("UPDATE idempotency SET status = 'booked', order_seq = ?"
+                                 " WHERE idempotency_key = ? AND status = 'charged'",
+                                 (seq, charge_key))
+                if cur.rowcount != 1:
+                    raise Refused("charge_state")
             return seq
         return self._tx(run)
 
+    def _run_faulted(self, run_id: str) -> bool:
+        def run(db):
+            return db.execute("SELECT 1 FROM fault_state WHERE kind = 'run' AND subject = ?",
+                              (run_id,)).fetchone() is not None
+        return self._tx(run)
+
+    def _lookup_charge(self, db, intent_id: str, key: str) -> str:
+        row = db.execute("SELECT idempotency_key, effect_sha256, status FROM idempotency"
+                         " WHERE intent_id = ?", (intent_id,)).fetchone()
+        if row is None:
+            other = db.execute("SELECT 1 FROM idempotency WHERE idempotency_key = ?", (key,)).fetchone()
+            return "mismatch" if other is not None else "none"
+        prev_key, prev_effect, status = row
+        if prev_key != key or prev_effect != key:
+            # A refused attempt never charged, so a different effect on this intent may proceed.
+            # A charge that did arm or land stays bound to the effect that was sent.
+            return "void" if status == "void" else "mismatch"
+        if status == "armed":
+            return "uncertain"
+        if status == "void":
+            return "void"
+        if status in ("charged", "booked"):
+            return "resume"
+        return "uncertain"
+
+    def _charge_state(self, intent_id: str, key: str) -> str:
+        return self._tx(lambda db: self._lookup_charge(db, intent_id, key))
+
+    def _arm_charge(self, intent_id: str, key: str, approval_id: str | None) -> str:
+        """Commit ``armed`` before the core call. A concurrent insert loses and re-reads."""
+        def run(db):
+            state = self._lookup_charge(db, intent_id, key)
+            if state == "none":
+                db.execute("INSERT INTO idempotency (idempotency_key, intent_id, effect_sha256,"
+                           " approval_id, status) VALUES (?, ?, ?, ?, 'armed')",
+                           (key, intent_id, key, approval_id))
+                return "go"
+            if state == "void":
+                cur = db.execute("UPDATE idempotency SET status = 'armed', approval_id = ?,"
+                                 " idempotency_key = ?, effect_sha256 = ?"
+                                 " WHERE intent_id = ? AND status = 'void'",
+                                 (approval_id, key, key, intent_id))
+                if cur.rowcount != 1:
+                    return self._lookup_charge(db, intent_id, key)
+                return "go"
+            return state
+        try:
+            return self._tx(run)
+        except sqlite3.IntegrityError:
+            return self._charge_state(intent_id, key)
+
+    def _void_charge(self, key: str) -> None:
+        """The core refused before charging. A later approval of this effect may try again."""
+        def run(db):
+            db.execute("UPDATE idempotency SET status = 'void' WHERE idempotency_key = ?"
+                       " AND status = 'armed'", (key,))
+        self._tx(run)
+
+    def _mark_charged(self, key: str, approval_id: str | None, digest: str | None, notional: int) -> None:
+        def run(db):
+            cur = db.execute("UPDATE idempotency SET status = 'charged', approval_id = ?, digest = ?,"
+                             " notional_minor = ? WHERE idempotency_key = ? AND status = 'armed'",
+                             (approval_id, digest, notional, key))
+            if cur.rowcount != 1:
+                raise Refused("charge_state")
+        self._tx(run)
+
+    def _charge_digest(self, key: str):
+        def run(db):
+            row = db.execute("SELECT digest FROM idempotency WHERE idempotency_key = ?", (key,)).fetchone()
+            return None if row is None else row[0]
+        return self._tx(run)
+
     def record_refusal(self, row: dict) -> int:
-        """Append one refusal to the audit table in its own committed step. Returns its seq."""
-        return self._tx(lambda db: self._audit_row(db, dict(row, event="refused")))
+        """Append one refusal to the audit table in its own committed step. Returns its seq.
+
+        A ``core:run_faulted`` row also records the run, in this same transaction, so a crash
+        after the commit cannot drop the fault while keeping the audit line (or the reverse).
+        """
+        def run(db):
+            seq = self._audit_row(db, dict(row, event="refused"))
+            if row.get("code") == "core:run_faulted" and type(row.get("run_id")) is str:
+                # A second refusal of the same run must not INSERT again: the append-only
+                # trigger aborts a conflicting insert, and that would roll this audit row back.
+                already = db.execute("SELECT 1 FROM fault_state WHERE kind = 'run' AND subject = ?",
+                                     (row["run_id"],)).fetchone()
+                if already is None:
+                    db.execute("INSERT INTO fault_state (kind, subject, code)"
+                               " VALUES ('run', ?, 'core:run_faulted')", (row["run_id"],))
+            return seq
+        return self._tx(run)
 
     def audit(self) -> list[dict]:
         with self._lock:
@@ -441,6 +627,8 @@ class OrderGateway:
             # A booked intent id draws no new approval. Only the book is asked: no approval state here.
             if self._book._has_intent(intent.intent_id):
                 raise Refused("intent_duplicate")
+            if self._book._run_faulted(intent.run_id):
+                raise Refused("core:run_faulted")
             stage = "funds"
             self._book.check_funds(intent)  # cash or held shares, so a doomed order is never approved
             stage = "request"
@@ -460,17 +648,49 @@ class OrderGateway:
             stage = "book"
             if self._book._has_intent(intent.intent_id):
                 raise Refused("intent_duplicate")
-            stage = "funds"
-            self._book.check_funds(intent)  # early read; the booking re-checks in its own transaction
-            stage = "authorize"
-            try:
-                core = self._core.authorize(effect, approval_id, authority)
-            except CoreRefused as exc:
-                raise Refused("core:" + exc.code) from None
+            if self._book._run_faulted(intent.run_id):
+                stage = "authorize"
+                raise Refused("core:run_faulted")
+            key = hashlib.sha256(canonical(effect)).hexdigest()
+            approval = approval_id if type(approval_id) is str else None
+            state = self._book._charge_state(intent.intent_id, key)
+            if state == "mismatch":
+                raise Refused("intent_duplicate")
+            if state == "uncertain":
+                stage = "authorize"
+                raise Refused("charge_uncertain")
+            core_digest = None
+            charged_now = False
+            if state in ("none", "void"):
+                stage = "funds"
+                self._book.check_funds(intent)  # early read; the booking re-checks in its own transaction
+                stage = "authorize"
+                state = self._book._arm_charge(intent.intent_id, key, approval)
+                if state == "mismatch":
+                    stage = "book"
+                    raise Refused("intent_duplicate")
+                if state == "uncertain":
+                    raise Refused("charge_uncertain")
+                if state == "go":
+                    try:
+                        core = self._core.authorize(effect, approval_id, authority)
+                    except CoreRefused as exc:
+                        self._book._void_charge(key)
+                        raise Refused("core:" + exc.code) from None
+                    digest = core.get("digest")
+                    core_digest = digest if type(digest) is str else None
+                    charged_now = True
+            if state not in ("go", "resume"):
+                stage = "authorize"
+                raise Refused("charge_state")
+            if core_digest is None:
+                core_digest = self._book._charge_digest(key)
             stage = "book"
             audit = self._audit_base(intent, effect)
             try:
-                seq = self._book._book(intent, _GATEWAY_ONLY, audit)
+                if charged_now:
+                    self._book._mark_charged(key, approval, core_digest, effect["amount_minor"])
+                seq = self._book._book(intent, _GATEWAY_ONLY, audit, charge_key=key)
             except Refused as exc:
                 # The core has charged and nothing was booked. Any booking refusal lands here, with
                 # its code as the cause (a halt, the same intent or a funds change during the core
@@ -482,4 +702,4 @@ class OrderGateway:
             # ``from exc.__cause__`` keeps a booking error's cause; every other refusal has none.
             raise self._refuse(exc, stage, intent, effect) from exc.__cause__
         return {"status": "paper_working", "intent_id": intent.intent_id, "seq": seq,
-                "notional_minor": effect["amount_minor"], "digest": core.get("digest")}
+                "notional_minor": effect["amount_minor"], "digest": core_digest}
