@@ -1,7 +1,7 @@
 # Default owners. Later, more specific entries take precedence.
 * @NotSkittlz @CDanTheMan @samir-shah-ahmed
 
-.github/ @NotSkittlz
-AGENTS.md @NotSkittlz
-.mcp.json @NotSkittlz
-.cursor/ @NotSkittlz
+.github/ @NotSkittlz @CDanTheMan @samir-shah-ahmed
+AGENTS.md @NotSkittlz @CDanTheMan @samir-shah-ahmed
+.mcp.json @NotSkittlz @CDanTheMan @samir-shah-ahmed
+.cursor/ @NotSkittlz @CDanTheMan @samir-shah-ahmed

@@ -137,7 +137,7 @@ cell. Record per-strategy coverage and keep unmet evidence as a release blocker.
 The Cloud Devin swarm may prepare replay fixtures and review packages. It does
 **not** run the 20 market days, live smoke, or broker-facing soaks. Those remain
 owner-operated (Grok Bot or another service Lucas chooses). See
-[research/agent-swarm-cloud-host-2026-09-11.md](research/agent-swarm-cloud-host-2026-09-11.md).
+[research/agent-swarm-cloud-host-2026-09-11.md](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-agent-swarm-cloud-host-2026-09-11-source-history-01/result.md).
 
 The release review contains useful research examples and measured errors, routing and
 quota/cost results, honest strategy outcomes, full tax coverage, incident/recovery

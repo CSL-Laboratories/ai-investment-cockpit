@@ -31,6 +31,35 @@ These pins do not constitute a new human receipt or settle the discretion-label
 reconciliation and other deferred questions in CSL-223. An annotation correction
 needs scoped review; a change to governing direction needs a fresh human receipt.
 
+Acceptance receipts fail closed. The live CSL-212 record is a Lucas Linear digest
+receipt (`kind: linear_digest`), and until the ISSUE-CONTRACT amendment of
+2026-10-25 is accepted and promoted it is the only acceptance. Once that amendment
+is accepted and promoted, spec changes may also be accepted by a checker-pinned
+founder GitHub PR approval recorded in `program.json`
+(`kind: github_founder_pr_approval`; the checker code path is present but inert
+while its pin table is empty): allowlisted founder login (`CDanTheMan`,
+`NotSkittlz`, `samir-shah-ahmed`; exact-case match), approver other than the PR
+author, approved head SHA, and the exact file digest map. The checker pins
+accepted GitHub receipts the same way it pins Linear comment IDs: editing
+`program.json` alone cannot mint an approval. Receipt digests are bound to
+`approved_head_sha` (`git show <sha>:<path>` and no governed diff from that SHA
+to HEAD); git failure is fail-closed. A GitHub receipt may move any of the four
+governing files. Outcome `dependency_contracts.accepted_digest` follows that
+receipt's MONTH-PROGRAM digest, so a MONTH-PROGRAM move also requires an
+`OUTCOME_BASELINE_DIGESTS` checker amendment. The superseded Linear receipt
+stays pinned. The offline checker does not call GitHub. Founder identity is
+that allowlist, not any non-author approver. Merge, labels, status, generic PR
+approval, and agent comments are not receipts.
+
+Proposed ISSUE-CONTRACT dual-path wording is not in this repository. It is a
+proposed amendment, not accepted, in `CSL-Laboratories/csl-research` at commit
+`d885c2de7228ab4e886b93165d30013e4c8bc5fd`, path
+`contracts/ai-investment-cockpit/amendments/ISSUE-CONTRACT-2026-10-25.md`,
+SHA-256 `0b756e0777520f7b8a83d518b6b5887e96ed98eb8481d9d3840ddf4418c9b345`,
+via [csl-research #58](https://github.com/CSL-Laboratories/csl-research/pull/58)
+(not merged). It is not governing. `ISSUE-CONTRACT.md` remains the CSL-212
+bytes until an accepted amendment is promoted.
+
 The current rules in `AGENTS.md`, `CLAUDE.md`, the nine implementation
 invariants, the order path, and all pre-live controls remain authoritative until
 separately scoped, reviewed implementation amendments qualify replacements.
