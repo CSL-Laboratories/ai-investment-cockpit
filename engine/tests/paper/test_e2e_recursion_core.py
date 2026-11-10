@@ -4,7 +4,7 @@ Skipped unless the Recursion core package and ``cryptography`` are importable. R
 both trees on the path, for example::
 
     PYTHONPATH=engine:/path/to/recursion/core python3 -B -m unittest \\
-        discover -s engine/cockpit/paper/tests -t engine -v
+        discover -s engine/tests/paper -t engine -v
 
 Flow: developer-signed Cockpit plugin loaded by the core's loader -> permission ->
 operator approval drawn by the core -> installer-signed authority profile and caps ->
@@ -35,7 +35,7 @@ try:
 except ImportError:
     CORE = False
 
-PLUGIN_SOURCE = Path(__file__).resolve().parents[1].joinpath("plugin.py").read_bytes()
+PLUGIN_SOURCE = (Path(__file__).resolve().parents[2] / "cockpit" / "paper").joinpath("plugin.py").read_bytes()
 PLUGIN_ID = "csl.cockpit.paper"
 OPERATOR, PLUGIN_TOKEN = "operator-token-fake", "plugin-token-fake"
 INTENT = Intent(intent_id="e2e-1", account="paper-acct", instrument="AAPL", side="buy", quantity=5,
