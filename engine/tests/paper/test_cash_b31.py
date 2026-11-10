@@ -1,4 +1,4 @@
-"""B31: size to cash, refuse at the gateway (CSL-724; Lucas t1414u; PRODUCT.md 055cc7a5, 4.2).
+"""B31: size to cash, refuse at the gateway (CSL-724; Lucas t1414u; PRODUCT.md d84cdd26a4de2366f3c5d34c4aec5215f822a494 (CSLR-D-012), 4.2).
 
 "The sizer caps the share count at available cash when it turns conviction into an order, so
 the approved order already fits. The gateway still checks cash at send time and rejects
