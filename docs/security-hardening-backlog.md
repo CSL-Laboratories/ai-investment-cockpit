@@ -54,7 +54,7 @@ related: [security-architecture, prompt-injection-defense, draft-discord-control
 >   W-24 exact-message readback is green, but no S3 WORM bucket/credential is provisioned. The
 >   valid local chain/mirrors therefore still have no out-of-domain trust authority; no paper/
 >   live/autonomous promotion is permitted. See
->   [[evidence/w25-admin-discord-worm-witness-2026-08-17]].
+>   [`evidence/w25-admin-discord-worm-witness-2026-08-17.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/w25-admin-discord-worm-witness-2026-08-17.md).
 > - **W11-closed (G11 adversarial gate, 2026-07-09):** SEC-03 (runtime capability
 >   boundary — tracer + live-MCP token binding + trust-root pinning), SEC-05
 >   (credential starvation — ACTIVATION pending the low-priv account + launcher;
@@ -365,7 +365,7 @@ W's file; keep the reason).**
 ### SEC-05 — Enumerate bearer-credential stores as first-class assets
 **Attack.** `keyring` protects Alpaca/Finnhub/MCP/Discord creds, but the **Codex and
 Claude CLI auth stores are plaintext files** (`~/.codex/auth.json`, the claude session
-store; [[research-report]] §3 names `auth.json`). A prompt-injected or compromised agent
+store; [`research-report`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-research-report-source-history-01/result.md) §3 names `auth.json`). A prompt-injected or compromised agent
 with any filesystem read exfiltrates them; a harvested Robinhood MCP session token lets
 an attacker connect a **rogue client and place orders with zero contact with this app** —
 the "single order path" is a property of *this process*, not of the credential.
@@ -687,7 +687,7 @@ first, one 128-entry page must prove its whole sequence group, and ambiguity ret
 Read and append operation counts are constant; post-write concurrency is rechecked. PR #48 merged
 the package, but W-25 activation still waits on independent/cross-platform attestation. No cost
 workaround may weaken rollback, candidate shadow/conflict/delete, retention, or fail-closed checks. See
-[[evidence/bug110-bounded-witness-read-2026-08-18]].
+[`evidence/bug110-bounded-witness-read-2026-08-18.md`](https://github.com/CSL-Laboratories/csl-research/blob/4bed7965c8c57de55caaecbf44c4fba0c88e7ce5/contracts/ai-investment-cockpit/evidence/legacy/bug110-bounded-witness-read-2026-08-18.md).
 
 ### SEC-12 — Pin hash coverage and canonical serialization
 **Attack.** The docs never say *which* columns or *what* serialization feed each hash. If
@@ -1059,7 +1059,7 @@ retrofit. Land them alongside the WP they touch.
 - **OPS-04 — Trading-session calendar.** The intraday loop's market-hours guard needs a
   real US-equity session calendar (holidays, half-days, DST/early closes);
   `ingest/calendars.py` is earnings/macro only.
-- **OPS-05 — MCP session lifetime & re-auth.** [[research-report]] open-Q2 flags
+- **OPS-05 — MCP session lifetime & re-auth.** [`research-report`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-research-report-source-history-01/result.md) open-Q2 flags
   auth/session lifetimes for long-running headless agents; give a design answer — token
   refresh, re-auth-on-expiry, a breaker on auth failure, and monitoring for
   concurrent/foreign sessions (pairs with SEC-05).
@@ -1090,4 +1090,4 @@ retrofit. Land them alongside the WP they touch.
 
 *Baseline: [[security-architecture]] · [[prompt-injection-defense]]. Spec:
 [[build-scaffold-ultracode]] · [[draft-discord-control-plane]]. Constraint source:
-[[research-report]] · [[research-supplement]].*
+[`research-report`](https://github.com/CSL-Laboratories/csl-research/blob/367fa4d8fa091340216bea0798915bdfc43f2f1c/submissions/20261023-cockpit-research-report-source-history-01/result.md) · [[research-supplement]].*

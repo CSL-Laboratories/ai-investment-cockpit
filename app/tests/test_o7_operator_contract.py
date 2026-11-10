@@ -87,9 +87,16 @@ def test_exact_candidate_command_shows_negative_controls_failing(pytestconfig) -
     assert "contract_frozen_claimed=false" in completed.stdout
     assert "contract_frozen_claimed=true" not in completed.stdout
     assert "PASS" not in completed.stdout
+    program = json.loads((ROOT / "docs" / "replacement" / "program.json").read_text(encoding="utf-8"))
+    assert program["authority"]["acceptance_receipt"]["accepted_contracts"] == ACCEPTED
+    assert program["authority"]["acceptance_receipt"]["kind"] == "linear_digest"
+    assert program["authority"]["founder_github_allowlist"] == [
+        "CDanTheMan",
+        "NotSkittlz",
+        "samir-shah-ahmed",
+    ]
     for path, digest in ACCEPTED.items():
         assert _sha256(ROOT / path) == digest
-    program = json.loads((ROOT / "docs" / "replacement" / "program.json").read_text(encoding="utf-8"))
     outcome = next(item for item in program["outcomes"] if item["key"] == "O7")
     assert outcome["evidence"]["claimed"] == "researched"
     assert outcome["completion_gate_status"] == "pending_outcome_artifact"

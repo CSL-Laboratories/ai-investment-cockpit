@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TradeProposal",
+  "type": "object",
+  "additionalProperties": false,
+  "description": "Agent output (deep proposer). A hijacked model can at most emit one of these; it gets NO shortcut around risk, mode, or approval. There is deliberately NO execute_now / skip_risk / notional_override field (prompt-injection-defense.md §4 M4).",
+  "properties": {
+    "proposal_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_:.\\-]{1,64}$",
+      "description": "Opaque proposal identifier. Pattern-constrained (SEC-09): a compact id with no spaces or long digit runs, so a hijacked model cannot smuggle an account number / PII through this structured field into the ProposalRecord PK, the EVENT_PROPOSAL audit payload, or the operator embed."
+    },
+    "symbol": {
+      "type": "string",
+      "pattern": "^[A-Z0-9.\\-]{1,12}$",
+      "description": "Uppercase US ticker. Pattern-constrained (SEC-09): a real ticker shape so a hijacked model cannot carry an account number / PII in this structured field to store/audit/embed."
+    },
+    "side": {
+      "type": "string",
+      "enum": ["buy", "sell"]
+    },
+    "asset_type": {
+      "type": "string",
+      "enum": ["equity", "option"]
+    },
+    "order_type": {
+      "type": "string",
+      "enum": ["market", "limit", "stop", "stop_limit"]
+    },
+    "quantity": {
+      "type": ["number", "null"],
+      "description": "Proposed order quantity (shares/contracts); nullable when sizing is expressed as notional."
+    },
+    "notional": {
+      "type": ["number", "null"],
+      "description": "Proposed dollar notional; nullable when sizing is expressed as quantity."
+    },
+    "time_horizon": {
+      "type": "string",
+      "enum": ["intraday", "short", "long"]
+    },
+    "thesis": {
+      "type": "string",
+      "description": "Rationale for the trade. Surfaced to the operator only alongside its source_refs (never as fact on its own)."
+    },
+    "invalidation": {
+      "type": "string",
+      "description": "The condition under which this thesis is wrong and the position should be exited."
+    },
+    "sizing_basis": {
+      "type": "string",
+      "description": "How the proposed size was derived (e.g. fixed-fraction, risk-per-trade). Advisory only; the deterministic risk engine sets max_allowed_notional."
+    },
+    "source_refs": {
+      "type": "array",
+      "description": "Cited raw_ref strings pointing at the raw source items (parquet) that support the thesis. Consumed by the cross-model grounding verifier.",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9:/#._\\-]{1,128}$",
+        "description": "A safe raw_ref (e.g. parquet://YYYY-MM-DD/events-<id>#<idx>). Pattern-constrained (SEC-09): no spaces or PII-shaped free text in this structured field."
+      }
+    },
+    "generated_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Provenance of the agent run that produced this proposal.",
+      "properties": {
+        "runtime": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": ["string", "null"]
+        }
+      },
+      "required": ["runtime", "model"]
+    }
+  },
+  "required": [
+    "proposal_id",
+    "symbol",
+    "side",
+    "asset_type",
+    "order_type",
+    "time_horizon",
+    "thesis",
+    "invalidation",
+    "sizing_basis",
+    "source_refs"
+  ]
+}

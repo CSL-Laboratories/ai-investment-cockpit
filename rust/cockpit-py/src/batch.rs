@@ -54,7 +54,7 @@ fn apply_one(
     out: Option<&Bound<'_, PyList>>,
 ) -> PyResult<()> {
     let tup = item
-        .downcast::<PyTuple>()
+        .cast::<PyTuple>()
         .map_err(|_| raise(BookError::Value("batch op must be a tuple".into())))?;
     if tup.is_empty() {
         return Err(raise(BookError::Value("batch op is empty".into())));
