@@ -22,8 +22,12 @@ skips the other. Status is truthful:
   ``False`` or a ``remaining`` other than ``0`` is unfinished, so ``pending``;
 * the key revoke is ``confirmed`` only when the revoke call itself was accepted
   (``accepted`` exactly ``True``) and an authenticated call made after it is refused as
-  unauthorized. Otherwise it is ``pending``: a rejected or raised revoke keeps its
-  ``rejected`` or ``error:`` detail even when the probe says unauthorized.
+  unauthorized. Otherwise it is ``pending``. The ``revoke_key`` detail holds only the
+  revoke attempt (``rejected``, ``error:<Exc>`` or ``unreadable_response``; absent after
+  an accepted revoke). The last probe is reported apart, under ``revoke_probe``: the
+  probe's reply (``unauthorized``, ``authorized``), ``unreadable_probe`` or
+  ``error:<Exc>``. It stays in the detail after a confirm, and an unauthorized probe
+  after a rejected or raised revoke confirms nothing.
 
 The overall status is ``confirmed`` only when both are. Calling ``kill`` again keeps
 the halt and retries what is not yet confirmed. A cancel confirm is kept only once the
@@ -148,16 +152,18 @@ class KalshiKill:
                 self._detail["revoke_key"] = "unreadable_response"
         # Confirmation needs both: this revoke accepted, and an authenticated call refused
         # after it. An unauthorized probe after a rejected or raised revoke confirms nothing.
+        # The last probe result is reported under its own key, apart from the revoke attempt's.
         try:
             probe = self._transport.probe_authenticated()
         except Exception as exc:  # noqa: BLE001
-            self._detail.setdefault("revoke_key", "probe_error:" + type(exc).__name__)
+            self._detail["revoke_probe"] = "error:" + type(exc).__name__
             return
-        if probe != "unauthorized":
-            self._detail.setdefault("revoke_key", "probe:" + str(probe)[:32])
-        elif accepted:
+        if type(probe) is not str:
+            self._detail["revoke_probe"] = "unreadable_probe"
+            return
+        self._detail["revoke_probe"] = probe[:32]
+        if accepted and probe == "unauthorized":
             self._state["revoke_key"] = "confirmed"
-            self._detail.pop("revoke_key", None)
 
     def kill(self) -> dict:
         with self._lock:

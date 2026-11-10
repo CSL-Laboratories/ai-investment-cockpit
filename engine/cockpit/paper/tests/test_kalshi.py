@@ -115,7 +115,7 @@ class KillTests(unittest.TestCase):
         self.assertEqual(log, ["halt", "cancel_all", "revoke_api_key", "probe"])
         self.assertEqual((out["status"], out["halt"], out["cancel_all"], out["revoke_key"]),
                          ("pending", "confirmed", "pending", "confirmed"))
-        self.assertEqual(out["detail"], {"cancel_all": "error:TimeoutError"})
+        self.assertEqual(out["detail"], {"cancel_all": "error:TimeoutError", "revoke_probe": "unauthorized"})
         # Still pending on the next kill while the cancel keeps timing out; no second revoke.
         log.clear()
         out = kill.kill()
@@ -134,26 +134,57 @@ class KillTests(unittest.TestCase):
                 self.assertEqual(log, ["halt", "cancel_all", "list_open_orders", "revoke_api_key", "probe"])
                 self.assertEqual((out["status"], out["cancel_all"], out["revoke_key"]),
                                  ("pending", "confirmed", "pending"))
-                self.assertEqual(out["detail"], {"revoke_key": detail})
+                self.assertEqual(out["detail"], {"revoke_key": detail, "revoke_probe": "unauthorized"})
 
     def test_accepted_revoke_after_a_rejected_one_confirms_and_drops_the_detail(self) -> None:
         log = []
         transport = FakeTransport(revoke={"accepted": False}, probe="unauthorized", log=log)
         kill = KalshiKill(lambda: log.append("halt"), transport)
-        self.assertEqual(kill.kill()["detail"], {"revoke_key": "rejected"})
+        self.assertEqual(kill.kill()["detail"], {"revoke_key": "rejected", "revoke_probe": "unauthorized"})
         transport.revoke = {"accepted": True}
         out = kill.kill()
-        self.assertEqual((out["status"], out["revoke_key"], out["detail"]), ("confirmed", "confirmed", {}))
+        self.assertEqual((out["status"], out["revoke_key"], out["detail"]),
+                         ("confirmed", "confirmed", {"revoke_probe": "unauthorized"}))
 
     def test_revoke_failure_after_cancel_reports_pending(self) -> None:
-        for transport, detail in ((dict(revoke=ConnectionError(), probe="authorized"), "error:ConnectionError"),
-                                  (dict(revoke={"accepted": False}, probe="authorized"), "rejected"),
-                                  (dict(probe="authorized"), "probe:authorized"),
-                                  (dict(probe=TimeoutError()), "probe_error:TimeoutError")):
+        for transport, detail in (
+                (dict(revoke=ConnectionError(), probe="authorized"),
+                 {"revoke_key": "error:ConnectionError", "revoke_probe": "authorized"}),
+                (dict(revoke={"accepted": False}, probe="authorized"),
+                 {"revoke_key": "rejected", "revoke_probe": "authorized"}),
+                (dict(revoke=ConnectionError(), probe=TimeoutError()),
+                 {"revoke_key": "error:ConnectionError", "revoke_probe": "error:TimeoutError"})):
             with self.subTest(transport=transport):
                 out = self._kill(**transport)[0].kill()
                 self.assertEqual((out["status"], out["cancel_all"], out["revoke_key"]), ("pending", "confirmed", "pending"))
-                self.assertEqual(out["detail"]["revoke_key"], detail)
+                self.assertEqual(out["detail"], detail)
+
+    def test_last_probe_is_reported_under_its_own_key(self) -> None:
+        """The probe result never mixes into the revoke attempt's detail."""
+        cases = ((dict(probe="authorized"), "pending", {"revoke_probe": "authorized"}),
+                 (dict(revoke={"accepted": False}, probe="unauthorized"), "pending",
+                  {"revoke_key": "rejected", "revoke_probe": "unauthorized"}),
+                 (dict(probe=TimeoutError()), "pending", {"revoke_probe": "error:TimeoutError"}),
+                 (dict(probe=None), "pending", {"revoke_probe": "unreadable_probe"}),
+                 (dict(probe={"unauthorized": True}), "pending", {"revoke_probe": "unreadable_probe"}),
+                 (dict(probe="x" * 40), "pending", {"revoke_probe": "x" * 32}),
+                 (dict(probe="unauthorized"), "confirmed", {"revoke_probe": "unauthorized"}))
+        for transport, state, detail in cases:
+            with self.subTest(transport=transport):
+                out = self._kill(**transport)[0].kill()
+                self.assertEqual((out["status"], out["cancel_all"], out["revoke_key"]), (state, "confirmed", state))
+                self.assertEqual(out["detail"], detail)
+
+    def test_each_probe_overwrites_the_last_probe_result(self) -> None:
+        log = []
+        transport = FakeTransport(probe=TimeoutError(), log=log)
+        kill = KalshiKill(lambda: log.append("halt"), transport)
+        self.assertEqual(kill.kill()["detail"], {"revoke_probe": "error:TimeoutError"})
+        transport.probe = "authorized"
+        self.assertEqual(kill.kill()["detail"], {"revoke_probe": "authorized"})
+        transport.probe = "unauthorized"
+        out = kill.kill()
+        self.assertEqual((out["status"], out["detail"]), ("confirmed", {"revoke_probe": "unauthorized"}))
 
     def test_capped_or_unreadable_cancel_is_pending_not_confirmed(self) -> None:
         for response, detail in (({"remaining": 7}, "remaining:7"), ({}, "unreadable_response"),
@@ -224,7 +255,7 @@ class KillTests(unittest.TestCase):
             with self.subTest(payload=payload):
                 out = self._kill(orders=payload)[0].kill()
                 self.assertEqual((out["status"], out["cancel_all"]), ("confirmed", "confirmed"))
-                self.assertEqual(out["detail"], {})
+                self.assertEqual(out["detail"], {"revoke_probe": "unauthorized"})
 
     def _failing_once_halt(self, log):
         errors = [OSError("disk")]
@@ -242,14 +273,15 @@ class KillTests(unittest.TestCase):
         self.assertEqual(log, ["halt", "cancel_all", "list_open_orders", "revoke_api_key", "probe"])
         self.assertEqual((out["status"], out["halt"], out["cancel_all"], out["revoke_key"]),
                          ("pending", "pending", "pending", "confirmed"))
-        self.assertEqual(out["detail"], {"halt": "error:OSError", "cancel_all": "halt_failed"})
+        self.assertEqual(out["detail"], {"halt": "error:OSError", "cancel_all": "halt_failed",
+                                         "revoke_probe": "unauthorized"})
         # An order placed while the halt was not set: the next kill cancels and lists again.
         transport.orders = ["k-new"]
         log.clear()
         out = kill.kill()
         self.assertEqual(log, ["halt", "cancel_all", "list_open_orders"])
         self.assertEqual((out["status"], out["halt"], out["cancel_all"]), ("pending", "confirmed", "pending"))
-        self.assertEqual(out["detail"], {"cancel_all": "remaining:1"})
+        self.assertEqual(out["detail"], {"cancel_all": "remaining:1", "revoke_probe": "unauthorized"})
         transport.orders = []
         self.assertEqual(kill.kill()["status"], "confirmed")
 
@@ -266,7 +298,7 @@ class KillTests(unittest.TestCase):
         out = kill.kill()
         self.assertEqual(log, ["halt", "cancel_all", "list_open_orders", "revoke_api_key", "probe"])
         self.assertEqual((out["status"], out["cancel_all"], out["revoke_key"]), ("pending", "pending", "confirmed"))
-        self.assertEqual(out["detail"], {"cancel_all": "remaining:1"})
+        self.assertEqual(out["detail"], {"cancel_all": "remaining:1", "revoke_probe": "unauthorized"})
 
     def test_pending_revoke_recancel_failure_still_revokes(self) -> None:
         log = []
@@ -278,7 +310,7 @@ class KillTests(unittest.TestCase):
         out = kill.kill()
         self.assertEqual(log, ["halt", "cancel_all", "revoke_api_key", "probe"])
         self.assertEqual((out["status"], out["cancel_all"], out["revoke_key"]), ("pending", "pending", "confirmed"))
-        self.assertEqual(out["detail"], {"cancel_all": "error:TimeoutError"})
+        self.assertEqual(out["detail"], {"cancel_all": "error:TimeoutError", "revoke_probe": "unauthorized"})
 
     def test_confirmed_cancel_and_revoke_are_not_retried(self) -> None:
         log = []
@@ -291,7 +323,7 @@ class KillTests(unittest.TestCase):
         out = kill.kill()
         self.assertEqual(log, ["halt"])
         self.assertEqual((out["status"], out["cancel_all"], out["revoke_key"]), ("confirmed", "confirmed", "confirmed"))
-        self.assertEqual(out["detail"], {})
+        self.assertEqual(out["detail"], {"revoke_probe": "unauthorized"})  # the last probe, not a new one
 
     def test_successful_halt_drops_the_stored_halt_error(self) -> None:
         log = []
@@ -300,7 +332,7 @@ class KillTests(unittest.TestCase):
         self.assertEqual((out["halt"], out["detail"]["halt"]), ("pending", "error:OSError"))
         out = kill.kill()
         self.assertEqual((out["status"], out["halt"]), ("confirmed", "confirmed"))
-        self.assertEqual(out["detail"], {})
+        self.assertEqual(out["detail"], {"revoke_probe": "unauthorized"})
 
 
 if __name__ == "__main__":

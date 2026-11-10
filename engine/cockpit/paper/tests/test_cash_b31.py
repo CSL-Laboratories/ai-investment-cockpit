@@ -130,10 +130,11 @@ class CashTests(unittest.TestCase):
         self.assertEqual((row["event"], row["code"], row["effect_sha256"]),
                          ("refused", "cash_insufficient", effect_digest))  # the approved effect, unresized
 
-    def test_cash_drop_during_core_authorize_refused_at_booking(self) -> None:
+    def test_cash_drop_during_core_authorize_is_a_leftover_charge(self) -> None:
         self._gateway(100_000)
         intent = self._size("first")
         approval = self._approved(intent)
+        effect_digest = hashlib.sha256(canonical(self.gw.risk_pass(intent))).hexdigest()
         original = self.core.__call__
 
         def spend_during_core_call(raw: bytes) -> bytes:
@@ -143,10 +144,38 @@ class CashTests(unittest.TestCase):
             other.close()
             return original(raw)
         self.gw._core = CoreClient(spend_during_core_call)
-        exc = self._refused("cash_insufficient", self.gw.submit, intent, approval, AUTHORITY)
-        self.assertEqual([r["stage"] for r in self.book.audit() if r["seq"] == exc.audit_seq], ["book"])
+        # The early funds read passed and the core charged; the booking's own check then refused.
+        exc = self._refused("leftover_charge", self.gw.submit, intent, approval, AUTHORITY)
+        self.assertEqual((exc.cause, str(exc)), ("cash_insufficient", "leftover_charge:cash_insufficient"))
+        self.assertEqual([(r["event"], r["stage"], r["code"], r["effect_sha256"])
+                          for r in self.book.audit() if r["seq"] == exc.audit_seq],
+                         [("refused", "book", "leftover_charge:cash_insufficient", effect_digest)])
+        self.assertEqual(intent.quantity, 10)  # the approved effect, never clamped or resized
         self.assertEqual([o[0] for o in self.book.orders()], ["racer"])
         self.assertEqual(self.book.available_cash_minor(ACCT), 90_000)
+        self.assertEqual(self.core.calls.count("effect.authorize"), 1)  # charged once, not reversed
+
+    def test_share_drop_during_core_authorize_is_a_leftover_charge(self) -> None:
+        self._gateway(0, holdings={(ACCT, "AAPL"): 10})
+        sell = Intent(intent_id="first", account=ACCT, instrument="AAPL", side="sell", quantity=10,
+                      limit_price_minor=10_000, run_id="run-1", connection="conn-a")
+        approval = self._approved(sell)
+        original = self.core.__call__
+
+        def sell_during_core_call(raw: bytes) -> bytes:
+            other = PaperBook(self.path)  # another connection, as another process would
+            # Test-only: stands in for another process's gateway booking (#317's capability).
+            other._book(replace(sell, intent_id="racer", quantity=1), gateway_module._GATEWAY_ONLY)
+            other.close()
+            return original(raw)
+        self.gw._core = CoreClient(sell_during_core_call)
+        exc = self._refused("leftover_charge", self.gw.submit, sell, approval, AUTHORITY)
+        self.assertEqual((exc.cause, str(exc)), ("holding_insufficient", "leftover_charge:holding_insufficient"))
+        self.assertEqual([(r["stage"], r["code"]) for r in self.book.audit() if r["seq"] == exc.audit_seq],
+                         [("book", "leftover_charge:holding_insufficient")])
+        self.assertEqual([o[0] for o in self.book.orders()], ["racer"])
+        self.assertEqual(self.book.held_shares(ACCT, "AAPL"), 9)
+        self.assertEqual(self.core.calls.count("effect.authorize"), 1)
 
     def test_gateway_never_clamps_or_resizes(self) -> None:
         self._gateway(50_000)

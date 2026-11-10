@@ -21,21 +21,25 @@ engine breaker tripped, is refused here with ``core:run_faulted`` or
 Cash (B31, Lucas t1414u: "size to cash, refuse at the gateway"). The book tracks each
 account's available cash and held shares. ``OrderGateway.size_buy`` turns a conviction
 into a buy and caps the share count at available cash, so the approved order already
-fits. At send time the gateway reads the same tracked cash again, inside the booking's
-``BEGIN IMMEDIATE`` transaction, and refuses a buy over it with ``cash_insufficient``. It
-never clamps or resizes. A booked buy reserves its notional; a booked sell reserves its
+fits. The gateway reads the same tracked cash again before the charge and refuses a buy
+over it with ``cash_insufficient``. At send time it reads it once more, inside the
+booking's ``BEGIN IMMEDIATE`` transaction; a buy over it there follows the charge, so it
+is refused with ``leftover_charge`` and cause ``cash_insufficient`` (see below). It never
+clamps or resizes. A booked buy reserves its notional; a booked sell reserves its
 held shares. A sell of held shares is allowed at any book size, including below the
 $2,000 equity floor that frozen ``app/`` enforces; there is no buy floor either
 (PRODUCT.md 4.2, "Size cap in the new engine"; O47).
 
 Step 3 is the charge. Every local refusal that does not need the core (steps 1 and 2,
-a duplicate intent id, and the early funds read) is checked before it. If the booking
-still refuses after a successful charge because of a halt or the same intent committed
-during the core call, ``submit`` raises ``Refused`` with code ``leftover_charge`` and the
-booking refusal in ``.cause``. Nothing is booked and the charge is not reversed: the core
-exposes no reverse. A funds refusal at the booking (cash or shares that dropped during the
-core call) keeps its own code (``cash_insufficient``, ``holding_insufficient``), as B31's
-tests require; it also follows the charge and is not reversed.
+a duplicate intent id, and the early funds read) is checked before it. An intent id
+already in the book is refused at ``request_approval`` too, before an approval is drawn.
+Any booking refusal after a successful charge (a halt, the same intent, or funds: cash or
+shares that dropped during the core call) makes ``submit`` raise ``Refused`` with code
+``leftover_charge`` and the booking refusal in ``.cause`` (``order_halted``,
+``intent_duplicate``, ``cash_insufficient``, ``holding_insufficient``). Any other booking
+exception after the charge (a locked book, say) is a ``leftover_charge`` as well, with
+``.cause`` ``booking_error:<Class>``. Nothing is booked and the charge is not reversed:
+the core exposes no reverse. A retry needs a new approval and will charge again.
 
 ``PaperBook`` has no public booking method: its private ``_book`` refuses unless handed a
 capability object that only ``OrderGateway.submit`` passes, and a static test refuses any
@@ -67,7 +71,8 @@ _GATEWAY_ONLY = object()  # booking capability; never exported or passed outside
 
 
 class Refused(Exception):
-    """``cause`` is set only on ``leftover_charge``: the booking refusal that followed the charge."""
+    """``cause`` is set only on ``leftover_charge``: the booking refusal that followed the charge,
+    or ``booking_error:<Class>`` for any other booking exception."""
 
     def __init__(self, code: str, cause: str | None = None) -> None:
         super().__init__(code if cause is None else code + ":" + cause)
@@ -430,6 +435,10 @@ class OrderGateway:
         stage = "risk"
         try:
             effect = self.risk_pass(intent)
+            stage = "request"
+            # A booked intent id draws no new approval. Only the book is asked: no approval state here.
+            if self._book._has_intent(intent.intent_id):
+                raise Refused("intent_duplicate")
             stage = "funds"
             self._book.check_funds(intent)  # cash or held shares, so a doomed order is never approved
             stage = "request"
@@ -446,7 +455,7 @@ class OrderGateway:
         try:
             effect = self.risk_pass(intent)
             # Every local refusal that does not need the core comes before the charge.
-            stage = "duplicate"
+            stage = "book"
             if self._book._has_intent(intent.intent_id):
                 raise Refused("intent_duplicate")
             stage = "funds"
@@ -457,15 +466,18 @@ class OrderGateway:
             except CoreRefused as exc:
                 raise Refused("core:" + exc.code) from None
             stage = "book"
+            audit = self._audit_base(intent, effect)
             try:
-                seq = self._book._book(intent, _GATEWAY_ONLY, self._audit_base(intent, effect))
+                seq = self._book._book(intent, _GATEWAY_ONLY, audit)
             except Refused as exc:
-                if exc.code not in ("order_halted", "intent_duplicate"):
-                    raise  # a funds refusal at the booking keeps its own code (B31)
-                # The core has charged and nothing was booked (a halt or the same intent committed
-                # during the core call). There is no reverse: say so, never a clean refusal.
+                # The core has charged and nothing was booked (a halt, the same intent, or cash or
+                # shares that dropped during the core call). There is no reverse: say so, never a
+                # clean refusal.
                 raise Refused("leftover_charge", exc.code) from None
+            except Exception as exc:
+                raise Refused("leftover_charge", "booking_error:" + type(exc).__name__) from exc
         except Refused as exc:
-            raise self._refuse(exc, stage, intent, effect) from None
+            # ``from exc.__cause__`` keeps a booking error's cause; every other refusal has none.
+            raise self._refuse(exc, stage, intent, effect) from exc.__cause__
         return {"status": "paper_working", "intent_id": intent.intent_id, "seq": seq,
                 "notional_minor": effect["amount_minor"], "digest": core.get("digest")}
