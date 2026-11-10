@@ -719,4 +719,5 @@ None of these are decided in this candidate.
 - **Unfilled remainder.** After a partial fill, this candidate requires
   the order-linked reserve to equal the executed premium and fees. It
   does not represent an additional hold for the unfilled quantity. That
-  needs a limit price on the order, which is not decided here.
+  needs a limit price on the order, which is not decided here. Follow-up:
+  [CSL-838](https://linear.app/csl-laboratories/issue/CSL-838).

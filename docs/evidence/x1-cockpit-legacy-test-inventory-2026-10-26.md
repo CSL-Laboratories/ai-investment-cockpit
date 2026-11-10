@@ -9,7 +9,7 @@ Prepared Mon Oct 26 2026 (PT) against Cockpit `main` `3122cac4780d776cbd487dd2a6
 - Source plan: WP14 "X1 tags and inventories" and decision 3 in section 6 and section 7 of `step4-synthesis-sonnet.md` (Oct 26 pipeline step 4; relayed, not published in this repo). Its acceptance: `pre-x1-<repo>-<date>` tag exists, every legacy test file appears in exactly one disposition row, and ported oracles run red under unchanged job names with a pinned count floor.
 - Lucas's decision, relayed in the task for this PR (Mon Oct 26, 11:59 AM PT, not independently verified against Linear): "Decision 3: approve keep-paths and boundary, push pre-x1 tags, delete after the Nov 10 rehearsal".
 - Cockpit checker promotion is WP4, a separate PR (#283, draft at the time of writing). It pins three files (`test_replacement_program_registry.py`, `test_o7_operator_contract.py`, `tools/test_replacement_program.py`) with its own floor. This inventory classifies the first two as `keep` and does not duplicate that floor or edit `.github/workflows/**`.
-- Scope of "legacy tree": every `test_*.py`, `*_test.py` and `conftest.py` under `app/` (223 files at `main`), plus this PR's own guard wrapper (1 file) = 224 rows.
+- Scope of "legacy tree": every `test_*.py`, `*_test.py` and `conftest.py` under `app/` (223 files at `main`), plus this PR's own guard wrapper (1 file) and the O3 candidate test `app/tests/test_o3_accounting_semantics.py` (1 file) = 225 rows.
 - The step-4 synthesis does not enumerate Cockpit keep-paths (it names only Recursion's). The `keep` rows were proposed by this agent from the nine invariants, the escalate list in AGENTS.md and `docs/replacement/SCOPE-AUDIT.md` section 2. **Samir confirmed the Cockpit keep list (the `K-*` classes and `SUPPORT-K`) and the drop rows on PR #287**: https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/287#issuecomment-6425530222. Any change to the keep list goes through a reviewed change to this table. Two drop rows are conditional (section 3).
 
 ## 2. Pre-X1 tag
@@ -30,7 +30,7 @@ Cockpit had no tags before this one. Recursion's precedent is `pre-v3-clean-cut-
 - `drop`: superseded scope with no successor oracle. Deletable only in the WP19 deletion PR, after the Nov 10 rehearsal, and only after the source couplings in section 7 are resolved. Samir confirmed 9 of the 11 drop rows (the 5 `feasibility/*` rows, `strategies/test_merger_edge.py`, `strategies/test_merger_semantics.py`, `test_rw22_semantics.py`, `test_rw22_semantics_independent.py`). **Two are conditional**: `strategies/test_rw21_real_filing_grammar.py` and `strategies/test_rw23_semantic_boundaries.py` (RW-21, BUG-146) drop only if the WP19 PR shows the same fail-closed behaviour is covered by a `K-UNTRUSTED` or `P-EVIDENCE` file; otherwise they become `port` to `P-EVIDENCE`. Their rows say so.
 - Nothing is deleted by this PR. WP19 preconditions per the synthesis: WP4 merged, WP14 merged, operator-surface parity (A6). Lucas decides any pull-forward to Nov 9.
 
-Totals: 136 `keep` rows (1509 test functions), 77 `port` rows (1210), 11 `drop` rows (168). Test functions are a static AST count; a parametrized function counts once.
+Totals: 137 `keep` rows (1601 test functions), 77 `port` rows (1210), 11 `drop` rows (168). Test functions are a static AST count; a parametrized function counts once.
 
 ## 4. Oracle catalog
 
@@ -71,10 +71,10 @@ The oracle column of every row must name one of these. A `port` oracle names the
 
 | Floor | Value |
 |---|---|
-| Rows (one per legacy test file) | 224 |
-| `keep` rows | 136 |
+| Rows (one per legacy test file) | 225 |
+| `keep` rows | 137 |
 | `port` rows | 77 |
-| Test functions across `keep` and `port` rows | 2719 |
+| Test functions across `keep` and `port` rows | 2811 |
 
 Red conditions, each covered by a negative control in the wrapper test: a legacy test file with no row; a row with no file (deleting a file before the rehearsal); a duplicate row; an unknown disposition or oracle; a disposition that conflicts with its oracle's class; an empty reason; a `keep` or `port` file collecting fewer test functions than its row; any floor above; a non-`drop` file importing a `drop` file; a `keep` file importing a `port` file that is not acknowledged in the coupling block (section 7); a stale or non-keep-to-port acknowledgement; a malformed table. Import detection covers absolute (`from tests.x import y`, `import tests.x`) and relative (`from .x import y`, `from . import x`, `from ..pkg import x`) forms.
 
