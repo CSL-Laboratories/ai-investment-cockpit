@@ -16,8 +16,8 @@ SPEC = importlib.util.spec_from_file_location("check_product_pin", ROOT / "tools
 pin_check = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(pin_check)
 
-COMMITTED_COMMIT = "055cc7a5c793b7135e5d0565dc4198cf96230531"
-COMMITTED_SHA256 = "e64783152f6d67d4ede774dc41d112fe46c2d7536d53cb2c04e71a3566044daf"
+COMMITTED_COMMIT = "d84cdd26a4de2366f3c5d34c4aec5215f822a494"
+COMMITTED_SHA256 = "e1d5fb8c02594b2ca88281113ffc14e6f3125daded2a00d45739cfb9d2ed04dd"
 AWAITING = {
     "format": "csl-product-pin/v1",
     "status": "awaiting",
