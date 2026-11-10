@@ -50,9 +50,10 @@ class KillSwitchTests(unittest.TestCase):
         def halt():
             log.append("halt")
             self.book.halt()
-        kalshi = KalshiKill(halt, FakeTransport(log=log))
-        coinbase = CoinbaseKill(halt, MockCoinbase(orders=["c1", "c2"], log=log))
-        gemini = GeminiKill(halt, MockGemini(orders=["g1"], log=log))
+        # Each venue confirms its halt leg on this book's own read-back.
+        kalshi = KalshiKill(halt, FakeTransport(log=log), halted=self.book.halted)
+        coinbase = CoinbaseKill(halt, MockCoinbase(orders=["c1", "c2"], log=log), halted=self.book.halted)
+        gemini = GeminiKill(halt, MockGemini(orders=["g1"], log=log), halted=self.book.halted)
         return halt, [kalshi, coinbase, gemini]
 
     def test_halt_first_then_every_venue_confirmed(self) -> None:
@@ -75,7 +76,7 @@ class KillSwitchTests(unittest.TestCase):
             def kill(self):
                 raise RuntimeError("venue down")
         venues.insert(0, Boom())
-        venues[1] = KalshiKill(halt, FakeTransport(cancel=TimeoutError(), log=log))
+        venues[1] = KalshiKill(halt, FakeTransport(cancel=TimeoutError(), log=log), halted=self.book.halted)
         out = self._switch(halt, venues).kill()
         self.assertEqual(out["status"], "pending")
         self.assertEqual([v["status"] for v in out["venues"]],
@@ -104,12 +105,13 @@ class KillSwitchTests(unittest.TestCase):
         """O70: a venue whose cancel timed out is pending, and so is the switch, whatever its revoke says."""
         cases = (
             ("kalshi", "cancel_all", "revoke_key", "error:TimeoutError", {"revoke_probe": "unauthorized"},
-             lambda halt, log: KalshiKill(halt, FakeTransport(cancel=TimeoutError(), log=log))),
+             lambda halt, log: KalshiKill(halt, FakeTransport(cancel=TimeoutError(), log=log),
+                                          halted=self.book.halted)),
             # The OAuth venues report two probes: the API call and the refresh-token exchange.
             ("coinbase", "cancel_orders", "revoke_grant", "unconfirmed:1", OAUTH_PROBES,
-             lambda halt, log: CoinbaseKill(halt, self._coinbase_timing_out(log))),
+             lambda halt, log: CoinbaseKill(halt, self._coinbase_timing_out(log), halted=self.book.halted)),
             ("gemini", "cancel_all", "revoke_grant", "error:TimeoutError", OAUTH_PROBES,
-             lambda halt, log: GeminiKill(halt, self._gemini_timing_out(log))),
+             lambda halt, log: GeminiKill(halt, self._gemini_timing_out(log), halted=self.book.halted)),
         )
         for index, (name, cancel_key, revoke_key, detail, probes, make) in enumerate(cases, start=1):
             with self.subTest(venue=name):
@@ -141,7 +143,7 @@ class KillSwitchTests(unittest.TestCase):
         log = []
         venue = MockGemini(orders=["g1"], log=log)
         venue.revoke_works = False
-        switch = self._switch(self.book.halt, [GeminiKill(self.book.halt, venue)])
+        switch = self._switch(self.book.halt, [GeminiKill(self.book.halt, venue, halted=self.book.halted)])
         out = switch.kill()
         gemini = out["venues"][1]
         self.assertEqual((out["status"], out["halt"], gemini["cancel_all"], gemini["revoke_grant"]),

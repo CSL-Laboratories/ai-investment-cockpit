@@ -20,9 +20,23 @@ in ``.cause``. Any other booking exception after the charge (a locked book, say)
 ``leftover_charge`` as well, with ``.cause`` ``booking_error:<Class>``. Nothing is booked
 and the charge is not reversed: the core exposes no reverse.
 
-``PaperBook`` has no public booking method: its private ``_book`` refuses unless handed a
-capability object that only ``OrderGateway.submit`` passes, and a static test refuses any
-other reference to either name in ``engine/``.
+``PaperBook`` has no public booking method. Its private ``_book`` refuses unless handed a
+one-shot ``_Grant`` that ``OrderGateway.submit`` mints after the risk pass and the core's
+authorize, bound to that gateway, this book, that intent object and the approved effect.
+At booking, ``_book`` runs that gateway's risk pass again (halt and caps included) and
+refuses unless it returns exactly the granted effect. The module attribute
+``_GATEWAY_ONLY`` is only the grant's mint key: handing it to ``_book`` books nothing.
+
+In-process Python cannot make a capability unforgeable: code in this process can still
+reach ``_Grant`` and its mint key and forge a grant, and a forged grant does not prove
+the core's approval. What this closes is the import-the-token path, and any grant,
+forged or not, meets a gateway's risk pass and caps again at booking (a forger can
+still name a gateway it built with its own caps). A static test refuses any reference
+to ``_book`` or ``_GATEWAY_ONLY`` elsewhere in ``engine/``.
+
+``PaperBook(path)`` refuses a missing path with ``book_missing`` and a file that is not a
+paper book (zero bytes, not SQLite, or without the tables, columns and state rows that
+``create_book`` makes) with ``book_invalid``.
 
 Paper only. There is no broker, venue transport, credential or network code here, and
 no Kalshi order code at all (not even demo). Risk logic uses no model, I/O beyond the
@@ -44,7 +58,12 @@ __all__ = ["Caps", "Intent", "OrderGateway", "PaperBook", "Refused", "create_boo
 PAPER_VENUE = "paper"
 _ID = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
 _INSTRUMENT = re.compile(r"[A-Z0-9][A-Z0-9._-]{0,31}")
-_GATEWAY_ONLY = object()  # booking capability; never exported or passed outside this module
+_GATEWAY_ONLY = object()  # private mint key of ``_Grant``; on its own it books nothing
+_STATE_COLUMNS = [("k", "TEXT"), ("v", "INTEGER")]
+_STATE_ROWS = [("halt_seq", "integer"), ("halted", "integer"), ("seq", "integer")]
+_ORDER_COLUMNS = [("intent_id", "TEXT"), ("seq", "INTEGER"), ("account", "TEXT"), ("instrument", "TEXT"),
+                  ("side", "TEXT"), ("quantity", "INTEGER"), ("limit_price_minor", "INTEGER"),
+                  ("status", "TEXT")]
 
 
 class Refused(Exception):
@@ -82,6 +101,37 @@ class Intent:
     mode: str = "paper"
 
 
+class _Grant:
+    """One-shot booking grant, minted only by ``OrderGateway.submit``. Not exported.
+
+    Not unforgeable (nothing in-process is): ``PaperBook._book`` re-runs the named
+    gateway's risk pass and caps before it books on any grant.
+    """
+
+    __slots__ = ("gateway", "book", "intent", "effect", "used")
+
+    def __init__(self, key: object, *, gateway: object, book: object, intent: object, effect: object) -> None:
+        if key is not _GATEWAY_ONLY:
+            raise Refused("book_direct_refused")
+        self.gateway = gateway
+        self.book = book
+        self.intent = intent
+        self.effect = effect
+        self.used = False
+
+
+def _check_book_schema(db: sqlite3.Connection) -> None:
+    """Refuse a file that does not hold the tables, columns and state rows ``create_book`` makes."""
+    def columns(table: str) -> list[tuple]:
+        return [(row[1], row[2]) for row in db.execute("PRAGMA table_info(%s)" % table)]
+    if columns("state") != _STATE_COLUMNS or columns("orders") != _ORDER_COLUMNS:
+        raise Refused("book_invalid")
+    rows = db.execute("SELECT k, typeof(v) FROM state WHERE k IN ('halted', 'seq', 'halt_seq')"
+                      " ORDER BY k").fetchall()
+    if rows != _STATE_ROWS:
+        raise Refused("book_invalid")
+
+
 def create_book(path: str) -> None:
     """Create the paper book. Refuses if it exists."""
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -105,9 +155,18 @@ class PaperBook:
     def __init__(self, path: str) -> None:
         if not os.path.isfile(path):
             raise Refused("book_missing")
-        self._db = sqlite3.connect(path, isolation_level=None, check_same_thread=False, timeout=30)
-        self._db.execute("PRAGMA synchronous=FULL")
-        self._db.execute("PRAGMA busy_timeout=30000")
+        try:
+            db = sqlite3.connect(path, isolation_level=None, check_same_thread=False, timeout=30)
+        except sqlite3.DatabaseError:
+            raise Refused("book_invalid") from None
+        try:
+            db.execute("PRAGMA synchronous=FULL")
+            db.execute("PRAGMA busy_timeout=30000")
+            _check_book_schema(db)
+        except Exception:  # noqa: BLE001 - not SQLite, or not a paper book: never a raw error later
+            db.close()
+            raise Refused("book_invalid") from None
+        self._db = db
         self._lock = threading.Lock()
 
     def _tx(self, fn):
@@ -146,9 +205,22 @@ class PaperBook:
             return self._db.execute("SELECT 1 FROM orders WHERE intent_id = ?", (intent_id,)).fetchone() is not None
 
     def _book(self, intent: Intent, token: object) -> int:
-        """Write a working order. Not a public API: only ``OrderGateway.submit`` holds the token,
-        after the risk pass and the core's checks (PRODUCT.md 4.2 "One way in")."""
-        if token is not _GATEWAY_ONLY:
+        """Write a working order. Not a public API: ``token`` must be the unused ``_Grant`` that
+        ``OrderGateway.submit`` minted for this book and this intent object, after the risk pass
+        and the core's checks (PRODUCT.md 4.2 "One way in"). The grant is spent here, and the
+        gateway's risk pass and caps are run again before anything is written; a refusal from
+        that re-check is raised as it is. A grant can be forged in-process; see the module doc."""
+        if type(token) is not _Grant:
+            raise Refused("book_direct_refused")
+        with self._lock:
+            if token.used:
+                raise Refused("book_direct_refused")
+            token.used = True  # one-shot: spent before the booking, whatever follows
+        gateway = token.gateway
+        if (token.book is not self or token.intent is not intent or type(gateway) is not OrderGateway
+                or gateway._book is not self):
+            raise Refused("book_direct_refused")
+        if gateway.risk_pass(intent) != token.effect:
             raise Refused("book_direct_refused")
 
         def run(db):
@@ -259,10 +331,12 @@ class OrderGateway:
         except CoreRefused as exc:
             raise Refused("core:" + exc.code) from None
         try:
-            seq = self._book._book(intent, _GATEWAY_ONLY)
+            grant = _Grant(_GATEWAY_ONLY, gateway=self, book=self._book, intent=intent, effect=effect)
+            seq = self._book._book(intent, grant)
         except Refused as exc:
             # The core has charged and nothing was booked (a halt or the same intent committed
-            # during the core call). There is no reverse: say so, never a clean refusal.
+            # during the core call, or the risk pass re-run at booking refused). There is no
+            # reverse: say so, never a clean refusal.
             raise Refused("leftover_charge", exc.code) from None
         except Exception as exc:
             raise Refused("leftover_charge", "booking_error:" + type(exc).__name__) from exc

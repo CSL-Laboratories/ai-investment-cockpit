@@ -9,6 +9,12 @@ contract); one venue failing or raising never skips the others. The paper cancel
 callable that returns without this book reading halted stays pending. The switch is
 ``confirmed`` only when the halt, the paper cancel and every venue are; otherwise it is
 ``pending`` and calling ``kill`` again retries.
+
+A venue counts as ``confirmed`` only when its result is exactly a ``dict`` whose
+``status`` is exactly a ``str`` (not a subclass) equal to ``"confirmed"``, so the
+comparison is ``str.__eq__``. Anything else (another type, a ``str`` subclass, an object
+whose ``__eq__`` or ``__ne__`` claims equality) is reported with the exact ``str``
+``"pending"``.
 """
 
 from __future__ import annotations
@@ -77,15 +83,19 @@ class KillSwitch:
                 # Confirm on the book read, not on the callable returning.
                 halt = "confirmed" if read is True else (halt_error or "not_halted")
             venues = []
+            all_confirmed = True
             for venue in (self._paper, *self._venues):
                 try:
                     out = venue.kill()
                 except Exception as exc:  # noqa: BLE001 - one venue never skips another
                     out = {"venue": type(venue).__name__, "status": "pending",
                            "detail": {"kill": "error:" + type(exc).__name__}}
-                if type(out) is not dict or out.get("status") != "confirmed":
+                # Exact types only: the status is compared by str.__eq__, never by a venue's own.
+                status = out.get("status") if type(out) is dict else None
+                if type(status) is not str or status != "confirmed":
                     out = dict(out) if type(out) is dict else {"venue": type(venue).__name__}
                     out["status"] = "pending"
+                    all_confirmed = False
                 venues.append(out)
-            done = halt == "confirmed" and all(v["status"] == "confirmed" for v in venues)
+            done = halt == "confirmed" and all_confirmed
             return {"status": "confirmed" if done else "pending", "halt": halt, "venues": venues}

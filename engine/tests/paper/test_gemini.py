@@ -76,9 +76,22 @@ class MockGemini:
         return "authorized" if self.granted or self.refresh_live else "unauthorized"
 
 
+def _halting(log, errors=()):
+    """The test's own halt flag: a halt callable that logs, raises each given error once, then
+    sets the flag; and the read-back of that flag."""
+    errors, flag = list(errors), []
+    def halt():
+        log.append("halt")
+        if errors:
+            raise errors.pop()
+        flag.append(True)
+    return halt, lambda: bool(flag)
+
+
 class GeminiKillTests(unittest.TestCase):
-    def _kill(self, venue):
-        return GeminiKill(lambda: venue.log.append("halt"), venue)
+    def _kill(self, venue, errors=()):
+        halt, halted = _halting(venue.log, errors)
+        return GeminiKill(halt, venue, halted=halted)
 
     def test_halt_then_cancel_then_confirm_by_listing_then_revoke(self) -> None:
         venue = MockGemini(orders=["g1", "g2"])
@@ -291,17 +304,9 @@ class GeminiKillTests(unittest.TestCase):
                 self.assertEqual((out["status"], out["cancel_all"]), ("confirmed", "confirmed"))
                 self.assertEqual(out["detail"], UNAUTH)
 
-    def _failing_once_halt(self, venue):
-        errors = [OSError("disk")]
-        def halt():
-            venue.log.append("halt")
-            if errors:
-                raise errors.pop()
-        return halt
-
     def test_cancel_confirm_is_not_kept_when_the_halt_call_failed(self) -> None:
         venue = MockGemini(orders=["g1"])
-        kill = GeminiKill(self._failing_once_halt(venue), venue)
+        kill = self._kill(venue, errors=[OSError("disk")])
         out = kill.kill()
         self.assertEqual(venue.log, ["halt", "cancel_all", "list", "revoke", "probe_api", "probe_refresh"])
         self.assertEqual((out["status"], out["halt"], out["cancel_all"], out["revoke_grant"]),
@@ -317,7 +322,9 @@ class GeminiKillTests(unittest.TestCase):
         venue.log.clear()
         out = kill.kill()
         self.assertEqual(venue.log, ["halt", "cancel_all", "list"])
-        self.assertEqual((out["status"], out["halt"], out["cancel_all"]), ("pending", "confirmed", "pending"))
+        # The revoke was confirmed before this cancel: still pending, with its own typed reason.
+        self.assertEqual((out["status"], out["halt"], out["cancel_all"]),
+                         ("pending", "confirmed", "pending_credential_revoked"))
         self.assertEqual(out["detail"], {"cancel_all": "remaining:1", **UNAUTH})
         self.assertEqual(venue.open, ["g-new"])
 
@@ -354,7 +361,7 @@ class GeminiKillTests(unittest.TestCase):
     def test_successful_halt_drops_the_stored_halt_error(self) -> None:
         venue = MockGemini()
         venue.revoke_works = False  # the grant stays, so the second kill can cancel and list
-        kill = GeminiKill(self._failing_once_halt(venue), venue)
+        kill = self._kill(venue, errors=[OSError("disk")])
         out = kill.kill()
         self.assertEqual((out["halt"], out["detail"]["halt"]), ("pending", "error:OSError"))
         venue.revoke_works = True

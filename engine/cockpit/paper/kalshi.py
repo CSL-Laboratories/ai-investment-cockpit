@@ -29,11 +29,27 @@ skips the other. Status is truthful:
   is stored) or ``error:<Exc>``. It stays in the detail after a confirm, and an
   unauthorized probe after a rejected or raised revoke confirms nothing.
 
-The overall status is ``confirmed`` only when both are. Calling ``kill`` again keeps
-the halt and retries what is not yet confirmed. A cancel confirm is kept only once the
-revoke is confirmed too: while the revoke is pending, each ``kill`` cancels and lists
-again before the revoke. A cancel that confirms in a ``kill`` whose halt call failed is
-not kept either.
+The halt leg is ``confirmed`` only on verified evidence: the halt callable returned and
+the ``halted`` read-back given to the constructor (``PaperBook.halted``, say) then
+returned exactly ``True``. The halt callable returning is not evidence. Without that the
+leg is not newly confirmed and the ``halt`` detail says why: ``unverified`` (no
+read-back was given), ``not_halted`` (the read returned anything but ``True``),
+``read_error:<Exc>`` (the read raised) or ``error:<Exc>`` (the halt call raised).
+
+Each leg (``halt``, ``cancel_all``, ``revoke_key``) is one of ``confirmed``,
+``pending`` or, for the cancel leg only, ``pending_credential_revoked``: the key's
+revoke was already confirmed before this ``kill`` tried the cancel and the cancel is
+still not confirmed, so the retry ran on a revoked credential. It is still pending, not
+done: every later ``kill`` tries the cancel again and the detail keeps that attempt's
+error. In the ``kill`` where the revoke first confirms, an unconfirmed cancel is plain
+``pending``.
+
+The overall status is ``confirmed`` only when halt, cancel and revoke all are exactly
+``confirmed``; otherwise it is ``pending``. Calling ``kill`` again calls the halt again
+and retries what is not yet confirmed. A cancel confirm is kept only once the revoke is
+confirmed too: while the revoke is pending, each ``kill`` cancels and lists again before
+the revoke. A cancel that confirms in a ``kill`` whose halt call raised is not kept
+either.
 """
 
 from __future__ import annotations
@@ -97,8 +113,10 @@ def _list_finished(listed: dict) -> bool:
 
 
 class KalshiKill:
-    def __init__(self, halt: Callable[[], object], transport: KalshiKillTransport) -> None:
+    def __init__(self, halt: Callable[[], object], transport: KalshiKillTransport, *,
+                 halted: Callable[[], object] | None = None) -> None:
         self._halt = halt
+        self._halted = halted
         self._transport = transport
         self._lock = threading.Lock()
         self._state = {"halt": "pending", "cancel_all": "pending", "revoke_key": "pending"}
@@ -166,24 +184,44 @@ class KalshiKill:
         if accepted and probe == "unauthorized":
             self._state["revoke_key"] = "confirmed"
 
+    def _confirm_halt(self) -> None:
+        # Confirm on the read-back, not on the halt callable returning.
+        if self._halted is None:
+            self._detail["halt"] = "unverified"
+            return
+        try:
+            read = self._halted()
+        except Exception as exc:  # noqa: BLE001 - an unknown read confirms nothing
+            self._detail["halt"] = "read_error:" + type(exc).__name__
+            return
+        if read is True:
+            self._state["halt"] = "confirmed"
+            self._detail.pop("halt", None)
+        else:
+            self._detail["halt"] = "not_halted"
+
     def kill(self) -> dict:
         with self._lock:
             halt_failed = False
             try:
                 self._halt()
-                self._state["halt"] = "confirmed"
-                self._detail.pop("halt", None)
             except Exception as exc:  # noqa: BLE001 - still try the risk-reducing calls
                 halt_failed = True
                 self._detail["halt"] = "error:" + type(exc).__name__
+            else:
+                self._confirm_halt()
+            revoked_before = self._state["revoke_key"] == "confirmed"
             # An earlier cancel confirm is kept only once the revoke is confirmed too.
-            if self._state["cancel_all"] != "confirmed" or self._state["revoke_key"] != "confirmed":
+            if self._state["cancel_all"] != "confirmed" or not revoked_before:
                 self._state["cancel_all"] = "pending"
                 self._cancel()
                 if halt_failed and self._state["cancel_all"] == "confirmed":
                     # The halt call failed in this kill: do not keep the confirm.
                     self._state["cancel_all"] = "pending"
                     self._detail["cancel_all"] = "halt_failed"
+                if revoked_before and self._state["cancel_all"] != "confirmed":
+                    # Still pending and retried on every kill, but on a credential already revoked.
+                    self._state["cancel_all"] = "pending_credential_revoked"
             if self._state["revoke_key"] != "confirmed":
                 self._revoke()
             status = "confirmed" if all(v == "confirmed" for v in self._state.values()) else "pending"
