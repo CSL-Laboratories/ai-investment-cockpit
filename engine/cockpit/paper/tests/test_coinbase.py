@@ -28,6 +28,7 @@ class MockCoinbase:
         self.list_error = None
         self.revoke_reply: object = {"accepted": True}
         self.revoke_works = True
+        self.probe_reply: object = None  # an exception to raise or a reply, in place of the grant's
         self.on_list = None
 
     def _auth(self):
@@ -67,6 +68,10 @@ class MockCoinbase:
 
     def probe_authenticated(self):
         self.log.append("probe")
+        if isinstance(self.probe_reply, BaseException):
+            raise self.probe_reply
+        if self.probe_reply is not None:
+            return self.probe_reply
         return "authorized" if self.granted else "unauthorized"
 
 
@@ -137,9 +142,11 @@ class CoinbaseKillTests(unittest.TestCase):
         self.assertEqual(self._kill(Garbled()).kill()["detail"]["cancel_orders"], "unreadable_list")
 
     def test_revoke_confirmed_only_when_post_kill_call_fails(self) -> None:
-        cases = ((dict(revoke_works=False), "probe:authorized"),
-                 (dict(revoke_works=False, revoke_reply={"accepted": False}), "rejected"),
-                 (dict(revoke_works=False, revoke_reply=ConnectionError()), "error:ConnectionError"))
+        cases = ((dict(revoke_works=False), {"revoke_probe": "authorized"}),
+                 (dict(revoke_works=False, revoke_reply={"accepted": False}),
+                  {"revoke_grant": "rejected", "revoke_probe": "authorized"}),
+                 (dict(revoke_works=False, revoke_reply=ConnectionError()),
+                  {"revoke_grant": "error:ConnectionError", "revoke_probe": "authorized"}))
         for attrs, detail in cases:
             with self.subTest(attrs=attrs):
                 venue = MockCoinbase()
@@ -148,7 +155,38 @@ class CoinbaseKillTests(unittest.TestCase):
                 out = self._kill(venue).kill()
                 self.assertEqual((out["status"], out["cancel_orders"], out["revoke_grant"]),
                                  ("pending", "confirmed", "pending"))
-                self.assertEqual(out["detail"]["revoke_grant"], detail)
+                self.assertEqual(out["detail"], detail)
+
+    def test_last_probe_is_reported_under_its_own_key(self) -> None:
+        """The probe result never mixes into the revoke attempt's detail."""
+        cases = ((dict(revoke_works=False), "pending", {"revoke_probe": "authorized"}),
+                 (dict(revoke_reply={"accepted": False}), "pending",
+                  {"revoke_grant": "rejected", "revoke_probe": "unauthorized"}),
+                 (dict(probe_reply=TimeoutError()), "pending", {"revoke_probe": "error:TimeoutError"}),
+                 (dict(probe_reply={"unauthorized": True}), "pending", {"revoke_probe": "unreadable_probe"}),
+                 (dict(probe_reply="x" * 40), "pending", {"revoke_probe": "x" * 32}),
+                 (dict(), "confirmed", {"revoke_probe": "unauthorized"}))
+        for attrs, state, detail in cases:
+            with self.subTest(attrs=attrs):
+                venue = MockCoinbase(orders=["o1"])
+                for k, v in attrs.items():
+                    setattr(venue, k, v)
+                out = self._kill(venue).kill()
+                self.assertEqual((out["status"], out["cancel_orders"], out["revoke_grant"]),
+                                 (state, "confirmed", state))
+                self.assertEqual(out["detail"], detail)
+
+    def test_each_probe_overwrites_the_last_probe_result(self) -> None:
+        venue = MockCoinbase()
+        venue.revoke_works = False  # the grant stays, so each kill can list
+        venue.probe_reply = TimeoutError()
+        kill = self._kill(venue)
+        self.assertEqual(kill.kill()["detail"], {"revoke_probe": "error:TimeoutError"})
+        venue.probe_reply = None
+        self.assertEqual(kill.kill()["detail"], {"revoke_probe": "authorized"})
+        venue.revoke_works = True
+        out = kill.kill()
+        self.assertEqual((out["status"], out["detail"]), ("confirmed", {"revoke_probe": "unauthorized"}))
 
     def test_unauthorized_probe_after_a_failed_revoke_confirms_nothing(self) -> None:
         """Finding 3: confirm only when the revoke was accepted and the probe is unauthorized."""
@@ -168,7 +206,7 @@ class CoinbaseKillTests(unittest.TestCase):
                 self.assertEqual(venue.log, ["halt", "list", "cancel:o1", "list", "revoke", "probe"])
                 self.assertEqual((out["status"], out["cancel_orders"], out["revoke_grant"]),
                                  ("pending", "confirmed", "pending"))
-                self.assertEqual(out["detail"], {"revoke_grant": detail})
+                self.assertEqual(out["detail"], {"revoke_grant": detail, "revoke_probe": "unauthorized"})
 
     def test_cancel_timeout_still_revokes_after_it_and_stays_pending(self) -> None:
         """O70: halt, cancel, revoke in one kill; a confirmed revoke never confirms a timed-out cancel."""
@@ -178,7 +216,7 @@ class CoinbaseKillTests(unittest.TestCase):
         self.assertEqual(venue.log, ["halt", "list", "cancel:o1", "cancel:o2", "revoke", "probe"])
         self.assertEqual((out["status"], out["halt"], out["cancel_orders"], out["revoke_grant"]),
                          ("pending", "confirmed", "pending", "confirmed"))
-        self.assertEqual(out["detail"], {"cancel_orders": "unconfirmed:1"})
+        self.assertEqual(out["detail"], {"cancel_orders": "unconfirmed:1", "revoke_probe": "unauthorized"})
         self.assertEqual((out["cancelled"], venue.open), (["o1"], ["o2"]))
         # The same when the listing itself times out: nothing cancelled, the revoke still runs.
         venue = MockCoinbase(orders=["o1"])
@@ -187,7 +225,7 @@ class CoinbaseKillTests(unittest.TestCase):
         self.assertEqual(venue.log, ["halt", "list", "revoke", "probe"])
         self.assertEqual((out["status"], out["cancel_orders"], out["revoke_grant"]),
                          ("pending", "pending", "confirmed"))
-        self.assertEqual(out["detail"], {"cancel_orders": "list_error:TimeoutError"})
+        self.assertEqual(out["detail"], {"cancel_orders": "list_error:TimeoutError", "revoke_probe": "unauthorized"})
 
     def test_retry_only_what_is_not_confirmed(self) -> None:
         venue = MockCoinbase(orders=["o1", "o2"])
@@ -258,7 +296,8 @@ class CoinbaseKillTests(unittest.TestCase):
         self.assertEqual(venue.log, ["halt", "list", "cancel:o1", "list", "revoke", "probe"])
         self.assertEqual((out["status"], out["halt"], out["cancel_orders"], out["revoke_grant"]),
                          ("pending", "pending", "pending", "confirmed"))
-        self.assertEqual(out["detail"], {"halt": "error:OSError", "cancel_orders": "halt_failed"})
+        self.assertEqual(out["detail"], {"halt": "error:OSError", "cancel_orders": "halt_failed",
+                                         "revoke_probe": "unauthorized"})
         # An order placed while the halt was not set: the next kill lists and cancels again.
         venue.open = ["c-new"]
         venue.fail_cancel["c-new"] = {"order_id": "c-new", "success": True}  # says yes, stays open
@@ -269,7 +308,7 @@ class CoinbaseKillTests(unittest.TestCase):
         out = kill.kill()
         self.assertEqual(venue.log, ["halt", "list", "cancel:c-new", "list"])
         self.assertEqual((out["status"], out["halt"], out["cancel_orders"]), ("pending", "confirmed", "pending"))
-        self.assertEqual(out["detail"], {"cancel_orders": "remaining:1"})
+        self.assertEqual(out["detail"], {"cancel_orders": "remaining:1", "revoke_probe": "unauthorized"})
         self.assertEqual(venue.open, ["c-new"])
 
     def test_pending_revoke_lists_and_cancels_again(self) -> None:
@@ -288,7 +327,7 @@ class CoinbaseKillTests(unittest.TestCase):
         self.assertEqual(venue.log, ["halt", "list", "cancel:late", "list", "revoke", "probe"])
         self.assertEqual((out["status"], out["cancel_orders"], out["revoke_grant"]),
                          ("pending", "pending", "confirmed"))
-        self.assertEqual(out["detail"], {"cancel_orders": "remaining:1"})
+        self.assertEqual(out["detail"], {"cancel_orders": "remaining:1", "revoke_probe": "unauthorized"})
 
     def test_confirmed_cancel_and_revoke_are_not_retried(self) -> None:
         venue = MockCoinbase(orders=["o1"])
@@ -302,7 +341,7 @@ class CoinbaseKillTests(unittest.TestCase):
         self.assertEqual(venue.log, ["halt"])
         self.assertEqual((out["status"], out["cancel_orders"], out["revoke_grant"]),
                          ("confirmed", "confirmed", "confirmed"))
-        self.assertEqual(out["detail"], {})
+        self.assertEqual(out["detail"], {"revoke_probe": "unauthorized"})
 
     def test_successful_halt_drops_the_stored_halt_error(self) -> None:
         venue = MockCoinbase()
@@ -313,7 +352,7 @@ class CoinbaseKillTests(unittest.TestCase):
         venue.revoke_works = True
         out = kill.kill()
         self.assertEqual((out["status"], out["halt"]), ("confirmed", "confirmed"))
-        self.assertEqual(out["detail"], {})
+        self.assertEqual(out["detail"], {"revoke_probe": "unauthorized"})
 
     def test_kill_halts_the_paper_book(self) -> None:
         d = tempfile.mkdtemp(prefix="cockpit-cb-")

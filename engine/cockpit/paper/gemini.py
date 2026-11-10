@@ -14,8 +14,12 @@ the kill cancels working orders. After the order halt is set in one committed st
   than ``0`` (unfinished). A failure never skips the revoke;
 * the OAuth grant is revoked, and the revoke is ``confirmed`` only when the revoke call
   itself was accepted (``accepted`` exactly ``True``) and an authenticated call made
-  after it is refused as unauthorized. Otherwise it is ``pending``: a rejected or raised
-  revoke keeps its ``rejected`` or ``error:`` detail even when the probe says unauthorized.
+  after it is refused as unauthorized. Otherwise it is ``pending``. The ``revoke_grant``
+  detail holds only the revoke attempt (``rejected``, ``error:<Exc>`` or
+  ``unreadable_response``; absent after an accepted revoke). The last probe is reported
+  apart, under ``revoke_probe``: the probe's reply (``unauthorized``, ``authorized``),
+  ``unreadable_probe`` or ``error:<Exc>``. It stays in the detail after a confirm, and an
+  unauthorized probe after a rejected or raised revoke confirms nothing.
 
 Which Gemini API operations back ``cancel_all`` and ``list_open_orders`` under an OAuth
 grant is not verified here; the transport is a mock (see the PR's gaps).
@@ -101,16 +105,18 @@ class GeminiKill:
                 self._detail["revoke_grant"] = "unreadable_response"
         # Confirmation needs both: this revoke accepted, and an authenticated call refused
         # after it. An unauthorized probe after a rejected or raised revoke confirms nothing.
+        # The last probe result is reported under its own key, apart from the revoke attempt's.
         try:
             probe = self._transport.probe_authenticated()
         except Exception as exc:  # noqa: BLE001
-            self._detail.setdefault("revoke_grant", "probe_error:" + type(exc).__name__)
+            self._detail["revoke_probe"] = "error:" + type(exc).__name__
             return
-        if probe != "unauthorized":
-            self._detail.setdefault("revoke_grant", "probe:" + str(probe)[:32])
-        elif accepted:
+        if type(probe) is not str:
+            self._detail["revoke_probe"] = "unreadable_probe"
+            return
+        self._detail["revoke_probe"] = probe[:32]
+        if accepted and probe == "unauthorized":
             self._state["revoke_grant"] = "confirmed"
-            self._detail.pop("revoke_grant", None)
 
     def kill(self) -> dict:
         with self._lock:

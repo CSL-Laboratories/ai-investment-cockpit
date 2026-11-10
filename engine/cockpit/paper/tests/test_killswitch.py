@@ -117,7 +117,7 @@ class KillSwitchTests(unittest.TestCase):
                 venue = out["venues"][index]
                 self.assertEqual((venue["venue"], venue["status"], venue[cancel_key], venue[revoke_key]),
                                  (name, "pending", "pending", "confirmed"))
-                self.assertEqual(venue["detail"], {cancel_key: detail})
+                self.assertEqual(venue["detail"], {cancel_key: detail, "revoke_probe": "unauthorized"})
                 self.assertEqual((out["status"], out["halt"]), ("pending", "confirmed"))
                 others = [v["status"] for i, v in enumerate(out["venues"]) if i != index]
                 self.assertEqual(others, ["confirmed"] * 3)
@@ -154,7 +154,7 @@ class KillSwitchTests(unittest.TestCase):
         self.assertEqual(venue.open, ["g-new"])
         self.assertEqual((out["status"], gemini["status"], gemini["cancel_all"], gemini["revoke_grant"]),
                          ("pending", "pending", "pending", "confirmed"))
-        self.assertEqual(gemini["detail"], {"cancel_all": "remaining:1"})
+        self.assertEqual(gemini["detail"], {"cancel_all": "remaining:1", "revoke_probe": "unauthorized"})
 
     def test_kill_cancels_working_paper_orders(self) -> None:
         """Red-team round 2 finding 1: a confirmed kill leaves no working paper order (O42, K1)."""

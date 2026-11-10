@@ -112,7 +112,7 @@ class EndToEndPaperTests(unittest.TestCase):
         self.assertEqual((out["status"], out["digest"]), ("paper_working", approval["digest"]))
         with self.assertRaises(Refused) as ctx:
             gateway.submit(INTENT, approval["approval_id"], profile)
-        self.assertEqual(ctx.exception.code, "core:approval_replayed")
+        self.assertEqual(ctx.exception.code, "intent_duplicate")  # refused before the core
         self.assertEqual(len(book.orders()), 1)
 
     def test_split_orders_over_profile_budget_refused(self) -> None:

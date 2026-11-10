@@ -12,10 +12,13 @@ The only path that books an order in ``engine/``. Every order goes, in this orde
    so a halt committed by any process before the booking wins.
 
 Step 3 is the charge. Every local refusal that does not need the core (steps 1 and 2,
-and a duplicate intent id) is checked before it. If the booking still refuses after a
-successful charge (a halt or the same intent committed during the core call), ``submit``
-raises ``Refused`` with code ``leftover_charge`` and the booking refusal in ``.cause``.
-Nothing is booked and the charge is not reversed: the core exposes no reverse.
+and a duplicate intent id) is checked before it. An intent id already in the book is
+refused at ``request_approval`` too, before an approval is drawn. If the booking still
+refuses after a successful charge (a halt or the same intent committed during the core
+call), ``submit`` raises ``Refused`` with code ``leftover_charge`` and the booking refusal
+in ``.cause``. Any other booking exception after the charge (a locked book, say) is a
+``leftover_charge`` as well, with ``.cause`` ``booking_error:<Class>``. Nothing is booked
+and the charge is not reversed: the core exposes no reverse.
 
 ``PaperBook`` has no public booking method: its private ``_book`` refuses unless handed a
 capability object that only ``OrderGateway.submit`` passes, and a static test refuses any
@@ -45,7 +48,8 @@ _GATEWAY_ONLY = object()  # booking capability; never exported or passed outside
 
 
 class Refused(Exception):
-    """``cause`` is set only on ``leftover_charge``: the booking refusal that followed the charge."""
+    """``cause`` is set only on ``leftover_charge``: the booking refusal that followed the charge,
+    or ``booking_error:<Class>`` for any other booking exception."""
 
     def __init__(self, code: str, cause: str | None = None) -> None:
         super().__init__(code if cause is None else code + ":" + cause)
@@ -237,6 +241,9 @@ class OrderGateway:
     def request_approval(self, intent: Intent) -> dict:
         """Risk pass, then ask the core to draw the approval for exactly this effect."""
         effect = self.risk_pass(intent)
+        # A booked intent id draws no new approval. Only the book is asked: no approval state here.
+        if self._book._has_intent(intent.intent_id):
+            raise Refused("intent_duplicate")
         try:
             return self._core.request_approval(effect)
         except CoreRefused as exc:
@@ -257,5 +264,7 @@ class OrderGateway:
             # The core has charged and nothing was booked (a halt or the same intent committed
             # during the core call). There is no reverse: say so, never a clean refusal.
             raise Refused("leftover_charge", exc.code) from None
+        except Exception as exc:
+            raise Refused("leftover_charge", "booking_error:" + type(exc).__name__) from exc
         return {"status": "paper_working", "intent_id": intent.intent_id, "seq": seq,
                 "notional_minor": effect["amount_minor"], "digest": core.get("digest")}
