@@ -177,6 +177,31 @@ class CashTests(unittest.TestCase):
         self.assertEqual(self.book.held_shares(ACCT, "AAPL"), 9)
         self.assertEqual(self.core.calls.count("effect.authorize"), 1)
 
+    def test_account_removed_during_core_authorize_is_a_leftover_charge(self) -> None:
+        self._gateway(100_000)
+        intent = self._size("first")
+        approval = self._approved(intent)
+        effect_digest = hashlib.sha256(canonical(self.gw.risk_pass(intent))).hexdigest()
+        original = self.core.__call__
+
+        def drop_account_during_core_call(raw: bytes) -> bytes:
+            other = sqlite3.connect(self.path)  # another connection, as another process would
+            # Test-only: no production code deletes a cash row.
+            other.execute("DELETE FROM cash WHERE account = ?", (ACCT,))
+            other.commit()
+            other.close()
+            return original(raw)
+        self.gw._core = CoreClient(drop_account_during_core_call)
+        # The early funds read passed and the core charged; the booking's own read then refused.
+        exc = self._refused("leftover_charge", self.gw.submit, intent, approval, AUTHORITY)
+        self.assertEqual((exc.cause, str(exc)), ("account_unknown", "leftover_charge:account_unknown"))
+        self.assertEqual([(r["event"], r["stage"], r["code"], r["effect_sha256"])
+                          for r in self.book.audit() if r["seq"] == exc.audit_seq],
+                         [("refused", "book", "leftover_charge:account_unknown", effect_digest)])
+        self.assertEqual(self.book.orders(), [])
+        self.assertEqual(self.core.spent, 100_000)  # the core charged, and nothing reversed it
+        self.assertEqual(self.core.calls.count("effect.authorize"), 1)  # charged once, not reversed
+
     def test_gateway_never_clamps_or_resizes(self) -> None:
         self._gateway(50_000)
         for quantity in (6, 7, 100, 1000):
@@ -235,6 +260,15 @@ class CashTests(unittest.TestCase):
         intent = Intent(intent_id="x", account="other", instrument="AAPL", side="buy", quantity=1,
                         limit_price_minor=100, run_id="r", connection="c")
         self._refused("account_unknown", self.gw.request_approval, intent)
+        # At submit, before the core, it stays a plain refusal: no charge, so no leftover_charge.
+        calls = list(self.core.calls)
+        exc = self._refused("account_unknown", self.gw.submit, intent, "apr_0", AUTHORITY)
+        self.assertEqual((exc.cause, str(exc)), (None, "account_unknown"))
+        self.assertEqual([(r["event"], r["stage"], r["code"])
+                          for r in self.book.audit() if r["seq"] == exc.audit_seq],
+                         [("refused", "funds", "account_unknown")])
+        self.assertEqual((self.core.calls, self.core.spent), (calls, 0))
+        self.assertEqual(self.book.orders(), [])
 
     def test_create_book_validates_cash_before_making_the_file(self) -> None:
         d = tempfile.mkdtemp(prefix="cockpit-cash-")
