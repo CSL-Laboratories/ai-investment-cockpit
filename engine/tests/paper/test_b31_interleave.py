@@ -4,7 +4,7 @@ Companion to ``test_b31_race_stress.py``, which races many threads and hopes to 
 window between the gateway's early funds read and the booking. Here the window is forced: the
 core double blocks inside ``effect.authorize`` for one intent (after its early funds read has
 passed) while a second ``PaperBook`` connection, as a second process would have, spends the cash
-or shares. B31 (Lucas t1414u; PRODUCT.md 055cc7a5, 4.2): the booking re-reads tracked cash in
+or shares. B31 (Lucas t1414u; PRODUCT.md d84cdd26a4de2366f3c5d34c4aec5215f822a494 (CSLR-D-012), 4.2): the booking re-reads tracked cash in
 its own ``BEGIN IMMEDIATE`` transaction and refuses; it never clamps or resizes. On the base
 (Cockpit #320 head 9f9010e40d3101acadd5bf90786ccfa902297273) a booking refusal that follows the
 core charge is ``leftover_charge`` with the booking refusal in ``.cause`` (``cash_insufficient``,
@@ -128,10 +128,15 @@ class InterleaveCase(unittest.TestCase):
             except BaseException as exc:  # noqa: BLE001 - anything untyped is the finding
                 out["result"] = exc
 
-        t = threading.Thread(target=run)
+        t = threading.Thread(target=run, daemon=True)  # a deadlocked worker must not keep the interpreter alive
         t.start()
         gate.wait_reached()
         return gate, t, out
+
+    def join(self, t: threading.Thread, timeout: float = 30) -> None:
+        """Join with a bound and report a hang as a failure; the daemon thread is left behind."""
+        t.join(timeout)
+        self.assertFalse(t.is_alive(), f"submit thread still running after {timeout}s (hung)")
 
     def assert_leftover(self, book, intent_id: str, exc, cause: str) -> None:
         """A typed refusal after the charge: ``leftover_charge`` with the booking refusal as cause, audited."""
@@ -162,7 +167,7 @@ class SendTimeWindowTests(InterleaveCase):
             gate, t, out = self.paused_submit(gw_a, core_a, sized)
             self.submit(gw_b, self.intent(f"b{i}", 1))  # another connection spends one share's cash
             gate.release()
-            t.join(30)
+            self.join(t)
             self.assert_leftover(book_a, sized.intent_id, out["result"], "cash_insufficient")
             rows = [r["event"] for r in book_a.audit() if r["intent_id"] == sized.intent_id]
             self.assertEqual(rows, ["refused"])  # no booked row for A
@@ -179,7 +184,7 @@ class SendTimeWindowTests(InterleaveCase):
             gate, t, out = self.paused_submit(gw_a, core_a, self.intent(f"a{i}", 5))
             self.submit(gw_b, self.intent(f"b{i}", 1))
             gate.release()
-            t.join(30)
+            self.join(t)
             self.assertEqual(out["result"]["status"], "paper_working", out["result"])
             self.assertEqual(out["result"]["notional_minor"], 5 * PRICE)
             self.assertEqual(book_a.available_cash_minor(ACCT), 0)
@@ -192,7 +197,7 @@ class SendTimeWindowTests(InterleaveCase):
             gate, t, out = self.paused_submit(gw_a, core_a, self.intent(f"s-a{i}", 3, "sell"))
             self.submit(gw_b, self.intent(f"s-b{i}", 1, "sell"))
             gate.release()
-            t.join(30)
+            self.join(t)
             self.assert_leftover(book_a, f"s-a{i}", out["result"], "holding_insufficient")
             self.assertEqual(book_a.held_shares(ACCT, "AAPL"), 2)
             self.assertEqual([o[0] for o in book_a.orders()], [f"s-b{i}"])
@@ -204,8 +209,9 @@ class SendTimeWindowTests(InterleaveCase):
             gw_b, _, _ = self.gateway(path)
             gate, t, out = self.paused_submit(gw_a, core_a, self.intent(f"a{i}", 1))
             gw_b.halt()  # the operator halts from another process while A is being authorized
+            self.assertTrue(t.daemon)
             gate.release()
-            t.join(30)
+            self.join(t)
             self.assert_leftover(book_a, f"a{i}", out["result"], "order_halted")
             self.assertEqual(book_a.orders(), [])
             self.assertEqual(book_a.available_cash_minor(ACCT), 10 * PRICE)
@@ -222,7 +228,7 @@ class DuplicateIntentTests(InterleaveCase):
             gate, t, out = self.paused_submit(gw_a, core_a, intent)
             self.submit(gw_b, intent)  # another connection books the same intent id first
             gate.release()
-            t.join(30)
+            self.join(t)
             self.assert_leftover(book_a, intent.intent_id, out["result"], "intent_duplicate")
             self.assertEqual([o[0] for o in book_a.orders()], [intent.intent_id])  # booked once
             self.assertEqual(book_a.available_cash_minor(ACCT), start - PRICE)
@@ -252,11 +258,13 @@ class DuplicateIntentTests(InterleaveCase):
                 with lock:
                     codes.append(code)
 
-            threads = [threading.Thread(target=go, args=(n,)) for n in range(THREADS)]
+            threads = [threading.Thread(target=go, args=(n,), daemon=True) for n in range(THREADS)]
             for t in threads:
                 t.start()
             for t in threads:
                 t.join(60)
+            hung = sum(t.is_alive() for t in threads)
+            self.assertEqual(hung, 0, f"{hung} thread(s) still running after 60s")
             self.assertEqual(codes.count(None), 1, codes)
             # Plain before the charge (approval or submit saw the booked id), leftover_charge after it.
             allowed = {("intent_duplicate", None), ("leftover_charge", "intent_duplicate")}

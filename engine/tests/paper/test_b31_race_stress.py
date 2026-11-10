@@ -1,7 +1,7 @@
 """B31 race and stress: cash refused at send time, never clamped, under many threads (CSL-801).
 
 Lane CSL-801 (3.14t race and stress), measured on this branch's base, Cockpit #320 head
-9f9010e40d3101acadd5bf90786ccfa902297273. B31 (Lucas t1414u; PRODUCT.md 055cc7a5, 4.2): "size to cash, refuse at the gateway
+9f9010e40d3101acadd5bf90786ccfa902297273. B31 (Lucas t1414u; PRODUCT.md d84cdd26a4de2366f3c5d34c4aec5215f822a494 (CSLR-D-012), 4.2): "size to cash, refuse at the gateway
 ... it never clamps or resizes."
 
 Each iteration gives every thread its own ``PaperBook`` connection to one book file (as
@@ -103,15 +103,17 @@ def hammer(workers, timeout: float = 300.0) -> list[str]:
     return problems
 
 
-def one_iteration(rng: random.Random, violations: list[str], counters: dict) -> None:
+def one_iteration(rng: random.Random, violations: list[str], counters: dict, halt: bool | None = None) -> None:
     tmp = tempfile.mkdtemp(prefix="cockpit-b31-race-")
     try:
-        _iteration(os.path.join(tmp, "book.db"), rng, violations, counters)
+        _iteration(os.path.join(tmp, "book.db"), rng, violations, counters, halt)
     finally:
         shutil.rmtree(tmp, True)
 
 
-def _iteration(path: str, rng: random.Random, violations: list[str], counters: dict) -> None:
+def _iteration(path: str, rng: random.Random, violations: list[str], counters: dict,
+               halt: bool | None = None) -> None:
+    """``halt`` forces (True) or forbids (False) the halter thread; None keeps the 30% roll."""
     create_book(path, cash_minor={a: START_CASH for a in ACCOUNTS},
                 holdings={(a, INSTRUMENT): START_SHARES for a in ACCOUNTS})
     caps = Caps(max_notional_minor=400_000, max_quantity=50)
@@ -184,9 +186,15 @@ def _iteration(path: str, rng: random.Random, violations: list[str], counters: d
             book.close()
 
     workers = [lambda s=rng.randrange(2**32), n=n: worker(s, n) for n in range(THREADS)]
-    if rng.random() < 0.3:
+    roll = rng.random() < 0.3  # always drawn, so a forced iteration keeps the seed's later draws
+    with_halter = roll if halt is None else halt
+    if with_halter:
         workers.append(halter)
     violations.extend(hammer(workers))
+    if with_halter and len(halt_seqs) != 1:
+        violations.append(f"halter iteration recorded {len(halt_seqs)} halt seq(s), expected 1")
+    if not with_halter and halt_seqs:
+        violations.append(f"no-halter iteration recorded halt seqs {halt_seqs}")
 
     db = sqlite3.connect(path)
     try:
@@ -217,14 +225,19 @@ def _iteration(path: str, rng: random.Random, violations: list[str], counters: d
     counters["refused"] += outcomes["refused"]
     counters["send_time_cash_refusals"] += send_time
     counters["halts"] += len(halt_seqs)
+    counters["halter_iters" if with_halter else "no_halter_iters"] += 1
+    if with_halter:
+        counters["orders_checked_against_halt"] += len(orders)
 
 
 def run(iters: int, seed: int) -> tuple[list[str], dict]:
+    """Iteration 0 always has a halter and iteration 1 never does; the rest keep the 30% roll."""
     rng = random.Random(seed)
     violations: list[str] = []
-    counters = {"booked": 0, "refused": 0, "send_time_cash_refusals": 0, "halts": 0}
-    for _ in range(iters):
-        one_iteration(rng, violations, counters)
+    counters = {"booked": 0, "refused": 0, "send_time_cash_refusals": 0, "halts": 0,
+                "halter_iters": 0, "no_halter_iters": 0, "orders_checked_against_halt": 0}
+    for i in range(max(2, iters)):
+        one_iteration(rng, violations, counters, {0: True, 1: False}.get(i))
     return violations, counters
 
 
@@ -244,6 +257,24 @@ class B31RaceStress(unittest.TestCase):
               f"violations={len(violations)}", file=sys.stderr)
         self.assertEqual(violations, [], f"seed {self.seed}")
         self.assertGreater(counters["booked"], 0)
+        # Both shapes run every time, not by a 30% roll: the halt-wins check and the no-halter path.
+        self.assertGreaterEqual(counters["halter_iters"], 1, f"seed {self.seed}: {counters}")
+        self.assertGreaterEqual(counters["no_halter_iters"], 1, f"seed {self.seed}: {counters}")
+        self.assertGreaterEqual(counters["halts"], 1, f"seed {self.seed}: {counters}")
+        self.assertEqual(counters["halts"], counters["halter_iters"], f"seed {self.seed}: {counters}")
+
+    def test_halt_and_no_halt_shapes_are_forced(self) -> None:
+        """``_iteration(halt=...)`` overrides the roll both ways, whatever the seed draws."""
+        for halt in (True, False):
+            for seed in range(5):
+                violations: list[str] = []
+                counters = {"booked": 0, "refused": 0, "send_time_cash_refusals": 0, "halts": 0,
+                            "halter_iters": 0, "no_halter_iters": 0, "orders_checked_against_halt": 0}
+                one_iteration(random.Random(seed), violations, counters, halt)
+                self.assertEqual(violations, [], f"halt={halt} seed={seed}")
+                self.assertEqual(counters["halts"], int(halt), f"halt={halt} seed={seed}: {counters}")
+                self.assertEqual(counters["halter_iters"], int(halt), counters)
+                self.assertEqual(counters["no_halter_iters"], int(not halt), counters)
 
     def test_sensitivity_dropped_send_time_check_is_caught(self) -> None:
         original = PaperBook._check_funds
