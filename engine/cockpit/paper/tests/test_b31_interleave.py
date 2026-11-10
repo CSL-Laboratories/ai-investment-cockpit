@@ -5,12 +5,15 @@ window between the gateway's early funds read and the booking. Here the window i
 core double blocks inside ``effect.authorize`` for one intent (after its early funds read has
 passed) while a second ``PaperBook`` connection, as a second process would have, spends the cash
 or shares. B31 (Lucas t1414u; PRODUCT.md 055cc7a5, 4.2): the booking re-reads tracked cash in
-its own ``BEGIN IMMEDIATE`` transaction and refuses with ``cash_insufficient``; it never clamps
-or resizes.
+its own ``BEGIN IMMEDIATE`` transaction and refuses; it never clamps or resizes. On the base
+(Cockpit #320 head 9f9010e40d3101acadd5bf90786ccfa902297273) a booking refusal that follows the
+core charge is ``leftover_charge`` with the booking refusal in ``.cause`` (``cash_insufficient``,
+``holding_insufficient``, ``order_halted``, ``intent_duplicate``); refusals before the charge
+keep their plain codes.
 
-Checks: the refusal is typed and audited at stage ``book``; nothing is booked for the paused
-intent; available cash plus working buy notional still equals starting cash; one intent id
-books once across connections.
+Checks: the refusal is typed and audited at stage ``book`` as ``leftover_charge:<cause>``;
+nothing is booked for the paused intent; available cash plus working buy notional still equals
+starting cash; one intent id books once across connections.
 
 Run: ``PYTHONPATH=engine python3 -B -m unittest engine/cockpit/paper/tests/test_b31_interleave.py -v``,
 and with ``PYTHON_GIL=0 python3.14t -X gil=0``. ``COCKPIT_RACE_ITERS`` (default 10) repeats
@@ -130,6 +133,14 @@ class InterleaveCase(unittest.TestCase):
         gate.wait_reached()
         return gate, t, out
 
+    def assert_leftover(self, book, intent_id: str, exc, cause: str) -> None:
+        """A typed refusal after the charge: ``leftover_charge`` with the booking refusal as cause, audited."""
+        self.assertIsInstance(exc, Refused, f"{intent_id}: booked or untyped error: {exc!r}")
+        self.assertEqual((exc.code, exc.cause), ("leftover_charge", cause))
+        self.assertIsNotNone(exc.audit_seq)
+        rows = [(r["event"], r["stage"], r["code"]) for r in book.audit() if r["intent_id"] == intent_id]
+        self.assertEqual([r for r in rows if r[0] == "refused"], [("refused", "book", "leftover_charge:" + cause)])
+
     def assert_cash_conserved(self, book, start: int) -> None:
         working = book._db.execute("SELECT quantity, limit_price_minor FROM orders"
                                    " WHERE side = 'buy' AND status = 'working'").fetchall()
@@ -152,11 +163,9 @@ class SendTimeWindowTests(InterleaveCase):
             self.submit(gw_b, self.intent(f"b{i}", 1))  # another connection spends one share's cash
             gate.release()
             t.join(30)
-            exc = out["result"]
-            self.assertIsInstance(exc, Refused, f"iteration {i}: booked over cash or untyped error: {exc!r}")
-            self.assertEqual(exc.code, "cash_insufficient")
-            rows = [(r["event"], r["stage"], r["code"]) for r in book_a.audit() if r["intent_id"] == sized.intent_id]
-            self.assertEqual(rows, [("refused", "book", "cash_insufficient")])
+            self.assert_leftover(book_a, sized.intent_id, out["result"], "cash_insufficient")
+            rows = [r["event"] for r in book_a.audit() if r["intent_id"] == sized.intent_id]
+            self.assertEqual(rows, ["refused"])  # no booked row for A
             self.assertEqual([o[0] for o in book_a.orders()], [f"b{i}"])  # nothing booked for A, not 4 shares
             self.assertEqual(book_a.available_cash_minor(ACCT), start - PRICE)
             self.assert_cash_conserved(book_a, start)
@@ -184,7 +193,7 @@ class SendTimeWindowTests(InterleaveCase):
             self.submit(gw_b, self.intent(f"s-b{i}", 1, "sell"))
             gate.release()
             t.join(30)
-            self.assertEqual(getattr(out["result"], "code", out["result"]), "holding_insufficient")
+            self.assert_leftover(book_a, f"s-a{i}", out["result"], "holding_insufficient")
             self.assertEqual(book_a.held_shares(ACCT, "AAPL"), 2)
             self.assertEqual([o[0] for o in book_a.orders()], [f"s-b{i}"])
 
@@ -197,12 +206,32 @@ class SendTimeWindowTests(InterleaveCase):
             gw_b.halt()  # the operator halts from another process while A is being authorized
             gate.release()
             t.join(30)
-            self.assertEqual(getattr(out["result"], "code", out["result"]), "order_halted")
+            self.assert_leftover(book_a, f"a{i}", out["result"], "order_halted")
             self.assertEqual(book_a.orders(), [])
             self.assertEqual(book_a.available_cash_minor(ACCT), 10 * PRICE)
 
 
 class DuplicateIntentTests(InterleaveCase):
+    def test_same_intent_booked_inside_the_window_is_refused(self) -> None:
+        for i in range(ITERS):
+            start = 10 * PRICE
+            path = self.new_book(start)
+            gw_a, book_a, core_a = self.gateway(path)
+            gw_b, _, _ = self.gateway(path)
+            intent = self.intent(f"dup-w{i}", 1)
+            gate, t, out = self.paused_submit(gw_a, core_a, intent)
+            self.submit(gw_b, intent)  # another connection books the same intent id first
+            gate.release()
+            t.join(30)
+            self.assert_leftover(book_a, intent.intent_id, out["result"], "intent_duplicate")
+            self.assertEqual([o[0] for o in book_a.orders()], [intent.intent_id])  # booked once
+            self.assertEqual(book_a.available_cash_minor(ACCT), start - PRICE)
+            self.assert_cash_conserved(book_a, start)
+            # Once booked, the id draws no new approval: a plain refusal, before any charge.
+            with self.assertRaises(Refused) as ctx:
+                gw_a.request_approval(intent)
+            self.assertEqual((ctx.exception.code, ctx.exception.cause), ("intent_duplicate", None))
+
     def test_one_intent_id_books_once_across_connections(self) -> None:
         for i in range(ITERS):
             path = self.new_book(10**9)
@@ -217,7 +246,7 @@ class DuplicateIntentTests(InterleaveCase):
                     self.submit(gws[n][0], self.intent(f"dup{i}", 1))
                     code = None
                 except Refused as exc:
-                    code = exc.code
+                    code = (exc.code, exc.cause)
                 except BaseException as exc:  # noqa: BLE001
                     code = repr(exc)
                 with lock:
@@ -229,9 +258,18 @@ class DuplicateIntentTests(InterleaveCase):
             for t in threads:
                 t.join(60)
             self.assertEqual(codes.count(None), 1, codes)
-            self.assertTrue(all(c == "intent_duplicate" for c in codes if c is not None), codes)
+            # Plain before the charge (approval or submit saw the booked id), leftover_charge after it.
+            allowed = {("intent_duplicate", None), ("leftover_charge", "intent_duplicate")}
+            self.assertTrue(all(c in allowed for c in codes if c is not None), codes)
             book = gws[0][1]
             self.assertEqual(len(book.orders()), 1)
+            rows = [(r["event"], r["stage"], r["code"]) for r in book.audit() if r["intent_id"] == f"dup{i}"]
+            self.assertEqual(rows.count(("booked", "book", None)), 1, rows)
+            refused = [r for r in rows if r[0] == "refused"]
+            self.assertEqual(len(refused), THREADS - 1, rows)
+            self.assertTrue(set(refused) <= {("refused", "request", "intent_duplicate"),
+                                             ("refused", "book", "intent_duplicate"),
+                                             ("refused", "book", "leftover_charge:intent_duplicate")}, rows)
             self.assert_cash_conserved(book, 10**9)
 
 

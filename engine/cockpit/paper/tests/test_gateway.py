@@ -10,11 +10,13 @@ import multiprocessing
 import os
 import re
 import shutil
+import sqlite3
 import tempfile
 import time
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest import mock
 
 from cockpit.paper.core_client import CoreClient
 from cockpit.paper.gateway import Caps, Intent, OrderGateway, PaperBook, Refused, create_book
@@ -172,8 +174,86 @@ class GatewayTests(unittest.TestCase):
             other.close()
             return original(raw)
         self.gw._core = CoreClient(halt_during_core_call)
-        self._refused("order_halted", self.gw.submit, second, approval, AUTHORITY)
+        # The halt landed after the charge: a typed leftover charge, never a clean refusal.
+        with self.assertRaises(Refused) as ctx:
+            self.gw.submit(second, approval, AUTHORITY)
+        self.assertEqual((ctx.exception.code, ctx.exception.cause), ("leftover_charge", "order_halted"))
+        self.assertEqual(str(ctx.exception), "leftover_charge:order_halted")
         self.assertEqual(self.book.orders(), [])
+        self.assertEqual(self.core.spent, 100_000)  # the core charged, and nothing reversed it
+        self.assertEqual(self.core.calls.count("effect.authorize"), 1)
+
+    def test_same_intent_booked_during_the_core_call_is_a_leftover_charge(self) -> None:
+        approval = self._approved(INTENT)
+        original = self.core.__call__
+        other_core = FakeCore(budget_minor=10**9)
+
+        def book_same_intent_during_core_call(raw: bytes) -> bytes:
+            other = PaperBook(self.path)  # another gateway on the same book, as another process would
+            gw = OrderGateway(plugin_id="csl.cockpit.paper", book=other, core=CoreClient(other_core),
+                              caps=Caps(max_notional_minor=500_000, max_quantity=100))
+            other_approval = gw.request_approval(INTENT)["approval_id"]
+            other_core.operator_approves(other_approval)
+            gw.submit(INTENT, other_approval, AUTHORITY)
+            other.close()
+            return original(raw)
+        self.gw._core = CoreClient(book_same_intent_during_core_call)
+        with self.assertRaises(Refused) as ctx:
+            self.gw.submit(INTENT, approval, AUTHORITY)
+        self.assertEqual((ctx.exception.code, ctx.exception.cause), ("leftover_charge", "intent_duplicate"))
+        self.assertIn("intent_duplicate", str(ctx.exception))
+        self.assertEqual(self.book.orders(), [("i-1", 1, "working")])  # only the other gateway's order
+        self.assertEqual(self.core.spent, 100_000)  # this core charged for an order that never booked
+
+    def test_booking_error_after_the_charge_is_a_leftover_charge(self) -> None:
+        """A locked book after the charge must not hide the charge behind a raw exception."""
+        approval = self._approved(INTENT)
+        error = sqlite3.OperationalError("database is locked")
+        with mock.patch.object(PaperBook, "_book", side_effect=error):
+            with self.assertRaises(Refused) as ctx:
+                self.gw.submit(INTENT, approval, AUTHORITY)
+        self.assertEqual((ctx.exception.code, ctx.exception.cause),
+                         ("leftover_charge", "booking_error:OperationalError"))
+        self.assertEqual(str(ctx.exception), "leftover_charge:booking_error:OperationalError")
+        self.assertIs(ctx.exception.__cause__, error)
+        self.assertEqual(self.book.orders(), [])
+        self.assertEqual(self.core.spent, 100_000)  # the core charged, and nothing reversed it
+        self.assertEqual(self.core.calls.count("effect.authorize"), 1)
+
+    def test_keyboard_interrupt_during_booking_is_not_wrapped(self) -> None:
+        approval = self._approved(INTENT)
+        with mock.patch.object(PaperBook, "_book", side_effect=KeyboardInterrupt()):
+            with self.assertRaises(KeyboardInterrupt):
+                self.gw.submit(INTENT, approval, AUTHORITY)
+        self.assertEqual(self.book.orders(), [])
+        self.assertEqual(self.core.spent, 100_000)
+
+    def test_booked_intent_cannot_request_a_new_approval(self) -> None:
+        self.gw.submit(INTENT, self._approved(INTENT), AUTHORITY)
+        calls, drawn = list(self.core.calls), len(self.core.approvals)
+        self._refused("intent_duplicate", self.gw.request_approval, INTENT)
+        # Refused before the core: no request reached it and no approval was drawn.
+        self.assertEqual((self.core.calls, len(self.core.approvals)), (calls, drawn))
+
+    def test_unbooked_intent_stays_requestable(self) -> None:
+        """Only the book decides: an approval that was never granted (the fake core's stand-in
+        for expired or vetoed), refused, or used without a booking leaves the id requestable."""
+        stale = self.gw.request_approval(INTENT)["approval_id"]
+        self._refused("core:approval_not_granted", self.gw.submit, INTENT, stale, AUTHORITY)
+        used = self._approved(INTENT)
+        with mock.patch.object(PaperBook, "_book", side_effect=sqlite3.OperationalError("database is locked")):
+            self._refused("leftover_charge", self.gw.submit, INTENT, used, AUTHORITY)
+        self.assertEqual(self.core.approvals[used]["state"], "used")
+        self.assertEqual(self.book.orders(), [])
+        out = self.gw.submit(INTENT, self._approved(INTENT), AUTHORITY)
+        self.assertEqual(out["status"], "paper_working")
+        self.assertEqual(self.book.orders(), [("i-1", 1, "working")])
+
+    def test_clean_refusals_carry_no_cause(self) -> None:
+        with self.assertRaises(Refused) as ctx:
+            self.gw.request_approval(replace(INTENT, side="short"))
+        self.assertEqual((ctx.exception.code, ctx.exception.cause, str(ctx.exception)),
+                         ("side_invalid", None, "side_invalid"))
 
     def test_halt_race_across_processes(self) -> None:
         """Three processes submit while this one halts: nothing books after the halt commits."""
@@ -197,8 +277,15 @@ class GatewayTests(unittest.TestCase):
         self.assertTrue(all(seq < halt_seq for _, seq, _ in orders), (halt_seq, orders[-3:]))
 
     def test_duplicate_intent_refused(self) -> None:
+        approval = self._approved(INTENT)  # drawn before the booking; none can be drawn after it
         self.gw.submit(INTENT, self._approved(INTENT), AUTHORITY)
-        self._refused("intent_duplicate", self.gw.submit, INTENT, self._approved(INTENT), AUTHORITY)
+        spent, calls = self.core.spent, list(self.core.calls)
+        self._refused("intent_duplicate", self.gw.submit, INTENT, approval, AUTHORITY)
+        # Caught before the core: no second charge, and the approval is not used up.
+        self.assertEqual((self.core.spent, self.core.calls), (spent, calls))
+        self.assertEqual(spent, 100_000)
+        self.assertEqual(self.core.approvals[approval]["state"], "approved")
+        self.assertEqual(self.book.orders(), [("i-1", 1, "working")])
 
     def test_only_the_gateway_books_orders(self) -> None:
         """Static check: no other file in engine/ (plugin and loader callers included) writes the

@@ -13,14 +13,27 @@ Kill. The order halt is set first, in one committed step. Then one cancel-all AP
 operation and one API-key revoke operation are attempted; a failure of either never
 skips the other. Status is truthful:
 
-* cancel-all is ``confirmed`` only when the venue reports zero orders remaining. A
-  timeout or error is ``pending`` (unknown), and a capped cancel that leaves orders is
-  ``pending`` with the remaining count;
-* the key revoke is ``confirmed`` only when an authenticated call made after it is
-  refused as unauthorized. Otherwise it is ``pending``.
+* cancel-all is ``confirmed`` only when a fresh listing after the cancel-all
+  shows no open order. The cancel-all reply's own ``remaining: 0`` is not
+  confirmation (PRODUCT.md 4.2, K1). A timeout or error is ``pending``
+  (unknown), a capped cancel that leaves orders is ``pending`` with the
+  remaining count, and any order the listing still shows is ``pending``. An
+  empty listing that still carries a ``cursor``, a ``truncated`` other than
+  ``False`` or a ``remaining`` other than ``0`` is unfinished, so ``pending``;
+* the key revoke is ``confirmed`` only when the revoke call itself was accepted
+  (``accepted`` exactly ``True``) and an authenticated call made after it is refused as
+  unauthorized. Otherwise it is ``pending``. The ``revoke_key`` detail holds only the
+  revoke attempt (``rejected``, ``error:<Exc>`` or ``unreadable_response``; absent after
+  an accepted revoke). The last probe is reported apart, under ``revoke_probe``: the
+  probe's reply (``unauthorized``, ``authorized``), ``unreadable_probe`` or
+  ``error:<Exc>``. It stays in the detail after a confirm, and an unauthorized probe
+  after a rejected or raised revoke confirms nothing.
 
 The overall status is ``confirmed`` only when both are. Calling ``kill`` again keeps
-the halt and retries only what is not yet confirmed.
+the halt and retries what is not yet confirmed. A cancel confirm is kept only once the
+revoke is confirmed too: while the revoke is pending, each ``kill`` cancels and lists
+again before the revoke. A cancel that confirms in a ``kill`` whose halt call failed is
+not kept either.
 """
 
 from __future__ import annotations
@@ -68,8 +81,19 @@ class KalshiKillTransport(Protocol):
     """Supplied only by the credential-owning host. Each method is one venue API operation."""
 
     def cancel_all(self) -> dict: ...          # {"remaining": int}
+    def list_open_orders(self) -> dict: ...    # {"order_ids": [str]}
     def revoke_api_key(self) -> dict: ...      # {"accepted": bool}
     def probe_authenticated(self) -> str: ...  # "unauthorized" | "authorized"
+
+
+def _list_finished(listed: dict) -> bool:
+    """True only when the list payload does not say more orders may follow."""
+    if listed.get("cursor") is not None:
+        return False
+    if listed.get("truncated", False) is not False:
+        return False
+    remaining = listed.get("remaining", 0)
+    return type(remaining) is int and remaining == 0
 
 
 class KalshiKill:
@@ -87,43 +111,78 @@ class KalshiKill:
             self._detail["cancel_all"] = "error:" + type(exc).__name__
             return
         remaining = out.get("remaining") if type(out) is dict else None
-        if type(remaining) is int and remaining == 0:
-            self._state["cancel_all"] = "confirmed"
-            self._detail.pop("cancel_all", None)
-        elif type(remaining) is int and remaining > 0:
-            self._detail["cancel_all"] = "remaining:%d" % remaining
-        else:
+        if type(remaining) is not int or remaining < 0:
             self._detail["cancel_all"] = "unreadable_response"
+            return
+        if remaining > 0:
+            self._detail["cancel_all"] = "remaining:%d" % remaining
+            return
+        # remaining == 0 is the cancel reply, not confirmation. Re-list.
+        try:
+            listed = self._transport.list_open_orders()
+        except Exception as exc:  # noqa: BLE001
+            self._detail["cancel_all"] = "list_error:" + type(exc).__name__
+            return
+        ids = listed.get("order_ids") if type(listed) is dict else None
+        if type(ids) is not list or not all(type(i) is str and i for i in ids):
+            self._detail["cancel_all"] = "unreadable_list"
+            return
+        if ids:
+            self._detail["cancel_all"] = "remaining:%d" % len(ids)
+            return
+        if not _list_finished(listed):
+            self._detail["cancel_all"] = "unfinished_list"
+            return
+        self._state["cancel_all"] = "confirmed"
+        self._detail.pop("cancel_all", None)
 
     def _revoke(self) -> None:
+        accepted = False
         try:
             out = self._transport.revoke_api_key()
         except Exception as exc:  # noqa: BLE001
             self._detail["revoke_key"] = "error:" + type(exc).__name__
-            out = None
-        if type(out) is dict and out.get("accepted") is False:
-            self._detail["revoke_key"] = "rejected"
-        # Confirmation is only an authenticated call refused after the revoke.
+        else:
+            accepted = type(out) is dict and out.get("accepted") is True
+            if accepted:
+                self._detail.pop("revoke_key", None)  # an earlier attempt's detail is not this one's
+            elif type(out) is dict and out.get("accepted") is False:
+                self._detail["revoke_key"] = "rejected"
+            else:
+                self._detail["revoke_key"] = "unreadable_response"
+        # Confirmation needs both: this revoke accepted, and an authenticated call refused
+        # after it. An unauthorized probe after a rejected or raised revoke confirms nothing.
+        # The last probe result is reported under its own key, apart from the revoke attempt's.
         try:
             probe = self._transport.probe_authenticated()
         except Exception as exc:  # noqa: BLE001
-            self._detail.setdefault("revoke_key", "probe_error:" + type(exc).__name__)
+            self._detail["revoke_probe"] = "error:" + type(exc).__name__
             return
-        if probe == "unauthorized":
+        if type(probe) is not str:
+            self._detail["revoke_probe"] = "unreadable_probe"
+            return
+        self._detail["revoke_probe"] = probe[:32]
+        if accepted and probe == "unauthorized":
             self._state["revoke_key"] = "confirmed"
-            self._detail.pop("revoke_key", None)
-        else:
-            self._detail.setdefault("revoke_key", "probe:" + str(probe)[:32])
 
     def kill(self) -> dict:
         with self._lock:
+            halt_failed = False
             try:
                 self._halt()
                 self._state["halt"] = "confirmed"
+                self._detail.pop("halt", None)
             except Exception as exc:  # noqa: BLE001 - still try the risk-reducing calls
+                halt_failed = True
                 self._detail["halt"] = "error:" + type(exc).__name__
-            if self._state["cancel_all"] != "confirmed":
+            # An earlier cancel confirm is kept only once the revoke is confirmed too.
+            if self._state["cancel_all"] != "confirmed" or self._state["revoke_key"] != "confirmed":
+                self._state["cancel_all"] = "pending"
                 self._cancel()
+                if halt_failed and self._state["cancel_all"] == "confirmed":
+                    # The halt call failed in this kill: do not keep the confirm.
+                    self._state["cancel_all"] = "pending"
+                    self._detail["cancel_all"] = "halt_failed"
             if self._state["revoke_key"] != "confirmed":
                 self._revoke()
             status = "confirmed" if all(v == "confirmed" for v in self._state.values()) else "pending"

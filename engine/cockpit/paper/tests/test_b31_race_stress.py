@@ -1,7 +1,7 @@
 """B31 race and stress: cash refused at send time, never clamped, under many threads (CSL-801).
 
 Lane CSL-801 (3.14t race and stress), measured on this branch's base, Cockpit #320 head
-31aa87a6e935dd8bceeaa7fa7b4097b24b0366a4. B31 (Lucas t1414u; PRODUCT.md 055cc7a5, 4.2): "size to cash, refuse at the gateway
+9f9010e40d3101acadd5bf90786ccfa902297273. B31 (Lucas t1414u; PRODUCT.md 055cc7a5, 4.2): "size to cash, refuse at the gateway
 ... it never clamps or resizes."
 
 Each iteration gives every thread its own ``PaperBook`` connection to one book file (as
@@ -9,8 +9,10 @@ separate processes would have) and runs sized buys, fixed-size buys that may exc
 held-share sells, ``cancel_all`` and, sometimes, ``halt``. The approval step yields, so other
 threads spend cash between the early funds read and the booking. Checks:
 
-* the gateway refuses every over-cash order with a typed ``Refused``; the database
-  ``CHECK (available_minor >= 0)`` never has to stop one (no ``sqlite3`` error escapes);
+* the gateway refuses every over-cash order with a typed ``Refused``: a plain code before the
+  core charge, ``leftover_charge`` with the booking refusal in ``.cause`` after it; the database
+  ``CHECK (available_minor >= 0)`` never has to stop one (no ``sqlite3`` error escapes and no
+  ``leftover_charge`` carries ``booking_error:IntegrityError``);
 * never clamps: each booked order has exactly the submitted quantity, and the returned
   ``notional_minor`` is quantity times limit price;
 * conservation per account: starting cash == available cash + working buy notional, and the
@@ -19,7 +21,8 @@ threads spend cash between the early funds read and the booking. Checks:
 * every booking has its ``booked`` audit row and every refusal its ``refused`` audit row.
 
 A sensitivity test drops the send-time check inside the booking transaction (B31's forbidden
-shape) and requires the run to catch it, so a clean run means something.
+shape) and requires the run to catch it as the database CHECK firing (``leftover_charge`` with
+cause ``booking_error:IntegrityError``), so a clean run means something.
 
 Run: ``PYTHONPATH=engine python3 -B -m unittest engine/cockpit/paper/tests/test_b31_race_stress.py -v``,
 and on the free-threaded build with ``PYTHON_GIL=0 python3.14t -X gil=0``.
@@ -52,6 +55,8 @@ START_SHARES = 40
 THREADS = 8
 EXPECTED_CODES = {"cash_insufficient", "holding_insufficient", "order_halted", "size_zero",
                   "size_cap_notional", "size_cap_quantity"}  # caps are Q25 risk refusals, also never clamped
+# After the core charge every booking refusal is ``leftover_charge`` with one of these in ``.cause``.
+EXPECTED_CAUSES = {"cash_insufficient", "holding_insufficient", "order_halted", "intent_duplicate"}
 
 
 class ApprovingCore:
@@ -154,10 +159,17 @@ def _iteration(path: str, rng: random.Random, violations: list[str], counters: d
                 except Refused as exc:
                     with lock:
                         outcomes["refused"] += 1
-                    if exc.code not in EXPECTED_CODES:
-                        flag(f"{intent_id}: unexpected refusal {exc.code}")
+                    if exc.code == "leftover_charge":
+                        if exc.cause == "booking_error:IntegrityError" \
+                                and isinstance(exc.__cause__, sqlite3.IntegrityError):
+                            flag(f"{intent_id}: the database stopped it, not the gateway: "
+                                 f"{type(exc.__cause__).__name__}: {exc.__cause__}")
+                        elif exc.cause not in EXPECTED_CAUSES:
+                            flag(f"{intent_id}: unexpected refusal {exc}")
+                    elif exc.code not in EXPECTED_CODES or exc.cause is not None:
+                        flag(f"{intent_id}: unexpected refusal {exc}")
                     if exc.audit_seq is None:
-                        flag(f"{intent_id}: refusal {exc.code} has no audit row")
+                        flag(f"{intent_id}: refusal {exc} has no audit row")
                 except sqlite3.Error as exc:
                     flag(f"{intent_id}: the database stopped it, not the gateway: {type(exc).__name__}: {exc}")
         finally:
@@ -184,7 +196,7 @@ def _iteration(path: str, rng: random.Random, violations: list[str], counters: d
         held = {a: n for a, _, n in db.execute("SELECT account, instrument, available FROM holdings")}
         audit_booked = db.execute("SELECT COUNT(*) FROM audit WHERE event = 'booked'").fetchone()[0]
         send_time = db.execute("SELECT COUNT(*) FROM audit WHERE event = 'refused' AND stage = 'book'"
-                               " AND code = 'cash_insufficient'").fetchone()[0]
+                               " AND code = 'leftover_charge:cash_insufficient'").fetchone()[0]
     finally:
         db.close()
     if not len(orders) == outcomes["booked"] == audit_booked:
@@ -252,7 +264,8 @@ class B31RaceStress(unittest.TestCase):
         with mock.patch.object(gw_mod.PaperBook, "_check_funds", classmethod(check_outside_booking)), \
                 mock.patch.object(gw_mod.PaperBook, "_book", book_without_send_check):
             violations, _ = run(max(3, self.iters // 2), self.seed)
-        # B31: the mutant must be caught by the database CHECK, not by any other flag.
+        # B31: the mutant must be caught by the database CHECK, not by any other flag. The CHECK's
+        # IntegrityError follows the charge, so it surfaces as leftover_charge / booking_error:IntegrityError.
         caught = [item for item in violations if "CHECK constraint failed" in item]
         other = [item for item in violations if "CHECK constraint failed" not in item]
         self.assertTrue(caught, f"mutant not caught as a CHECK violation, seed {self.seed}: {violations}")

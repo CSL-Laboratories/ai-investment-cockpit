@@ -16,11 +16,20 @@ committed step:
   the two listings, a list error, or a page cap reached keeps it ``pending``. An order
   the venue still lists after a success reply is dropped from ``cancelled`` and is
   cancelled again on the next ``kill``;
-* the OAuth grant is revoked, and the revoke is ``confirmed`` only when an authenticated
-  call made after it is refused as unauthorized. Otherwise it is ``pending``.
+* the OAuth grant is revoked, and the revoke is ``confirmed`` only when the revoke call
+  itself was accepted (``accepted`` exactly ``True``) and an authenticated call made
+  after it is refused as unauthorized. Otherwise it is ``pending``. The ``revoke_grant``
+  detail holds only the revoke attempt (``rejected``, ``error:<Exc>`` or
+  ``unreadable_response``; absent after an accepted revoke). The last probe is reported
+  apart, under ``revoke_probe``: the probe's reply (``unauthorized``, ``authorized``),
+  ``unreadable_probe`` or ``error:<Exc>``. It stays in the detail after a confirm, and an
+  unauthorized probe after a rejected or raised revoke confirms nothing.
 
 The overall status is ``confirmed`` only when halt, cancel and revoke all are. Calling
-``kill`` again keeps the halt and retries only what is not yet confirmed.
+``kill`` again keeps the halt and retries what is not yet confirmed. A cancel confirm is
+kept only once the revoke is confirmed too: while the revoke is pending, each ``kill``
+lists and cancels again before the revoke. A cancel that confirms in a ``kill`` whose
+halt call failed is not kept either.
 """
 
 from __future__ import annotations
@@ -114,34 +123,52 @@ class CoinbaseKill:
         self._detail.pop("cancel_orders", None)
 
     def _revoke(self) -> None:
+        accepted = False
         try:
             out = self._transport.revoke_oauth_grant()
         except Exception as exc:  # noqa: BLE001
             self._detail["revoke_grant"] = "error:" + type(exc).__name__
-            out = None
-        if type(out) is dict and out.get("accepted") is False:
-            self._detail["revoke_grant"] = "rejected"
-        # Confirmation is only an authenticated call refused after the revoke.
+        else:
+            accepted = type(out) is dict and out.get("accepted") is True
+            if accepted:
+                self._detail.pop("revoke_grant", None)  # an earlier attempt's detail is not this one's
+            elif type(out) is dict and out.get("accepted") is False:
+                self._detail["revoke_grant"] = "rejected"
+            else:
+                self._detail["revoke_grant"] = "unreadable_response"
+        # Confirmation needs both: this revoke accepted, and an authenticated call refused
+        # after it. An unauthorized probe after a rejected or raised revoke confirms nothing.
+        # The last probe result is reported under its own key, apart from the revoke attempt's.
         try:
             probe = self._transport.probe_authenticated()
         except Exception as exc:  # noqa: BLE001
-            self._detail.setdefault("revoke_grant", "probe_error:" + type(exc).__name__)
+            self._detail["revoke_probe"] = "error:" + type(exc).__name__
             return
-        if probe == "unauthorized":
+        if type(probe) is not str:
+            self._detail["revoke_probe"] = "unreadable_probe"
+            return
+        self._detail["revoke_probe"] = probe[:32]
+        if accepted and probe == "unauthorized":
             self._state["revoke_grant"] = "confirmed"
-            self._detail.pop("revoke_grant", None)
-        else:
-            self._detail.setdefault("revoke_grant", "probe:" + str(probe)[:32])
 
     def kill(self) -> dict:
         with self._lock:
+            halt_failed = False
             try:
                 self._halt()
                 self._state["halt"] = "confirmed"
+                self._detail.pop("halt", None)
             except Exception as exc:  # noqa: BLE001 - still try the risk-reducing calls
+                halt_failed = True
                 self._detail["halt"] = "error:" + type(exc).__name__
-            if self._state["cancel_orders"] != "confirmed":
+            # An earlier cancel confirm is kept only once the revoke is confirmed too.
+            if self._state["cancel_orders"] != "confirmed" or self._state["revoke_grant"] != "confirmed":
+                self._state["cancel_orders"] = "pending"
                 self._cancel()
+                if halt_failed and self._state["cancel_orders"] == "confirmed":
+                    # The halt call failed in this kill: do not keep the confirm.
+                    self._state["cancel_orders"] = "pending"
+                    self._detail["cancel_orders"] = "halt_failed"
             if self._state["revoke_grant"] != "confirmed":
                 self._revoke()
             status = "confirmed" if all(v == "confirmed" for v in self._state.values()) else "pending"
