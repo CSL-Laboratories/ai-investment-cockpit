@@ -2,13 +2,13 @@
 """Tests for tools/check_product_pin.py, plus a check of the committed pin (CSL-585, CSL-796)."""
 from __future__ import annotations
 
-import contextlib
 import copy
 import hashlib
 import importlib.util
-import io
 import json
+import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -20,6 +20,7 @@ SPEC.loader.exec_module(pin_check)
 
 COMMITTED_COMMIT = "d84cdd26a4de2366f3c5d34c4aec5215f822a494"
 COMMITTED_SHA256 = "e1d5fb8c02594b2ca88281113ffc14e6f3125daded2a00d45739cfb9d2ed04dd"
+COMMITTED_BYTES = 467579
 AWAITING = {
     "format": "csl-product-pin/v1",
     "status": "awaiting",
@@ -38,7 +39,6 @@ PINNED = {
     "sha256": "b" * 64,
     "claim": "Recursion product contract, candidate.",
 }
-UNSAFE_PATHS = {"NUL": "contracts/a\u0000b.md", "lone surrogate": "contracts/a\ud800b.md"}
 
 
 class ShapeTests(unittest.TestCase):
@@ -53,6 +53,21 @@ class ShapeTests(unittest.TestCase):
         self.assertEqual(pin["path"], "contracts/PRODUCT.md")
         self.assertEqual(pin["commit"], COMMITTED_COMMIT)
         self.assertEqual(pin["sha256"], COMMITTED_SHA256)
+        self.assertIn(f"({COMMITTED_BYTES} bytes)", pin["claim"])
+
+    @unittest.skipUnless(os.environ.get("CSL_RESEARCH_VAULT"), "set CSL_RESEARCH_VAULT to a local csl-research clone")
+    def test_committed_pin_matches_vault_blob(self) -> None:
+        # Re-hash the real pinned blob from a local csl-research clone (no network).
+        pin = json.loads(pin_check.PIN.read_text(encoding="utf-8"))
+        vault = Path(os.environ["CSL_RESEARCH_VAULT"])
+        blob = subprocess.run(
+            ["git", "-C", str(vault), "show", f"{COMMITTED_COMMIT}:contracts/PRODUCT.md"],
+            check=True,
+            capture_output=True,
+        ).stdout
+        self.assertEqual(len(blob), COMMITTED_BYTES)
+        self.assertEqual(hashlib.sha256(blob).hexdigest(), COMMITTED_SHA256)
+        self.assertEqual(pin_check.vault_errors(pin, vault), [])
 
     def test_readme_pointer_matches_committed_pin(self) -> None:
         pin = json.loads(pin_check.PIN.read_text(encoding="utf-8"))
@@ -91,7 +106,7 @@ class ShapeTests(unittest.TestCase):
                 )
 
     def test_pinned_rejects_nul_control_and_surrogate_paths(self) -> None:
-        for path in (*UNSAFE_PATHS.values(), "a\nb.md", "a\x1fb.md", "a\x7fb.md", "a\udfffb.md"):
+        for path in (*VaultTests.BAD_PATHS, "a\nb.md", "a\x1fb.md", "a\x7fb.md", "a\udfffb.md"):
             with self.subTest(path=ascii(path)):
                 self.assertIn(
                     "path must not contain NUL, control characters or lone surrogates",
@@ -141,29 +156,46 @@ class VaultTests(unittest.TestCase):
         missing = {**self.pin("0" * 64), "path": "contracts/recursion/NOPE.md"}
         self.assertTrue(pin_check.vault_errors(missing, self.vault)[0].startswith("cannot read"))
 
+    BAD_PATHS = ("contracts/recursion/PRO\u0000DUCT.md", "contracts/recursion/\ud800.md")
+
+    def test_nul_and_lone_surrogate_paths_fail_cleanly_in_process(self) -> None:
+        # A JSON \u0000 or lone \ud800 in path must be rejected, not raise.
+        digest = hashlib.sha256(self.body).hexdigest()
+        for path in self.BAD_PATHS:
+            with self.subTest(path=ascii(path)):
+                pin = {**self.pin(digest), "path": path}
+                try:
+                    problems = pin_check.errors(pin) or pin_check.vault_errors(pin, self.vault)
+                except Exception as exc:  # noqa: BLE001
+                    self.fail(f"checker raised {type(exc).__name__}: {exc}")
+                self.assertTrue(problems, "bad path was accepted")
+
+    def test_nul_and_lone_surrogate_paths_fail_cleanly_on_cli(self) -> None:
+        digest = hashlib.sha256(self.body).hexdigest()
+        for path in self.BAD_PATHS:
+            with self.subTest(path=ascii(path)):
+                pin_file = self.vault / "bad.pin.json"
+                pin_file.write_text(json.dumps({**self.pin(digest), "path": path}), encoding="utf-8")
+                result = subprocess.run(
+                    [sys.executable, "-B", str(ROOT / "tools" / "check_product_pin.py"),
+                     "--pin", str(pin_file), "--vault", str(self.vault)],
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(result.returncode, 1)
+                self.assertNotIn("Traceback", result.stderr, result.stderr)
+                self.assertTrue(result.stdout.startswith("FAIL: "), result.stdout + result.stderr)
+
     def test_awaiting_needs_no_vault(self) -> None:
         self.assertEqual(pin_check.vault_errors(AWAITING, self.vault / "absent"), [])
 
     def test_nul_and_surrogate_paths_fail_without_raising(self) -> None:
-        for name, path in UNSAFE_PATHS.items():
-            with self.subTest(path=name):
+        for path in self.BAD_PATHS:
+            with self.subTest(path=ascii(path)):
                 problems = pin_check.vault_errors({**self.pin("0" * 64), "path": path}, self.vault)
                 self.assertEqual(len(problems), 1)
                 self.assertTrue(problems[0].startswith("cannot read"))
                 problems[0].encode("utf-8")  # printable on a UTF-8 stdout
-
-    def test_main_fails_cleanly_on_nul_and_surrogate_paths(self) -> None:
-        for name, path in UNSAFE_PATHS.items():
-            pin_file = self.vault / "bad.pin.json"
-            pin_file.write_text(json.dumps({**self.pin("0" * 64), "path": path}), encoding="utf-8")
-            for extra in ([], ["--vault", str(self.vault)]):
-                with self.subTest(path=name, extra=extra):
-                    stdout = io.StringIO()
-                    with contextlib.redirect_stdout(stdout):
-                        code = pin_check.main(["--pin", str(pin_file), *extra])
-                    self.assertEqual(code, 1)
-                    self.assertTrue(stdout.getvalue().startswith("FAIL: "))
-                    stdout.getvalue().encode("utf-8")
 
 
 if __name__ == "__main__":
