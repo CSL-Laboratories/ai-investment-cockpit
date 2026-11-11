@@ -132,8 +132,10 @@ class BookApprovedEffectTests(unittest.TestCase):
                 self.assertEqual((self._rows(), self._funds()), ([], funds))
 
     def test_sell_changed_inside_the_booking_books_the_approved_sell(self) -> None:
-        sell = Intent(intent_id="f4-sell", account=ACCT, instrument="AAPL", side="sell", quantity=7,
-                      limit_price_minor=10_000, run_id="run-1", connection="conn-a")
+        # 700 bps of the 1_000_000 notional cap at 10_000 is 7 shares, under the 500 held.
+        sell = self.gw.size_sell(intent_id="f4-sell", account=ACCT, instrument="AAPL", limit_price_minor=10_000,
+                                 conviction_bps=700, run_id="run-1", connection="conn-a")
+        self.assertEqual(sell.quantity, 7)
         approval = self.gw.request_approval(sell)
         self.core.operator_approves(approval["approval_id"])
 

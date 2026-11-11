@@ -8,8 +8,9 @@ Lines 1474-1475: "The order universe is a static, operator-approved allowlist; n
 API changes execution eligibility at runtime." The allowlist is fixed at construction and
 an instrument outside it is refused before any core call.
 
-Sells are not sized here (the spec does not say how); the control below pins that a
-caller-quantity sell still books.
+Sells are sized too (Lucas, Nov 11: "Size sells from conviction, capped at the position
+held, no caller-set quantity"): a caller-quantity sell is refused below, and
+``test_sell_sizing_nov11.py`` covers ``size_sell``.
 
 Run: ``PYTHONPATH=engine python3 -B -m unittest discover -s engine/tests/paper -t engine -v``.
 No provider, venue, network, credential or keyring is touched.
@@ -173,12 +174,13 @@ class SizingTests(_GatewayCase):
                     self.assertEqual(ctx.exception.code, "intent_invalid")
         self.assertEqual((self.gw._sized, self.core.calls), ({}, []))
 
-    def test_sell_keeps_the_callers_quantity(self) -> None:
-        """Open question, pinned as it stands: the spec does not say how a sell is sized."""
+    def test_caller_quantity_sell_is_refused(self) -> None:
+        """Lucas, Nov 11: "no caller-set quantity". A hand-built sell never reaches the core;
+        ``test_sell_sizing_nov11.py`` covers ``size_sell`` itself."""
         sell = Intent(intent_id="sell-1", account=ACCT, instrument="AAPL", side="sell", quantity=4,
                       limit_price_minor=PRICE, run_id="run-1", connection="conn-a")
-        self.assertEqual(self.gw.submit(sell, self._approved(sell), AUTHORITY)["status"], "paper_working")
-        self.assertEqual(self.book.held_shares(ACCT, "AAPL"), 6)
+        self._refused_before_core("quantity_not_sized", "size", sell)
+        self.assertEqual(self.book.held_shares(ACCT, "AAPL"), 10)
 
 
 class AllowlistTests(_GatewayCase):
@@ -237,8 +239,8 @@ class AllowlistTests(_GatewayCase):
         for name in ("add", "update", "remove", "discard", "clear", "pop"):
             self.assertFalse(hasattr(gw.allowlist, name), name)
         public = {name for name in vars(OrderGateway) if not name.startswith("_")}
-        self.assertEqual(public, {"allowlist", "halt", "cancel_all", "size_buy", "risk_pass", "request_approval",
-                                  "submit"})  # no method takes an instrument list
+        self.assertEqual(public, {"allowlist", "halt", "cancel_all", "size_buy", "size_sell", "risk_pass",
+                                  "request_approval", "submit"})  # no method takes an instrument list
         self.assertIsNone(vars(OrderGateway)["allowlist"].fset)
         self.assertEqual(gw.allowlist, {"AAPL", "MSFT"})
         with self.assertRaises(Refused) as ctx:
