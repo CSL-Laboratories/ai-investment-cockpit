@@ -158,12 +158,14 @@ def keep_venue_rows(value: object, venue: object) -> object:
     The rule, applied recursively (``venue`` is the panel's declared venue; a venue in
     ``PAPER_BOOK`` owns both of its labels, ``stock`` and ``paper``, any other venue only itself):
 
-    * A dict with a ``venue`` key is kept whole if the label is one the panel's venue owns and
-      dropped otherwise.
+    * A dict with a ``venue`` key is kept if the label is one the panel's venue owns and
+      dropped otherwise. Inside a kept dict, unlabelled children are kept as part of that row,
+      but nested dicts labelled with another venue and ``<v>_...`` keys of another known venue
+      are still dropped.
     * A dict without a ``venue`` key, outside a kept venue dict, is dropped if it carries any
       ``VENUE_ROW_KEYS`` key (venue-like data with no label); otherwise it is kept and its
       values are filtered by the same rule.
-    * Outside a kept venue dict, a key named ``<v>_...`` for a known venue ``v`` the panel's
+    * At any depth, a key named ``<v>_...`` for a known venue ``v`` the panel's
       venue does not own is dropped (e.g. ``kalshi_yes_price`` on a paper panel); ``paper_*``
       and ``stock_*`` keys stay on the paper panel.
     * Everything else passes through unchanged: O7 status, refusal, stale, unreconciled,
@@ -195,23 +197,26 @@ def _other_venue_key(key: object, owned: frozenset) -> bool:
 
 
 def _rows(value: object, owned: frozenset, scoped: bool) -> object:
-    if scoped:
-        return value
+    # ``scoped`` is True inside a kept venue dict: its unlabelled children belong to that row,
+    # but a nested dict labelled with another venue, or a key named for another venue, is still
+    # that venue's data and is dropped (a paper row must not carry Kalshi prices, PRODUCT.md 5.3).
     if type(value) is dict:
         if "venue" in value:
-            return value if type(value["venue"]) is str and value["venue"] in owned else _DROP
-        if VENUE_ROW_KEYS.intersection(value):
+            if type(value["venue"]) is not str or value["venue"] not in owned:
+                return _DROP
+            scoped = True
+        elif not scoped and VENUE_ROW_KEYS.intersection(value):
             return _DROP
         out = {}
         for key, item in value.items():
             if _other_venue_key(key, owned):
                 continue
-            item = _rows(item, owned, False)
+            item = _rows(item, owned, scoped)
             if item is not _DROP:
                 out[key] = item
         return out
     if type(value) is list:
-        return [v for v in (_rows(v, owned, False) for v in value) if v is not _DROP]
+        return [v for v in (_rows(v, owned, scoped) for v in value) if v is not _DROP]
     return value
 
 
