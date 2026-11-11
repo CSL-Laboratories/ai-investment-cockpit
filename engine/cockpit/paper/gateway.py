@@ -32,8 +32,9 @@ more at booking, with the run and connection of the approved effect and its own 
 1. the full check, in the calling thread, before the book's lock and its SQLite write lock
    are taken, so a check that hangs never keeps a halt or a kill on this book waiting
    (that submit just does not book while it hangs);
-2. a re-verify inside the booking transaction, next to the halt re-read, waited on for at
-   most ``RUN_RECHECK_TIMEOUT_S`` (the check runs on a worker thread of a shared pool; at
+2. a re-verify inside the booking transaction, started next to the halt re-read and waited
+   on before the commit, for at most ``RUN_RECHECK_TIMEOUT_S`` from its start (the check runs
+   on a worker thread of a shared pool while the booking's own statements run; at
    most ``_RUN_CHECK_WORKERS_MAX`` run at once per gateway and ``_RUN_CHECK_THREADS_MAX`` in
    the process; when either is used up by hung checks, ``submit`` is refused
    ``run_check_busy`` before the charge, and a cap reached between that test and the
@@ -43,15 +44,24 @@ more at booking, with the run and connection of the approved effect and its own 
    committed in between is refused with the core's code (``core:run_faulted``, say) or
    ``run_check_changed``, and a re-verify that does not answer in time is
    ``run_check_timeout`` (``run_check_busy`` when too many are already in flight). The
-   book's locks are therefore held for at most that bound however the check behaves.
+   book's locks are therefore held for at most that bound, or the booking's own statements
+   if they take longer (they run meanwhile), however the check behaves. Nothing commits before the
+   re-verify has answered the same as step 1: a different answer, a refusal or no answer in
+   time rolls the transaction back. When one of the booking's statements fails (a duplicate,
+   short funds, a database error), the re-verify is still waited for and its refusal wins,
+   as when it ran before those statements (Lucas, Nov 11 12:00pm: "Yes, run the re-check
+   during the database writes on #320"). An interrupt raised by one of those statements
+   (``KeyboardInterrupt``, ``SystemExit``) also waits for it, at most to the same bound,
+   and is then raised as it is; an interrupt landing anywhere else just rolls back, and
+   the worker gives its slot back when the check returns.
 
 A refusal at either step follows the charge, so it is ``leftover_charge`` with that code as
 the cause, audited at stage ``book``. An error without a typed code, or a result that is
 not a dict with ``str`` keys, is ``run_check_error``. A ``KeyboardInterrupt`` or
 ``SystemExit`` raised by the check is raised again, never turned into a refusal. A gateway built without a run check
 books nothing: ``request_approval`` and ``submit`` refuse ``run_check_missing`` before any
-core call. A fault or trip committed after the re-verify and before the booking's commit
-is not seen.
+core call. A fault or trip committed after the re-verify read the store and before the
+booking's commit is not seen.
 
 Sizing and the order universe (PRODUCT.md at csl-research d84cdd26, lines 1183-1184 and
 1474-1475): "Proposals carry conviction, not quantity, and the gateway sizes orders
@@ -341,14 +351,14 @@ class _Slots:
             self.used -= 1
 
 
-_SLOTS, _SLOT, _TAKEN, _JOBS, _ALIVE, _GIVEN = range(6)  # a call's ticket, see ``_BoundedCaller.call``
+_SLOTS, _SLOT, _TAKEN, _JOBS, _ALIVE, _GIVEN = range(6)  # a call's ticket, see ``_BoundedCaller.start``
 
 
 class _BoundedCaller:
     """Runs a host callable on a worker thread and waits at most a given time for it.
 
-    ``call`` returns ``(True, value)`` or ``(False, exception)`` for what the callable did; only
-    the pool's own refusals are raised. A call that has not returned in time is
+    ``call`` (``start`` then ``join``) returns ``(True, value)`` or ``(False, exception)`` for
+    what the callable did; only the pool's own refusals are raised. A call that has not returned in time is
     ``run_check_timeout``; its worker is left to finish, its late result is discarded, and it
     rejoins the pool only if it ever returns. A call takes one of its gateway's ``_Slots``
     (at most ``_RUN_CHECK_WORKERS_MAX`` in flight per gateway) and the pool never runs more
@@ -399,7 +409,9 @@ class _BoundedCaller:
         if ticket[_SLOT]:
             ticket[_SLOTS].give()
 
-    def call(self, fn, args: tuple, timeout_s: float, slots: _Slots):
+    def start(self, fn, args: tuple, timeout_s: float, slots: _Slots) -> tuple:
+        """Hand ``fn(*args)`` to a worker and return at once; ``join`` waits for its outcome.
+        The deadline is fixed here: ``join`` waits at most until ``timeout_s`` after this."""
         # What this call has taken so far, so that whoever gives it back (an interrupt here, or
         # the worker) returns exactly that, once.
         ticket = [slots, False, False, None, False, False]  # slots, slot, taken, jobs, alive, given
@@ -424,20 +436,28 @@ class _BoundedCaller:
                 threading.Thread(target=self._work, args=(jobs,), daemon=True, name="cockpit-run-check").start()
                 ticket[_ALIVE] = True
             done.acquire()  # released by the worker once ``box`` holds the outcome
-            start = time.monotonic()
+            deadline = time.monotonic() + timeout_s
             jobs.put((fn, args, done, box, ticket))
         except BaseException as exc:
             self._give_back(ticket)  # a no-op if the worker already gave it back
             if isinstance(exc, Refused) or not isinstance(exc, Exception):
                 raise
             raise Refused("run_check_error") from None
+        return done, box, deadline
+
+    def join(self, pending: tuple):
+        """The outcome of a ``start``ed call, or ``run_check_timeout`` once its deadline passes."""
+        done, box, deadline = pending
         if self._SPIN_S:
-            spin_until = start + min(self._SPIN_S, timeout_s)
+            spin_until = min(time.monotonic() + self._SPIN_S, deadline)
             while not box and time.monotonic() < spin_until:
                 pass
-        if not done.acquire(timeout=max(0.0, start + timeout_s - time.monotonic())):
+        if not done.acquire(timeout=max(0.0, deadline - time.monotonic())):
             raise Refused("run_check_timeout")
         return box[0]
+
+    def call(self, fn, args: tuple, timeout_s: float, slots: _Slots):
+        return self.join(self.start(fn, args, timeout_s, slots))
 
     def _work(self, jobs) -> None:
         while True:
@@ -869,24 +889,42 @@ class PaperBook:
             if self._halted_in(db):
                 raise Refused("order_halted")
             # Re-verified under the lock, bounded: a fault, a trip or a new binding committed
-            # since the check above wins, and so does a check that cannot answer in time.
-            if gateway._check_run(order, RUN_RECHECK_TIMEOUT_S) != checked:
+            # since the check above wins, and so does a check that cannot answer in time. It
+            # runs while the statements below do and is waited for before the commit (``_tx``
+            # rolls back on any refusal); the deadline is fixed now.
+            pending = gateway._start_run_check(order, RUN_RECHECK_TIMEOUT_S)
+            try:
+                if db.execute("SELECT 1 FROM orders WHERE intent_id = ?", (order.intent_id,)).fetchone():
+                    raise Refused("intent_duplicate")
+                self._check_funds(db, order)  # send-time cash check, same transaction as the booking
+                if order.side == "buy":
+                    db.execute("UPDATE cash SET available_minor = available_minor - ? WHERE account = ?",
+                               (order.notional_minor, order.account))
+                else:
+                    db.execute("UPDATE holdings SET available = available - ? WHERE account = ? AND instrument = ?",
+                               (order.quantity, order.account, order.instrument))
+                seq = self._next_seq(db)
+                db.execute("INSERT INTO orders VALUES (?, ?, ?, ?, ?, ?, ?, 'working')",
+                           (order.intent_id, seq, order.account, order.instrument, order.side,
+                            order.quantity, order.limit_price_minor))
+                if audit is not None:
+                    self._audit_row(db, dict(audit, event="booked", stage="book", code=None))
+            except Exception:
+                # The re-verify's refusal or changed answer wins over the statement's error, as
+                # when it ran before these statements.
+                if gateway._join_run_check(pending) != checked:
+                    raise Refused("run_check_changed") from None
+                raise
+            except BaseException:
+                # An interrupt in this thread waits for the re-verify too (at most to its
+                # deadline) and is then raised as it is, never replaced by a refusal.
+                try:
+                    gateway._join_run_check(pending)
+                except BaseException:  # noqa: BLE001 - the interrupt below is what is raised
+                    pass
+                raise
+            if gateway._join_run_check(pending) != checked:
                 raise Refused("run_check_changed")
-            if db.execute("SELECT 1 FROM orders WHERE intent_id = ?", (order.intent_id,)).fetchone():
-                raise Refused("intent_duplicate")
-            self._check_funds(db, order)  # send-time cash check, same transaction as the booking
-            if order.side == "buy":
-                db.execute("UPDATE cash SET available_minor = available_minor - ? WHERE account = ?",
-                           (order.notional_minor, order.account))
-            else:
-                db.execute("UPDATE holdings SET available = available - ? WHERE account = ? AND instrument = ?",
-                           (order.quantity, order.account, order.instrument))
-            seq = self._next_seq(db)
-            db.execute("INSERT INTO orders VALUES (?, ?, ?, ?, ?, ?, ?, 'working')",
-                       (order.intent_id, seq, order.account, order.instrument, order.side,
-                        order.quantity, order.limit_price_minor))
-            if audit is not None:
-                self._audit_row(db, dict(audit, event="booked", stage="book", code=None))
             return seq
         return self._tx(run)
 
@@ -1053,17 +1091,33 @@ class OrderGateway:
         """Ask the host's run check about the approved effect's run: in this thread when
         ``timeout_s`` is ``None``, else on a worker, waiting at most ``timeout_s``. Fails closed.
         Returns the check's answer as a comparable snapshot."""
+        if timeout_s is not None:
+            return self._join_run_check(self._start_run_check(order, timeout_s))
+        check = self._run_check
+        if check is None:
+            raise Refused("run_check_missing")
+        try:
+            ok, out = True, check(order.run_id, order.connection, self._plugin_id)
+        except Exception as exc:  # noqa: BLE001 - mapped below; an interrupt is not swallowed
+            ok, out = False, exc
+        return self._run_check_snapshot(ok, out)
+
+    def _start_run_check(self, order: _Order, timeout_s: float) -> tuple:
+        """Start the run check on a worker; ``_join_run_check`` waits at most ``timeout_s`` from
+        now for its answer. Raises only the pool's own refusals (``run_check_busy``, ...)."""
         check = self._run_check
         if check is None:
             raise Refused("run_check_missing")
         args = (order.run_id, order.connection, self._plugin_id)
-        if timeout_s is None:
-            try:
-                ok, out = True, check(*args)
-            except Exception as exc:  # noqa: BLE001 - mapped below; an interrupt is not swallowed
-                ok, out = False, exc
-        else:
-            ok, out = _RUN_CHECKS.call(check, args, timeout_s, self._run_check_slots)  # raises only its own refusals
+        return _RUN_CHECKS.start(check, args, timeout_s, self._run_check_slots)
+
+    def _join_run_check(self, pending: tuple) -> tuple:
+        """The started check's answer as a comparable snapshot, or its refusal. Fails closed."""
+        ok, out = _RUN_CHECKS.join(pending)  # raises only its own refusals
+        return self._run_check_snapshot(ok, out)
+
+    @staticmethod
+    def _run_check_snapshot(ok: bool, out: object) -> tuple:
         if not ok:
             if not isinstance(out, Exception):
                 raise out  # KeyboardInterrupt or SystemExit raised by the check: never a refusal
