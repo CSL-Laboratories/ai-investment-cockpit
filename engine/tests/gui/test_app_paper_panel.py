@@ -8,6 +8,7 @@ non-paper venue, and drops other venues' data, including data nested in a paper 
 """
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 import types
@@ -407,7 +408,8 @@ class ControlApiReaderTests(unittest.TestCase):
         reader = rc.ControlApiPanelReader(spy)
         for method in ("run.stop", "run.start", "run.list", "run.status", "operator.interventions.request_stop",
                        "operator.interventions.request_revocation", "operator.audit.export", "operator.export.bundle",
-                       "operator.positions.inspect.x", "", None, 3):
+                       "operator.positions.inspect.x", "operator.\u00e9.inspect", "operator.Positions.inspect",
+                       "operator..inspect", "", None, 3):
             with self.subTest(method=method), self.assertRaises(rc.ReadRefused):
                 reader(method)  # type: ignore[arg-type]
         self.assertEqual(spy.calls, [])
@@ -420,6 +422,11 @@ class ControlApiReaderTests(unittest.TestCase):
         unknown = rc.ControlApiPanelReader(_ControlSpy(serve_o7=False))("operator.positions.inspect")
         self.assertEqual(unknown, {"code": "method_unknown", "detail": "operator.positions.inspect",
                                    "status_code": "method_unknown"})
+        masked = types.SimpleNamespace(call=lambda m, p: {"code": "method_unknown", "status_code": "ok"})
+        self.assertEqual(rc.ControlApiPanelReader(masked)("operator.positions.inspect")["status_code"],
+                         "method_unknown")
+        stale = types.SimpleNamespace(call=lambda m, p: {"code": "ok", "status_code": "stale_quote"})
+        self.assertEqual(rc.ControlApiPanelReader(stale)("operator.positions.inspect")["status_code"], "stale_quote")
         odd = types.SimpleNamespace(call=lambda m, p: ["x"])
         self.assertEqual(rc.ControlApiPanelReader(odd)("operator.budgets.inspect")["status_code"], "read_failed")
         with self.assertRaises(TypeError):
@@ -457,6 +464,57 @@ class CreateAppMountTests(unittest.TestCase):
     def test_without_a_control_api_the_panel_says_so(self) -> None:
         body = self._client(None).get("/panels/cockpit.paper_own_trading", headers={"X-API-Key": self.KEY}).json()
         self.assertEqual({v["status_code"] for v in body["reads"].values()}, {"control_api_unavailable"})
+
+
+class ComposeMountTests(unittest.TestCase):
+    """The mount line in app/main.py compose(): the control API passes through to the panel."""
+
+    def test_compose_passes_the_control_api_to_the_panel(self) -> None:
+        import keyring
+        from keyring.backend import KeyringBackend
+
+        from core.secrets import set_secret
+        from main import compose
+        from orchestrator.auth import API_KEY_SECRET_NAME
+
+        class _InMemory(KeyringBackend):
+            priority = 1  # type: ignore[assignment]
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.store: dict = {}
+
+            def get_password(self, service, username):
+                return self.store.get((service, username))
+
+            def set_password(self, service, username, password):
+                self.store[(service, username)] = password
+
+            def delete_password(self, service, username):
+                self.store.pop((service, username), None)
+
+        previous, cwd = keyring.get_keyring(), os.getcwd()
+        keyring.set_keyring(_InMemory())
+        spy = _ControlSpy(serve_o7=True)
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            try:
+                os.chdir(tmp)
+                with mock.patch.dict(os.environ, {"COCKPIT_HALT_PATH": os.path.join(tmp, "HALT")}):
+                    _, app, _ = compose(db_url=f"sqlite:///{Path(tmp, 'c.db').as_posix()}",
+                                        parquet_root=os.path.join(tmp, "raw"), paper_panel_control=spy)
+                    set_secret(API_KEY_SECRET_NAME, self.KEY)
+                    client = TestClient(app)
+                    path = "/panels/cockpit.paper_own_trading"
+                    self.assertEqual(client.get(path).status_code, 401)
+                    self.assertEqual(client.post(path, headers={"X-API-Key": self.KEY}).status_code, 405)
+                    body = client.get(path, headers={"X-API-Key": self.KEY}).json()
+                    self.assertEqual({v["status_code"] for v in body["reads"].values()}, {"ok"})
+                    self.assertEqual({m for m, _ in spy.calls}, set(pp.paper_panel()["reads"]))
+            finally:
+                os.chdir(cwd)
+                keyring.set_keyring(previous)
+
+    KEY = "item5-compose-key"
 
 
 if __name__ == "__main__":
