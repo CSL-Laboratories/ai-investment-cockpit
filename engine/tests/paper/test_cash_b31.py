@@ -22,7 +22,7 @@ from dataclasses import replace
 import cockpit.paper.gateway as gateway_module
 from cockpit.paper.core_client import CoreClient, canonical
 from cockpit.paper.gateway import Caps, Intent, OrderGateway, PaperBook, Refused, create_book
-from tests.paper.fakecore import AUTHORITY, FakeCore
+from tests.paper.fakecore import ALLOWLIST, AUTHORITY, FakeCore, sized
 
 ACCT = "paper-acct"
 
@@ -37,14 +37,14 @@ class CashTests(unittest.TestCase):
         self.addCleanup(self.book.close)
         self.core = FakeCore(budget_minor=10**12)
         self.gw = OrderGateway(plugin_id="csl.cockpit.paper", book=self.book, core=CoreClient(self.core),
-                               caps=caps)
+                               caps=caps, allowlist=ALLOWLIST, run_check=self.core.check)
 
     def _size(self, intent_id: str = "b31", price: int = 10_000, conviction: int = 10_000) -> Intent:
         return self.gw.size_buy(intent_id=intent_id, account=ACCT, instrument="AAPL", limit_price_minor=price,
                                 conviction_bps=conviction, run_id="run-1", connection="conn-a")
 
     def _approved(self, intent: Intent) -> str:
-        approval = self.gw.request_approval(intent)["approval_id"]
+        approval = self.gw.request_approval(sized(self.gw, intent))["approval_id"]
         self.core.operator_approves(approval)
         return approval
 
@@ -54,8 +54,8 @@ class CashTests(unittest.TestCase):
         other = PaperBook(self.path)  # another connection, as another process would
         core = FakeCore(budget_minor=10**12)
         gw = OrderGateway(plugin_id="csl.cockpit.paper", book=other, core=CoreClient(core),
-                          caps=Caps(10**9, 10**6))
-        approval = gw.request_approval(intent)["approval_id"]
+                          caps=Caps(10**9, 10**6), allowlist=ALLOWLIST, run_check=core.check)
+        approval = gw.request_approval(sized(gw, intent))["approval_id"]
         core.operator_approves(approval)
         gw.submit(intent, approval, AUTHORITY)
         other.close()
@@ -211,8 +211,9 @@ class CashTests(unittest.TestCase):
     def test_gateway_never_clamps_or_resizes(self) -> None:
         self._gateway(50_000)
         for quantity in (6, 7, 100, 1000):
-            over = Intent(intent_id="o-%d" % quantity, account=ACCT, instrument="AAPL", side="buy",
-                          quantity=quantity, limit_price_minor=10_000, run_id="run-1", connection="conn-a")
+            over = sized(self.gw, Intent(intent_id="o-%d" % quantity, account=ACCT, instrument="AAPL",
+                                         side="buy", quantity=quantity, limit_price_minor=10_000,
+                                         run_id="run-1", connection="conn-a"))
             with self.subTest(quantity=quantity):
                 self._refused("cash_insufficient", self.gw.request_approval, over)
                 # The booking's own send-time check, reached with a grant forged for this gateway
@@ -267,8 +268,8 @@ class CashTests(unittest.TestCase):
         self._gateway(100_000)
         self._refused("account_unknown", self.gw.size_buy, intent_id="x", account="other", instrument="AAPL",
                       limit_price_minor=100, conviction_bps=100, run_id="r", connection="c")
-        intent = Intent(intent_id="x", account="other", instrument="AAPL", side="buy", quantity=1,
-                        limit_price_minor=100, run_id="r", connection="c")
+        intent = sized(self.gw, Intent(intent_id="x", account="other", instrument="AAPL", side="buy", quantity=1,
+                                       limit_price_minor=100, run_id="r", connection="c"))
         self._refused("account_unknown", self.gw.request_approval, intent)
         # At submit, before the core, it stays a plain refusal: no charge, so no leftover_charge.
         calls = list(self.core.calls)

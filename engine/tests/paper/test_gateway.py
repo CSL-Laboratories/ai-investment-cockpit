@@ -21,7 +21,7 @@ from unittest import mock
 from cockpit.paper.core_client import CoreClient
 from cockpit.paper.gateway import Caps, Intent, OrderGateway, PaperBook, Refused, create_book
 from cockpit.paper.plugin import build
-from tests.paper.fakecore import AUTHORITY, FakeCore
+from tests.paper.fakecore import ALLOWLIST, AUTHORITY, FakeCore, sized
 
 PAPER_DIR = Path(__file__).resolve().parents[2] / "cockpit" / "paper"
 INTENT = Intent(intent_id="i-1", account="paper-acct", instrument="AAPL", side="buy", quantity=10,
@@ -40,10 +40,10 @@ def _submitter(path: str, prefix: str, count: int, out) -> None:
     core = FakeCore(budget_minor=10**12)
     book = PaperBook(path)
     gw = OrderGateway(plugin_id="csl.cockpit.paper", book=book, core=CoreClient(core),
-                      caps=Caps(10**9, 10**6))
+                      caps=Caps(10**9, 10**6), allowlist=ALLOWLIST, run_check=core.check)
     done = 0
     for i in range(count):
-        intent = replace(INTENT, intent_id="%s-%d" % (prefix, i))
+        intent = sized(gw, replace(INTENT, intent_id="%s-%d" % (prefix, i)))
         try:
             approval = gw.request_approval(intent)["approval_id"]
             core.operator_approves(approval)
@@ -62,10 +62,12 @@ class GatewayTests(unittest.TestCase):
         self.addCleanup(self.book.close)
         self.core = FakeCore(budget_minor=10**9)
         self.gw = OrderGateway(plugin_id="csl.cockpit.paper", book=self.book, core=CoreClient(self.core),
-                               caps=Caps(max_notional_minor=500_000, max_quantity=100))
+                               caps=Caps(max_notional_minor=500_000, max_quantity=100),
+                               allowlist=ALLOWLIST, run_check=self.core.check)
+        sized(self.gw, INTENT)  # the shared fixture stands for a buy this gateway sized
 
     def _approved(self, intent: Intent) -> str:
-        approval = self.gw.request_approval(intent)["approval_id"]
+        approval = self.gw.request_approval(sized(self.gw, intent))["approval_id"]
         self.core.operator_approves(approval)
         return approval
 
@@ -85,7 +87,7 @@ class GatewayTests(unittest.TestCase):
         approval = self._approved(INTENT)
         self._refused("core:profile_signature_invalid", self.gw.submit, INTENT, approval, {"x": 1})
         self._refused("core:approval_replayed", self.gw.submit, INTENT, approval, AUTHORITY)
-        changed = replace(INTENT, quantity=11)
+        changed = sized(self.gw, replace(INTENT, quantity=11))
         self._refused("core:approval_digest_mismatch", self.gw.submit, changed, self._approved(INTENT), AUTHORITY)
         self.assertEqual(self.book.orders(), [])
 
@@ -129,7 +131,8 @@ class GatewayTests(unittest.TestCase):
                 self.assertRaises(Refused, Caps, *cap)
 
     def test_in_process_plugin_refuses_non_paper_orders_before_core(self) -> None:
-        gateway = build(self.core, self.path, Caps(500_000, 100))
+        gateway = build(self.core, self.path, Caps(500_000, 100), run_check=self.core.check,
+                        allowlist=ALLOWLIST)
         self.addCleanup(gateway._book.close)
         for change in (dict(venue="kalshi"), dict(venue="kalshi-demo"), dict(venue="coinbase"),
                        dict(venue=""), dict(venue=None), dict(mode="live"), dict(mode="demo")):
@@ -150,7 +153,7 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(self.core.calls, [])
         self.assertEqual(self.book.orders(), [])
         self.assertEqual(self.book.available_cash_minor(INTENT.account), 10**15)
-        out = gateway.submit(INTENT, self._approved(INTENT), AUTHORITY)
+        out = gateway.submit(sized(gateway, INTENT), self._approved(INTENT), AUTHORITY)
         self.assertEqual(out["status"], "paper_working")
 
     def test_halt_blocks_new_risk_and_allows_cancels(self) -> None:
@@ -191,8 +194,9 @@ class GatewayTests(unittest.TestCase):
         def book_same_intent_during_core_call(raw: bytes) -> bytes:
             other = PaperBook(self.path)  # another gateway on the same book, as another process would
             gw = OrderGateway(plugin_id="csl.cockpit.paper", book=other, core=CoreClient(other_core),
-                              caps=Caps(max_notional_minor=500_000, max_quantity=100))
-            other_approval = gw.request_approval(INTENT)["approval_id"]
+                              caps=Caps(max_notional_minor=500_000, max_quantity=100),
+                              allowlist=ALLOWLIST, run_check=other_core.check)
+            other_approval = gw.request_approval(sized(gw, INTENT))["approval_id"]
             other_core.operator_approves(other_approval)
             gw.submit(INTENT, other_approval, AUTHORITY)
             other.close()
