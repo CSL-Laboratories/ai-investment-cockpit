@@ -80,6 +80,12 @@ from .core_client import MAX_INT, CoreClient, CoreRefused, canonical
 __all__ = ["CONVICTION_FULL_BPS", "Caps", "Intent", "OrderGateway", "PaperBook", "Refused", "create_book"]
 
 PAPER_VENUE = "paper"
+# The rest of the five-field scope the core's ``check_effect`` requires and the installer's
+# authority profile must match exactly. Fixed here: this gateway has one adapter (the local
+# paper book), one environment, and does not classify instruments into contract families.
+PAPER_CONTRACT_FAMILY = "unclassified"
+PAPER_ADAPTER = "paper-book"
+PAPER_ENVIRONMENT = "paper"
 _ID = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
 _INSTRUMENT = re.compile(r"[A-Z0-9][A-Z0-9._-]{0,31}")
 CONVICTION_FULL_BPS = 10_000  # conviction is an integer in basis points, 1..10_000
@@ -446,6 +452,15 @@ def _positive_int(value: object, limit: int) -> bool:
     return type(value) is int and 0 < value <= limit
 
 
+def _field(intent: Intent, name: str) -> object:
+    """Read one intent field. An ``Intent`` made without ``__init__``, or with a field deleted,
+    is refused ``intent_invalid``, never an ``AttributeError``."""
+    try:
+        return object.__getattribute__(intent, name)
+    except AttributeError:
+        raise Refused("intent_invalid") from None
+
+
 class OrderGateway:
     def __init__(self, *, plugin_id: str, book: PaperBook, core: CoreClient, caps: Caps,
                  currency: str = "USD") -> None:
@@ -497,30 +512,37 @@ class OrderGateway:
             raise Refused("intent_invalid")
         if self._book.halted():
             raise Refused("order_halted")
-        if intent.mode != "paper" or intent.venue != PAPER_VENUE:
+        # Exact ``str`` only: a subclass or an object with rigged ``__eq__``/``__ne__`` is not paper.
+        mode, venue = _field(intent, "mode"), _field(intent, "venue")
+        if type(mode) is not str or mode != "paper" or type(venue) is not str or venue != PAPER_VENUE:
             raise Refused("paper_only")
-        for value in (intent.intent_id, intent.account, intent.run_id, intent.connection):
+        intent_id, account = _field(intent, "intent_id"), _field(intent, "account")
+        run_id, connection = _field(intent, "run_id"), _field(intent, "connection")
+        for value in (intent_id, account, run_id, connection):
             if type(value) is not str or not _ID.fullmatch(value):
                 raise Refused("intent_invalid")
-        if type(intent.instrument) is not str or not _INSTRUMENT.fullmatch(intent.instrument):
+        instrument = _field(intent, "instrument")
+        if type(instrument) is not str or not _INSTRUMENT.fullmatch(instrument):
             raise Refused("instrument_invalid")
-        if intent.side not in ("buy", "sell"):
+        side = _field(intent, "side")
+        if type(side) is not str or side not in ("buy", "sell"):
             raise Refused("side_invalid")
-        if not _positive_int(intent.quantity, MAX_INT) or not _positive_int(intent.limit_price_minor, MAX_INT):
+        quantity, limit_price_minor = _field(intent, "quantity"), _field(intent, "limit_price_minor")
+        if not _positive_int(quantity, MAX_INT) or not _positive_int(limit_price_minor, MAX_INT):
             raise Refused("money_invalid")
-        if intent.quantity > self._caps.max_quantity:
+        if quantity > self._caps.max_quantity:
             raise Refused("size_cap_quantity")
-        notional = intent.quantity * intent.limit_price_minor
+        notional = quantity * limit_price_minor
         if notional > self._caps.max_notional_minor:
             raise Refused("size_cap_notional")
         return {
             "schema": "csl-effect/vNext", "kind": "order.submit", "plugin_id": self._plugin_id,
-            "run_id": intent.run_id, "connection": intent.connection,
-            "scope": {"account": intent.account, "venue": PAPER_VENUE},
+            "run_id": run_id, "connection": connection,
+            "scope": {"account": account, "venue": PAPER_VENUE, "contract_family": PAPER_CONTRACT_FAMILY,
+                      "adapter": PAPER_ADAPTER, "environment": PAPER_ENVIRONMENT},
             "currency": self._currency, "amount_minor": notional,
-            "payload": {"intent_id": intent.intent_id, "instrument": intent.instrument,
-                        "side": intent.side, "quantity": intent.quantity,
-                        "limit_price_minor": intent.limit_price_minor, "mode": "paper"},
+            "payload": {"intent_id": intent_id, "instrument": instrument, "side": side,
+                        "quantity": quantity, "limit_price_minor": limit_price_minor, "mode": "paper"},
         }
 
     def _audit_base(self, intent: object, effect: dict | None) -> dict:
