@@ -32,7 +32,7 @@ skips the other. Status is truthful:
 The halt leg is ``confirmed`` only on verified evidence: the halt callable returned and
 the ``halted`` read-back given to the constructor (``PaperBook.halted``, say) then
 returned exactly ``True``. The halt callable returning is not evidence. Without that the
-leg is not newly confirmed and the ``halt`` detail says why: ``unverified`` (no
+leg is not confirmed in this ``kill`` and the ``halt`` detail says why: ``unverified`` (no
 read-back was given), ``not_halted`` (the read returned anything but ``True``),
 ``read_error:<Exc>`` (the read raised) or ``error:<Exc>`` (the halt call raised).
 
@@ -40,16 +40,28 @@ Each leg (``halt``, ``cancel_all``, ``revoke_key``) is one of ``confirmed``,
 ``pending`` or, for the cancel leg only, ``pending_credential_revoked``: the key's
 revoke was already confirmed before this ``kill`` tried the cancel and the cancel is
 still not confirmed, so the retry ran on a revoked credential. It is still pending, not
-done: every later ``kill`` tries the cancel again and the detail keeps that attempt's
+done: every later ``kill`` tries the cancel again and the detail holds that attempt's
 error. In the ``kill`` where the revoke first confirms, an unconfirmed cancel is plain
 ``pending``.
 
 The overall status is ``confirmed`` only when halt, cancel and revoke all are exactly
-``confirmed``; otherwise it is ``pending``. Calling ``kill`` again calls the halt again
-and retries what is not yet confirmed. A cancel confirm is kept only once the revoke is
-confirmed too: while the revoke is pending, each ``kill`` cancels and lists again before
-the revoke. A cancel that confirms in a ``kill`` whose halt call raised is not kept
-either.
+``confirmed``; otherwise it is ``pending``. Nothing confirms on an earlier ``kill``'s
+calls: every ``kill`` starts with every leg ``pending`` and an empty detail, calls the
+halt and reads it back again, tries the cancel again, and makes a fresh revoke call and
+fresh probes (a venue answering a second revoke of a dead credential is expected). A halt
+read that now says ``not_halted`` or fails therefore leaves this ``kill`` ``pending``,
+whatever an earlier one reported. ``revoke_evidence`` in the result holds only what this
+``kill``'s own revoke call and probes returned; ``killswitch.KillSwitch`` confirms a venue
+on it.
+
+One fact is remembered across calls, and it never confirms anything on its own. A
+credential that is revoked can no longer list or cancel, so once a ``kill`` has confirmed
+the cancel and then the revoke, a later ``kill`` whose cancel attempt raises on its first
+venue call keeps the cancel leg ``confirmed`` only if that same ``kill``'s fresh revoke
+and probes confirm the credential is still dead; the detail then reads
+``kept:<this attempt's error>``. If the fresh revoke does not confirm, or the venue
+answers the cancel attempt at all, the earlier confirm is dropped. A cancel that confirms
+in a ``kill`` whose halt call raised does not count.
 """
 
 from __future__ import annotations
@@ -121,6 +133,10 @@ class KalshiKill:
         self._lock = threading.Lock()
         self._state = {"halt": "pending", "cancel_all": "pending", "revoke_key": "pending"}
         self._detail: dict[str, str] = {}
+        self._evidence: dict[str, object] = {}
+        # Labels and the kept-cancel rule only (see the module doc); neither confirms a leg alone.
+        self._revoked_before = False
+        self._cancel_then_revoke_confirmed = False
 
     def _cancel(self) -> None:
         try:
@@ -163,7 +179,7 @@ class KalshiKill:
         else:
             accepted = type(out) is dict and out.get("accepted") is True
             if accepted:
-                self._detail.pop("revoke_key", None)  # an earlier attempt's detail is not this one's
+                self._evidence["accepted"] = True
             elif type(out) is dict and out.get("accepted") is False:
                 self._detail["revoke_key"] = "rejected"
             else:
@@ -181,6 +197,7 @@ class KalshiKill:
             return
         # Only a declared reply is stored; no part of any other string is.
         self._detail["revoke_probe"] = probe if probe in ("unauthorized", "authorized") else "unreadable_probe"
+        self._evidence["probe"] = self._detail["revoke_probe"]
         if accepted and probe == "unauthorized":
             self._state["revoke_key"] = "confirmed"
 
@@ -202,6 +219,10 @@ class KalshiKill:
 
     def kill(self) -> dict:
         with self._lock:
+            # Nothing confirms on an earlier kill's calls: every leg starts pending again.
+            self._state = {"halt": "pending", "cancel_all": "pending", "revoke_key": "pending"}
+            self._detail = {}
+            self._evidence = {"accepted": False, "probe": None}
             halt_failed = False
             try:
                 self._halt()
@@ -210,19 +231,29 @@ class KalshiKill:
                 self._detail["halt"] = "error:" + type(exc).__name__
             else:
                 self._confirm_halt()
-            revoked_before = self._state["revoke_key"] == "confirmed"
-            # An earlier cancel confirm is kept only once the revoke is confirmed too.
-            if self._state["cancel_all"] != "confirmed" or not revoked_before:
+            self._cancel()
+            if halt_failed and self._state["cancel_all"] == "confirmed":
+                # The halt call failed in this kill: the confirm does not count.
                 self._state["cancel_all"] = "pending"
-                self._cancel()
-                if halt_failed and self._state["cancel_all"] == "confirmed":
-                    # The halt call failed in this kill: do not keep the confirm.
-                    self._state["cancel_all"] = "pending"
-                    self._detail["cancel_all"] = "halt_failed"
-                if revoked_before and self._state["cancel_all"] != "confirmed":
+                self._detail["cancel_all"] = "halt_failed"
+            cancelled_now = self._state["cancel_all"] == "confirmed"
+            self._revoke()
+            revoked_now = self._state["revoke_key"] == "confirmed"
+            if cancelled_now:
+                self._cancel_then_revoke_confirmed = revoked_now
+            elif (self._cancel_then_revoke_confirmed and revoked_now
+                  and self._detail.get("cancel_all", "").startswith("error:")):
+                # The dead credential cannot list or cancel. This kill's own revoke and probes
+                # say it is still dead, so the earlier cancel-then-revoke confirm stands.
+                self._state["cancel_all"] = "confirmed"
+                self._detail["cancel_all"] = "kept:" + self._detail["cancel_all"]
+            else:
+                self._cancel_then_revoke_confirmed = False
+                if self._revoked_before:
                     # Still pending and retried on every kill, but on a credential already revoked.
                     self._state["cancel_all"] = "pending_credential_revoked"
-            if self._state["revoke_key"] != "confirmed":
-                self._revoke()
+            if revoked_now:
+                self._revoked_before = True
             status = "confirmed" if all(v == "confirmed" for v in self._state.values()) else "pending"
-            return {"venue": "kalshi", "status": status, **self._state, "detail": dict(self._detail)}
+            return {"venue": "kalshi", "status": status, **self._state, "detail": dict(self._detail),
+                    "revoke_evidence": dict(self._evidence)}
