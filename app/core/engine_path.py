@@ -16,6 +16,7 @@ d84cdd26, CSLR-D-012).
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -38,9 +39,27 @@ def import_engine(name: str) -> ModuleType:
     entry = str(ENGINE_DIR)
     if entry not in sys.path:
         sys.path.append(entry)
+    # Find before import, so a foreign ``cockpit`` is refused without running its code.
+    parts = name.split(".")
+    for depth in range(1, len(parts) + 1):
+        prefix = ".".join(parts[:depth])
+        loaded = sys.modules.get(prefix)
+        origin = getattr(loaded, "__file__", None) if loaded is not None else None
+        if loaded is None:
+            if depth > 1 and sys.modules.get(".".join(parts[:depth - 1])) is None:
+                break  # the parent is not imported yet; import_module checks it next
+            spec = importlib.util.find_spec(prefix)
+            origin = getattr(spec, "origin", None) if spec is not None else None
+            if spec is None:
+                break  # let import_module raise ModuleNotFoundError
+        _require_inside(prefix, origin, package)
     module = importlib.import_module(name)
-    for loaded in (sys.modules.get("cockpit"), module):
-        origin = getattr(loaded, "__file__", None)
-        if origin is None or not Path(origin).resolve().is_relative_to(package.resolve()):
-            raise EngineImportRefused(f"{getattr(loaded, '__name__', name)!r} was not loaded from {package}")
+    for depth in range(1, len(parts) + 1):
+        prefix = ".".join(parts[:depth])
+        _require_inside(prefix, getattr(sys.modules.get(prefix), "__file__", None), package)
     return module
+
+
+def _require_inside(name: str, origin: object, package: Path) -> None:
+    if type(origin) is not str or not Path(origin).resolve().is_relative_to(package.resolve()):
+        raise EngineImportRefused(f"{name!r} was not loaded from {package}")

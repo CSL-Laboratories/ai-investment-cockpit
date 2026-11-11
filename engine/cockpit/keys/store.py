@@ -204,7 +204,11 @@ class KeyStore:
         except BaseException:
             _unlink_quiet(dir_fd, tmp)
             raise
-        os.fsync(dir_fd)  # the rename is durable before put/delete returns
+        try:
+            os.fsync(dir_fd)  # the rename is durable before put/delete returns
+        except OSError as exc:
+            if exc.errno not in (errno.EINVAL, getattr(errno, "ENOTSUP", errno.EINVAL)):
+                raise  # a filesystem that cannot fsync a directory is the only exception
 
 
 def key_file_state(path: str) -> str:
