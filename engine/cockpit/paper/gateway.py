@@ -9,9 +9,9 @@ The only path that books an order in ``engine/``. Every order goes, in this orde
 3. the Recursion core over its protocol: permission, the operator's one-use approval of
    this exact effect, then the installer-signed authority profile and its budgets
    (PRODUCT.md 4.2, O11, K3);
-4. booking, in one SQLite ``BEGIN IMMEDIATE`` transaction that re-reads the halt flag and
-   asks the host's run check again, so a halt, a run fault or a connection trip committed
-   before the booking wins.
+4. the host's run check, outside the book's lock, then booking, in one SQLite
+   ``BEGIN IMMEDIATE`` transaction that re-reads the halt flag and re-verifies the run check
+   within a bound, so a halt, a run fault or a connection trip committed before the booking wins.
 
 Every refusal on ``size_buy``, ``request_approval`` and ``submit`` is written to the book's append-only
 ``audit`` table (stage, typed code, intent, run, connection, effect digest) before the
@@ -25,14 +25,29 @@ the host hands in ``run_check``: the core ``ConnectionBreaker``'s
 ``check(run_id, connection, plugin_id)``. It returns a dict for a healthy run and raises
 an error carrying the core's typed ``code`` otherwise (``run_unknown``, ``run_not_owned``,
 ``run_connection_mismatch``, ``run_faulted``, ``connection_tripped``). The core runs the
-same check inside ``effect.request`` and ``effect.authorize``; the gateway calls it once
-more inside the booking transaction, next to the halt re-read, with the run and
-connection of the approved effect and its own plugin id. A refusal there follows the
-charge, so it is ``leftover_charge`` with cause ``core:<code>``, audited at stage
-``book``. An error without a typed code, or a result that is not a dict, is
-``run_check_error``. A gateway built without a run check books nothing: ``request_approval``
-and ``submit`` refuse ``run_check_missing`` before any core call. A fault or trip
-committed after the check inside the transaction and before its commit is not seen.
+same check inside ``effect.request`` and ``effect.authorize``; the gateway asks it twice
+more at booking, with the run and connection of the approved effect and its own plugin id
+(Lucas, Nov 11: "Fix it now: move the breaker check outside the lock and re-verify"):
+
+1. the full check, in the calling thread, before the book's lock and its SQLite write lock
+   are taken, so a check that hangs never keeps a halt or a kill on this book waiting
+   (that submit just does not book while it hangs);
+2. a re-verify inside the booking transaction, next to the halt re-read, waited on for at
+   most ``RUN_RECHECK_TIMEOUT_S`` (the check runs on a worker thread; at most
+   ``_RUN_CHECK_WORKERS_MAX`` run at once). The frozen breaker API offers only ``check()``,
+   so the re-verify is that same call, bounded by the wait rather than by what it reads. It
+   must answer exactly what step 1 answered: a fault, a trip or a different binding
+   committed in between is refused with the core's code (``core:run_faulted``, say) or
+   ``run_check_changed``, and a re-verify that does not answer in time is
+   ``run_check_timeout`` (``run_check_busy`` when too many are already in flight). The
+   book's locks are therefore held for at most that bound however the check behaves.
+
+A refusal at either step follows the charge, so it is ``leftover_charge`` with that code as
+the cause, audited at stage ``book``. An error without a typed code, or a result that is
+not a dict with ``str`` keys, is ``run_check_error``. A gateway built without a run check
+books nothing: ``request_approval`` and ``submit`` refuse ``run_check_missing`` before any
+core call. A fault or trip committed after the re-verify and before the booking's commit
+is not seen.
 
 Sizing and the order universe (PRODUCT.md at csl-research d84cdd26, lines 1183-1184 and
 1474-1475): "Proposals carry conviction, not quantity, and the gateway sizes orders
@@ -150,9 +165,11 @@ from __future__ import annotations
 
 import hashlib
 import os
+import queue
 import re
 import sqlite3
 import stat
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -290,6 +307,95 @@ HALT_YIELD_S = 5.0
 _HALT_FLAG_DIR = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else None
 _HALT_SPIN_S = 0.0002
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)  # POSIX only; Windows has no symlink-following open flag
+# The longest the booking waits on the run check's re-verify while it holds the book's lock
+# and write lock (see "Run check at the booking point" in the module doc).
+RUN_RECHECK_TIMEOUT_S = 1.0
+_RUN_CHECK_WORKERS_MAX = 8  # run checks in flight at once; past that a check is refused, never queued
+
+
+class _BoundedCaller:
+    """Runs a host callable on a worker thread and waits at most a given time for it.
+
+    A call that has not returned in time is ``run_check_timeout``; its worker is left to
+    finish, its late result is discarded, and it rejoins the pool only if it ever returns.
+    At most ``_RUN_CHECK_WORKERS_MAX`` calls run at once, so hung checks cannot pile up
+    threads without bound: past that a call is ``run_check_busy`` without waiting.
+
+    Latency only (no effect on what is decided): without the GIL, ``warm`` wakes an idle
+    worker ahead of a call and the worker then polls for up to ``_SPIN_S`` before sleeping
+    again, and the caller polls for the answer for up to ``_SPIN_S`` before it sleeps, so a
+    hand-off does not pay two thread wake-ups. With the GIL, polling would only take the GIL
+    from the other thread, so both sides just sleep until woken."""
+
+    _SPIN_S = 0.002 if not getattr(sys, "_is_gil_enabled", lambda: True)() else 0.0
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._idle: list = []
+        self._running = 0
+
+    def warm(self) -> None:
+        if self._SPIN_S:
+            with self._lock:
+                jobs = self._idle[-1] if self._idle else None
+            if jobs is not None:
+                jobs.put(None)
+
+    def call(self, fn, args: tuple, timeout_s: float):
+        with self._lock:
+            if self._idle:
+                jobs = self._idle.pop()
+            elif self._running >= _RUN_CHECK_WORKERS_MAX:
+                raise Refused("run_check_busy")
+            else:
+                jobs = None
+            self._running += 1
+        if jobs is None:
+            jobs = queue.SimpleQueue()
+            try:
+                threading.Thread(target=self._work, args=(jobs,), daemon=True, name="cockpit-run-check").start()
+            except BaseException:
+                with self._lock:
+                    self._running -= 1
+                raise Refused("run_check_error") from None
+        done, box = threading.Lock(), []
+        done.acquire()  # released by the worker once ``box`` holds the outcome
+        start = time.monotonic()
+        jobs.put((fn, args, done, box))
+        if self._SPIN_S:
+            spin_until = start + min(self._SPIN_S, timeout_s)
+            while not box and time.monotonic() < spin_until:
+                pass
+        if not done.acquire(timeout=max(0.0, start + timeout_s - time.monotonic())):
+            raise Refused("run_check_timeout")
+        ok, value = box[0]
+        if not ok:
+            raise value
+        return value
+
+    def _work(self, jobs) -> None:
+        while True:
+            job = jobs.get()
+            if job is None:  # warmed: poll briefly for the call that is about to come
+                spin_until = time.monotonic() + self._SPIN_S
+                while jobs.empty() and time.monotonic() < spin_until:
+                    pass
+                continue
+            fn, args, done, box = job
+            try:
+                outcome = (True, fn(*args))
+            except BaseException as exc:  # noqa: BLE001 - handed back to the waiting caller, if any
+                outcome = (False, exc)
+            # Back in the pool before the caller wakes, so its next call finds this worker idle.
+            with self._lock:
+                self._running -= 1
+                self._idle.append(jobs)
+            box.append(outcome)
+            done.release()
+            del job, fn, args, done, box, outcome
+
+
+_RUN_CHECKS = _BoundedCaller()
 
 
 class _Grant:
@@ -681,11 +787,18 @@ class PaperBook:
         if gateway.risk_pass(intent) != effect:
             raise Refused("book_direct_refused")
         gateway._require_sized(intent, order)  # buys and sells alike, on the granted effect
+        # The full host run check, before the book's lock: however long it takes, a halt or a
+        # kill on this book is never kept waiting by it.
+        _RUN_CHECKS.warm()  # latency only: the re-verify below then finds its worker awake
+        checked = gateway._check_run(order, None)
 
         def run(db):
             if self._halted_in(db):
                 raise Refused("order_halted")
-            gateway._check_run(order)  # a fault or trip committed before this booking wins
+            # Re-verified under the lock, bounded: a fault, a trip or a new binding committed
+            # since the check above wins, and so does a check that cannot answer in time.
+            if gateway._check_run(order, RUN_RECHECK_TIMEOUT_S) != checked:
+                raise Refused("run_check_changed")
             if db.execute("SELECT 1 FROM orders WHERE intent_id = ?", (order.intent_id,)).fetchone():
                 raise Refused("intent_duplicate")
             self._check_funds(db, order)  # send-time cash check, same transaction as the booking
@@ -862,20 +975,27 @@ class OrderGateway:
         if held is None or held[0] is not intent or self._sized_order(order) != held[1]:
             raise Refused("quantity_not_sized")
 
-    def _check_run(self, order: _Order) -> None:
-        """Ask the host's run check about the approved effect's run. Fails closed."""
+    def _check_run(self, order: _Order, timeout_s: float | None) -> tuple:
+        """Ask the host's run check about the approved effect's run: in this thread when
+        ``timeout_s`` is ``None``, else on a worker, waiting at most ``timeout_s``. Fails closed.
+        Returns the check's answer as a comparable snapshot."""
         check = self._run_check
         if check is None:
             raise Refused("run_check_missing")
+        args = (order.run_id, order.connection, self._plugin_id)
         try:
-            out = check(order.run_id, order.connection, self._plugin_id)
-        except Exception as exc:  # noqa: BLE001 - whatever the check raises, nothing books
+            out = check(*args) if timeout_s is None else _RUN_CHECKS.call(check, args, timeout_s)
+        except Refused:
+            raise
+        except BaseException as exc:  # noqa: BLE001 - whatever the check raises, nothing books
             code = getattr(exc, "code", None)
             if type(code) is str and _CODE.fullmatch(code):
                 raise Refused("core:" + code) from None
             raise Refused("run_check_error") from None
-        if type(out) is not dict:
+        if type(out) is not dict or any(type(key) is not str for key in out):
             raise Refused("run_check_error")
+        # Keys are distinct ``str``, so sorting never compares the values or their types.
+        return tuple(sorted((key, type(value), value) for key, value in out.items()))
 
     def size_buy(self, *, intent_id: str, account: str, instrument: str, limit_price_minor: int,
                  conviction_bps: int, run_id: str, connection: str) -> Intent:
