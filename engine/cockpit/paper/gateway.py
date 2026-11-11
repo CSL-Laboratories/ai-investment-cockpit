@@ -75,6 +75,21 @@ and the charge is not reversed: the core exposes no reverse. A retry needs a new
 and will charge again. The audit stage ``book`` alone does not say whether the core
 charged; only a ``leftover_charge`` code does.
 
+Locked book (B15). Before the charge, ``submit`` takes the book's write lock and lets it go
+(``BEGIN IMMEDIATE`` then ``ROLLBACK``: no write, no fsync), waiting at most
+``BOOK_LOCK_PROBE_S``. A book another connection or process holds write-locked past that is
+refused ``book_locked`` at stage ``book`` before the core is called, so nothing is charged and
+the approval stays unused; its audit row is tried with the same short wait. A lock taken
+after the probe and before the booking (the probe cannot close that window) still waits the
+full busy timeout at the booking and, if it outlasts it, is a ``leftover_charge``.
+
+Halt priority. ``PaperBook.halt`` creates a flag file for the book (in ``/dev/shm`` where it
+exists, else ``<book>-halt``), then takes the write
+lock in a short retry loop instead of SQLite's backing-off busy handler, and removes the flag
+after its commit. Every other writer waits while the flag exists (at most ``HALT_YIELD_S``;
+an older flag was left by a halt that died and is removed), so a stream of refusal or
+booking commits on other connections or processes cannot starve a halt. Reads never wait.
+
 ``PaperBook`` has no public booking method. Its private ``_book`` refuses unless handed a
 one-shot ``_Grant`` that ``OrderGateway.submit`` mints after the risk pass and the core's
 authorize, bound to that gateway, this book, that intent object and the approved effect.
@@ -93,8 +108,15 @@ still name a gateway it built with its own caps). A static test refuses any refe
 to ``_book`` or ``_GATEWAY_ONLY`` elsewhere in ``engine/``.
 
 ``PaperBook(path)`` refuses a missing path with ``book_missing`` and a file that is not a
-paper book (zero bytes, not SQLite, or without the tables, columns and state rows that
-``create_book`` makes) with ``book_invalid``.
+paper book (zero bytes, not SQLite, or without exactly the tables, constraints, append-only
+audit triggers, working-order index and state rows that ``create_book`` makes) with
+``book_invalid``. After ``PaperBook.close`` every book method,
+and so every gateway call that reaches the book, refuses with ``book_closed``; ``close``
+takes the book's lock, so it never closes the connection under a statement in flight.
+
+An ``Intent`` is paper only when its own instance holds ``venue`` and ``mode`` as the
+exact ``str`` ``"paper"``. The dataclass defaults are not read: an instance with either
+field missing or deleted is refused ``paper_only`` before any side effect.
 
 Paper only. There is no broker, venue transport, credential or network code here, and
 no Kalshi order code at all (not even demo). Risk logic uses no model, I/O beyond the
@@ -109,6 +131,7 @@ import os
 import re
 import sqlite3
 import threading
+import time
 from dataclasses import dataclass
 from typing import Callable, NamedTuple
 
@@ -222,7 +245,27 @@ _TABLE_SCHEMAS = (
     "CREATE TABLE holdings (account TEXT NOT NULL, instrument TEXT NOT NULL,"
     " available INTEGER NOT NULL CHECK (available >= 0), PRIMARY KEY (account, instrument))",
 )
+# The append-only triggers on ``audit`` and the partial index that keeps ``working()`` and
+# ``cancel_all`` off cancelled history. Part of the schema the open check compares.
+_TRIGGER_SCHEMAS = (
+    "CREATE TRIGGER audit_no_update BEFORE UPDATE ON audit"
+    " BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END",
+    "CREATE TRIGGER audit_no_delete BEFORE DELETE ON audit"
+    " BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END",
+)
+_INDEX_SCHEMAS = ("CREATE INDEX orders_working ON orders (intent_id) WHERE status = 'working'",)
 _STATE_KEYS = ("halted", "seq", "halt_seq")  # every row of ``state``; each starts at integer 0
+# How long ``submit`` waits for the book's write lock before the core charge (see the module doc).
+BOOK_LOCK_PROBE_S = 1.0
+_BUSY_TIMEOUT_MS = 30_000
+# Halt priority: ``halt`` creates the book's halt flag before it takes the write lock; every other writer
+# waits while that flag exists, at most ``HALT_YIELD_S``. A flag older than that is stale.
+HALT_YIELD_S = 5.0
+# The flag lives in shared memory where there is one (no filesystem journal, so creating and
+# removing it adds nothing to the book's next fsync), else next to the book. Every process that
+# opens the same book file derives the same flag path from the book's real path.
+_HALT_FLAG_DIR = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else None
+_HALT_SPIN_S = 0.0002
 
 
 class _Grant:
@@ -244,54 +287,67 @@ class _Grant:
         self.used = False
 
 
-def _table_columns(db: sqlite3.Connection, table: str) -> list[tuple]:
-    return [(row[1], row[2]) for row in db.execute("PRAGMA table_info(%s)" % table)]
-
-
-def _schema_columns() -> dict:
-    """Each book table's ``(name, type)`` columns, in order, read back from ``_TABLE_SCHEMAS``."""
+def _schema_objects() -> dict:
+    """Every table, trigger and index ``create_book`` makes: ``{(type, name): (tbl_name, sql)}``,
+    read back from ``_TABLE_SCHEMAS``, ``_TRIGGER_SCHEMAS`` and ``_INDEX_SCHEMAS`` in a memory db."""
     db = sqlite3.connect(":memory:")
     try:
-        for schema in _TABLE_SCHEMAS:
+        for schema in _TABLE_SCHEMAS + _TRIGGER_SCHEMAS + _INDEX_SCHEMAS:
             db.execute(schema)
-        tables = [row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
-        return {table: _table_columns(db, table) for table in tables}
+        return _read_objects(db)
     finally:
         db.close()
 
 
-_BOOK_COLUMNS = _schema_columns()
-# ``audit()`` reads ``AUDIT_COLUMNS`` by name, and the open check compares the audit table with
-# ``_BOOK_COLUMNS["audit"]`` (names and types from ``AUDIT_SCHEMA``). The two must name the same
-# columns in the same order; checked once here, at import, not again on every open.
-if [name for name, _ in _BOOK_COLUMNS["audit"]] != list(AUDIT_COLUMNS):
+def _read_objects(db: sqlite3.Connection) -> dict:
+    # SQLite's own autoindexes (primary keys) carry no SQL; the table SQL already pins them.
+    return {(kind, name): (table, sql) for kind, name, table, sql in db.execute(
+        "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE sql IS NOT NULL")}
+
+
+_BOOK_OBJECTS = _schema_objects()
+
+
+def _audit_column_names() -> list:
+    db = sqlite3.connect(":memory:")
+    try:
+        db.execute(AUDIT_SCHEMA)
+        return [row[1] for row in db.execute("PRAGMA table_info(audit)")]
+    finally:
+        db.close()
+
+
+# ``audit()`` reads ``AUDIT_COLUMNS`` by name; checked once here, at import, against ``AUDIT_SCHEMA``.
+if _audit_column_names() != list(AUDIT_COLUMNS):
     raise RuntimeError("AUDIT_COLUMNS does not match AUDIT_SCHEMA")
 _STATE_ROWS = sorted((key, "integer") for key in _STATE_KEYS)
 
 
 def _check_book_schema(db: sqlite3.Connection) -> None:
-    """Refuse a file that does not hold the tables, columns and state rows ``create_book`` makes.
+    """Refuse a file that does not hold exactly the tables, triggers, index and state rows
+    ``create_book`` makes.
 
-    A file without the core book (``state`` and ``orders`` exactly as ``create_book`` makes
-    them, with every state row) is ``book_invalid``. A core book from before the audit
-    table (B15) is ``book_without_audit``; one from before the cash tables (B31) is
-    ``book_without_cash``. Any other column difference is ``book_invalid``."""
+    The book's ``sqlite_master`` is read once and compared, statement for statement, with
+    what ``create_book`` runs, so a missing ``CHECK`` constraint, a missing append-only
+    trigger or a missing index is refused, not just a column difference. A file without
+    the core book (``state`` and ``orders`` exactly as ``create_book`` makes them, with
+    every state row) is ``book_invalid``. A core book from before the audit table (B15) is
+    ``book_without_audit``; one from before the cash tables (B31) is ``book_without_cash``.
+    Any other difference is ``book_invalid``."""
+    have = _read_objects(db)
     for table in ("state", "orders"):
-        if _table_columns(db, table) != _BOOK_COLUMNS[table]:
+        if have.get(("table", table)) != _BOOK_OBJECTS[("table", table)]:
             raise Refused("book_invalid")
     rows = db.execute("SELECT k, typeof(v) FROM state WHERE k IN (%s) ORDER BY k"
                       % ", ".join("?" * len(_STATE_KEYS)), _STATE_KEYS).fetchall()
     if rows != _STATE_ROWS:
         raise Refused("book_invalid")
-    have = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-    if "audit" not in have:
+    if ("table", "audit") not in have:
         raise Refused("book_without_audit")
-    if not {"cash", "holdings"} <= have:
+    if ("table", "cash") not in have or ("table", "holdings") not in have:
         raise Refused("book_without_cash")
-    # ``state`` and ``orders`` were checked above on this connection; each is read once.
-    for table, expected in _BOOK_COLUMNS.items():
-        if table not in ("state", "orders") and _table_columns(db, table) != expected:
-            raise Refused("book_invalid")
+    if have != _BOOK_OBJECTS:
+        raise Refused("book_invalid")
 
 
 def create_book(path: str, *, cash_minor: dict, holdings: dict | None = None) -> None:
@@ -321,16 +377,21 @@ def create_book(path: str, *, cash_minor: dict, holdings: dict | None = None) ->
         for schema in _TABLE_SCHEMAS:
             db.execute(schema)
         db.executemany("INSERT INTO state VALUES (?, 0)", [(key,) for key in _STATE_KEYS])
-        db.execute("CREATE TRIGGER audit_no_update BEFORE UPDATE ON audit"
-                   " BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END")
-        db.execute("CREATE TRIGGER audit_no_delete BEFORE DELETE ON audit"
-                   " BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END")
+        for schema in _TRIGGER_SCHEMAS + _INDEX_SCHEMAS:
+            db.execute(schema)
         db.executemany("INSERT INTO cash VALUES (?, ?)", sorted(cash_minor.items()))
         db.executemany("INSERT INTO holdings VALUES (?, ?, ?)",
                        sorted((a, i, n) for (a, i), n in holdings.items()))
         db.execute("COMMIT")
     finally:
         db.close()
+
+
+def _halt_flag_path(path: str) -> str:
+    real = os.path.realpath(path)
+    if _HALT_FLAG_DIR is None:
+        return real + "-halt"
+    return os.path.join(_HALT_FLAG_DIR, "csl-paper-halt-" + hashlib.sha256(real.encode()).hexdigest()[:32])
 
 
 class PaperBook:
@@ -355,16 +416,57 @@ class PaperBook:
             raise Refused("book_invalid") from None
         self._db = db
         self._lock = threading.Lock()
+        self._closed = False
+        self._halt_flag = _halt_flag_path(path)
 
-    def _tx(self, fn):
-        with self._lock:
-            self._db.execute("BEGIN IMMEDIATE")
+    def _open_db(self) -> sqlite3.Connection:
+        """The connection, or ``book_closed``. Call only with ``self._lock`` held."""
+        if self._closed:
+            raise Refused("book_closed")
+        return self._db
+
+    def _yield_to_halt(self) -> None:
+        """Wait while a halt is taking the write lock (its flag exists), at most ``HALT_YIELD_S``.
+
+        Called before ``self._lock`` is taken, so a halt on this same book is never blocked by
+        a waiter. A flag older than ``HALT_YIELD_S`` was left by a halt that died; it is removed."""
+        deadline = None
+        while True:
             try:
-                out = fn(self._db)
-                self._db.execute("COMMIT")
+                age = time.time() - os.stat(self._halt_flag).st_mtime
+            except OSError:
+                return  # no halt in progress: the usual case, one stat
+            if age > HALT_YIELD_S:
+                try:
+                    os.unlink(self._halt_flag)
+                except OSError:
+                    pass
+                return
+            now = time.monotonic()
+            if deadline is None:
+                deadline = now + HALT_YIELD_S
+            elif now >= deadline:
+                return
+            time.sleep(_HALT_SPIN_S * 5)
+
+    def _tx(self, fn, busy_ms: int | None = None):
+        self._yield_to_halt()
+        with self._lock:
+            db = self._open_db()
+            if busy_ms is None:
+                db.execute("BEGIN IMMEDIATE")
+            else:
+                db.execute("PRAGMA busy_timeout=%d" % busy_ms)
+                try:
+                    db.execute("BEGIN IMMEDIATE")
+                finally:
+                    db.execute("PRAGMA busy_timeout=%d" % _BUSY_TIMEOUT_MS)
+            try:
+                out = fn(db)
+                db.execute("COMMIT")
                 return out
             except BaseException:
-                self._db.execute("ROLLBACK")
+                db.execute("ROLLBACK")
                 raise
 
     @staticmethod
@@ -373,19 +475,70 @@ class PaperBook:
         return db.execute("SELECT v FROM state WHERE k = 'seq'").fetchone()[0]
 
     def halt(self) -> int:
-        """Set the halt flag in one committed step. Returns the halt's sequence number."""
-        def run(db):
-            if db.execute("SELECT v FROM state WHERE k = 'halted'").fetchone()[0]:
-                return db.execute("SELECT v FROM state WHERE k = 'halt_seq'").fetchone()[0]
-            seq = self._next_seq(db)
-            db.execute("UPDATE state SET v = 1 WHERE k = 'halted'")
-            db.execute("UPDATE state SET v = ? WHERE k = 'halt_seq'", (seq,))
-            return seq
-        return self._tx(run)
+        """Set the halt flag in one committed step. Returns the halt's sequence number.
+
+        Halt has priority over every other writer, across processes: it first creates the
+        book's halt flag file, which every other writer waits on before it takes the write
+        lock (``_yield_to_halt``), then takes the lock itself in a short retry loop instead of
+        SQLite's backing-off busy handler, so a stream of refusal or booking commits on other
+        connections cannot starve it. The flag is removed after the commit."""
+        try:
+            os.close(os.open(self._halt_flag, os.O_WRONLY | os.O_CREAT, 0o600))
+            os.utime(self._halt_flag)
+        except OSError:
+            pass  # no flag: the halt still takes the lock, only without priority
+        try:
+            with self._lock:
+                db = self._open_db()
+                deadline = time.monotonic() + _BUSY_TIMEOUT_MS / 1000
+                db.execute("PRAGMA busy_timeout=0")
+                try:
+                    while True:
+                        try:
+                            db.execute("BEGIN IMMEDIATE")
+                            break
+                        except sqlite3.OperationalError:
+                            if time.monotonic() >= deadline:
+                                raise
+                            time.sleep(_HALT_SPIN_S)
+                finally:
+                    db.execute("PRAGMA busy_timeout=%d" % _BUSY_TIMEOUT_MS)
+                try:
+                    if db.execute("SELECT v FROM state WHERE k = 'halted'").fetchone()[0]:
+                        seq = db.execute("SELECT v FROM state WHERE k = 'halt_seq'").fetchone()[0]
+                    else:
+                        seq = self._next_seq(db)
+                        db.execute("UPDATE state SET v = 1 WHERE k = 'halted'")
+                        db.execute("UPDATE state SET v = ? WHERE k = 'halt_seq'", (seq,))
+                    db.execute("COMMIT")
+                    return seq
+                except BaseException:
+                    db.execute("ROLLBACK")
+                    raise
+        finally:
+            try:
+                os.unlink(self._halt_flag)
+            except OSError:
+                pass
+
+    def _probe_writable(self) -> None:
+        """Refuse ``book_locked`` unless this connection can take the book's write lock within
+        ``BOOK_LOCK_PROBE_S``. Takes it and lets it go (no write, no fsync)."""
+        self._yield_to_halt()
+        with self._lock:
+            db = self._open_db()
+            db.execute("PRAGMA busy_timeout=%d" % int(BOOK_LOCK_PROBE_S * 1000))
+            try:
+                db.execute("BEGIN IMMEDIATE")
+            except sqlite3.OperationalError:
+                raise Refused("book_locked") from None
+            finally:
+                db.execute("PRAGMA busy_timeout=%d" % _BUSY_TIMEOUT_MS)
+            db.execute("ROLLBACK")
 
     def halted(self) -> bool:
         with self._lock:
-            return bool(self._db.execute("SELECT v FROM state WHERE k = 'halted'").fetchone()[0])
+            return bool(self._open_db().execute("SELECT v FROM state WHERE k = 'halted'").fetchone()[0])
 
     @staticmethod
     def _audit_row(db, row: dict) -> int:
@@ -413,11 +566,11 @@ class PaperBook:
     def available_cash_minor(self, account: str) -> int:
         """The tracked cash both the sizer and the send-time check read (B31)."""
         with self._lock:
-            return self._cash(self._db, account)
+            return self._cash(self._open_db(), account)
 
     def held_shares(self, account: str, instrument: str) -> int:
         with self._lock:
-            return self._held(self._db, account, instrument)
+            return self._held(self._open_db(), account, instrument)
 
     @classmethod
     def _check_funds(cls, db, intent: Intent | _Order) -> None:
@@ -432,11 +585,12 @@ class PaperBook:
 
     def check_funds(self, intent: Intent | _Order) -> None:
         with self._lock:
-            self._check_funds(self._db, intent)
+            self._check_funds(self._open_db(), intent)
 
     def _has_intent(self, intent_id: str) -> bool:
         with self._lock:
-            return self._db.execute("SELECT 1 FROM orders WHERE intent_id = ?", (intent_id,)).fetchone() is not None
+            return self._open_db().execute("SELECT 1 FROM orders WHERE intent_id = ?",
+                                           (intent_id,)).fetchone() is not None
 
     def _book(self, intent: Intent, token: object, audit: dict | None = None) -> int:
         """Write a working order. Not a public API: ``token`` must be the unused ``_Grant`` that
@@ -485,13 +639,19 @@ class PaperBook:
             return seq
         return self._tx(run)
 
-    def record_refusal(self, row: dict) -> int:
-        """Append one refusal to the audit table in its own committed step. Returns its seq."""
-        return self._tx(lambda db: self._audit_row(db, dict(row, event="refused")))
+    def record_refusal(self, row: dict, *, busy_s: float | None = None) -> int:
+        """Append one refusal to the audit table in its own committed step. Returns its seq.
+
+        ``busy_s`` bounds the wait for the write lock (``book_locked`` uses the probe's bound)."""
+        write = lambda db: self._audit_row(db, dict(row, event="refused"))  # noqa: E731
+        if busy_s is None:
+            return self._tx(write)
+        return self._tx(write, int(busy_s * 1000))
 
     def audit(self) -> list[dict]:
         with self._lock:
-            rows = self._db.execute("SELECT " + ", ".join(AUDIT_COLUMNS) + " FROM audit ORDER BY seq").fetchall()
+            rows = self._open_db().execute("SELECT " + ", ".join(AUDIT_COLUMNS)
+                                           + " FROM audit ORDER BY seq").fetchall()
         return [dict(zip(AUDIT_COLUMNS, row)) for row in rows]
 
     def cancel_all(self) -> int:
@@ -499,43 +659,68 @@ class PaperBook:
 
         Allowed while halted (risk-reducing)."""
         def run(db):
-            working = db.execute("SELECT account, instrument, side, quantity, limit_price_minor FROM orders"
-                                 " WHERE status = 'working'").fetchall()
-            for account, instrument, side, quantity, price in working:
+            # One read of the working orders (through the ``orders_working`` partial index), then one
+            # release per account (buys) and per held instrument (sells): the statements grow with
+            # accounts and instruments, never with the number of working orders.
+            cash: dict[str, int] = {}
+            shares: dict[tuple, int] = {}
+            for account, instrument, side, quantity, price in db.execute(
+                    "SELECT account, instrument, side, quantity, limit_price_minor FROM orders"
+                    " WHERE status = 'working'"):
                 if side == "buy":
-                    db.execute("UPDATE cash SET available_minor = available_minor + ? WHERE account = ?",
-                               (quantity * price, account))
+                    cash[account] = cash.get(account, 0) + quantity * price
                 else:
-                    db.execute("INSERT INTO holdings VALUES (?, ?, ?) ON CONFLICT (account, instrument)"
-                               " DO UPDATE SET available = available + excluded.available",
-                               (account, instrument, quantity))
+                    shares[(account, instrument)] = shares.get((account, instrument), 0) + quantity
+            for account, minor in sorted(cash.items()):
+                db.execute("UPDATE cash SET available_minor = available_minor + ? WHERE account = ?",
+                           (minor, account))
+            for (account, instrument), quantity in sorted(shares.items()):
+                db.execute("INSERT INTO holdings VALUES (?, ?, ?) ON CONFLICT (account, instrument)"
+                           " DO UPDATE SET available = available + excluded.available",
+                           (account, instrument, quantity))
             return db.execute("UPDATE orders SET status = 'cancelled' WHERE status = 'working'").rowcount
         return self._tx(run)
 
     def working(self) -> int:
         """How many paper orders are still working."""
         with self._lock:
-            return self._db.execute("SELECT COUNT(*) FROM orders WHERE status = 'working'").fetchone()[0]
+            return self._open_db().execute("SELECT COUNT(*) FROM orders WHERE status = 'working'").fetchone()[0]
 
     def orders(self) -> list[tuple]:
         with self._lock:
-            return self._db.execute("SELECT intent_id, seq, status FROM orders ORDER BY seq").fetchall()
+            return self._open_db().execute("SELECT intent_id, seq, status FROM orders ORDER BY seq").fetchall()
 
     def halt_seq(self) -> int:
         with self._lock:
-            return self._db.execute("SELECT v FROM state WHERE k = 'halt_seq'").fetchone()[0]
+            return self._open_db().execute("SELECT v FROM state WHERE k = 'halt_seq'").fetchone()[0]
 
     def close(self) -> None:
-        self._db.close()
+        """Close the book. Waits for a statement in flight; every later call refuses ``book_closed``."""
+        with self._lock:
+            if not self._closed:
+                self._closed = True
+                self._db.close()
 
 
 def _positive_int(value: object, limit: int) -> bool:
     return type(value) is int and 0 < value <= limit
 
 
+def _own_field(intent: Intent, name: str) -> object:
+    """Read ``venue`` or ``mode`` from the intent's own instance dict, never the dataclass
+    default: an instance without the field has not said paper, so it is refused ``paper_only``."""
+    try:
+        own = object.__getattribute__(intent, "__dict__")
+    except AttributeError:
+        raise Refused("paper_only") from None
+    if type(own) is not dict or name not in own:
+        raise Refused("paper_only")
+    return dict.__getitem__(own, name)
+
+
 def _field(intent: Intent, name: str) -> object:
-    """Read one intent field. An ``Intent`` made without ``__init__``, or with a field deleted,
-    is refused ``intent_invalid``, never an ``AttributeError``."""
+    """Read one intent field other than ``venue`` and ``mode`` (those go through ``_own_field``).
+    An ``Intent`` with the field deleted is refused ``intent_invalid``, never an ``AttributeError``."""
     try:
         return object.__getattribute__(intent, name)
     except AttributeError:
@@ -561,6 +746,9 @@ class OrderGateway:
         self._currency = currency
         self._sized: dict[int, tuple] = {}  # id(intent) -> (the intent, its fields when sized), oldest first
         self._sized_lock = threading.Lock()
+        # The kill switch composed on this gateway's book (``plugin.compose`` sets it), so a
+        # host that holds only the gateway can still kill.
+        self.kill_switch = None
 
     def __setattr__(self, name: str, value: object) -> None:
         # The order universe is fixed at construction: no setter, and no rebinding either.
@@ -655,7 +843,7 @@ class OrderGateway:
         if self._book.halted():
             raise Refused("order_halted")
         # Exact ``str`` only: a subclass or an object with rigged ``__eq__``/``__ne__`` is not paper.
-        mode, venue = _field(intent, "mode"), _field(intent, "venue")
+        mode, venue = _own_field(intent, "mode"), _own_field(intent, "venue")
         if type(mode) is not str or mode != "paper" or type(venue) is not str or venue != PAPER_VENUE:
             raise Refused("paper_only")
         intent_id, account = _field(intent, "intent_id"), _field(intent, "account")
@@ -703,8 +891,12 @@ class OrderGateway:
     def _refuse(self, exc: Refused, stage: str, intent: object, effect: dict | None) -> Refused:
         """Audit a refusal before it is raised. The refusal stands even if the audit write fails."""
         try:
-            exc.audit_seq = self._book.record_refusal(dict(self._audit_base(intent, effect), stage=stage,
-                                                           code=str(exc)))  # a leftover charge keeps its cause
+            # A locked book is refused without waiting the full busy timeout for its audit row too.
+            row = dict(self._audit_base(intent, effect), stage=stage, code=str(exc))  # a leftover charge keeps its cause
+            if exc.code == "book_locked":
+                exc.audit_seq = self._book.record_refusal(row, busy_s=BOOK_LOCK_PROBE_S)
+            else:
+                exc.audit_seq = self._book.record_refusal(row)
         except Exception:  # noqa: BLE001 - an audit failure never turns a refusal into a pass
             exc.audit_seq = None
         return exc
@@ -752,6 +944,8 @@ class OrderGateway:
                 raise Refused("intent_duplicate")
             stage = "funds"
             self._book.check_funds(order)  # early read; the booking re-checks in its own transaction
+            stage = "book"
+            self._book._probe_writable()  # a write-locked book is refused before the core charges
             stage = "authorize"
             try:
                 core = self._core.authorize(effect, approval_id, authority)

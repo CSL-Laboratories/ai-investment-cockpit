@@ -347,7 +347,7 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(venue_io, [])
 
     def test_paper_book_has_no_public_booking_path(self) -> None:
-        """Red-team round 2 finding 6: holding a PaperBook (or the gateway's) books nothing."""
+        """Holding a PaperBook (or the gateway's) books nothing."""
         public = {name for name in vars(PaperBook) if not name.startswith("_")}
         # B15/B31 (#320) add read-only cash/holding reads, the funds check and the refusal audit
         # write; none of them writes the orders table.

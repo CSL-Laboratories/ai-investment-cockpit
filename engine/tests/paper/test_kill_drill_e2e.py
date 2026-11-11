@@ -11,8 +11,10 @@ The drill: several paper orders are booked through permission -> operator approv
 authority profile -> gateway, and one more is approved but not submitted. Then the
 composed switch kills. The switch reports ``confirmed`` only when the halt reads back on
 the book, every working paper order is cancelled, and each OAuth venue's revoke answered
-exactly the int 200 with both probes then reading exactly ``"unauthorized"``. Anything
-less is ``pending``. After the kill the host faults the active run at the core
+exactly the int 200 with both probes then reading exactly ``"unauthorized"``, all in that
+``kill`` call: a second kill revokes and probes again. Anything less is ``pending``. With
+no venue composed (the paper-only default) a completed kill reports ``paper_only``, never
+``confirmed``. After the kill the host faults the active run at the core
 (``run.fault``), so a later attempt is refused there too (``run_faulted``).
 
 The paper book keeps orders and their status only; it has no cash or reservation ledger.
@@ -65,8 +67,9 @@ class _RaisingKill:
 
 @unittest.skipIf(e2e.CORE_SKIP is not None, e2e.AWAITING_328)
 class KillDrillTests(unittest.TestCase):
-    def _drill(self, *, first_venues: tuple = (), halt_patch: object = None) -> e2e.World:
-        """Build the world with both mock venues composed, book ``BOOKED`` and hold one approval."""
+    def _drill(self, *, first_venues: tuple = (), halt_patch: object = None, paper_only: bool = False) -> e2e.World:
+        """Build the world with both mock venues composed (none when ``paper_only``), book
+        ``BOOKED`` and hold one approval."""
         self.coinbase = MockCoinbase(orders=["cb-1", "cb-2", "cb-3"])
         self.gemini = MockGemini(orders=["gm-1", "gm-2"])
         self.mocks = {"coinbase": self.coinbase, "gemini": self.gemini}
@@ -75,7 +78,8 @@ class KillDrillTests(unittest.TestCase):
             halt = book.halt if halt_patch is None else halt_patch
             return [*first_venues, CoinbaseKill(halt, self.coinbase, halted=book.halted),
                     GeminiKill(halt, self.gemini, halted=book.halted)]
-        w = e2e.build_world(self, venue_kills=venue_kills)
+        w = e2e.build_world(self, venue_kills=None if paper_only else venue_kills)
+        self.assertIs(w.gateway.kill_switch, w.kill_switch)
         self.assertIs(type(w.kill_switch), KillSwitch)
         self.assertIs(type(w.gateway), OrderGateway)
         for intent_id in BOOKED:
@@ -112,6 +116,12 @@ class KillDrillTests(unittest.TestCase):
         reply = self.mocks[name].revoke_reply
         answered = (type(reply) is RevokeReply and type(reply.http_status) is int and reply.http_status == 200
                     and "revoke_grant" not in venue["detail"])
+        # The evidence the switch confirms on says the same as the mock and the detail.
+        evidence = venue["revoke_evidence"]
+        self.assertEqual(set(evidence), {"http_status", "probe_api", "probe_refresh"})
+        self.assertIs(type(evidence["http_status"]) is int and evidence["http_status"] == 200, answered)
+        self.assertEqual((evidence["probe_api"], evidence["probe_refresh"]),
+                         (venue["detail"]["revoke_probe_api"], venue["detail"]["revoke_probe_refresh"]))
         return answered, venue["detail"]["revoke_probe_api"], venue["detail"]["revoke_probe_refresh"]
 
     def _pending_never_confirmed(self, w: e2e.World, out: dict) -> dict:
@@ -186,7 +196,7 @@ class KillDrillTests(unittest.TestCase):
         self._refused("order_halted",
                       lambda: w.gateway.submit(self.held, self.held_approval["approval_id"], w.profile))
 
-    def test_kill_twice_is_idempotent(self) -> None:
+    def test_kill_twice_is_idempotent_and_each_kill_revokes_and_probes_afresh(self) -> None:
         w = self._drill()
         first = w.kill_switch.kill()
         halt_seq, logs = w.book.halt_seq(), {name: list(m.log) for name, m in self.mocks.items()}
@@ -197,11 +207,53 @@ class KillDrillTests(unittest.TestCase):
         self.assertEqual(w.book.halt_seq(), halt_seq)
         for name in OAUTH_VENUES:
             with self.subTest(venue=name):
-                self.assertEqual(venues[name], self._venues(first)[name])
-                self.assertEqual(self.mocks[name].log, logs[name])  # nothing is cancelled or revoked again
-                self.assertEqual(self.mocks[name].log.count("revoke"), 1)
+                # The second kill confirms on its own revoke and probes, not on the first kill's.
+                fresh = self.mocks[name].log[len(logs[name]):]
+                self.assertEqual(fresh[-3:], ["revoke", "probe_api", "probe_refresh"])
+                self.assertEqual(self.mocks[name].log.count("revoke"), 2)
+                self.assertEqual(self._revoke_evidence(name, venues[name]), (True, "unauthorized", "unauthorized"))
+                self.assertEqual((venues[name]["status"], venues[name]["halt"], venues[name]["revoke_grant"]),
+                                 ("confirmed",) * 3)
+                # Nothing was open to cancel again, and no order came back.
+                self.assertNotIn("cancel:", "".join(fresh))
+                self.assertEqual(self.mocks[name].open, [])
+        self.assertEqual(venues["coinbase"]["cancelled"], ["cb-1", "cb-2", "cb-3"])
         self._refused("order_halted",
                       lambda: w.gateway.submit(self.held, self.held_approval["approval_id"], w.profile))
+
+    def test_second_kill_is_pending_when_a_grant_works_again(self) -> None:
+        for name in OAUTH_VENUES:
+            with self.subTest(venue=name):
+                w = self._drill()
+                self.assertEqual(w.kill_switch.kill()["status"], "confirmed")
+                self.mocks[name].api_reply = self.mocks[name].refresh_reply = "authorized"
+                calls = len(self.mocks[name].log)
+                out = w.kill_switch.kill()
+                venues = self._pending_never_confirmed(w, out)
+                self.assertGreater(len(self.mocks[name].log), calls)
+                self.assertEqual((venues[name]["status"], venues[name]["revoke_grant"]), ("pending", "pending"))
+                self.assertEqual(self._revoke_evidence(name, venues[name]), (True, "authorized", "authorized"))
+                other = venues[OAUTH_VENUES[1 - OAUTH_VENUES.index(name)]]
+                self.assertEqual((out["halt"], other["status"]), ("confirmed", "confirmed"))
+
+    def test_paper_only_drill_reports_paper_only_and_never_confirmed(self) -> None:
+        """No venue composed (the Nov 11 default): halted and paper cancelled, nothing revoked."""
+        w = self._drill(paper_only=True)
+        ops, drawn = list(w.plugin_ops), len(w.drawn)
+        for cancelled in (3, 0):  # a second kill says the same
+            out = w.kill_switch.kill()
+            venues = self._venues(out)
+            self.assertEqual(list(venues), ["paper"])
+            self.assertIs(type(out["status"]), str)
+            self.assertEqual((out["status"], out["halt"]), ("paper_only", "confirmed"))
+            self._paper_cancelled(w, venues, cancelled=cancelled)
+        self.assertIs(w.book.halted(), True)
+        self.assertEqual((self.coinbase.log, self.gemini.log), ([], []))
+        self._refused("order_halted",
+                      lambda: w.gateway.submit(self.held, self.held_approval["approval_id"], w.profile))
+        self._refused("order_halted", lambda: w.gateway.request_approval(replace(self.held, intent_id="drill-new")))
+        self.assertEqual((w.plugin_ops, len(w.drawn)), (ops, drawn))
+        self.assertEqual(w.gateway.cancel_all(), 0)
 
     def test_revoke_200_with_one_probe_authorized_stays_pending(self) -> None:
         for name in OAUTH_VENUES:
@@ -326,7 +378,7 @@ class ComposedKillSwitchTests(unittest.TestCase):
         calls, spent = list(self.core.calls), self.core.spent
 
         out = composed.kill_switch.kill()
-        self.assertEqual((out["status"], out["halt"]), ("confirmed", "confirmed"))
+        self.assertEqual((out["status"], out["halt"]), ("paper_only", "confirmed"))
         self.assertEqual([(v["venue"], v["status"], v["cancelled"]) for v in out["venues"]],
                          [("paper", "confirmed", 1)])
         # The halt and the cancel landed on the book the gateway books into.

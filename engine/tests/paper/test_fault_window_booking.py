@@ -53,16 +53,27 @@ WAIT = 10  # seconds a synchronisation point may take before the test fails
 
 
 class _SignallingDb:
-    """The book's connection, setting ``about_to_begin`` right before each ``BEGIN IMMEDIATE``."""
+    """The book's connection, setting ``about_to_begin`` right before each ``BEGIN IMMEDIATE``.
 
-    def __init__(self, db: sqlite3.Connection, about_to_begin: threading.Event) -> None:
+    With ``after_probe``, the first ``BEGIN IMMEDIATE`` is ``submit``'s write-lock probe
+    before the charge: ``after_probe`` runs right after the probe lets the lock go, and only
+    a later ``BEGIN IMMEDIATE`` (the booking's) sets ``about_to_begin``."""
+
+    def __init__(self, db: sqlite3.Connection, about_to_begin: threading.Event, after_probe=None) -> None:
         self._db = db
         self._about_to_begin = about_to_begin
+        self._after_probe = after_probe
+        self._begins = 0
 
     def execute(self, sql: str, *args: object):
         if sql == "BEGIN IMMEDIATE":
-            self._about_to_begin.set()
-        return self._db.execute(sql, *args)
+            self._begins += 1
+            if self._after_probe is None or self._begins > 1:
+                self._about_to_begin.set()
+        out = self._db.execute(sql, *args)
+        if sql == "ROLLBACK" and self._after_probe is not None and self._begins == 1:
+            self._after_probe()
+        return out
 
     def close(self) -> None:
         self._db.close()
@@ -162,23 +173,24 @@ class _Window:
     def _while_waiting_on_the_book_lock(self) -> object:
         """Time of check (``effect.authorize``) against time of use (the booking's commit).
 
-        Another connection holds the book's write lock, as another process's booking or
-        refusal audit would. ``submit`` passes the core and reaches the booking's
+        Another connection takes the book's write lock right after ``submit``'s pre-charge
+        lock probe, as another process's booking or refusal audit would (the window the
+        probe cannot close). ``submit`` passes the core and reaches the booking's
         ``BEGIN IMMEDIATE``, which cannot start while the lock is held; the fault or trip
         lands there, and only then is the lock released.
         """
         approval = self._approved()
         about_to_begin = threading.Event()
-        self.book._db = _SignallingDb(self.book._db, about_to_begin)
-        blocker = sqlite3.connect(self.path, isolation_level=None, timeout=WAIT)
+        blocker = sqlite3.connect(self.path, isolation_level=None, timeout=WAIT, check_same_thread=False)
         self.addCleanup(blocker.close)
-        blocker.execute("BEGIN IMMEDIATE")
+        self.book._db = _SignallingDb(self.book._db, about_to_begin,
+                                      after_probe=lambda: blocker.execute("BEGIN IMMEDIATE"))
         result = []
         worker = threading.Thread(target=lambda: result.append(self._submit(approval)), daemon=True)
         try:
             worker.start()
             self.assertTrue(about_to_begin.wait(WAIT), "submit never reached the booking transaction")
-            # The first BEGIN IMMEDIATE of this submit is the booking's, and it follows the charge.
+            # The second BEGIN IMMEDIATE of this submit is the booking's, and it follows the charge.
             self.assertEqual((self.core.calls.count("effect.authorize"), self.core.spent), (1, NOTIONAL))
             self._land()
             self.assertEqual(result, [], "submit finished while the book's write lock was held")
