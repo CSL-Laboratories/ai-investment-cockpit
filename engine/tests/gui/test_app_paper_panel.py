@@ -9,6 +9,7 @@ non-paper venue, and drops other venues' data, including data nested in a paper 
 from __future__ import annotations
 
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -18,7 +19,7 @@ APP_DIR = Path(__file__).resolve().parents[3] / "app"
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
-from fastapi import FastAPI  # noqa: E402
+from fastapi import Depends, FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from core import engine_path  # noqa: E402
@@ -54,6 +55,13 @@ def _with(**changes: object) -> dict:
 
 def _registry_returning(panels: object):
     return mock.patch.object(gp, "registry", lambda: {"required": {}, "panels": panels})
+
+
+def _allow() -> None:
+    return None
+
+
+AUTH = [Depends(_allow)]
 
 
 def _mixed_read(command: str) -> dict:
@@ -151,7 +159,7 @@ class PaperPanelCheckTests(unittest.TestCase):
                 with self.assertRaises(pp.PanelRefused):
                     pp.paper_panel()
                 with self.assertRaises(pp.PanelRefused):
-                    pp.build_paper_panel_router(lambda c: {})
+                    pp.build_paper_panel_router(lambda c: {}, dependencies=AUTH)
                 with self.assertRaises(pp.PanelRefused):
                     pp.render_paper_panel(lambda c: {})
 
@@ -194,6 +202,25 @@ class PaperPanelRenderTests(unittest.TestCase):
         self.assertEqual(view["reads"]["operator.budgets.inspect"]["errors"][0]["message"], "ConnectionError")
         self.assertEqual(view["reads"]["operator.positions.inspect"], {"status_code": "ok", "result": []})
 
+    def test_a_caller_cannot_render_another_panel(self) -> None:
+        with self.assertRaises(TypeError):
+            pp.render_paper_panel(_mixed_read, gp.KALSHI_PANELS[0])  # type: ignore[call-arg]
+
+    def test_non_dict_containers_are_normalised_before_the_filter(self) -> None:
+        from collections import OrderedDict
+
+        def read(command: str) -> object:
+            if command == "operator.positions.inspect":
+                return {"result": ({"venue": "kalshi_demo", "ticker": "KXDEMO-1"}, {"venue": "paper", "qty": "1"})}
+            if command == "operator.decisions.inspect":
+                return OrderedDict(result=[OrderedDict(venue="coinbase", price="1")])
+            return {"result": [types.SimpleNamespace(venue="kalshi_demo")]}
+        view = pp.render_paper_panel(read)["reads"]
+        self.assertEqual(view["operator.positions.inspect"], {"result": [{"venue": "paper", "qty": "1"}]})
+        self.assertEqual(view["operator.decisions.inspect"], {"result": []})
+        self.assertEqual(view["operator.budgets.inspect"]["status_code"], "read_failed")
+        self.assertNotIn("kalshi", repr(view))
+
     def test_only_the_named_inspect_reads_are_called(self) -> None:
         calls: list = []
         pp.render_paper_panel(lambda c: calls.append(c) or {})
@@ -208,7 +235,7 @@ class PaperPanelRouterTests(unittest.TestCase):
             self.calls.append(command)
             return _mixed_read(command)
 
-        self.router = pp.build_paper_panel_router(read)
+        self.router = pp.build_paper_panel_router(read, dependencies=AUTH)
         app = FastAPI()
         app.include_router(self.router)
         self.client = TestClient(app)
@@ -243,8 +270,15 @@ class PaperPanelRouterTests(unittest.TestCase):
         for data in rigged["reads"].values():
             self.assertEqual(_venues(data), {"paper", "stock"})
 
+    def test_a_mount_without_auth_is_refused(self) -> None:
+        for deps in ((), [], "x"):
+            with self.subTest(deps=deps), self.assertRaises(pp.PanelRefused):
+                pp.build_paper_panel_router(_mixed_read, dependencies=deps)  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            pp.build_paper_panel_router(_mixed_read)  # type: ignore[call-arg]
+
     def test_auth_dependencies_are_applied(self) -> None:
-        from fastapi import Depends, HTTPException
+        from fastapi import HTTPException
 
         def deny() -> None:
             raise HTTPException(status_code=401)
@@ -257,7 +291,7 @@ class PaperPanelRouterTests(unittest.TestCase):
 
     def test_a_non_callable_read_refuses_the_mount(self) -> None:
         with self.assertRaises(pp.PanelRefused):
-            pp.build_paper_panel_router(None)  # type: ignore[arg-type]
+            pp.build_paper_panel_router(None, dependencies=AUTH)  # type: ignore[arg-type]
 
 
 class EngineImportTests(unittest.TestCase):
@@ -272,6 +306,34 @@ class EngineImportTests(unittest.TestCase):
         fake = types.ModuleType("cockpit")
         fake.__file__ = "/elsewhere/cockpit/__init__.py"
         with mock.patch.dict(sys.modules, {"cockpit": fake}):
+            with self.assertRaises(engine_path.EngineImportRefused):
+                engine_path.import_engine("cockpit.gui.panels")
+
+    def test_a_foreign_cockpit_on_the_path_is_refused_before_it_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pkg = Path(tmp) / "cockpit"
+            (pkg / "gui").mkdir(parents=True)
+            marker = Path(tmp) / "ran"
+            (pkg / "__init__.py").write_text(f"open({str(marker)!r}, 'w').close()\n")
+            (pkg / "gui" / "__init__.py").write_text("")
+            saved = {k: v for k, v in sys.modules.items() if k == "cockpit" or k.startswith("cockpit.")}
+            for key in saved:
+                del sys.modules[key]
+            sys.path.insert(0, tmp)
+            try:
+                with self.assertRaises(engine_path.EngineImportRefused):
+                    engine_path.import_engine("cockpit.gui.panels")
+                self.assertFalse(marker.exists())
+            finally:
+                sys.path.remove(tmp)
+                for key in [k for k in sys.modules if k == "cockpit" or k.startswith("cockpit.")]:
+                    del sys.modules[key]
+                sys.modules.update(saved)
+
+    def test_a_foreign_subpackage_already_loaded_is_refused(self) -> None:
+        fake = types.ModuleType("cockpit.gui")
+        fake.__file__ = "/elsewhere/cockpit/gui/__init__.py"
+        with mock.patch.dict(sys.modules, {"cockpit.gui": fake}):
             with self.assertRaises(engine_path.EngineImportRefused):
                 engine_path.import_engine("cockpit.gui.panels")
 
@@ -292,6 +354,13 @@ class NestedVenueDataTests(unittest.TestCase):
         kept = gp.keep_venue_rows({"result": [row]}, "stock")
         self.assertEqual(kept, {"result": [{"venue": "paper", "instrument_id": "MSFT",
                                             "lots": [{"qty": "1", "price": "2"}]}]})
+
+    def test_a_key_named_for_another_venue_is_dropped(self) -> None:
+        row = {"venue": "paper", "instrument_id": "MSFT", "kalshi": {"yes_price": "0.42"}, "coinbase": [1],
+               "stock": {"qty": "1"}, "paper": {"qty": "2"}}
+        kept = gp.keep_venue_rows({"result": [row], "gemini": {"x": 1}}, "stock")
+        self.assertEqual(kept, {"result": [{"venue": "paper", "instrument_id": "MSFT",
+                                            "stock": {"qty": "1"}, "paper": {"qty": "2"}}]})
 
     def test_an_errors_item_labelled_paper_loses_its_kalshi_price(self) -> None:
         kept = gp.keep_venue_rows({"errors": [{"venue": "paper", "code": "stale_quote", "kalshi_yes_price": "0.42"}]},

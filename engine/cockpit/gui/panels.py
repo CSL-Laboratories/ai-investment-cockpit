@@ -165,7 +165,7 @@ def keep_venue_rows(value: object, venue: object) -> object:
     * A dict without a ``venue`` key, outside a kept venue dict, is dropped if it carries any
       ``VENUE_ROW_KEYS`` key (venue-like data with no label); otherwise it is kept and its
       values are filtered by the same rule.
-    * At any depth, a key named ``<v>_...`` for a known venue ``v`` the panel's
+    * At any depth, a key named ``<v>`` or ``<v>_...`` for a known venue ``v`` the panel's
       venue does not own is dropped (e.g. ``kalshi_yes_price`` on a paper panel); ``paper_*``
       and ``stock_*`` keys stay on the paper panel.
     * Everything else passes through unchanged: O7 status, refusal, stale, unreconciled,
@@ -191,9 +191,9 @@ def _owned(venue: object) -> frozenset:
 
 
 def _other_venue_key(key: object, owned: frozenset) -> bool:
-    if type(key) is not str or any(key.startswith(v + "_") for v in owned):
+    if type(key) is not str or key in owned or any(key.startswith(v + "_") for v in owned):
         return False
-    return any(key.startswith(v + "_") for v in KNOWN_VENUES - owned)
+    return any(key == v or key.startswith(v + "_") for v in KNOWN_VENUES - owned)
 
 
 def _rows(value: object, owned: frozenset, scoped: bool) -> object:

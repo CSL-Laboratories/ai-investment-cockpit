@@ -20,10 +20,11 @@ panel never offers a path to an order, and never to a venue other than the paper
 read result is passed through Cockpit's ``redact_panel`` with every venue switch off, so rows
 labelled with another venue (Kalshi, Coinbase, Gemini) are dropped and O7 status, refusal,
 stale and error states stay visible (PRODUCT.md 3.5). The caller injects ``read`` (the O7
-read client) and any auth dependencies; mounting the router is the caller's step.
+read client) and the app's auth dependency (required); mounting the router is the caller's step.
 """
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 from typing import Any
@@ -88,38 +89,55 @@ def paper_panel() -> Mapping[str, Any]:
     return MappingProxyType({**panel, "reads": tuple(reads)})
 
 
-def render_paper_panel(read: ReadFn, panel: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    """Run the panel's named reads through ``read`` and return Cockpit's redacted view.
+def render_paper_panel(read: ReadFn) -> dict[str, Any]:
+    """Run the checked panel's named reads through ``read`` and return Cockpit's redacted view.
 
-    A read that raises is shown as ``read_failed`` with the exception type, never hidden and
-    never retried here. Venue switches are all off (``DEFAULT_SWITCH_STATES``); the paper panel
-    is not behind one, and nothing in a read result can switch one on.
+    Each result is normalised to plain JSON first (tuples become lists; anything that is not
+    JSON, such as a model object, is ``read_failed``), so the venue filter sees every row. A read
+    that raises is shown as ``read_failed`` with the exception type, never hidden and never
+    retried here. Venue switches are all off (``DEFAULT_SWITCH_STATES``); the paper panel is not
+    behind one, and nothing in a read result can switch one on.
     """
+    return _render(read, paper_panel())
+
+
+def _failed(reason: str) -> dict[str, Any]:
+    return {"status_code": "read_failed", "errors": [{"code": "read_failed", "message": reason}]}
+
+
+def _render(read: ReadFn, panel: Mapping[str, Any]) -> dict[str, Any]:
     gp = _panels()
-    panel = paper_panel() if panel is None else panel
     results: dict[str, object] = {}
     for command in panel["reads"]:
         try:
-            results[command] = read(command)
+            raw = read(command)
         except Exception as exc:  # shown, not hidden (PRODUCT.md 3.5)
-            results[command] = {"status_code": "read_failed",
-                                "errors": [{"code": "read_failed", "message": type(exc).__name__}]}
+            results[command] = _failed(type(exc).__name__)
+            continue
+        try:
+            results[command] = json.loads(json.dumps(raw, allow_nan=False))
+        except (TypeError, ValueError):
+            results[command] = _failed("not_json")
     view = gp.redact_panel(panel, results, gp.DEFAULT_SWITCH_STATES)
     return {"id": panel["id"], "title": panel["title"], "venue": panel["venue"],
             "venue_use": panel["venue_use"], "paper_only": True, "reads": view}
 
 
-def build_paper_panel_router(read: ReadFn, *, dependencies: Sequence[Any] = ()) -> Any:
+def build_paper_panel_router(read: ReadFn, *, dependencies: Sequence[Any]) -> Any:
     """A FastAPI router with two GET routes: ``/panels`` and ``/panels/{panel_id}``.
 
     The panel is checked once here, so a bad engine panel refuses the mount rather than a
-    request. Any other panel id is 404. Pass the app's auth as ``dependencies``.
+    request. Any other panel id is 404. ``dependencies`` is the app's auth (for example
+    ``[Depends(ApiKeyAuth(...))]``); an empty one refuses the mount, so the operator reads
+    are never served without auth.
     """
     from fastapi import APIRouter, HTTPException
 
     panel = paper_panel()
     if not callable(read):
         raise PanelRefused("read_not_callable")
+    if isinstance(dependencies, (str, bytes)) or not list(dependencies):
+        raise PanelRefused("no_auth_dependency")
     router = APIRouter(dependencies=list(dependencies))
     summary = {"id": panel["id"], "title": panel["title"], "venue": panel["venue"],
                "venue_use": panel["venue_use"], "paper_only": True}
@@ -132,6 +150,6 @@ def build_paper_panel_router(read: ReadFn, *, dependencies: Sequence[Any] = ()) 
     def get_panel(panel_id: str) -> dict:
         if panel_id != PAPER_PANEL_ID:
             raise HTTPException(status_code=404, detail="unknown panel")
-        return render_paper_panel(read, panel)
+        return _render(read, panel)
 
     return router
