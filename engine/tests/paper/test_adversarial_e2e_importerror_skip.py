@@ -75,13 +75,13 @@ class E2EImportErrorSkipTests(unittest.TestCase):
         module = importlib.import_module(E2E)
         result = unittest.TestResult()
         unittest.defaultTestLoader.loadTestsFromModule(module).run(result)
-        self.assertEqual(result.testsRun, 3)
+        self.assertEqual(result.testsRun, 5)
         self.assertEqual((result.failures, result.errors), ([], []))
         reasons = [reason for _, reason in result.skipped]
         if module.CORE_SKIP is None:
             self.assertEqual(reasons, [])
         else:
-            self.assertEqual(reasons, [REASON] * 3)
+            self.assertEqual(reasons, [REASON] * 5)
 
     def test_absent_core_is_the_only_skip(self) -> None:
         with self.subTest(missing="recursion_core"), self._without_core():
