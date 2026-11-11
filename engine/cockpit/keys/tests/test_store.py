@@ -188,12 +188,16 @@ class NoKeychainTests(unittest.TestCase):
         os.chmod(lock, 0o644)
         self.refused("key_file_not_owner_only", self.store.put, "model_provider", "other", FAKE)
         self.assertEqual(stat.S_IMODE(os.lstat(lock).st_mode), 0o644)
-        self.assertEqual(self.store.get("model_provider", "openai"), FAKE)
+        # Reads are refused too (README: refused on read and on write), never repaired.
+        self.refused("key_file_not_owner_only", self.store.get, "model_provider", "openai")
+        self.assertEqual(stat.S_IMODE(os.lstat(lock).st_mode), 0o644)
         os.unlink(lock)
         os.symlink(self.path, lock)
         self.refused("key_file_not_owner_only", self.store.put, "model_provider", "other", FAKE)
         self.assertTrue(stat.S_ISLNK(os.lstat(lock).st_mode))
-        self.assertIsNone(self.store.get("model_provider", "other"))
+        self.refused("key_file_not_owner_only", self.store.get, "model_provider", "openai")
+        os.unlink(lock)
+        self.assertEqual(self.store.get("model_provider", "openai"), FAKE)
 
     def test_file_body_names_kind_and_holds_no_broker_key(self) -> None:
         self.store.put("model_provider", "openai", FAKE)

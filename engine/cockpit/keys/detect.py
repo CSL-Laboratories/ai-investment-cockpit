@@ -15,6 +15,7 @@ The doctor line names where keys are kept and the key-file state; it never print
 from __future__ import annotations
 
 import importlib
+import math
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -69,7 +70,7 @@ def _classify(backend: Any) -> KeychainStatus:
         priority = float(getattr(type(backend), "priority", getattr(backend, "priority", 0)))
     except Exception as exc:  # keyring backends raise from ``priority`` when unusable (e.g. no D-Bus)
         return KeychainStatus(False, "", f"keychain_unusable:{type(exc).__name__}")
-    if priority <= 0:
+    if math.isnan(priority) or priority <= 0:
         return KeychainStatus(False, "", "keychain_unusable:priority")
     return KeychainStatus(True, name, "ok")
 
@@ -124,8 +125,14 @@ def doctor(status: KeychainStatus, key_file: str | os.PathLike[str] | None) -> d
     """Structured doctor result: ``level`` is ``ok``, ``warn`` or ``fail``. Never contains a key value."""
 
     if status.available:
-        return {"check": "keys", "level": "ok", "keychain": status.backend,
-                "model_provider": "keyring", "broker": "keyring", "venue": "keyring"}
+        out = {"check": "keys", "level": "ok", "keychain": status.backend,
+               "model_provider": "keyring", "broker": "keyring", "venue": "keyring"}
+        if key_file is not None and os.name != "nt":
+            # A model-key file left from a host without a keychain is still checked.
+            state = _file_state(os.fspath(key_file))
+            if state.startswith(("dir_not_owner_only", "file_not_owner_only")):
+                out.update(level="fail", key_file=state, stale_key_file=os.fspath(key_file))
+        return out
     out = {"check": "keys", "keychain": "none", "reason": status.reason,
            "broker": "refused:keychain_required", "venue": "refused:keychain_required"}
     if os.name == "nt":
@@ -142,8 +149,12 @@ def doctor(status: KeychainStatus, key_file: str | os.PathLike[str] | None) -> d
 
 
 def doctor_line(result: dict[str, str]) -> str:
-    if result["level"] == "ok":
-        return f"keys: ok - OS keychain ({result['keychain']}); model-provider, broker and venue keys in the keychain"
+    if result.get("keychain", "none") != "none":
+        line = (f"keys: {result['level']} - OS keychain ({result['keychain']}); "
+                "model-provider, broker and venue keys in the keychain")
+        if "stale_key_file" in result:
+            line += f"; old model-key file {result['stale_key_file']} is not owner-only [{result['key_file']}]"
+        return line
     head = f"keys: {result['level']} - no OS keychain ({result['reason']})"
     mp = result["model_provider"]
     if mp.startswith("refused:"):

@@ -108,6 +108,7 @@ class KeyStore:
         assert self._path is not None
         dir_fd = _open_owned_dir(os.path.dirname(os.path.abspath(self._path)))
         try:
+            _refuse_existing_unless_owner_only(dir_fd, _LOCK_NAME)
             return self._read_file(dir_fd).get(name)
         finally:
             os.close(dir_fd)
@@ -163,6 +164,8 @@ class KeyStore:
             raise KeyRefused("key_file_malformed") from None
         if not isinstance(data, Mapping) or data.get("version") != _FILE_VERSION or not isinstance(data.get("keys"), Mapping):
             raise KeyRefused("key_file_malformed")
+        if type(data.get("kind")) is not str or data.get("kind") != "model_provider":
+            raise KeyRefused("key_file_malformed", "kind")
         keys = data["keys"]
         if not all(isinstance(k, str) and _NAME.match(k) and isinstance(v, str) for k, v in keys.items()):
             raise KeyRefused("key_file_malformed")
@@ -201,6 +204,7 @@ class KeyStore:
         except BaseException:
             _unlink_quiet(dir_fd, tmp)
             raise
+        os.fsync(dir_fd)  # the rename is durable before put/delete returns
 
 
 def key_file_state(path: str) -> str:
@@ -224,6 +228,14 @@ def key_file_state(path: str) -> str:
             return "file_not_owner_only"
         if not stat.S_ISREG(st.st_mode) or st.st_uid != os.geteuid() or st.st_mode & 0o077:
             return f"file_not_owner_only({oct(st.st_mode & 0o777)})"
+        try:
+            lock = os.lstat(_LOCK_NAME, dir_fd=fd)
+        except FileNotFoundError:
+            return "owner_only"
+        except OSError:
+            return "file_not_owner_only(lock)"
+        if not stat.S_ISREG(lock.st_mode) or lock.st_uid != os.geteuid() or lock.st_mode & 0o077:
+            return f"file_not_owner_only(lock {oct(lock.st_mode & 0o777)})"
         return "owner_only"
     finally:
         os.close(fd)
