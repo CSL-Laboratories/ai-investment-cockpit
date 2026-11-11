@@ -265,12 +265,12 @@ The research body that used to sit in this section is in the vault, not in this 
 - Repository: `CSL-Laboratories/csl-research`
 - Record: `20261110-csl220-o8-phase-a-embedded-research-01`
 - Path: `submissions/20261110-csl220-o8-phase-a-embedded-research-01/result.md`
-- Commit: `dda56c9a3e450d0176786bb93cbfd56c54ba46ff` (draft [csl-research #1165](https://github.com/CSL-Laboratories/csl-research/pull/1165); this pointer will move to the merge commit once #1165 merges)
+- Commit: `abde3b3209043f779c39aeba6eee8d73384fa634` ([csl-research #1165](https://github.com/CSL-Laboratories/csl-research/pull/1165))
 - SHA-256 of the verbatim passage (2693 bytes): `459192a97236c44f8c9ecddca50e64fde076ab7c2ca12e8c92f07428ab7fac8d`
 - Claim: the embedded Parallel search records and source-to-claim summaries that previously appeared in this section, used as the research basis of this phase A candidate.
 - Limitations: candidate-only; not reviewed knowledge; not a human decision; not an acceptance receipt; not a PRODUCT.md or contract change. CSL Research recorded the passage verbatim and did not re-run the searches or re-fetch the cited pages.
 
-The recorded passage is at [result.md @ dda56c9a](https://github.com/CSL-Laboratories/csl-research/blob/dda56c9a3e450d0176786bb93cbfd56c54ba46ff/submissions/20261110-csl220-o8-phase-a-embedded-research-01/result.md).
+The recorded passage is at [result.md @ abde3b3209043f779c39aeba6eee8d73384fa634](https://github.com/CSL-Laboratories/csl-research/blob/abde3b3209043f779c39aeba6eee8d73384fa634/submissions/20261110-csl220-o8-phase-a-embedded-research-01/result.md).
 
 ## Unresolved decisions (owner: release owner)
 
