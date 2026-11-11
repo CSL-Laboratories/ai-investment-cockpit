@@ -207,35 +207,47 @@ class RunCheckOutsideLockTests(unittest.TestCase):
         self._assert_nothing_booked(result[0], "run_check_timeout")
 
     def test_hung_rechecks_cannot_pile_up_threads(self) -> None:
-        pool = gateway_module._BoundedCaller()
+        pool, slots = gateway_module._BoundedCaller(), gateway_module._Slots()
         release = threading.Event()
         self.addCleanup(release.set)
         with mock.patch.object(gateway_module, "_RUN_CHECK_WORKERS_MAX", 2):
             for _ in range(2):
                 with self.assertRaises(Refused) as caught:
-                    pool.call(release.wait, (WAIT,), 0.05)
+                    pool.call(release.wait, (WAIT,), 0.05, slots)
                 self.assertEqual(caught.exception.code, "run_check_timeout")
             t = time.monotonic()
             with self.assertRaises(Refused) as caught:
-                pool.call(release.wait, (WAIT,), WAIT)
+                pool.call(release.wait, (WAIT,), WAIT, slots)
             self.assertEqual(caught.exception.code, "run_check_busy")
             self.assertLess(time.monotonic() - t, 1.0)  # refused at once, never queued
             release.set()
             deadline = time.monotonic() + WAIT
-            while pool._running and time.monotonic() < deadline:
+            while (pool._running or slots.used) and time.monotonic() < deadline:
                 time.sleep(0.01)
-            self.assertEqual(pool.call(lambda: {"ok": 1}, (), WAIT), (True, {"ok": 1}))  # hung workers came back
+            self.assertEqual(pool.call(lambda: {"ok": 1}, (), WAIT, slots), (True, {"ok": 1}))  # hung workers came back
+
+    def test_the_process_wide_thread_cap_refuses_busy_at_once(self) -> None:
+        pool = gateway_module._BoundedCaller()
+        release = threading.Event()
+        self.addCleanup(release.set)
+        with mock.patch.object(gateway_module, "_RUN_CHECK_THREADS_MAX", 2):
+            for _ in range(2):  # two gateways, one hung check each
+                with self.assertRaises(Refused):
+                    pool.call(release.wait, (WAIT,), 0.05, gateway_module._Slots())
+            with self.assertRaises(Refused) as caught:
+                pool.call(release.wait, (WAIT,), WAIT, gateway_module._Slots())
+            self.assertEqual(caught.exception.code, "run_check_busy")
 
     def test_a_saturated_pool_is_refused_before_the_charge(self) -> None:
         release = threading.Event()
         self.addCleanup(release.set)
         with mock.patch.object(gateway_module, "_RUN_CHECK_WORKERS_MAX", 1):
             with self.assertRaises(Refused):
-                self.gw._run_checks.call(release.wait, (WAIT,), 0.05)  # one re-verify hung
+                gateway_module._RUN_CHECKS.call(release.wait, (WAIT,), 0.05, self.gw._run_check_slots)  # hung
             outcome = self._submit()
             self.assertEqual((outcome.code, outcome.cause), ("run_check_busy", None))
             self.assertEqual((self.core.spent, self.core.calls.count("effect.authorize")), (0, 0))
-            # Another gateway's pool is its own: a hung check here does not refuse there.
+            # Another gateway's slots are its own: a hung check here does not refuse there.
             other = OrderGateway(plugin_id=DEFAULT_PLUGIN, book=self.book, core=CoreClient(self.core),
                                  caps=Caps(10**9, 10**6), allowlist=ALLOWLIST, run_check=self.core.check)
             intent = sized(other, Intent(**dict(BASE.__dict__, intent_id="ol-other")))
@@ -268,17 +280,17 @@ class RunCheckOutsideLockTests(unittest.TestCase):
     @unittest.skipUnless(hasattr(os, "fork"), "no fork on this platform")
     def test_a_forked_child_starts_with_an_empty_pool(self) -> None:
         self.assertEqual(self._submit()["status"], "paper_working")  # leaves an idle worker behind
-        self.assertTrue(self.gw._run_checks._idle)
+        self.assertTrue(gateway_module._RUN_CHECKS._idle)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)  # fork with threads running
             pid = os.fork()
         if pid == 0:  # child: never return into the test runner
             code = 1
             try:
-                pool = self.gw._run_checks
-                fresh = (pool._idle, pool._running) == ([], 0)
+                pool, slots = gateway_module._RUN_CHECKS, self.gw._run_check_slots
+                fresh = (pool._idle, pool._running, slots.used) == ([], 0, 0)
                 t = time.monotonic()
-                answered = pool.call(lambda: 7, (), 5.0) == (True, 7)
+                answered = pool.call(lambda: 7, (), 5.0, slots) == (True, 7)
                 code = 0 if fresh and answered and time.monotonic() - t < 1.0 else 2
             finally:
                 os._exit(code)
