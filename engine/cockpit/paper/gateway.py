@@ -24,8 +24,12 @@ and the charge is not reversed: the core exposes no reverse.
 one-shot ``_Grant`` that ``OrderGateway.submit`` mints after the risk pass and the core's
 authorize, bound to that gateway, this book, that intent object and the approved effect.
 At booking, ``_book`` runs that gateway's risk pass again (halt and caps included) and
-refuses unless it returns exactly the granted effect. The module attribute
-``_GATEWAY_ONLY`` is only the grant's mint key: handing it to ``_book`` books nothing.
+refuses unless it returns exactly the granted effect. Every booked value (intent id,
+account, instrument, side, quantity, limit price) and the reply are then taken from that
+approved effect, never from the intent object, so a change to the intent after the
+re-check cannot alter what is booked (backported from #320 for #317 alone). The module
+attribute ``_GATEWAY_ONLY`` is only the grant's mint key: handing it to ``_book`` books
+nothing.
 
 In-process Python cannot make a capability unforgeable: code in this process can still
 reach ``_Grant`` and its mint key and forge a grant, and a forged grant does not prove
@@ -56,6 +60,7 @@ import re
 import sqlite3
 import threading
 from dataclasses import dataclass
+from typing import NamedTuple
 
 from .core_client import MAX_INT, CoreClient, CoreRefused
 
@@ -111,6 +116,34 @@ class Intent:
     connection: str
     venue: str = PAPER_VENUE
     mode: str = "paper"
+
+
+class _Order(NamedTuple):
+    """The order inside an approved effect: what the core charged and the only values booked."""
+
+    intent_id: str
+    account: str
+    instrument: str
+    side: str
+    quantity: int
+    limit_price_minor: int
+    notional_minor: int
+
+
+def _order_of(effect: object) -> _Order:
+    """Read the order out of an effect ``risk_pass`` returned. Anything else is refused."""
+    try:
+        payload, scope = effect["payload"], effect["scope"]
+        order = _Order(payload["intent_id"], scope["account"], payload["instrument"], payload["side"],
+                       payload["quantity"], payload["limit_price_minor"], effect["amount_minor"])
+    except (TypeError, KeyError, IndexError):
+        raise Refused("book_direct_refused") from None
+    texts = (order.intent_id, order.account, order.instrument, order.side)
+    numbers = (order.quantity, order.limit_price_minor, order.notional_minor)
+    if (any(type(v) is not str for v in texts) or any(type(v) is not int or v <= 0 for v in numbers)
+            or order.side not in ("buy", "sell") or order.notional_minor != order.quantity * order.limit_price_minor):
+        raise Refused("book_direct_refused")
+    return order
 
 
 class _Grant:
@@ -229,7 +262,8 @@ class PaperBook:
         ``OrderGateway.submit`` minted for this book and this intent object, after the risk pass
         and the core's checks (PRODUCT.md 4.2 "One way in"). The grant is spent here, and the
         gateway's risk pass and caps are run again before anything is written; a refusal from
-        that re-check is raised as it is. A grant can be forged in-process; see the module doc."""
+        that re-check is raised as it is. What is written comes from the grant's approved
+        effect alone. A grant can be forged in-process; see the module doc."""
         if type(token) is not _Grant:
             raise Refused("book_direct_refused")
         with self._lock:
@@ -240,18 +274,20 @@ class PaperBook:
         if (token.book is not self or token.intent is not intent or type(gateway) is not OrderGateway
                 or gateway._book is not self):
             raise Refused("book_direct_refused")
-        if gateway.risk_pass(intent) != token.effect:
+        effect = token.effect
+        order = _order_of(effect)  # read once; nothing below reads the intent's fields again
+        if gateway.risk_pass(intent) != effect:
             raise Refused("book_direct_refused")
 
         def run(db):
             if db.execute("SELECT v FROM state WHERE k = 'halted'").fetchone()[0]:
                 raise Refused("order_halted")
-            if db.execute("SELECT 1 FROM orders WHERE intent_id = ?", (intent.intent_id,)).fetchone():
+            if db.execute("SELECT 1 FROM orders WHERE intent_id = ?", (order.intent_id,)).fetchone():
                 raise Refused("intent_duplicate")
             seq = self._next_seq(db)
             db.execute("INSERT INTO orders VALUES (?, ?, ?, ?, ?, ?, ?, 'working')",
-                       (intent.intent_id, seq, intent.account, intent.instrument, intent.side,
-                        intent.quantity, intent.limit_price_minor))
+                       (order.intent_id, seq, order.account, order.instrument, order.side,
+                        order.quantity, order.limit_price_minor))
             return seq
         return self._tx(run)
 
@@ -368,8 +404,9 @@ class OrderGateway:
     def request_approval(self, intent: Intent) -> dict:
         """Risk pass, then ask the core to draw the approval for exactly this effect."""
         effect = self.risk_pass(intent)
+        order = _order_of(effect)  # every later check reads the effect, not the intent again
         # A booked intent id draws no new approval. Only the book is asked: no approval state here.
-        if self._book._has_intent(intent.intent_id):
+        if self._book._has_intent(order.intent_id):
             raise Refused("intent_duplicate")
         try:
             return self._core.request_approval(effect)
@@ -378,8 +415,9 @@ class OrderGateway:
 
     def submit(self, intent: Intent, approval_id: str, authority: dict | None) -> dict:
         effect = self.risk_pass(intent)
+        order = _order_of(effect)  # every later check reads the effect, not the intent again
         # Every local refusal that does not need the core comes before the charge.
-        if self._book._has_intent(intent.intent_id):
+        if self._book._has_intent(order.intent_id):
             raise Refused("intent_duplicate")
         try:
             core = self._core.authorize(effect, approval_id, authority)
@@ -395,5 +433,5 @@ class OrderGateway:
             raise Refused("leftover_charge", exc.code) from None
         except Exception as exc:
             raise Refused("leftover_charge", "booking_error:" + type(exc).__name__) from exc
-        return {"status": "paper_working", "intent_id": intent.intent_id, "seq": seq,
-                "notional_minor": effect["amount_minor"], "digest": core.get("digest")}
+        return {"status": "paper_working", "intent_id": order.intent_id, "seq": seq,
+                "notional_minor": order.notional_minor, "digest": core.get("digest")}
