@@ -304,7 +304,7 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(venue_io, [])
 
     def test_paper_book_has_no_public_booking_path(self) -> None:
-        """Red-team round 2 finding 6: holding a PaperBook (or the gateway's) books nothing."""
+        """Holding a PaperBook (or the gateway's) books nothing."""
         public = {name for name in vars(PaperBook) if not name.startswith("_")}
         self.assertEqual(public, {"halt", "halted", "cancel_all", "working", "orders", "halt_seq", "close"})
         self.assertFalse(hasattr(self.book, "book"))

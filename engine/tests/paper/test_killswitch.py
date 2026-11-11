@@ -162,7 +162,7 @@ class KillSwitchTests(unittest.TestCase):
         self.assertEqual(gemini["detail"], {"cancel_all": "remaining:1", **OAUTH_PROBES})
 
     def test_kill_cancels_working_paper_orders(self) -> None:
-        """Red-team round 2 finding 1: a confirmed kill leaves no working paper order (O42, K1)."""
+        """A confirmed kill leaves no working paper order (O42, K1)."""
         self._working_orders(3)
         log = []
         halt, venues = self._venues(log)
@@ -196,9 +196,10 @@ class KillSwitchTests(unittest.TestCase):
                 out = KillSwitch(self.book.halt, [], paper_book=paper).kill()
                 self.assertEqual((out["status"], out["venues"][0]["status"]), ("pending", "pending"))
                 self.assertEqual(out["venues"][0]["detail"]["cancel_orders"], detail)
-        # A retry against the real book cancels them and confirms.
+        # A retry against the real book cancels them. No venue is composed, so it is never "confirmed".
         out = self._switch(self.book.halt, []).kill()
-        self.assertEqual((out["status"], out["venues"][0]["cancelled"]), ("confirmed", 2))
+        self.assertEqual((out["status"], out["venues"][0]["status"], out["venues"][0]["cancelled"]),
+                         ("paper_only", "confirmed", 2))
 
     def test_paper_book_is_required(self) -> None:
         with self.assertRaises(TypeError):
@@ -219,7 +220,7 @@ class KillSwitchTests(unittest.TestCase):
         for read, halt in ((False, "not_halted"), (1, "not_halted"), (True, "confirmed")):
             with self.subTest(read=read):
                 out = KillSwitch(lambda: None, [], paper_book=Quiet(read)).kill()
-                status = "confirmed" if halt == "confirmed" else "pending"
+                status = "paper_only" if halt == "confirmed" else "pending"
                 self.assertEqual((out["status"], out["halt"]), (status, halt))
 
         other_dir = tempfile.mkdtemp(prefix="cockpit-kill-other-")
@@ -235,7 +236,7 @@ class KillSwitchTests(unittest.TestCase):
 
         out = KillSwitch(self.book.halt, [], paper_book=self.book).kill()
         self.assertTrue(self.book.halted())
-        self.assertEqual((out["status"], out["halt"]), ("confirmed", "confirmed"))
+        self.assertEqual((out["status"], out["halt"]), ("paper_only", "confirmed"))
 
 
 if __name__ == "__main__":

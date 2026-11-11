@@ -36,7 +36,13 @@ to ``_book`` or ``_GATEWAY_ONLY`` elsewhere in ``engine/``.
 
 ``PaperBook(path)`` refuses a missing path with ``book_missing`` and a file that is not a
 paper book (zero bytes, not SQLite, or without the tables, columns and state rows that
-``create_book`` makes) with ``book_invalid``.
+``create_book`` makes) with ``book_invalid``. After ``PaperBook.close`` every book method,
+and so every gateway call that reaches the book, refuses with ``book_closed``; ``close``
+takes the book's lock, so it never closes the connection under a statement in flight.
+
+An ``Intent`` is paper only when its own instance holds ``venue`` and ``mode`` as the
+exact ``str`` ``"paper"``. The dataclass defaults are not read: an instance with either
+field missing or deleted is refused ``paper_only`` before any side effect.
 
 Paper only. There is no broker, venue transport, credential or network code here, and
 no Kalshi order code at all (not even demo). Risk logic uses no model, I/O beyond the
@@ -174,10 +180,17 @@ class PaperBook:
             raise Refused("book_invalid") from None
         self._db = db
         self._lock = threading.Lock()
+        self._closed = False
+
+    def _open_db(self) -> sqlite3.Connection:
+        """The connection, or ``book_closed``. Call only with ``self._lock`` held."""
+        if self._closed:
+            raise Refused("book_closed")
+        return self._db
 
     def _tx(self, fn):
         with self._lock:
-            self._db.execute("BEGIN IMMEDIATE")
+            self._open_db().execute("BEGIN IMMEDIATE")
             try:
                 out = fn(self._db)
                 self._db.execute("COMMIT")
@@ -204,11 +217,12 @@ class PaperBook:
 
     def halted(self) -> bool:
         with self._lock:
-            return bool(self._db.execute("SELECT v FROM state WHERE k = 'halted'").fetchone()[0])
+            return bool(self._open_db().execute("SELECT v FROM state WHERE k = 'halted'").fetchone()[0])
 
     def _has_intent(self, intent_id: str) -> bool:
         with self._lock:
-            return self._db.execute("SELECT 1 FROM orders WHERE intent_id = ?", (intent_id,)).fetchone() is not None
+            return self._open_db().execute("SELECT 1 FROM orders WHERE intent_id = ?",
+                                           (intent_id,)).fetchone() is not None
 
     def _book(self, intent: Intent, token: object) -> int:
         """Write a working order. Not a public API: ``token`` must be the unused ``_Grant`` that
@@ -249,27 +263,43 @@ class PaperBook:
     def working(self) -> int:
         """How many paper orders are still working."""
         with self._lock:
-            return self._db.execute("SELECT COUNT(*) FROM orders WHERE status = 'working'").fetchone()[0]
+            return self._open_db().execute("SELECT COUNT(*) FROM orders WHERE status = 'working'").fetchone()[0]
 
     def orders(self) -> list[tuple]:
         with self._lock:
-            return self._db.execute("SELECT intent_id, seq, status FROM orders ORDER BY seq").fetchall()
+            return self._open_db().execute("SELECT intent_id, seq, status FROM orders ORDER BY seq").fetchall()
 
     def halt_seq(self) -> int:
         with self._lock:
-            return self._db.execute("SELECT v FROM state WHERE k = 'halt_seq'").fetchone()[0]
+            return self._open_db().execute("SELECT v FROM state WHERE k = 'halt_seq'").fetchone()[0]
 
     def close(self) -> None:
-        self._db.close()
+        """Close the book. Waits for a statement in flight; every later call refuses ``book_closed``."""
+        with self._lock:
+            if not self._closed:
+                self._closed = True
+                self._db.close()
 
 
 def _positive_int(value: object, limit: int) -> bool:
     return type(value) is int and 0 < value <= limit
 
 
+def _own_field(intent: Intent, name: str) -> object:
+    """Read ``venue`` or ``mode`` from the intent's own instance dict, never the dataclass
+    default: an instance without the field has not said paper, so it is refused ``paper_only``."""
+    try:
+        own = object.__getattribute__(intent, "__dict__")
+    except AttributeError:
+        raise Refused("paper_only") from None
+    if type(own) is not dict or name not in own:
+        raise Refused("paper_only")
+    return dict.__getitem__(own, name)
+
+
 def _field(intent: Intent, name: str) -> object:
-    """Read one intent field. An ``Intent`` made without ``__init__``, or with a field deleted,
-    is refused ``intent_invalid``, never an ``AttributeError``."""
+    """Read one intent field other than ``venue`` and ``mode`` (those go through ``_own_field``).
+    An ``Intent`` with the field deleted is refused ``intent_invalid``, never an ``AttributeError``."""
     try:
         return object.__getattribute__(intent, name)
     except AttributeError:
@@ -286,6 +316,9 @@ class OrderGateway:
         self._core = core
         self._caps = caps
         self._currency = currency
+        # The kill switch composed on this gateway's book (``plugin.compose`` sets it), so a
+        # host that holds only the gateway can still kill.
+        self.kill_switch = None
 
     def halt(self) -> int:
         return self._book.halt()
@@ -300,7 +333,7 @@ class OrderGateway:
         if self._book.halted():
             raise Refused("order_halted")
         # Exact ``str`` only: a subclass or an object with rigged ``__eq__``/``__ne__`` is not paper.
-        mode, venue = _field(intent, "mode"), _field(intent, "venue")
+        mode, venue = _own_field(intent, "mode"), _own_field(intent, "venue")
         if type(mode) is not str or mode != "paper" or type(venue) is not str or venue != PAPER_VENUE:
             raise Refused("paper_only")
         intent_id, account = _field(intent, "intent_id"), _field(intent, "account")

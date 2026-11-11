@@ -317,23 +317,26 @@ class CoinbaseKillTests(unittest.TestCase):
                          ("pending", "pending", "confirmed"))
         self.assertEqual(out["detail"], {"cancel_orders": "list_error:TimeoutError", **UNAUTH})
 
-    def test_retry_only_what_is_not_confirmed(self) -> None:
+    def test_retry_cancels_what_is_left_and_revokes_and_probes_again(self) -> None:
         venue = MockCoinbase(orders=["o1", "o2"])
         venue.fail_cancel["o2"] = TimeoutError()
         kill = self._kill(venue)
         self.assertEqual(kill.kill()["status"], "pending")
         del venue.fail_cancel["o2"]
         # The first pass confirmed the revoke, so a retry needs the host to re-authorise
-        # the mock for cleanup (a gap listed in the PR); it must not re-cancel o1 or re-revoke.
+        # the mock for cleanup (a gap listed in the PR); it must not re-cancel o1.
         venue.granted = True
         venue.log.clear()
         out = kill.kill()
         self.assertEqual(out["status"], "confirmed")
-        self.assertEqual(venue.log, ["halt", "list", "cancel:o2", "list"])
+        # The earlier revoke confirm is not kept: this kill revokes and probes for itself.
+        self.assertEqual(venue.log, ["halt", "list", "cancel:o2", "list", "revoke", "probe_api", "probe_refresh"])
         self.assertEqual(out["cancelled"], ["o1", "o2"])
+        self.assertEqual(out["revoke_evidence"], {"http_status": 200, "probe_api": "unauthorized",
+                                                  "probe_refresh": "unauthorized"})
 
     def test_success_reply_but_still_listed_is_retried(self) -> None:
-        """Red-team round 2 finding 2: a venue that still lists the order wins over its reply."""
+        """A venue that still lists the order wins over its reply."""
         venue = MockCoinbase(orders=["o1", "o2"])
         venue.fail_cancel["o2"] = {"order_id": "o2", "success": True}  # says yes, stays open
         kill = self._kill(venue)
@@ -388,7 +391,7 @@ class CoinbaseKillTests(unittest.TestCase):
         venue.granted = True
         venue.log.clear()
         out = kill.kill()
-        self.assertEqual(venue.log, ["halt", "list", "cancel:c-new", "list"])
+        self.assertEqual(venue.log, ["halt", "list", "cancel:c-new", "list", "revoke", "probe_api", "probe_refresh"])
         # The revoke was confirmed before this cancel: still pending, with its own typed reason.
         self.assertEqual((out["status"], out["halt"], out["cancel_orders"]),
                          ("pending", "confirmed", "pending_credential_revoked"))
@@ -413,7 +416,7 @@ class CoinbaseKillTests(unittest.TestCase):
                          ("pending", "pending", "confirmed"))
         self.assertEqual(out["detail"], {"cancel_orders": "remaining:1", **UNAUTH})
 
-    def test_confirmed_cancel_and_revoke_are_not_retried(self) -> None:
+    def test_second_kill_revokes_and_probes_again_and_keeps_the_cancel_only_on_a_dead_grant(self) -> None:
         venue = MockCoinbase(orders=["o1"])
         kill = self._kill(venue)
         self.assertEqual(kill.kill()["status"], "confirmed")
@@ -422,10 +425,70 @@ class CoinbaseKillTests(unittest.TestCase):
             venue.list_open_orders(None)
         venue.log.clear()
         out = kill.kill()
-        self.assertEqual(venue.log, ["halt"])
+        # Every leg is tried again: the halt, the listing, and a fresh revoke with both probes.
+        self.assertEqual(venue.log, ["halt", "list", "revoke", "probe_api", "probe_refresh"])
         self.assertEqual((out["status"], out["cancel_orders"], out["revoke_grant"]),
                          ("confirmed", "confirmed", "confirmed"))
-        self.assertEqual(out["detail"], UNAUTH)
+        self.assertEqual(out["detail"], {"cancel_orders": "kept:list_error:PermissionError", **UNAUTH})
+        self.assertEqual(out["revoke_evidence"], {"http_status": 200, "probe_api": "unauthorized",
+                                                  "probe_refresh": "unauthorized"})
+
+    def test_second_kill_does_not_confirm_on_the_first_kills_probes(self) -> None:
+        """A confirmed kill, then the grant works again: the next kill must see it and say pending."""
+        for attr, key in PROBES[0][:2], PROBES[1][:2]:
+            with self.subTest(probe=key):
+                venue = MockCoinbase(orders=["o1"])
+                kill = self._kill(venue)
+                self.assertEqual(kill.kill()["status"], "confirmed")
+                setattr(venue, attr, "authorized")
+                venue.log.clear()
+                out = kill.kill()
+                self.assertEqual(venue.log[-3:], ["revoke", "probe_api", "probe_refresh"])
+                self.assertEqual((out["status"], out["revoke_grant"], out["detail"][key]),
+                                 ("pending", "pending", "authorized"))
+                # The earlier cancel confirm does not stand on a grant that is not proven dead.
+                self.assertEqual((out["cancel_orders"], out["detail"]["cancel_orders"]),
+                                 ("pending_credential_revoked", "list_error:PermissionError"))
+                self.assertEqual(out["revoke_evidence"][key.replace("revoke_", "")], "authorized")
+        # The grant works again and lists a new order: cancelled in that kill, and not kept after it.
+        venue = MockCoinbase(orders=["o1"])
+        kill = self._kill(venue)
+        self.assertEqual(kill.kill()["status"], "confirmed")
+        venue.granted, venue.revoke_works, venue.open = True, False, ["late-1"]
+        venue.log.clear()
+        out = kill.kill()
+        self.assertEqual(venue.log, ["halt", "list", "cancel:late-1", "list", "revoke", "probe_api", "probe_refresh"])
+        self.assertEqual((out["status"], out["cancel_orders"], out["revoke_grant"]),
+                         ("pending", "confirmed", "pending"))
+        self.assertEqual(out["detail"], AUTH)
+        # A revoke that answers anything but 200 on a later kill is pending too, probes unauthorized or not.
+        venue = MockCoinbase(orders=["o1"])
+        kill = self._kill(venue)
+        self.assertEqual(kill.kill()["status"], "confirmed")
+        venue.revoke_reply = RevokeReply(503)
+        out = kill.kill()
+        self.assertEqual((out["status"], out["revoke_grant"], out["detail"]["revoke_grant"]),
+                         ("pending", "pending", "rejected"))
+        self.assertEqual(out["revoke_evidence"], {"http_status": None, "probe_api": "unauthorized",
+                                                  "probe_refresh": "unauthorized"})
+
+    def test_kill_is_not_confirmed_when_its_latest_halt_read_fails(self) -> None:
+        """The halt leg is read again on every kill; an earlier confirmed read is not kept."""
+        def raising() -> bool:
+            raise OSError("disk")
+        for label, read, detail in (("not_halted", lambda: False, "not_halted"),
+                                    ("read_error", raising, "read_error:OSError")):
+            with self.subTest(read=label):
+                venue = MockCoinbase(orders=["o1"])
+                reads = [lambda: True, read, lambda: True]
+                kill = CoinbaseKill(lambda: None, venue, halted=lambda: reads.pop(0)())
+                self.assertEqual(kill.kill()["status"], "confirmed")
+                out = kill.kill()
+                self.assertEqual((out["status"], out["halt"], out["detail"]["halt"]), ("pending", "pending", detail))
+                self.assertEqual((out["cancel_orders"], out["revoke_grant"]), ("confirmed", "confirmed"))
+                out = kill.kill()
+                self.assertEqual((out["status"], out["halt"]), ("confirmed", "confirmed"))
+                self.assertNotIn("halt", out["detail"])
 
     def test_successful_halt_drops_the_stored_halt_error(self) -> None:
         venue = MockCoinbase()

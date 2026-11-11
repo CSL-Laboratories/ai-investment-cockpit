@@ -321,7 +321,7 @@ class GeminiKillTests(unittest.TestCase):
         venue.granted = True
         venue.log.clear()
         out = kill.kill()
-        self.assertEqual(venue.log, ["halt", "cancel_all", "list"])
+        self.assertEqual(venue.log, ["halt", "cancel_all", "list", "revoke", "probe_api", "probe_refresh"])
         # The revoke was confirmed before this cancel: still pending, with its own typed reason.
         self.assertEqual((out["status"], out["halt"], out["cancel_all"]),
                          ("pending", "confirmed", "pending_credential_revoked"))
@@ -344,7 +344,7 @@ class GeminiKillTests(unittest.TestCase):
         self.assertEqual((out["status"], out["cancel_all"], out["revoke_grant"]), ("pending", "pending", "confirmed"))
         self.assertEqual(out["detail"], {"cancel_all": "remaining:1", **UNAUTH})
 
-    def test_confirmed_cancel_and_revoke_are_not_retried(self) -> None:
+    def test_second_kill_revokes_and_probes_again_and_keeps_the_cancel_only_on_a_dead_grant(self) -> None:
         venue = MockGemini(orders=["g1"])
         kill = self._kill(venue)
         self.assertEqual(kill.kill()["status"], "confirmed")
@@ -353,10 +353,69 @@ class GeminiKillTests(unittest.TestCase):
             venue.list_open_orders()
         venue.log.clear()
         out = kill.kill()
-        self.assertEqual(venue.log, ["halt"])
+        # Every leg is tried again: the halt, the cancel, and a fresh revoke with both probes.
+        self.assertEqual(venue.log, ["halt", "cancel_all", "revoke", "probe_api", "probe_refresh"])
         self.assertEqual((out["status"], out["cancel_all"], out["revoke_grant"]),
                          ("confirmed", "confirmed", "confirmed"))
-        self.assertEqual(out["detail"], UNAUTH)
+        self.assertEqual(out["detail"], {"cancel_all": "kept:error:PermissionError", **UNAUTH})
+        self.assertEqual(out["revoke_evidence"], {"http_status": 200, "probe_api": "unauthorized",
+                                                  "probe_refresh": "unauthorized"})
+
+    def test_second_kill_does_not_confirm_on_the_first_kills_probes(self) -> None:
+        """A confirmed kill, then the grant works again: the next kill must see it and say pending."""
+        for attr, key in (("api_reply", "revoke_probe_api"), ("refresh_reply", "revoke_probe_refresh")):
+            with self.subTest(probe=key):
+                venue = MockGemini(orders=["g1"])
+                kill = self._kill(venue)
+                self.assertEqual(kill.kill()["status"], "confirmed")
+                setattr(venue, attr, "authorized")
+                venue.log.clear()
+                out = kill.kill()
+                self.assertEqual(venue.log[-3:], ["revoke", "probe_api", "probe_refresh"])
+                self.assertEqual((out["status"], out["revoke_grant"], out["detail"][key]),
+                                 ("pending", "pending", "authorized"))
+                # The earlier cancel confirm does not stand on a grant that is not proven dead.
+                self.assertEqual((out["cancel_all"], out["detail"]["cancel_all"]),
+                                 ("pending_credential_revoked", "error:PermissionError"))
+                self.assertEqual(out["revoke_evidence"][key.replace("revoke_", "")], "authorized")
+        # The grant works again and lists a new order: cancelled in that kill, and not kept after it.
+        venue = MockGemini(orders=["g1"])
+        kill = self._kill(venue)
+        self.assertEqual(kill.kill()["status"], "confirmed")
+        venue.granted, venue.revoke_works, venue.open = True, False, ["late-1"]
+        venue.log.clear()
+        out = kill.kill()
+        self.assertEqual(venue.log, ["halt", "cancel_all", "list", "revoke", "probe_api", "probe_refresh"])
+        self.assertEqual((out["status"], out["cancel_all"], out["revoke_grant"]), ("pending", "confirmed", "pending"))
+        self.assertEqual(out["detail"], {"revoke_probe_api": "authorized", "revoke_probe_refresh": "authorized"})
+        # A revoke that answers anything but 200 on a later kill is pending too, probes unauthorized or not.
+        venue = MockGemini(orders=["g1"])
+        kill = self._kill(venue)
+        self.assertEqual(kill.kill()["status"], "confirmed")
+        venue.revoke_reply = RevokeReply(503)
+        out = kill.kill()
+        self.assertEqual((out["status"], out["revoke_grant"], out["detail"]["revoke_grant"]),
+                         ("pending", "pending", "rejected"))
+        self.assertEqual(out["revoke_evidence"], {"http_status": None, "probe_api": "unauthorized",
+                                                  "probe_refresh": "unauthorized"})
+
+    def test_kill_is_not_confirmed_when_its_latest_halt_read_fails(self) -> None:
+        """The halt leg is read again on every kill; an earlier confirmed read is not kept."""
+        def raising() -> bool:
+            raise OSError("disk")
+        for label, read, detail in (("not_halted", lambda: False, "not_halted"),
+                                    ("read_error", raising, "read_error:OSError")):
+            with self.subTest(read=label):
+                venue = MockGemini(orders=["g1"])
+                reads = [lambda: True, read, lambda: True]
+                kill = GeminiKill(lambda: None, venue, halted=lambda: reads.pop(0)())
+                self.assertEqual(kill.kill()["status"], "confirmed")
+                out = kill.kill()
+                self.assertEqual((out["status"], out["halt"], out["detail"]["halt"]), ("pending", "pending", detail))
+                self.assertEqual((out["cancel_all"], out["revoke_grant"]), ("confirmed", "confirmed"))
+                out = kill.kill()
+                self.assertEqual((out["status"], out["halt"]), ("confirmed", "confirmed"))
+                self.assertNotIn("halt", out["detail"])
 
     def test_successful_halt_drops_the_stored_halt_error(self) -> None:
         venue = MockGemini()

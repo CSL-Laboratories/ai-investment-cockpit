@@ -11,6 +11,7 @@ No provider, venue, network, credential or keyring is touched.
 
 from __future__ import annotations
 
+import gc
 import os
 import shutil
 import tempfile
@@ -19,7 +20,9 @@ import unittest
 from dataclasses import asdict, replace
 
 from cockpit.paper import plugin
-from cockpit.paper.gateway import Caps, Intent, PaperBook, Refused, create_book
+from cockpit.paper.core_client import CoreClient
+from cockpit.paper.gateway import Caps, Intent, OrderGateway, PaperBook, Refused, create_book
+from cockpit.paper.killswitch import KillSwitch
 from tests.paper.fakecore import AUTHORITY, FakeCore
 
 FIELDS = dict(intent_id="i-1", account="paper-acct", instrument="AAPL", side="buy", quantity=10,
@@ -165,16 +168,79 @@ class PaperOnlyRefusalTests(unittest.TestCase):
         self._control_still_books()
 
     def test_intent_with_a_missing_field_is_refused_typed_before_the_core(self) -> None:
-        """An ``Intent`` built without ``__init__``, or with a field deleted, is ``intent_invalid``
-        (never an ``AttributeError``) at request and at submit: no core call, nothing booked."""
+        """An ``Intent`` with a field deleted is ``intent_invalid`` (never an ``AttributeError``) at
+        request and at submit: no core call, nothing booked. One built without ``__init__`` holds
+        no venue or mode of its own, so it is ``paper_only``, the earlier check."""
         with self.subTest(order="object.__new__"):
-            self._refused_everywhere("intent_invalid", object.__new__(Intent))
+            self._refused_everywhere("paper_only", object.__new__(Intent))
         for field in FIELDS:
             with self.subTest(deleted=field):
                 intent = Intent(**FIELDS)
                 object.__delattr__(intent, field)
                 self._refused_everywhere("intent_invalid", intent)
         self._control_still_books()
+
+    def test_intent_without_its_own_venue_or_mode_is_refused_paper_only(self) -> None:
+        """The dataclass defaults are not the intent's word: a venue or mode that is deleted, or
+        that only the class default supplies, is ``paper_only`` before any side effect."""
+        self.assertEqual((Intent.venue, Intent.mode), ("paper", "paper"))  # the defaults a lookup would find
+
+        def deleted(field: str, **changes: object) -> Intent:
+            intent = Intent(**dict(FIELDS, **changes))
+            object.__delattr__(intent, field)
+            return intent
+
+        def never_set(field: str) -> Intent:
+            intent = object.__new__(Intent)
+            for name, value in asdict(Intent(**FIELDS)).items():
+                if name != field:
+                    object.__setattr__(intent, name, value)
+            return intent
+
+        for field in ("venue", "mode"):
+            orders = {"deleted": deleted(field), "deleted_after_non_paper": deleted(field, **{field: "kalshi"}),
+                      "never_set": never_set(field),
+                      # Still the first refusal when the rest of the intent is malformed too.
+                      "deleted_and_malformed": deleted(field, intent_id="", side="short", quantity=0)}
+            for name, order in orders.items():
+                with self.subTest(field=field, order=name):
+                    self.assertNotIn(field, vars(order))
+                    self.assertEqual(getattr(order, field), "paper")  # only the class default answers
+                    self._refused_everywhere("paper_only", order)
+        both = deleted("venue")
+        object.__delattr__(both, "mode")
+        with self.subTest(order="neither"):
+            self._refused_everywhere("paper_only", both)
+        self._control_still_books()
+
+    def test_build_keeps_the_composed_kill_switch_reachable(self) -> None:
+        """``plugin.build`` returns only the gateway; the switch composed with it must not be lost."""
+        self.assertIs(type(self.gw.kill_switch), KillSwitch)
+        composed = plugin.compose(self.core, self._second_book_path(), Caps(500_000, 100))
+        self.assertIs(composed.gateway.kill_switch, composed.kill_switch)
+        intent = Intent(**FIELDS)
+        approval = self.gw.request_approval(intent)["approval_id"]
+        self.core.operator_approves(approval)
+        self.gw.submit(intent, approval, AUTHORITY)
+        gc.collect()  # the gateway is the only reference a build() caller holds
+        out = self.gw.kill_switch.kill()
+        self.assertEqual((out["status"], out["halt"]), ("paper_only", "confirmed"))
+        self.assertEqual(out["venues"], [{"venue": "paper", "status": "confirmed", "cancelled": 1, "detail": {}}])
+        self.assertEqual((self.book.halted(), self.book.orders()), (True, [("i-1", 1, "cancelled")]))
+        with self.assertRaises(Refused) as ctx:
+            self.gw.request_approval(Intent(**dict(FIELDS, intent_id="i-2")))
+        self.assertEqual(ctx.exception.code, "order_halted")
+        # A gateway built on its own has no switch, and says so with None rather than a missing name.
+        bare = OrderGateway(plugin_id="csl.cockpit.paper", book=self.book, core=CoreClient(self.core),
+                            caps=Caps(500_000, 100))
+        self.assertIsNone(bare.kill_switch)
+
+    def _second_book_path(self) -> str:
+        d = tempfile.mkdtemp(prefix="cockpit-paper-only-2-")
+        self.addCleanup(shutil.rmtree, d, True)
+        path = os.path.join(d, "book.db")
+        create_book(path)
+        return path
 
     def test_a_missing_field_keeps_the_check_order(self) -> None:
         """Checks before the missing field's own still answer first; the halt outranks them all."""
