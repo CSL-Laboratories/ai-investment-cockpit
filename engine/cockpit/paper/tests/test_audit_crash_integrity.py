@@ -331,6 +331,112 @@ class CrashIntegrityTests(unittest.TestCase):
         self.assertEqual(core.calls, [])
         self.assertEqual(book.available_cash_minor("paper-acct"), _CASH - 200)
 
+    def test_explicit_nonpositive_seq_is_refused(self) -> None:
+        """seq -1 is the unassigned sentinel, so the BEFORE guard must not be the only check."""
+        book, gw = _open(self.path, FakeCore())
+        self.addCleanup(book.close)
+        with self.assertRaises(Refused):
+            gw.request_approval(_intent(side="hold"))
+        self.assertGreaterEqual(book.audit()[0]["seq"], 1)
+        db = sqlite3.connect(self.path)  # recursive_triggers stays off
+        self.addCleanup(db.close)
+        attempts = (
+            "INSERT INTO audit (seq, event, stage, plugin_id, halt_seq) VALUES ({seq}, 'refused', 'risk', 'p', 0)",
+            "INSERT OR REPLACE INTO audit (seq, event, stage, plugin_id, halt_seq)"
+            " VALUES ({seq}, 'refused', 'risk', 'rewritten', 0)",
+            "INSERT INTO fault_seen (seq, kind, subject) VALUES ({seq}, 'run', 'ghost')",
+            "INSERT OR REPLACE INTO fault_seen (seq, kind, subject) VALUES ({seq}, 'run', 'ghost')",
+            "INSERT INTO idempotency_seen (seq, intent_id) VALUES ({seq}, 'ghost-intent')",
+            "INSERT OR REPLACE INTO idempotency_seen (seq, intent_id) VALUES ({seq}, 'ghost-intent')",
+            "INSERT INTO idempotency_key_seen (seq, idempotency_key) VALUES ({seq}, 'ghost-key')",
+            "INSERT OR REPLACE INTO idempotency_key_seen (seq, idempotency_key) VALUES ({seq}, 'ghost-key')",
+        )
+        for seq in (-1, 0):
+            for sql in attempts:
+                with self.assertRaises(sqlite3.DatabaseError):
+                    db.execute(sql.format(seq=seq))
+                db.rollback()
+        fresh = sqlite3.connect(self.path, isolation_level=None)
+        self.addCleanup(fresh.close)
+        for table in ("audit", "fault_seen", "idempotency_seen", "idempotency_key_seen"):
+            self.assertEqual(fresh.execute(f"SELECT COUNT(*) FROM {table} WHERE seq < 1").fetchone()[0], 0)
+        self.assertEqual([row["code"] for row in book.audit()], ["side_invalid"])
+
+    def test_charged_key_replace_or_delete_leaves_the_charge(self) -> None:
+        book = PaperBook(self.path)
+        self.addCleanup(book.close)
+        book._arm_charge("intent-1", "key-123", "apr-1")
+        book._mark_charged("key-123", "apr-1", "core-digest-1", 1000)
+        db = sqlite3.connect(self.path)  # recursive_triggers stays off, as a default connection
+        self.addCleanup(db.close)
+        with self.assertRaises(sqlite3.DatabaseError):
+            db.execute("INSERT OR REPLACE INTO idempotency (idempotency_key, intent_id, effect_sha256, status)"
+                       " VALUES ('key-123', 'intent-2', 'key-123', 'void')")
+        db.rollback()
+        with self.assertRaises(sqlite3.DatabaseError):
+            db.execute("DELETE FROM idempotency")
+        db.rollback()
+        self.assertEqual(book._charge_state("intent-1", "key-123"), "resume")
+        row = book._db.execute("SELECT intent_id, status FROM idempotency WHERE idempotency_key = 'key-123'").fetchone()
+        self.assertEqual(row, ("intent-1", "charged"))
+
+    def test_retargeted_charge_key_cannot_be_replaced(self) -> None:
+        book = PaperBook(self.path)
+        self.addCleanup(book.close)
+        self.assertEqual(book._arm_charge("intent-1", "key-old", "apr-1"), "go")
+        book._void_charge("key-old")
+        self.assertEqual(book._arm_charge("intent-1", "key-new", "apr-2"), "go")
+        db = sqlite3.connect(self.path)
+        self.addCleanup(db.close)
+        with self.assertRaises(sqlite3.DatabaseError):
+            db.execute("INSERT OR REPLACE INTO idempotency (idempotency_key, intent_id, effect_sha256, status)"
+                       " VALUES ('key-new', 'intent-2', 'key-new', 'void')")
+        db.rollback()
+        with self.assertRaises(sqlite3.DatabaseError):
+            db.execute("INSERT OR REPLACE INTO idempotency (idempotency_key, intent_id, effect_sha256, status)"
+                       " VALUES ('key-old', 'intent-2', 'key-old', 'void')")
+        db.rollback()
+        row = book._db.execute("SELECT intent_id, idempotency_key, status FROM idempotency"
+                               " WHERE intent_id = 'intent-1'").fetchone()
+        self.assertEqual(row, ("intent-1", "key-new", "armed"))
+
+    def test_reopen_installs_seq_and_key_guards_on_an_older_book(self) -> None:
+        book = PaperBook(self.path)
+        book._arm_charge("intent-1", "key-123", "apr-1")
+        book._mark_charged("key-123", "apr-1", "core-digest-1", 1000)
+        book.close()
+        db = sqlite3.connect(self.path, isolation_level=None)
+        db.execute("DROP TRIGGER IF EXISTS idempotency_no_replace")
+        db.execute("CREATE TRIGGER idempotency_no_replace BEFORE INSERT ON idempotency"
+                   " WHEN EXISTS (SELECT 1 FROM idempotency_seen WHERE intent_id = NEW.intent_id)"
+                   " BEGIN SELECT RAISE(ABORT, 'idempotency key is already recorded'); END")
+        for name in ("audit_no_nonpositive_seq", "fault_seen_no_nonpositive_seq",
+                     "idempotency_seen_no_nonpositive_seq", "idempotency_key_seen_no_explicit_seq",
+                     "idempotency_key_seen_no_nonpositive_seq", "idempotency_key_seen_no_update",
+                     "idempotency_key_seen_no_delete", "idempotency_no_replace_key",
+                     "idempotency_remember_key", "idempotency_remember_key_update", "idempotency_no_delete"):
+            db.execute(f"DROP TRIGGER IF EXISTS {name}")
+        db.execute("DROP TABLE IF EXISTS idempotency_key_seen")
+        db.close()
+        book = PaperBook(self.path)
+        self.addCleanup(book.close)
+        db = sqlite3.connect(self.path)
+        self.addCleanup(db.close)
+        with self.assertRaises(sqlite3.DatabaseError):
+            db.execute("INSERT INTO audit (seq, event, stage, plugin_id, halt_seq)"
+                       " VALUES (-1, 'refused', 'risk', 'p', 0)")
+        db.rollback()
+        with self.assertRaises(sqlite3.DatabaseError):
+            db.execute("INSERT OR REPLACE INTO idempotency (idempotency_key, intent_id, effect_sha256, status)"
+                       " VALUES ('key-123', 'intent-2', 'key-123', 'void')")
+        db.rollback()
+        with self.assertRaises(sqlite3.DatabaseError):
+            db.execute("DELETE FROM idempotency")
+        db.rollback()
+        self.assertEqual(book._charge_state("intent-1", "key-123"), "resume")
+        guard = db.execute("SELECT sql FROM sqlite_master WHERE name = 'idempotency_no_replace'").fetchone()[0]
+        self.assertIn("idempotency_key_seen", guard)
+
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1].startswith("crash-"):

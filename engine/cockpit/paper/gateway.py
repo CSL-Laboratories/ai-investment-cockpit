@@ -45,7 +45,10 @@ inside an explicit ``BEGIN IMMEDIATE`` (never ``REPLACE``, and not on sqlite3's 
 connection, whose implicit transaction rolls back if the process is killed). A retry of
 that effect does not call the core again. If the charge row committed and the booking did
 not, the retry finishes the booking. If the process died during the core call, the row
-stays ``armed`` and the retry is ``charge_uncertain``. A run fault the core has already
+stays ``armed`` and the retry is ``charge_uncertain``. A charge row cannot be deleted, and
+a replace that reuses its key or its intent is refused. An explicit seq of -1 is the same
+sentinel an omitted integer key shows, so each append-only table also refuses a seq below
+1 after the insert. A run fault the core has already
 refused is stored in ``fault_state`` in the same transaction as its audit row, so a
 restarted core does not forget it. The audit stage ``book`` alone does not say whether
 the core charged; a ``leftover_charge`` code, or a committed idempotency row, does.
@@ -120,11 +123,15 @@ AUDIT_SCHEMA = ("CREATE TABLE audit (seq INTEGER PRIMARY KEY, event TEXT NOT NUL
                 " run_id TEXT, connection TEXT, effect_sha256 TEXT, halt_seq INTEGER NOT NULL)")
 AUDIT_COLUMNS = ("seq", "event", "stage", "code", "plugin_id", "intent_id", "run_id", "connection",
                  "effect_sha256", "halt_seq")
-# SQLite shows an unassigned INTEGER PRIMARY KEY as -1 inside BEFORE INSERT. An explicit seq
-# (what INSERT OR REPLACE uses to overwrite a row) is any other value. recursive_triggers
-# defaults off, so a BEFORE DELETE trigger does not fire for that REPLACE.
+# SQLite shows an unassigned INTEGER PRIMARY KEY as -1 inside BEFORE INSERT, so an explicit
+# -1 takes the same path as an omitted seq. Do not write the guard as `IS NOT NULL`: NEW.seq
+# is -1, not NULL, and that would refuse every ordinary insert. The AFTER INSERT backstop
+# rejects any assigned seq below 1. recursive_triggers defaults off, so a BEFORE DELETE
+# trigger does not fire for that REPLACE.
 AUDIT_NO_EXPLICIT = ("CREATE TRIGGER audit_no_explicit_seq BEFORE INSERT ON audit"
                      " WHEN NEW.seq != -1 BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END")
+AUDIT_NO_NONPOSITIVE = ("CREATE TRIGGER audit_no_nonpositive_seq AFTER INSERT ON audit"
+                        " WHEN NEW.seq < 1 BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END")
 FAULT_SCHEMA = ("CREATE TABLE fault_state (kind TEXT NOT NULL CHECK (kind = 'run'),"
                 " subject TEXT NOT NULL, code TEXT NOT NULL, PRIMARY KEY (kind, subject))")
 FAULT_SEEN_SCHEMA = ("CREATE TABLE fault_seen (seq INTEGER PRIMARY KEY, kind TEXT NOT NULL,"
@@ -145,28 +152,62 @@ FAULT_SEEN_NO_UPDATE = ("CREATE TRIGGER fault_seen_no_update BEFORE UPDATE ON fa
                         " BEGIN SELECT RAISE(ABORT, 'fault state is append-only'); END")
 FAULT_SEEN_NO_DELETE = ("CREATE TRIGGER fault_seen_no_delete BEFORE DELETE ON fault_seen"
                         " BEGIN SELECT RAISE(ABORT, 'fault state is append-only'); END")
+FAULT_SEEN_NO_NONPOSITIVE = ("CREATE TRIGGER fault_seen_no_nonpositive_seq AFTER INSERT ON fault_seen"
+                             " WHEN NEW.seq < 1"
+                             " BEGIN SELECT RAISE(ABORT, 'fault state is append-only'); END")
 IDEMPOTENCY_SCHEMA = ("CREATE TABLE idempotency (idempotency_key TEXT PRIMARY KEY,"
                       " intent_id TEXT NOT NULL UNIQUE, effect_sha256 TEXT NOT NULL, approval_id TEXT,"
                       " status TEXT NOT NULL CHECK (status IN ('armed', 'charged', 'booked', 'void')),"
                       " order_seq INTEGER, notional_minor INTEGER, digest TEXT)")
 IDEMPOTENCY_SEEN_SCHEMA = ("CREATE TABLE idempotency_seen (seq INTEGER PRIMARY KEY,"
                            " intent_id TEXT NOT NULL)")
+IDEMPOTENCY_KEY_SEEN_SCHEMA = ("CREATE TABLE idempotency_key_seen (seq INTEGER PRIMARY KEY,"
+                               " idempotency_key TEXT NOT NULL)")
 IDEMPOTENCY_NO_REPLACE = ("CREATE TRIGGER idempotency_no_replace BEFORE INSERT ON idempotency"
                           " WHEN EXISTS (SELECT 1 FROM idempotency_seen WHERE intent_id = NEW.intent_id)"
+                          " OR EXISTS (SELECT 1 FROM idempotency_key_seen"
+                          " WHERE idempotency_key = NEW.idempotency_key)"
                           " BEGIN SELECT RAISE(ABORT, 'idempotency key is already recorded'); END")
 IDEMPOTENCY_REMEMBER = ("CREATE TRIGGER idempotency_remember AFTER INSERT ON idempotency"
                         " BEGIN INSERT INTO idempotency_seen (intent_id) VALUES (NEW.intent_id); END")
+IDEMPOTENCY_REMEMBER_KEY = ("CREATE TRIGGER idempotency_remember_key AFTER INSERT ON idempotency"
+                            " BEGIN INSERT INTO idempotency_key_seen (idempotency_key)"
+                            " VALUES (NEW.idempotency_key); END")
+IDEMPOTENCY_REMEMBER_KEY_UPDATE = (
+    "CREATE TRIGGER idempotency_remember_key_update AFTER UPDATE OF idempotency_key ON idempotency"
+    " WHEN NOT EXISTS (SELECT 1 FROM idempotency_key_seen WHERE idempotency_key = NEW.idempotency_key)"
+    " BEGIN INSERT INTO idempotency_key_seen (idempotency_key) VALUES (NEW.idempotency_key); END")
+IDEMPOTENCY_NO_DELETE = ("CREATE TRIGGER idempotency_no_delete BEFORE DELETE ON idempotency"
+                         " BEGIN SELECT RAISE(ABORT, 'idempotency key is already recorded'); END")
 IDEMPOTENCY_SEEN_NO_EXPLICIT = ("CREATE TRIGGER idempotency_seen_no_explicit_seq BEFORE INSERT ON idempotency_seen"
                                 " WHEN NEW.seq != -1"
                                 " BEGIN SELECT RAISE(ABORT, 'idempotency key is already recorded'); END")
+IDEMPOTENCY_SEEN_NO_NONPOSITIVE = (
+    "CREATE TRIGGER idempotency_seen_no_nonpositive_seq AFTER INSERT ON idempotency_seen"
+    " WHEN NEW.seq < 1 BEGIN SELECT RAISE(ABORT, 'idempotency key is already recorded'); END")
 IDEMPOTENCY_SEEN_NO_UPDATE = ("CREATE TRIGGER idempotency_seen_no_update BEFORE UPDATE ON idempotency_seen"
                               " BEGIN SELECT RAISE(ABORT, 'idempotency key is already recorded'); END")
 IDEMPOTENCY_SEEN_NO_DELETE = ("CREATE TRIGGER idempotency_seen_no_delete BEFORE DELETE ON idempotency_seen"
                               " BEGIN SELECT RAISE(ABORT, 'idempotency key is already recorded'); END")
-_CRASH_TRIGGERS = (AUDIT_NO_EXPLICIT, FAULT_NO_UPDATE, FAULT_NO_DELETE, FAULT_NO_REPLACE, FAULT_REMEMBER,
-                   FAULT_SEEN_NO_EXPLICIT, FAULT_SEEN_NO_UPDATE, FAULT_SEEN_NO_DELETE,
-                   IDEMPOTENCY_NO_REPLACE, IDEMPOTENCY_REMEMBER, IDEMPOTENCY_SEEN_NO_EXPLICIT,
-                   IDEMPOTENCY_SEEN_NO_UPDATE, IDEMPOTENCY_SEEN_NO_DELETE)
+IDEMPOTENCY_KEY_SEEN_NO_EXPLICIT = (
+    "CREATE TRIGGER idempotency_key_seen_no_explicit_seq BEFORE INSERT ON idempotency_key_seen"
+    " WHEN NEW.seq != -1 BEGIN SELECT RAISE(ABORT, 'idempotency key is already recorded'); END")
+IDEMPOTENCY_KEY_SEEN_NO_NONPOSITIVE = (
+    "CREATE TRIGGER idempotency_key_seen_no_nonpositive_seq AFTER INSERT ON idempotency_key_seen"
+    " WHEN NEW.seq < 1 BEGIN SELECT RAISE(ABORT, 'idempotency key is already recorded'); END")
+IDEMPOTENCY_KEY_SEEN_NO_UPDATE = (
+    "CREATE TRIGGER idempotency_key_seen_no_update BEFORE UPDATE ON idempotency_key_seen"
+    " BEGIN SELECT RAISE(ABORT, 'idempotency key is already recorded'); END")
+IDEMPOTENCY_KEY_SEEN_NO_DELETE = (
+    "CREATE TRIGGER idempotency_key_seen_no_delete BEFORE DELETE ON idempotency_key_seen"
+    " BEGIN SELECT RAISE(ABORT, 'idempotency key is already recorded'); END")
+_CRASH_TRIGGERS = (AUDIT_NO_EXPLICIT, AUDIT_NO_NONPOSITIVE, FAULT_NO_UPDATE, FAULT_NO_DELETE, FAULT_NO_REPLACE,
+                   FAULT_REMEMBER, FAULT_SEEN_NO_EXPLICIT, FAULT_SEEN_NO_NONPOSITIVE, FAULT_SEEN_NO_UPDATE,
+                   FAULT_SEEN_NO_DELETE, IDEMPOTENCY_NO_REPLACE, IDEMPOTENCY_NO_DELETE, IDEMPOTENCY_REMEMBER,
+                   IDEMPOTENCY_REMEMBER_KEY, IDEMPOTENCY_REMEMBER_KEY_UPDATE, IDEMPOTENCY_SEEN_NO_EXPLICIT,
+                   IDEMPOTENCY_SEEN_NO_NONPOSITIVE, IDEMPOTENCY_SEEN_NO_UPDATE, IDEMPOTENCY_SEEN_NO_DELETE,
+                   IDEMPOTENCY_KEY_SEEN_NO_EXPLICIT, IDEMPOTENCY_KEY_SEEN_NO_NONPOSITIVE,
+                   IDEMPOTENCY_KEY_SEEN_NO_UPDATE, IDEMPOTENCY_KEY_SEEN_NO_DELETE)
 
 
 def create_book(path: str, *, cash_minor: dict, holdings: dict | None = None) -> None:
@@ -210,6 +251,7 @@ def create_book(path: str, *, cash_minor: dict, holdings: dict | None = None) ->
         db.execute(FAULT_SEEN_SCHEMA)
         db.execute(IDEMPOTENCY_SCHEMA)
         db.execute(IDEMPOTENCY_SEEN_SCHEMA)
+        db.execute(IDEMPOTENCY_KEY_SEEN_SCHEMA)
         for statement in _CRASH_TRIGGERS:
             if statement != AUDIT_NO_EXPLICIT:
                 db.execute(statement)
@@ -261,10 +303,9 @@ class PaperBook:
                 raise
 
     def _ensure_crash_tables(self) -> None:
-        """Add the fault and idempotency tables to a book created before they existed."""
+        """Add the fault and idempotency guards to a book created before they existed."""
         def run(db):
             have = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-            triggers = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'")}
             if "fault_state" not in have:
                 db.execute(FAULT_SCHEMA)
             if "fault_seen" not in have:
@@ -273,10 +314,23 @@ class PaperBook:
                 db.execute(IDEMPOTENCY_SCHEMA)
             if "idempotency_seen" not in have:
                 db.execute(IDEMPOTENCY_SEEN_SCHEMA)
+            if "idempotency_key_seen" not in have:
+                db.execute(IDEMPOTENCY_KEY_SEEN_SCHEMA)
+            # A book from the previous schema remembers intents only. Replace that guard so a
+            # reuse of the charged key is refused too; the name stays, the body gains the key.
+            stale = db.execute("SELECT sql FROM sqlite_master WHERE type = 'trigger'"
+                               " AND name = 'idempotency_no_replace'").fetchone()
+            if stale is not None and "idempotency_key_seen" not in stale[0]:
+                db.execute("DROP TRIGGER idempotency_no_replace")
+            triggers = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'")}
             for statement in _CRASH_TRIGGERS:
                 name = statement.split("CREATE TRIGGER ", 1)[1].split(" ", 1)[0]
                 if name not in triggers:
                     db.execute(statement)
+            db.execute("INSERT INTO idempotency_key_seen (idempotency_key) "
+                       "SELECT idempotency_key FROM idempotency WHERE NOT EXISTS ("
+                       "SELECT 1 FROM idempotency_key_seen"
+                       " WHERE idempotency_key = idempotency.idempotency_key)")
         self._tx(run)
 
     @staticmethod
