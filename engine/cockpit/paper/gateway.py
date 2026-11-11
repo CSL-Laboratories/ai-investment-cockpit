@@ -34,8 +34,10 @@ more at booking, with the run and connection of the approved effect and its own 
    (that submit just does not book while it hangs);
 2. a re-verify inside the booking transaction, next to the halt re-read, waited on for at
    most ``RUN_RECHECK_TIMEOUT_S`` (the check runs on a worker thread of a shared pool; at
-   most ``_RUN_CHECK_WORKERS_MAX`` run at once per gateway, and when all of a gateway's are
-   still hung its ``submit`` is refused ``run_check_busy`` before the charge). The frozen
+   most ``_RUN_CHECK_WORKERS_MAX`` run at once per gateway and ``_RUN_CHECK_THREADS_MAX`` in
+   the process; when either is used up by hung checks, ``submit`` is refused
+   ``run_check_busy`` before the charge, and a cap reached between that test and the
+   booking is ``leftover_charge`` with that cause, never a booking). The frozen
    breaker API offers only ``check()``, so the re-verify is that same call, bounded by the wait rather than by what it reads. It
    must answer exactly what step 1 answered: a fault, a trip or a different binding
    committed in between is refused with the core's code (``core:run_faulted``, say) or
@@ -339,6 +341,9 @@ class _Slots:
             self.used -= 1
 
 
+_SLOTS, _SLOT, _TAKEN, _JOBS, _ALIVE, _GIVEN = range(6)  # a call's ticket, see ``_BoundedCaller.call``
+
+
 class _BoundedCaller:
     """Runs a host callable on a worker thread and waits at most a given time for it.
 
@@ -376,42 +381,53 @@ class _BoundedCaller:
             if jobs is not None:
                 jobs.put(None)
 
+    def full(self) -> bool:
+        with self._lock:
+            return not self._idle and self._running >= _RUN_CHECK_THREADS_MAX
+
+    def _give_back(self, ticket: list) -> None:
+        """Return what one call took (its gateway slot, its worker), exactly once: the caller
+        (when interrupted) and the worker (when done) may both get here."""
+        with self._lock:
+            if ticket[_GIVEN]:
+                return
+            ticket[_GIVEN] = True
+            if ticket[_TAKEN]:
+                self._running -= 1
+            if ticket[_ALIVE]:
+                self._idle.append(ticket[_JOBS])
+        if ticket[_SLOT]:
+            ticket[_SLOTS].give()
+
     def call(self, fn, args: tuple, timeout_s: float, slots: _Slots):
-        # ``slot``, ``taken``, ``alive`` and ``handed`` say what an interrupt (a signal raising
-        # in this thread) found done, so the hand-back below returns exactly that and no more.
-        jobs, slot, taken, alive, handed = None, False, False, False, False
+        # What this call has taken so far, so that whoever gives it back (an interrupt here, or
+        # the worker) returns exactly that, once.
+        ticket = [slots, False, False, None, False, False]  # slots, slot, taken, jobs, alive, given
         done, box = threading.Lock(), []
         try:
             with slots.lock:
                 if slots.used >= _RUN_CHECK_WORKERS_MAX:
                     raise Refused("run_check_busy")
                 slots.used += 1
-                slot = True
+                ticket[_SLOT] = True
             with self._lock:
                 if self._idle:
-                    jobs = self._idle.pop()
-                    alive = True
+                    ticket[_JOBS] = self._idle.pop()
+                    ticket[_ALIVE] = True
                 elif self._running >= _RUN_CHECK_THREADS_MAX:
                     raise Refused("run_check_busy")
                 self._running += 1
-                taken = True
+                ticket[_TAKEN] = True
+            jobs = ticket[_JOBS]
             if jobs is None:
-                jobs = queue.SimpleQueue()
+                jobs = ticket[_JOBS] = queue.SimpleQueue()
                 threading.Thread(target=self._work, args=(jobs,), daemon=True, name="cockpit-run-check").start()
-                alive = True
+                ticket[_ALIVE] = True
             done.acquire()  # released by the worker once ``box`` holds the outcome
             start = time.monotonic()
-            jobs.put((fn, args, done, box, slots))
-            handed = True  # from here the worker gives the slot and the worker back
+            jobs.put((fn, args, done, box, ticket))
         except BaseException as exc:
-            if not handed:  # nothing was handed over: give back what was taken
-                if slot:
-                    slots.give()
-                with self._lock:
-                    if taken:
-                        self._running -= 1
-                    if alive:
-                        self._idle.append(jobs)
+            self._give_back(ticket)  # a no-op if the worker already gave it back
             if isinstance(exc, Refused) or not isinstance(exc, Exception):
                 raise
             raise Refused("run_check_error") from None
@@ -438,19 +454,16 @@ class _BoundedCaller:
                 while jobs.empty() and time.monotonic() < spin_until:
                     pass
                 continue
-            fn, args, done, box, slots = job
+            fn, args, done, box, ticket = job
             try:
                 outcome = (True, fn(*args))
             except BaseException as exc:  # noqa: BLE001 - handed back to the waiting caller, if any
                 outcome = (False, exc)
             # Back in the pool before the caller wakes, so its next call finds this worker idle.
-            slots.give()
-            with self._lock:
-                self._running -= 1
-                self._idle.append(jobs)
+            self._give_back(ticket)
             box.append(outcome)
             done.release()
-            del job, fn, args, done, box, slots, outcome
+            del job, fn, args, done, box, ticket, outcome
 
 
 _FORK_RESET: "weakref.WeakSet" = weakref.WeakSet()
@@ -1230,7 +1243,7 @@ class OrderGateway:
             self._book.check_funds(order)  # early read; the booking re-checks in its own transaction
             stage = "book"
             self._book._probe_writable()  # a write-locked book is refused before the core charges
-            if self._run_check_slots.full():
+            if self._run_check_slots.full() or _RUN_CHECKS.full():
                 raise Refused("run_check_busy")  # re-verify workers all hung: refused before the charge
             stage = "authorize"
             _RUN_CHECKS.warm()  # latency only: the booking's re-verify then finds its worker awake
