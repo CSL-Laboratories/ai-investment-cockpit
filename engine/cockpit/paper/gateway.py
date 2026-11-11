@@ -358,17 +358,19 @@ class _BoundedCaller:
                 jobs.put(None)
 
     def call(self, fn, args: tuple, timeout_s: float):
-        with self._lock:
-            if self._idle:
-                jobs = self._idle.pop()
-            elif self._running >= _RUN_CHECK_WORKERS_MAX:
-                raise Refused("run_check_busy")
-            else:
-                jobs = None
-            self._running += 1
+        # ``slot``, ``alive`` and ``handed`` say what an interrupt (a signal raising in this
+        # thread) found done, so the hand-back below returns exactly that and no more.
+        jobs, slot, alive, handed = None, False, False, False
         done, box = threading.Lock(), []
-        alive = jobs is not None  # an idle worker was taken; a new one is alive once started
         try:
+            with self._lock:
+                if self._idle:
+                    jobs = self._idle.pop()
+                    alive = True
+                elif self._running >= _RUN_CHECK_WORKERS_MAX:
+                    raise Refused("run_check_busy")
+                self._running += 1
+                slot = True
             if jobs is None:
                 jobs = queue.SimpleQueue()
                 threading.Thread(target=self._work, args=(jobs,), daemon=True, name="cockpit-run-check").start()
@@ -376,14 +378,17 @@ class _BoundedCaller:
             done.acquire()  # released by the worker once ``box`` holds the outcome
             start = time.monotonic()
             jobs.put((fn, args, done, box))
-        except BaseException as exc:  # nothing was handed over: give the slot (and the worker) back
-            with self._lock:
-                self._running -= 1
-                if alive:
-                    self._idle.append(jobs)
-            if isinstance(exc, Exception):
-                raise Refused("run_check_error") from None
-            raise
+            handed = True  # from here the worker gives the slot back
+        except BaseException as exc:
+            if not handed:  # nothing was handed over: give back the slot and the worker taken
+                with self._lock:
+                    if slot:
+                        self._running -= 1
+                    if alive:
+                        self._idle.append(jobs)
+            if isinstance(exc, Refused) or not isinstance(exc, Exception):
+                raise
+            raise Refused("run_check_error") from None
         if self._SPIN_S:
             spin_until = start + min(self._SPIN_S, timeout_s)
             while not box and time.monotonic() < spin_until:
