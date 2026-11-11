@@ -512,6 +512,54 @@ class CrashIntegrityTests(unittest.TestCase):
                                " WHERE intent_id = 'intent-1'").fetchone()
         self.assertEqual(row, ("booked", seq, "d1", 200))
 
+    def test_void_rearm_cannot_replace_another_intents_charge(self) -> None:
+        """UPDATE OR REPLACE through void->armed must not delete a charged key."""
+        book = PaperBook(self.path)
+        book._arm_charge("intent-1", "key-123", "apr-1")
+        book._mark_charged("key-123", "apr-1", "d1", 1000)
+        book._arm_charge("intent-v", "key-v", "apr-v")
+        book._void_charge("key-v")
+        book.close()
+        steal = ("UPDATE OR REPLACE idempotency SET status = 'armed', idempotency_key = 'key-123',"
+                 " effect_sha256 = 'key-123' WHERE intent_id = 'intent-v'")
+        db = sqlite3.connect(self.path)
+        self.addCleanup(db.close)
+        with self.assertRaises(sqlite3.DatabaseError):
+            db.execute(steal)
+        db.rollback()
+        rows = db.execute("SELECT intent_id, idempotency_key, status FROM idempotency"
+                          " ORDER BY intent_id").fetchall()
+        self.assertEqual(rows, [("intent-1", "key-123", "charged"), ("intent-v", "key-v", "void")])
+        book = PaperBook(self.path)
+        self.addCleanup(book.close)
+        self.assertEqual(book._charge_state("intent-1", "key-123"), "resume")
+        # A book that still has the previous trigger body (no other-intent check) is rebuilt on open.
+        book.close()
+        db.execute("DROP TRIGGER idempotency_transitions")
+        db.execute("CREATE TRIGGER idempotency_transitions BEFORE UPDATE ON idempotency"
+                   " WHEN NOT ("
+                   " (OLD.status = 'armed' AND NEW.status IN ('charged', 'void')"
+                   " AND NEW.idempotency_key = OLD.idempotency_key"
+                   " AND NEW.intent_id = OLD.intent_id AND NEW.effect_sha256 = OLD.effect_sha256)"
+                   " OR (OLD.status = 'void' AND NEW.status = 'armed' AND NEW.intent_id = OLD.intent_id)"
+                   " OR (OLD.status = 'charged' AND NEW.status = 'booked'"
+                   " AND NEW.idempotency_key = OLD.idempotency_key"
+                   " AND NEW.intent_id = OLD.intent_id AND NEW.effect_sha256 = OLD.effect_sha256"
+                   " AND NEW.digest IS OLD.digest AND NEW.notional_minor IS OLD.notional_minor))"
+                   " BEGIN SELECT RAISE(ABORT, 'idempotency key is already recorded'); END")
+        db.commit()
+        book = PaperBook(self.path)
+        self.addCleanup(book.close)
+        with self.assertRaises(sqlite3.DatabaseError):
+            db.execute(steal)
+        db.rollback()
+        rows = db.execute("SELECT intent_id, idempotency_key, status FROM idempotency"
+                          " ORDER BY intent_id").fetchall()
+        self.assertEqual(rows, [("intent-1", "key-123", "charged"), ("intent-v", "key-v", "void")])
+        self.assertEqual(book._charge_state("intent-1", "key-123"), "resume")
+        stored = db.execute("SELECT sql FROM sqlite_master WHERE name = 'idempotency_transitions'").fetchone()[0]
+        self.assertIn("other.intent_id", stored)
+
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1].startswith("crash-"):

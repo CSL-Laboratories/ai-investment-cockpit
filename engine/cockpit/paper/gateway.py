@@ -47,7 +47,8 @@ that effect does not call the core again. If the charge row committed and the bo
 not, the retry finishes the booking. If the process died during the core call, the row
 stays ``armed`` and the retry is ``charge_uncertain``. A charge row cannot be deleted, and
 a replace that reuses its key or its intent is refused. Its status may move only from
-armed to charged, armed to void, void to armed, or charged to booked. An explicit seq of -1 is the same
+armed to charged, armed to void, void to armed, or charged to booked. A void row cannot
+be armed onto a key another intent already holds. An explicit seq of -1 is the same
 sentinel an omitted integer key shows, so each append-only table also refuses a seq below
 1 after the insert. A run fault the core has already
 refused is stored in ``fault_state`` in the same transaction as its audit row, so a
@@ -188,7 +189,9 @@ IDEMPOTENCY_TRANSITIONS = (
     " (OLD.status = 'armed' AND NEW.status IN ('charged', 'void')"
     " AND NEW.idempotency_key = OLD.idempotency_key"
     " AND NEW.intent_id = OLD.intent_id AND NEW.effect_sha256 = OLD.effect_sha256)"
-    " OR (OLD.status = 'void' AND NEW.status = 'armed' AND NEW.intent_id = OLD.intent_id)"
+    " OR (OLD.status = 'void' AND NEW.status = 'armed' AND NEW.intent_id = OLD.intent_id"
+    " AND NOT EXISTS (SELECT 1 FROM idempotency AS other WHERE other.idempotency_key = NEW.idempotency_key"
+    " AND other.intent_id != OLD.intent_id))"
     " OR (OLD.status = 'charged' AND NEW.status = 'booked'"
     " AND NEW.idempotency_key = OLD.idempotency_key"
     " AND NEW.intent_id = OLD.intent_id AND NEW.effect_sha256 = OLD.effect_sha256"
@@ -338,6 +341,12 @@ class PaperBook:
                                " AND name = 'idempotency_no_replace'").fetchone()
             if stale is not None and "idempotency_key_seen" not in stale[0]:
                 db.execute("DROP TRIGGER idempotency_no_replace")
+            # The first transitions body let void -> armed adopt any key. UPDATE OR REPLACE
+            # then deleted the other intent's charge, because recursive_triggers is off.
+            stale = db.execute("SELECT sql FROM sqlite_master WHERE type = 'trigger'"
+                               " AND name = 'idempotency_transitions'").fetchone()
+            if stale is not None and "other.intent_id" not in stale[0]:
+                db.execute("DROP TRIGGER idempotency_transitions")
             triggers = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'")}
             for statement in _CRASH_TRIGGERS:
                 name = statement.split("CREATE TRIGGER ", 1)[1].split(" ", 1)[0]
