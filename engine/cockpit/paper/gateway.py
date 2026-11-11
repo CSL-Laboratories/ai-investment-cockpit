@@ -46,7 +46,8 @@ connection, whose implicit transaction rolls back if the process is killed). A r
 that effect does not call the core again. If the charge row committed and the booking did
 not, the retry finishes the booking. If the process died during the core call, the row
 stays ``armed`` and the retry is ``charge_uncertain``. A charge row cannot be deleted, and
-a replace that reuses its key or its intent is refused. An explicit seq of -1 is the same
+a replace that reuses its key or its intent is refused. Its status may move only from
+armed to charged, armed to void, void to armed, or charged to booked. An explicit seq of -1 is the same
 sentinel an omitted integer key shows, so each append-only table also refuses a seq below
 1 after the insert. A run fault the core has already
 refused is stored in ``fault_state`` in the same transaction as its audit row, so a
@@ -179,6 +180,20 @@ IDEMPOTENCY_REMEMBER_KEY_UPDATE = (
     " BEGIN INSERT INTO idempotency_key_seen (idempotency_key) VALUES (NEW.idempotency_key); END")
 IDEMPOTENCY_NO_DELETE = ("CREATE TRIGGER idempotency_no_delete BEFORE DELETE ON idempotency"
                          " BEGIN SELECT RAISE(ABORT, 'idempotency key is already recorded'); END")
+# The only UPDATEs in this module. Anything else, including charged -> void, would let a
+# retry arm the same effect and call the core again.
+IDEMPOTENCY_TRANSITIONS = (
+    "CREATE TRIGGER idempotency_transitions BEFORE UPDATE ON idempotency"
+    " WHEN NOT ("
+    " (OLD.status = 'armed' AND NEW.status IN ('charged', 'void')"
+    " AND NEW.idempotency_key = OLD.idempotency_key"
+    " AND NEW.intent_id = OLD.intent_id AND NEW.effect_sha256 = OLD.effect_sha256)"
+    " OR (OLD.status = 'void' AND NEW.status = 'armed' AND NEW.intent_id = OLD.intent_id)"
+    " OR (OLD.status = 'charged' AND NEW.status = 'booked'"
+    " AND NEW.idempotency_key = OLD.idempotency_key"
+    " AND NEW.intent_id = OLD.intent_id AND NEW.effect_sha256 = OLD.effect_sha256"
+    " AND NEW.digest IS OLD.digest AND NEW.notional_minor IS OLD.notional_minor))"
+    " BEGIN SELECT RAISE(ABORT, 'idempotency key is already recorded'); END")
 IDEMPOTENCY_SEEN_NO_EXPLICIT = ("CREATE TRIGGER idempotency_seen_no_explicit_seq BEFORE INSERT ON idempotency_seen"
                                 " WHEN NEW.seq != -1"
                                 " BEGIN SELECT RAISE(ABORT, 'idempotency key is already recorded'); END")
@@ -203,7 +218,8 @@ IDEMPOTENCY_KEY_SEEN_NO_DELETE = (
     " BEGIN SELECT RAISE(ABORT, 'idempotency key is already recorded'); END")
 _CRASH_TRIGGERS = (AUDIT_NO_EXPLICIT, AUDIT_NO_NONPOSITIVE, FAULT_NO_UPDATE, FAULT_NO_DELETE, FAULT_NO_REPLACE,
                    FAULT_REMEMBER, FAULT_SEEN_NO_EXPLICIT, FAULT_SEEN_NO_NONPOSITIVE, FAULT_SEEN_NO_UPDATE,
-                   FAULT_SEEN_NO_DELETE, IDEMPOTENCY_NO_REPLACE, IDEMPOTENCY_NO_DELETE, IDEMPOTENCY_REMEMBER,
+                   FAULT_SEEN_NO_DELETE, IDEMPOTENCY_NO_REPLACE, IDEMPOTENCY_NO_DELETE, IDEMPOTENCY_TRANSITIONS,
+                   IDEMPOTENCY_REMEMBER,
                    IDEMPOTENCY_REMEMBER_KEY, IDEMPOTENCY_REMEMBER_KEY_UPDATE, IDEMPOTENCY_SEEN_NO_EXPLICIT,
                    IDEMPOTENCY_SEEN_NO_NONPOSITIVE, IDEMPOTENCY_SEEN_NO_UPDATE, IDEMPOTENCY_SEEN_NO_DELETE,
                    IDEMPOTENCY_KEY_SEEN_NO_EXPLICIT, IDEMPOTENCY_KEY_SEEN_NO_NONPOSITIVE,

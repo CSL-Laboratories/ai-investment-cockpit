@@ -20,6 +20,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
+import cockpit.paper.gateway as gateway_module
 from cockpit.paper.core_client import CoreClient
 from cockpit.paper.gateway import Caps, Intent, OrderGateway, PaperBook, Refused, create_book
 from cockpit.paper.tests.fakecore import AUTHORITY, FakeCore
@@ -414,7 +415,8 @@ class CrashIntegrityTests(unittest.TestCase):
                      "idempotency_seen_no_nonpositive_seq", "idempotency_key_seen_no_explicit_seq",
                      "idempotency_key_seen_no_nonpositive_seq", "idempotency_key_seen_no_update",
                      "idempotency_key_seen_no_delete", "idempotency_no_replace_key",
-                     "idempotency_remember_key", "idempotency_remember_key_update", "idempotency_no_delete"):
+                     "idempotency_remember_key", "idempotency_remember_key_update",
+                     "idempotency_no_delete", "idempotency_transitions"):
             db.execute(f"DROP TRIGGER IF EXISTS {name}")
         db.execute("DROP TABLE IF EXISTS idempotency_key_seen")
         db.close()
@@ -436,6 +438,79 @@ class CrashIntegrityTests(unittest.TestCase):
         self.assertEqual(book._charge_state("intent-1", "key-123"), "resume")
         guard = db.execute("SELECT sql FROM sqlite_master WHERE name = 'idempotency_no_replace'").fetchone()[0]
         self.assertIn("idempotency_key_seen", guard)
+        with self.assertRaises(sqlite3.DatabaseError):
+            db.execute("UPDATE idempotency SET status = 'void' WHERE idempotency_key = 'key-123'")
+        db.rollback()
+        self.assertEqual(book._charge_state("intent-1", "key-123"), "resume")
+        self.assertEqual(book._arm_charge("intent-1", "key-123", "apr-2"), "resume")
+
+    def test_status_rewrite_cannot_rearm_a_charged_row(self) -> None:
+        """A plain UPDATE to void must not let a retry arm the same charge again."""
+        book = PaperBook(self.path)
+        book._arm_charge("intent-1", "key-123", "apr-1")
+        book._mark_charged("key-123", "apr-1", "d1", 1000)
+        self.assertEqual(book._charge_state("intent-1", "key-123"), "resume")
+        book.close()
+        db = sqlite3.connect(self.path)
+        self.addCleanup(db.close)
+        with self.assertRaises(sqlite3.DatabaseError):
+            db.execute("UPDATE idempotency SET status = 'void' WHERE idempotency_key = 'key-123'")
+        db.rollback()
+        book = PaperBook(self.path)
+        self.addCleanup(book.close)
+        self.assertEqual(book._charge_state("intent-1", "key-123"), "resume")
+        self.assertEqual(book._arm_charge("intent-1", "key-123", "apr-2"), "resume")
+
+    def test_illegal_charge_updates_are_refused(self) -> None:
+        book = PaperBook(self.path)
+        self.addCleanup(book.close)
+        book._arm_charge("intent-1", "key-123", "apr-1")
+        book._mark_charged("key-123", "apr-1", "d1", 1000)
+        db = sqlite3.connect(self.path)
+        self.addCleanup(db.close)
+        charged = (
+            "UPDATE idempotency SET status = 'void' WHERE idempotency_key = 'key-123'",
+            "UPDATE idempotency SET status = 'armed' WHERE idempotency_key = 'key-123'",
+            "UPDATE idempotency SET intent_id = 'intent-X' WHERE idempotency_key = 'key-123'",
+            "UPDATE idempotency SET idempotency_key = 'key-999' WHERE idempotency_key = 'key-123'",
+            "UPDATE idempotency SET effect_sha256 = 'other' WHERE idempotency_key = 'key-123'",
+        )
+        for sql in charged:
+            with self.assertRaises(sqlite3.DatabaseError):
+                db.execute(sql)
+            db.rollback()
+        book._book(_intent(intent_id="intent-1"), gateway_module._GATEWAY_ONLY, charge_key="key-123")
+        booked = (
+            "UPDATE idempotency SET status = 'void' WHERE idempotency_key = 'key-123'",
+            "UPDATE idempotency SET status = 'armed' WHERE idempotency_key = 'key-123'",
+            "UPDATE idempotency SET status = 'charged' WHERE idempotency_key = 'key-123'",
+            "UPDATE idempotency SET intent_id = 'intent-X' WHERE idempotency_key = 'key-123'",
+            "UPDATE idempotency SET order_seq = 9 WHERE idempotency_key = 'key-123'",
+        )
+        for sql in booked:
+            with self.assertRaises(sqlite3.DatabaseError):
+                db.execute(sql)
+            db.rollback()
+        row = book._db.execute("SELECT intent_id, idempotency_key, status FROM idempotency"
+                               " WHERE idempotency_key = 'key-123'").fetchone()
+        self.assertEqual(row, ("intent-1", "key-123", "booked"))
+
+    def test_legal_charge_transitions_still_commit(self) -> None:
+        book = PaperBook(self.path)
+        self.addCleanup(book.close)
+        self.assertEqual(book._arm_charge("intent-1", "key-old", "apr-1"), "go")
+        book._void_charge("key-old")  # armed -> void
+        self.assertEqual(book._charge_state("intent-1", "key-old"), "void")
+        self.assertEqual(book._arm_charge("intent-1", "key-new", "apr-2"), "go")  # void -> armed, new key
+        row = book._db.execute("SELECT idempotency_key, effect_sha256, status FROM idempotency"
+                               " WHERE intent_id = 'intent-1'").fetchone()
+        self.assertEqual(row, ("key-new", "key-new", "armed"))
+        book._mark_charged("key-new", "apr-2", "d1", 200)  # armed -> charged
+        self.assertEqual(book._charge_state("intent-1", "key-new"), "resume")
+        seq = book._book(_intent(intent_id="intent-1"), gateway_module._GATEWAY_ONLY, charge_key="key-new")
+        row = book._db.execute("SELECT status, order_seq, digest, notional_minor FROM idempotency"
+                               " WHERE intent_id = 'intent-1'").fetchone()
+        self.assertEqual(row, ("booked", seq, "d1", 200))
 
 
 if __name__ == "__main__":
