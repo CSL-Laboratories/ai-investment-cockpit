@@ -3,7 +3,8 @@
 Every order whose venue or mode is not exactly the paper book's is refused ``paper_only``
 before any side effect: no core call (``effect.request`` or ``effect.authorize``), no
 charge, no booking. Values that only claim to equal ``"paper"`` (a ``str`` subclass, an
-object with rigged ``__eq__``/``__ne__``) are refused like any other venue.
+object whose ``__ne__`` is always false, one whose ``__eq__`` is always true, one with
+both) are refused like any other venue.
 
 Run: ``PYTHONPATH=engine python3 -B -m unittest discover -s engine/tests/paper -t engine -v``.
 No provider, venue, network, credential or keyring is touched.
@@ -47,16 +48,39 @@ class AlwaysEqual:
         return "AlwaysEqual()"
 
 
+class NeverUnequal:
+    """Only ``!=`` is rigged: it is always false, so a ``venue != "paper"`` test alone passes it."""
+
+    def __ne__(self, other: object) -> bool:
+        return False
+
+    def __repr__(self) -> str:
+        return "NeverUnequal()"
+
+
+class EqualOnly:
+    """Only ``==`` is rigged: it is always true (and ``!=``, derived from it, always false)."""
+
+    def __eq__(self, other: object) -> bool:
+        return True
+
+    def __hash__(self) -> int:
+        return 0
+
+    def __repr__(self) -> str:
+        return "EqualOnly()"
+
+
 class SubIntent(Intent):
     """An ``Intent`` subclass: not the exact type the gateway accepts."""
 
 
-RIGGED = [StrSub("paper"), AlwaysEqual()]
+RIGGED = [StrSub("paper"), AlwaysEqual(), NeverUnequal(), EqualOnly()]
 VENUES = ["kalshi", "kalshi-demo", "coinbase", "gemini", "live", "paper-book", "PAPER", "Paper", " paper",
           "paper ", "paper\n", "pаper", "ｐａｐｅｒ", "paper​", "", None, 0,
           b"paper"] + RIGGED
 MODES = [None, "", "live", "demo", "PAPER"] + RIGGED
-SIDES = [AlwaysEqual(), StrSub("buy"), "BUY", None]
+SIDES = [AlwaysEqual(), NeverUnequal(), EqualOnly(), StrSub("buy"), StrSub("sell"), "BUY", None]
 
 
 class PaperOnlyRefusalTests(unittest.TestCase):
@@ -171,6 +195,27 @@ class PaperOnlyRefusalTests(unittest.TestCase):
         for side in SIDES:
             with self.subTest(side=repr(side), type=type(side).__name__):
                 self._refused_everywhere("side_invalid", replace(Intent(**FIELDS), side=side))
+        self._control_still_books()
+
+    def test_str_subclass_side_is_a_typed_audited_refusal(self) -> None:
+        """A ``side`` that is a ``str`` subclass equal to ``"buy"`` or ``"sell"`` is the typed
+        ``side_invalid`` with its audit row at request and at submit, never a raw ``ValueError``
+        from the core client's encoder."""
+        for n, side in enumerate((StrSub("buy"), StrSub("sell"))):
+            intent = replace(Intent(**FIELDS), intent_id="side-%d" % n, side=side)
+            for name, attempt in (("request", lambda: self.gw.request_approval(intent)),
+                                  ("submit", lambda: self.gw.submit(intent, BOGUS_APPROVAL, AUTHORITY))):
+                with self.subTest(side=str(side), entry=name):
+                    before = len(self.book.audit())
+                    with self.assertRaises(Refused) as ctx:
+                        attempt()
+                    self.assertEqual((ctx.exception.code, ctx.exception.cause), ("side_invalid", None))
+                    rows = self.book.audit()
+                    self.assertEqual(len(rows), before + 1)
+                    self.assertEqual({k: rows[-1][k] for k in ("seq", "event", "stage", "code", "intent_id")},
+                                     {"seq": ctx.exception.audit_seq, "event": "refused", "stage": "risk",
+                                      "code": "side_invalid", "intent_id": intent.intent_id})
+        self.assertEqual((self.core.calls, self.core.spent, self.book.orders()), ([], 0, []))
         self._control_still_books()
 
     def test_intent_with_a_missing_field_is_refused_typed_before_the_core(self) -> None:
