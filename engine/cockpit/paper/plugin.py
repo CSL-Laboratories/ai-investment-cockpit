@@ -19,8 +19,9 @@ venues. Nothing here builds a venue kill, a transport or a credential.
 
 ``run_check`` and ``allowlist`` are required. ``run_check`` is the host's bound
 ``check(run_id, connection, plugin_id)`` of the core's ``ConnectionBreaker``; the gateway
-asks it again inside the booking transaction, so a run fault or connection trip that
-lands after ``effect.authorize`` still refuses the order. ``allowlist`` is the static,
+asks it again before taking the book's lock and re-verifies it, bounded, inside the booking
+transaction, so a run fault or connection trip that lands after ``effect.authorize`` still
+refuses the order and a hung check never blocks a halt or kill on the book. ``allowlist`` is the static,
 operator-approved order universe, a ``frozenset`` of instruments. Neither has a default:
 the gateway cannot be composed here without them.
 """
