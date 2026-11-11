@@ -268,8 +268,12 @@ class ComposeMountTests(unittest.TestCase):
     def test_compose_exposes_owner_keys_on_app_state(self) -> None:
         from main import compose
 
+        class _NoKeychain(_InMemory):
+            """The app's store on a host without an OS keychain (read as keyring's null backend)."""
+
+        _NoKeychain.__module__ = "keyring.backends.null"
         previous, cwd = keyring.get_keyring(), os.getcwd()
-        keyring.set_keyring(_InMemory())
+        keyring.set_keyring(_NoKeychain())
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             env = {"COCKPIT_HALT_PATH": os.path.join(tmp, "HALT"),
                    "XDG_CONFIG_HOME": os.path.join(tmp, "xdg")}
@@ -283,6 +287,25 @@ class ComposeMountTests(unittest.TestCase):
                     with self.assertRaises(KeyRefused):
                         keys.get("wallet", "openai")
                     self.assertTrue(keys.doctor_line().startswith("keys: "))
+                    if POSIX:
+                        self.assertFalse(keys.keychain)
+                        key_dir = os.path.join(tmp, "xdg", "csl-cockpit")
+                        os.makedirs(key_dir)
+                        os.chmod(key_dir, 0o700)
+                        self.assertEqual(keys.put("model_provider", "openai", FAKE), "owner_only_file")
+                        self.assertEqual(keys.model_key("openai").reveal(), FAKE)
+                        loose = [os.path.join(key_dir, f) for f in os.listdir(key_dir) if f.endswith(".json")]
+                        self.assertEqual(len(loose), 1)
+                        os.chmod(loose[0], 0o644)
+                        secrets.set_secret("openai", "from-app-keyring")
+                        with mock.patch.dict(os.environ, {"OPENAI_API_KEY": "from-env"}):
+                            with self.assertRaises(KeyRefused) as ctx:
+                                keys.model_key("openai")
+                        self.assertEqual(ctx.exception.cause, "key_file_not_owner_only")
+                        os.chmod(loose[0], 0o600)
+                        with mock.patch("os.geteuid", return_value=os.geteuid() + 4242), \
+                                self.assertRaises(KeyRefused):
+                            keys.model_key("openai")
             finally:
                 os.chdir(cwd)
                 keyring.set_keyring(previous)
