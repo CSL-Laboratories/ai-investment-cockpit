@@ -315,17 +315,27 @@ def _linked_reversal_ids(
     replacement that lands before the mirror does not count. Void
     supersession keeps the default, which still pairs an original with
     its later mirror alone.
+
+    The replacement is an ordinary positive settlement of that instrument.
+    It need not repeat the original's fill or order reference. Each
+    original is corrected once, and each mirror and replacement is used
+    once. A replacement may itself be the original of a later correction.
     """
     paired: set[str] = set()
     mirrors: set[str] = set()
-    used: set[str] = set()
+    handled: set[str] = set()
+    consumed: set[str] = set()
     journal = fixture.get("journal", ())
     for item in fixture.get("corrections", ()):
         if item.get("cause") != "settlement_payout":
             continue
         original_id = item.get("reverses_entry_id")
         instrument_id = item.get("instrument_id")
-        if not isinstance(original_id, str) or original_id in used or original_id in repeated_ids:
+        if (
+            not isinstance(original_id, str)
+            or original_id in handled
+            or original_id in repeated_ids
+        ):
             continue
         if not isinstance(instrument_id, str):
             continue
@@ -355,7 +365,7 @@ def _linked_reversal_ids(
             if (
                 not isinstance(entry_id, str)
                 or entry_id == original_id
-                or entry_id in used
+                or entry_id in consumed
                 or entry_id in repeated_ids
             ):
                 continue
@@ -382,13 +392,12 @@ def _linked_reversal_ids(
             replacement_id = None
             replacement_sequence_best: int | None = None
             replacement_tie = False
-            original_key = _causal_key(original)
             for entry in journal:
                 entry_id = entry.get("entry_id")
                 if (
                     not isinstance(entry_id, str)
                     or entry_id in {original_id, partner_id}
-                    or entry_id in used
+                    or entry_id in consumed
                     or entry_id in repeated_ids
                 ):
                     continue
@@ -403,7 +412,7 @@ def _linked_reversal_ids(
                     or replacement_sequence <= partner_sequence_best
                 ):
                     continue
-                if _causal_key(entry) != original_key:
+                if not _ordinary_settlement(entry):
                     continue
                 signature = _line_signature(entry, reverse=False)
                 if not _signature_positive(signature) or signature == wanted:
@@ -419,12 +428,12 @@ def _linked_reversal_ids(
                     replacement_tie = True
             if replacement_id is None or replacement_tie:
                 continue
-            used.add(replacement_id)
+            consumed.add(replacement_id)
         paired.add(original_id)
         paired.add(partner_id)
         mirrors.add(partner_id)
-        used.add(original_id)
-        used.add(partner_id)
+        handled.add(original_id)
+        consumed.add(partner_id)
     return paired, mirrors
 
 
@@ -1043,6 +1052,8 @@ def evaluate_semantics(fixture: dict) -> set[str]:
     attribution: dict[str, dict[str, int]] = {}
     replay_detected = False
     journal_fees = 0
+    cash_sequence: int | None = None
+    cash_inflow_at_sequence = 0
     corporate_cash = 0
     corporate_cash_by: dict[str, int] = {}
     settlement_fee_cash_by: dict[str, int] = {}
@@ -1329,6 +1340,7 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                     failures.add("settlement_unreconciled")
         premium_delta = 0
         fee_delta = 0
+        cash_before = cash
         collateral_sides: dict[str, list[tuple[str, int]]] = {}
         for line in entry["lines"]:
             amount = _line_amount(line, failures)
@@ -1419,6 +1431,14 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             else:
                 failures.add("schema_invalid")
         _apply_collateral_posting(entry, order_ref, fill_ref, collateral_sides)
+        # Available cash may not go negative after any entry. Entries that
+        # share a sequence have no order, so one's inflow cannot fund another.
+        if entry["sequence"] != cash_sequence:
+            cash_sequence = entry["sequence"]
+            cash_inflow_at_sequence = 0
+        cash_inflow_at_sequence += max(cash - cash_before, 0)
+        if cash - cash_inflow_at_sequence < 0:
+            failures.add("balance_mismatch")
         if fill_ref is not None:
             posted_premium[fill_ref] = posted_premium.get(fill_ref, 0) + premium_delta
             posted_fees[fill_ref] = posted_fees.get(fill_ref, 0) + fee_delta
@@ -1516,13 +1536,21 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         for entry in fixture["journal"]:
             if entry["reason"] != "void_unwind":
                 continue
+            # A validated correction mirror swaps the refund sides and nets
+            # the original back out. Any other swapped posting is not a refund.
+            is_mirror = entry.get("entry_id") in correction_mirrors
+            cash_side, collateral_side = ("cr", "dr") if is_mirror else ("dr", "cr")
+            sign = -1 if is_mirror else 1
             for line in entry["lines"]:
                 if line["instrument_id"] != instrument_id:
                     continue
-                if line["account"] == "cash_available" and line["side"] == "dr":
-                    unwind_cash += line["amount_minor"]
-                elif line["account"] == "collateral_reserved" and line["side"] == "cr":
-                    unwind_collateral += line["amount_minor"]
+                if line["account"] == "cash_available" and line["side"] == cash_side:
+                    unwind_cash += sign * line["amount_minor"]
+                elif (
+                    line["account"] == "collateral_reserved"
+                    and line["side"] == collateral_side
+                ):
+                    unwind_collateral += sign * line["amount_minor"]
                 else:
                     unwind_other = True
         if (
