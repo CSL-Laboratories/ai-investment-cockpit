@@ -812,7 +812,8 @@ def _sqlite_db_path(db_url: str):
 def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/raw",
             clock=None, transport=None, deliver=None, ingest_fetchers=None,
             http_get=None, ws_connect=None, finra_token_provider=None, finra_http_get=None,
-            finra_row_mapper=None, paper_client=None, edgar_fetcher_factory=None):
+            finra_row_mapper=None, paper_client=None, edgar_fetcher_factory=None,
+            paper_panel_control=None):
     """Build the full application graph: ``(state, app, services)``.
 
     RETURN SHAPE IS UNCHANGED (a 3-tuple) ON PURPOSE. The RW-01 ingest runner is reachable as
@@ -916,6 +917,7 @@ def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/r
         paper=paper,
         watchlist=configured_watchlist,
         quant_snapshots=(market_data.snapshot_source if market_data is not None else None),
+        paper_panel_control=paper_panel_control,  # item 5 (#318): recursion #327 control API
     )
     app.state.market_data = market_data
     # RW-01: ingest -> scheduler. Built AFTER the state so the pollers persist through the same

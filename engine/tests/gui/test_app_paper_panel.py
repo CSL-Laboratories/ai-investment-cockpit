@@ -24,6 +24,9 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from core import engine_path  # noqa: E402
 from orchestrator import paper_panel as pp  # noqa: E402
+from orchestrator import recursion_control as rc  # noqa: E402
+from orchestrator.app import create_app  # noqa: E402
+from orchestrator.auth import ApiKeyAuth  # noqa: E402
 
 from cockpit.gui import panels as gp  # noqa: E402
 
@@ -184,7 +187,7 @@ class PaperPanelRenderTests(unittest.TestCase):
                 self.assertEqual(data["errors"], [{"code": "stale_quote", "message": "paper book stale"}])
                 msft = next(r for r in data["result"] if r["instrument_id"] == "MSFT")
                 self.assertEqual(msft["paper_cash_minor"], 100)
-                self.assertEqual(msft["detail"], {"note": "paper fill", "price": "410.00"})
+                self.assertNotIn("detail", msft)  # unlabelled venue-like child of a kept row
 
     def test_a_payload_cannot_switch_kalshi_on(self) -> None:
         view = pp.render_paper_panel(_mixed_read)
@@ -352,8 +355,23 @@ class NestedVenueDataTests(unittest.TestCase):
         row = {"venue": "paper", "instrument_id": "MSFT", "evidence": {"venue": "kalshi_demo", "yes_price": "0.42"},
                "kalshi_yes_price": "0.42", "lots": [{"venue": "coinbase", "price": "1"}, {"qty": "1", "price": "2"}]}
         kept = gp.keep_venue_rows({"result": [row]}, "stock")
-        self.assertEqual(kept, {"result": [{"venue": "paper", "instrument_id": "MSFT",
-                                            "lots": [{"qty": "1", "price": "2"}]}]})
+        self.assertEqual(kept, {"result": [{"venue": "paper", "instrument_id": "MSFT", "lots": []}]})
+
+    def test_unlabelled_venue_like_children_of_a_kept_row_are_dropped(self) -> None:
+        """Lucas, Nov 11 2:30am PST (Q4): drop them; they cannot be attributed to the paper book."""
+        row = {"venue": "paper", "instrument_id": "MSFT", "qty": "3",
+               "evidence": {"ticker": "KXDEMO-1", "yes_price": "0.42"},
+               "quotes": [{"symbol": "MSFT", "bid": "1"}, {"note": "kept"}],
+               "fill": {"filled_at": "t", "detail": {"market": "x"}},
+               "status": {"stale": True}}
+        kept = gp.keep_venue_rows({"result": [row]}, "stock")
+        self.assertEqual(kept, {"result": [{"venue": "paper", "instrument_id": "MSFT", "qty": "3",
+                                            "quotes": [{"note": "kept"}], "fill": {"filled_at": "t"},
+                                            "status": {"stale": True}}]})
+        for key in gp.VENUE_ROW_KEYS:
+            with self.subTest(key=key):
+                nested = gp.keep_venue_rows({"result": [{"venue": "stock", "child": {key: "1"}}]}, "stock")
+                self.assertEqual(nested, {"result": [{"venue": "stock"}]})
 
     def test_a_key_named_for_another_venue_is_dropped(self) -> None:
         row = {"venue": "paper", "instrument_id": "MSFT", "kalshi": {"yes_price": "0.42"}, "coinbase": [1],
@@ -366,6 +384,79 @@ class NestedVenueDataTests(unittest.TestCase):
         kept = gp.keep_venue_rows({"errors": [{"venue": "paper", "code": "stale_quote", "kalshi_yes_price": "0.42"}]},
                                   "stock")
         self.assertEqual(kept, {"errors": [{"venue": "paper", "code": "stale_quote"}]})
+
+
+class _ControlSpy:
+    """The recursion #327 ControlAPI shape (``call(method, params) -> dict`` with ``code``)."""
+
+    def __init__(self, serve_o7: bool) -> None:
+        self.serve_o7, self.calls = serve_o7, []
+
+    def call(self, method, params=None):
+        self.calls.append((method, params))
+        if method.startswith("run."):
+            return {"code": "ok", "runs": []}
+        if not self.serve_o7:
+            return {"code": "method_unknown", "detail": method}  # #327 at 1580d103 for operator.*
+        return _mixed_read(method)
+
+
+class ControlApiReaderTests(unittest.TestCase):
+    def test_only_inspect_reads_are_sent(self) -> None:
+        spy = _ControlSpy(serve_o7=True)
+        reader = rc.ControlApiPanelReader(spy)
+        for method in ("run.stop", "run.start", "run.list", "run.status", "operator.interventions.request_stop",
+                       "operator.interventions.request_revocation", "operator.audit.export", "operator.export.bundle",
+                       "operator.positions.inspect.x", "", None, 3):
+            with self.subTest(method=method), self.assertRaises(rc.ReadRefused):
+                reader(method)  # type: ignore[arg-type]
+        self.assertEqual(spy.calls, [])
+        reader("operator.positions.inspect")
+        self.assertEqual(spy.calls, [("operator.positions.inspect", {})])
+
+    def test_answers_stay_visible(self) -> None:
+        self.assertEqual(rc.ControlApiPanelReader(None)("operator.positions.inspect"),
+                         {"status_code": "control_api_unavailable"})
+        unknown = rc.ControlApiPanelReader(_ControlSpy(serve_o7=False))("operator.positions.inspect")
+        self.assertEqual(unknown, {"code": "method_unknown", "detail": "operator.positions.inspect",
+                                   "status_code": "method_unknown"})
+        odd = types.SimpleNamespace(call=lambda m, p: ["x"])
+        self.assertEqual(rc.ControlApiPanelReader(odd)("operator.budgets.inspect")["status_code"], "read_failed")
+        with self.assertRaises(TypeError):
+            rc.ControlApiPanelReader(object())
+        self.assertEqual(rc.CONTROL_API_PIN, "recursion#327@1580d103fb7c0f5983b9fd67d89892f28f215c78")
+
+
+class CreateAppMountTests(unittest.TestCase):
+    """The mount lines in app/orchestrator/app.py create_app (item 5, Lucas Nov 11 2:30am PST)."""
+
+    KEY = "item5-smoke-key"
+
+    def _client(self, control):
+        state = types.SimpleNamespace(settings=types.SimpleNamespace(watchlist_symbols=frozenset()))
+        app = create_app(state, auth=ApiKeyAuth(key_provider=lambda: self.KEY), paper_panel_control=control)
+        return TestClient(app)
+
+    def test_the_panel_is_mounted_behind_the_key_and_read_only(self) -> None:
+        spy = _ControlSpy(serve_o7=True)
+        client = self._client(spy)
+        path = "/panels/cockpit.paper_own_trading"
+        self.assertEqual(client.get(path).status_code, 401)
+        self.assertEqual(client.get(path, headers={"X-API-Key": "wrong"}).status_code, 401)
+        ok = client.get(path, headers={"X-API-Key": self.KEY})
+        self.assertEqual(ok.status_code, 200)
+        for data in ok.json()["reads"].values():
+            self.assertEqual(_venues(data), {"paper", "stock"})
+        for method in ("post", "put", "patch", "delete"):
+            with self.subTest(method=method):
+                self.assertEqual(getattr(client, method)(path, headers={"X-API-Key": self.KEY}).status_code, 405)
+        self.assertEqual(client.get("/panels/cockpit.kalshi_model_fed_read",
+                                    headers={"X-API-Key": self.KEY}).status_code, 404)
+        self.assertEqual({m for m, _ in spy.calls}, set(pp.paper_panel()["reads"]))
+
+    def test_without_a_control_api_the_panel_says_so(self) -> None:
+        body = self._client(None).get("/panels/cockpit.paper_own_trading", headers={"X-API-Key": self.KEY}).json()
+        self.assertEqual({v["status_code"] for v in body["reads"].values()}, {"control_api_unavailable"})
 
 
 if __name__ == "__main__":

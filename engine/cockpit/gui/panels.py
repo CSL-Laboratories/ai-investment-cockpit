@@ -159,12 +159,10 @@ def keep_venue_rows(value: object, venue: object) -> object:
     ``PAPER_BOOK`` owns both of its labels, ``stock`` and ``paper``, any other venue only itself):
 
     * A dict with a ``venue`` key is kept if the label is one the panel's venue owns and
-      dropped otherwise. Inside a kept dict, unlabelled children are kept as part of that row,
-      but nested dicts labelled with another venue and ``<v>_...`` keys of another known venue
-      are still dropped.
-    * A dict without a ``venue`` key, outside a kept venue dict, is dropped if it carries any
-      ``VENUE_ROW_KEYS`` key (venue-like data with no label); otherwise it is kept and its
-      values are filtered by the same rule.
+      dropped otherwise. Its children are filtered by the same rule.
+    * A dict without a ``venue`` key, at any depth (including inside a kept row), is dropped if
+      it carries any ``VENUE_ROW_KEYS`` key (venue-like data with no label); otherwise it is
+      kept and its values are filtered by the same rule.
     * At any depth, a key named ``<v>`` or ``<v>_...`` for a known venue ``v`` the panel's
       venue does not own is dropped (e.g. ``kalshi_yes_price`` on a paper panel); ``paper_*``
       and ``stock_*`` keys stay on the paper panel.
@@ -175,7 +173,7 @@ def keep_venue_rows(value: object, venue: object) -> object:
     A non-string ``venue`` drops every venue-labelled dict and venue row. A response the
     rule drops entirely keeps only its string ``status_code``.
     """
-    kept = _rows(value, _owned(venue), False)
+    kept = _rows(value, _owned(venue))
     if kept is not _DROP:
         return kept
     if type(value) is dict and type(value.get("status_code")) is str:
@@ -196,27 +194,26 @@ def _other_venue_key(key: object, owned: frozenset) -> bool:
     return any(key == v or key.startswith(v + "_") for v in KNOWN_VENUES - owned)
 
 
-def _rows(value: object, owned: frozenset, scoped: bool) -> object:
-    # ``scoped`` is True inside a kept venue dict: its unlabelled children belong to that row,
-    # but a nested dict labelled with another venue, or a key named for another venue, is still
-    # that venue's data and is dropped (a paper row must not carry Kalshi prices, PRODUCT.md 5.3).
+def _rows(value: object, owned: frozenset) -> object:
+    # Inside a kept venue dict, a nested dict labelled with another venue, a key named for another
+    # venue, and an unlabelled venue-like dict (one carrying ``VENUE_ROW_KEYS``) are all dropped:
+    # none can be attributed to the paper book (PRODUCT.md 3.5, 5.3; Lucas, Nov 11 2:30am PST).
     if type(value) is dict:
         if "venue" in value:
             if type(value["venue"]) is not str or value["venue"] not in owned:
                 return _DROP
-            scoped = True
-        elif not scoped and VENUE_ROW_KEYS.intersection(value):
+        elif VENUE_ROW_KEYS.intersection(value):
             return _DROP
         out = {}
         for key, item in value.items():
             if _other_venue_key(key, owned):
                 continue
-            item = _rows(item, owned, scoped)
+            item = _rows(item, owned)
             if item is not _DROP:
                 out[key] = item
         return out
     if type(value) is list:
-        return [v for v in (_rows(v, owned, scoped) for v in value) if v is not _DROP]
+        return [v for v in (_rows(v, owned) for v in value) if v is not _DROP]
     return value
 
 
