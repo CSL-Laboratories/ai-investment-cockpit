@@ -235,6 +235,21 @@ class HaltDurableTests(unittest.TestCase):
                 self.assertIs(self.book.halted(), True)
                 self._raw("UPDATE state SET v = 0 WHERE k = 'halted'")  # test-only reset for the next value
 
+    def test_halt_does_not_depend_on_the_sequence_counter(self) -> None:
+        """A damaged ``seq`` row never stops the halted write (it is written first)."""
+        for n, damage in enumerate(("DELETE FROM state WHERE k = 'seq'", "UPDATE state SET v = 0.5 WHERE k = 'seq'")):
+            with self.subTest(damage=damage):
+                self._raw("UPDATE state SET v = 0 WHERE k = 'halted'")  # test-only reset
+                self._raw(damage)
+                out = self.gw.kill_switch.kill()
+                self.assertEqual((out["status"], out["halt"]), ("paper_only", "confirmed"))
+                self.assertIs(self.book.halted(), True)
+                self._assert_refused("order_halted", self.gw, self.core, self._buy(self.gw, "seq-%d" % n))
+                with self.assertRaises(Refused) as ctx:  # the counter itself is a typed refusal, not a TypeError
+                    self.book._tx(self.book._next_seq)
+                self.assertEqual(ctx.exception.code, "book_invalid")
+                self._raw("INSERT INTO state VALUES ('seq', 5) ON CONFLICT (k) DO UPDATE SET v = 5")
+
     def test_durable_flag_read_error_fails_closed_and_stays_halted(self) -> None:
         intent, approval = self._approved(self.gw, self.core, "io")
         self.gw.halt()
