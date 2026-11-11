@@ -1,0 +1,10 @@
+{
+  "format": "csl-product-pin/v1",
+  "status": "pinned",
+  "repository": "CSL-Laboratories/csl-research",
+  "path": "contracts/PRODUCT.md",
+  "commit": "d84cdd26a4de2366f3c5d34c4aec5215f822a494",
+  "sha256": "e1d5fb8c02594b2ca88281113ffc14e6f3125daded2a00d45739cfb9d2ed04dd",
+  "claim": "Lucas's exact-digest receipts of Nov 10 2026 05:05Z to 05:06Z (Nov 9 2026 9:05pm to 9:06pm PST) on CSL-703 (df27ce92), CSL-542 (10cff4b1) and CSL-543 (5568a38d) accept these PRODUCT.md bytes (467579 bytes); the vault record says the receipts are tied to Lucas by Liaison's relay rather than his own chat message. The commit adds section 6.5 to the previously pinned bytes and changes nothing else. It is on csl-research main (#1158 merged by merge commit ec06b860) and is the last main commit to touch contracts/PRODUCT.md. Vault pointer CSLR-D-012 and the promotion record merged on main in csl-research #1160 (7bf35942). Values from Lucas's words, relayed by Liaison at 11:16am PST Nov 10 2026: \"Repin #322 and #316 to d84cdd26 / CSLR-D-012\"; pin issue CSL-796.",
+  "limitations": "A pin names exact bytes in csl-research; it does not accept, admit or bind them. The earlier versions 055cc7a5 (SHA-256 e64783152f6d67d4ede774dc41d112fe46c2d7536d53cb2c04e71a3566044daf, pointer CSLR-D-011), f113f377 (SHA-256 6180c4203cb436bccfc8085dd380d9c73d143284fa774bbd0cd8a087b65a1c57), e44c0a46 (SHA-256 11f449b4b660a05a3a5e58e096f023861907bf89b27aaf011fa2a049445b566f), 2c025ded (SHA-256 e2155631d547cea28704704663f9d61167127f221b28b921e6b1dd4310c2a734), c7bcf625 (SHA-256 e7a934ce2b96132f13e9c8f3af5d4d40cb7987df9a24f4eaf68a8d726bc4ec6e), 550cca0e (SHA-256 c5730c36c55208e0e54f5e0a0ae00381ba7f665231c86edbe05dd38a4c925ce8), 398cd812 (SHA-256 36666beeadacb2af741db0ee55022b2e3911513b4de329ec500d50badbb3a226), e3119b0b (SHA-256 916f3f6a34d4182b2963fe510894904c25a198b94a0c105c7b514448e77a2409) and 09d4e762 (SHA-256 1c029e5a5f70d4917ec7f3fa9b3d1e6c28f537ed45b97ec6549cf9682020d544) are superseded and not pinned. How a pinned contract binds Cockpit stays as PRODUCT.md and CSL-585 say."
+}
