@@ -289,6 +289,7 @@ HALT_YIELD_S = 5.0
 # opens the same book file derives the same flag path from the book's real path.
 _HALT_FLAG_DIR = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else None
 _HALT_SPIN_S = 0.0002
+_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)  # POSIX only; Windows has no symlink-following open flag
 
 
 class _Grant:
@@ -517,13 +518,13 @@ class PaperBook:
         SQLite's backing-off busy handler, so a stream of refusal or booking commits on other
         connections cannot starve it. The flag is removed after the commit."""
         try:
-            fd = os.open(self._halt_flag, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+            fd = os.open(self._halt_flag, os.O_WRONLY | os.O_CREAT | _NOFOLLOW, 0o600)
             try:
-                os.utime(fd)
+                os.utime(fd if os.utime in os.supports_fd else self._halt_flag)
             finally:
                 os.close(fd)
-        except OSError:
-            pass  # no flag: the halt still takes the lock, only without priority
+        except Exception:  # noqa: BLE001 - no flag: the halt still takes the lock and commits, only without priority
+            pass
         try:
             with self._lock:
                 db = self._open_db()

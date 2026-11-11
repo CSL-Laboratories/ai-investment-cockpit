@@ -185,7 +185,10 @@ class HaltDurableTests(unittest.TestCase):
             os.utime(flag, (now - 3600, now - 3600))
 
         def dangling() -> None:
-            os.symlink(os.path.join(self.dir, "nowhere"), flag)
+            try:
+                os.symlink(os.path.join(self.dir, "nowhere"), flag)
+            except (OSError, NotImplementedError):  # Windows without the symlink privilege
+                garbage(now - 3600)()
 
         variants = {"stale": garbage(now - 3600), "future": garbage(now + 3600), "directory": directory,
                     "dangling_symlink": dangling, "empty_stale": garbage(now - gateway_module.HALT_YIELD_S - 1)}
@@ -209,12 +212,28 @@ class HaltDurableTests(unittest.TestCase):
         with open(target, "wb") as f:
             f.write(b"keep")
         os.utime(target, (1, 1))
-        os.symlink(target, self.book._halt_flag)
+        try:
+            os.symlink(target, self.book._halt_flag)
+        except (OSError, NotImplementedError):  # Windows without the symlink privilege: a plain copy instead
+            linked = False
+            open(self.book._halt_flag, "w").close()
+        else:
+            linked = True
         self.gw.halt()
         self.assertIs(self.book.halted(), True)
         with open(target, "rb") as f:
             self.assertEqual(f.read(), b"keep")
-        self.assertEqual(os.stat(target).st_mtime, 1)  # never opened or touched through the link
+        if linked and gateway_module._NOFOLLOW:
+            self.assertEqual(os.stat(target).st_mtime, 1)  # never opened or touched through the link
+
+    def test_a_fast_copy_that_cannot_be_made_never_stops_the_halt(self) -> None:
+        for failure in (OSError("read-only"), AttributeError("O_NOFOLLOW"), NotImplementedError("utime fd")):
+            with self.subTest(failure=type(failure).__name__):
+                self._raw("UPDATE state SET v = 0 WHERE k = 'halted'")  # test-only reset
+                with mock.patch.object(gateway_module.os, "open", side_effect=failure):
+                    out = self.gw.kill_switch.kill()
+                self.assertEqual((out["status"], out["halt"]), ("paper_only", "confirmed"))
+                self.assertIs(self.book.halted(), True)
 
     # -- the durable flag fails closed -----------------------------------------------------------
 
