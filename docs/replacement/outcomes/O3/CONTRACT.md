@@ -37,87 +37,30 @@ receipt. It does not implement them in `app/risk/`, `app/brokers/`, or
 
 ## Research basis
 
-Parallel search `search_17de480276f5deb848309a5562f1b43e` is the embedded
-result set recorded as run on Dan's box on 2026-10-17. This session did not
-start another Parallel search. The five pages below were read on 2026-10-17.
-Local inventory was read on branch base `ebbaa34489f171e079834d02098135711e1d4755`.
-The replacement registry's inspected commit remains
-`73ab78d9d69494c757cec875855121b1d29320a4`. This candidate does not edit that
-annotation.
+The research basis is not kept in this repository. It is the candidate record
+below in the research vault (root `AGENTS.md`: research output lives in
+csl-research and this repository only links to it).
 
-### Venue and accounting sources
-
-- [Kalshi market settlement](https://docs.kalshi.com/getting_started/market_settlement).
-  A yes outcome pays yes holders $1 per contract. A no outcome pays no holders
-  $1 per contract. Only net positions are settled. Settlement fees are
-  described as zero for a simple yes/no determination and as possible for
-  sub-cent scalar settlement. The payout (`CollateralAmountChange`) is rounded
-  to whole cents, and `CollateralAmountChange + MiscFeeAmt` equals the
-  pre-rounding settlement value.
-- [Kalshi FIX market settlement](http://docs.kalshi.com/fix/market-settlement).
-  The settlement report is `35=UMS`. `MarketResult` is `yes`, `no`, or
-  `scalar`. `SettlementPrice` (tag 730) is the pre-fee YES price. The payout
-  balance change is net of the settlement fee. `MiscFeeAmt` is already
-  deducted from that payout. Adding the fee back reconstructs the pre-fee
-  amount. Deducting it again is a double count. Paginated reports use a new
-  `MarketSettlementReportID` per page; the market ticker is the join key.
-  The scalar example on that page (100.01 YES at 30.60 cents, gross
-  `$30.60306`, rounding fee `$0.00006`, net payout `$30.6030`) is a source
-  illustration. This candidate does not adopt that rounding procedure as a
-  product formula.
-- [Kalshi fee schedule](https://kalshi.com/docs/kalshi-fee-schedule.pdf),
-  last updated and effective July 7, 2026 on the fetched copy. The general
-  taker fee is described as `round up(M × 0.07 × C × P × (1−P))` and the
-  maker fee as `round up(M × 0.0175 × C × P × (1−P))`. Fees apply when a
-  trade executes. Canceling a resting order has no fee under that schedule.
-  The same copy says there is no settlement fee. That sentence and the
-  scalar rounding fee in the settlement docs are both recorded. This
-  candidate does not decide which text controls a future schedule. Fixtures
-  carry explicit fee amounts.
-- [Kalshi rulebook, CFTC filing](https://www.cftc.gov/filings/orgrules/rules07012525155.pdf).
-  Positions are fully cash collateralized. An order that lacks collateral is
-  not accepted. A cancel of a resting order withdraws the unexecuted
-  remainder; a partial fill stands. Trade cancellation authority is limited
-  (Rule 5.11). A trade the clearing house rejects is void ab initio
-  (Rule 6.1(d)). Binary settlement pays the settlement value (the filing's
-  example is $1.00) to the in-the-money side (Rule 6.3(a)). Scalar settlement
-  pays a proportion (Rule 6.3(b)). If the expiration value cannot be placed
-  against the payout criterion, the filing describes venue discretion,
-  including last trade and an outcome-review committee (Rule 6.3(c), Rule 7.1).
-  This candidate does not treat that discretion as an automatic mark.
-- [Cross-venue prediction-market accounting](https://camusocpa.com/cross-venue-prediction-market-accounting/)
-  (page last updated August 29, 2026). Venue profit-and-loss figures are not
-  added together to produce books. Cash reconciliation and position
-  reconciliation are separate. A Kalshi position stays identifiable as a
-  Kalshi position. Polymarket.com and Polymarket US are different source
-  environments. Fees, rebates, and incentives stay separate from contract
-  premium. Corrections stay visible. Platform profit and loss is not federal
-  taxable income. Section 1092 is a question about offsetting positions, not
-  a result that follows from two venues being economically related. This
-  page is a practitioner discussion. It is not a venue rule and it is not a
-  tax opinion adopted here.
-
-### Local inventory
-
-The current tree has stock-shaped accounting and no accepted event-contract
-ledger:
-
-- `app/quant/oms.py` tracks simulated orders (`pending_new`, `working`,
-  `partially_filled`, `filled`, `cancelled`, `rejected`). Position changes
-  from fills, not from intents. It does not share code with the broker
-  state machine.
-- `app/brokers/order_state_machine.py` is the equity order path that can
-  reach a broker: `proposed`, `approved`, `submitted`, `partially_filled`,
-  with terminals `filled`, `cancelled`, `expired`, `rejected`, and
-  `canary_breach`.
-- `app/quant/pnl.py` decomposes one strategy on one symbol into spread
-  capture, inventory drift, and fees. It has no collateral account and no
-  resolution.
-- `app/brokers/paper_reconciliation.py` is read-only. Missing or conflicting
-  broker evidence leaves the paper order open.
-- `docs/product-tax-contract.md` is the historical September tax contract.
-  The accepted scope audit says that contract is not automatically inherited.
-  Nothing in this candidate applies it.
+- Repository: [CSL-Laboratories/csl-research](https://github.com/CSL-Laboratories/csl-research)
+- Commit: `fe650eddb608c42b3daa1a6fa6a20aabf9725e3f`. This is the head of the
+  open draft vault pull request, not a merge commit. It will be re-pointed
+  to the merge commit after Lucas merges that pull request.
+- Path: `submissions/20261110-csl215-o3-research-materials-01/`
+  (`record.json`, `result.md`, `prompt.txt`)
+- Claim: the record holds, byte for byte from this repository at
+  `981b8ab05cfbf9315e85bd317547067e5ecffdac`, the former
+  `docs/replacement/outcomes/O3/research/sources.json` (1,022 bytes, SHA-256
+  `69eb1c16bc31643e167e2cf5fd2008b0146d47e062160efc98381ef772bbf4cc`) and the
+  former text of this section, lines 38-121 of this file (5,085 bytes, SHA-256
+  `175914e103025d4a7a37629bbe674c0b15e99b6c3ac6052cab116989b1fdb3fc`). That
+  text names Parallel search `search_17de480276f5deb848309a5562f1b43e`, the
+  venue and accounting sources, and the local inventory with its branch base
+  `ebbaa34489f171e079834d02098135711e1d4755` and registry inspected commit
+  `73ab78d9d69494c757cec875855121b1d29320a4`.
+- Limitations: candidate-only and unreviewed. It is not a human receipt, a
+  decision, or implementation scope. The Parallel search was not re-run and
+  the cited pages were not re-fetched when the record was made, so the
+  search id and the page summaries stand as the original author wrote them.
 
 ## Identity
 
@@ -177,7 +120,8 @@ Other terminals: `cancelled` (unexecuted remainder only),
 `void_ab_initio`.
 
 A resting event order that is not matched does not pay a trading fee in the
-fixtures. The fee schedule above says a cancel, by itself, is not a fill and
+fixtures. The fee schedule cited in the vault record (see Research basis)
+says a cancel, by itself, is not a fill and
 is not a fee. This candidate does not turn that sentence into a permanent
 fee rule.
 
