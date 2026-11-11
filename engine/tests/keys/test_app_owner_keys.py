@@ -262,5 +262,31 @@ class KeychainHostTests(unittest.TestCase):
                 engine_path.import_engine("cockpit.keys")
 
 
+class ComposeMountTests(unittest.TestCase):
+    """The #319 mount line: compose() hangs OwnerKeys off the running app's state."""
+
+    def test_compose_exposes_owner_keys_on_app_state(self) -> None:
+        from main import compose
+
+        previous, cwd = keyring.get_keyring(), os.getcwd()
+        keyring.set_keyring(_InMemory())
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            env = {"COCKPIT_HALT_PATH": os.path.join(tmp, "HALT"),
+                   "XDG_CONFIG_HOME": os.path.join(tmp, "xdg")}
+            try:
+                os.chdir(tmp)
+                with mock.patch.dict(os.environ, env):
+                    _, app, _ = compose(db_url=f"sqlite:///{Path(tmp, 'c.db').as_posix()}",
+                                        parquet_root=os.path.join(tmp, "raw"))
+                    keys = app.state.owner_keys
+                    self.assertIsInstance(keys, OwnerKeys)
+                    with self.assertRaises(KeyRefused):
+                        keys.get("wallet", "openai")
+                    self.assertTrue(keys.doctor_line().startswith("keys: "))
+            finally:
+                os.chdir(cwd)
+                keyring.set_keyring(previous)
+
+
 if __name__ == "__main__":
     unittest.main()
