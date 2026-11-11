@@ -263,6 +263,8 @@ class NoKeychainTests(unittest.TestCase):
         import cockpit.keys.store as store_mod
 
         real_close = store_mod.os.close
+        real_rename = store_mod.os.rename
+        raised: list[str] = []
 
         def close(fd: int) -> None:
             try:
@@ -271,23 +273,28 @@ class NoKeychainTests(unittest.TestCase):
                 target = ""
             real_close(fd)
             if ".keys-" in target:
+                raised.append(target)
                 raise OSError(errno.EIO, "simulated close failure")
 
+        def rename(*args: object, **kwargs: object) -> None:
+            raise OSError(errno.EIO, "simulated rename failure")
+
         store_mod.os.close = close
+        store_mod.os.rename = rename
         old = os.umask(0)
         try:
-            try:
+            with self.assertRaises(OSError):
                 self.store.put("model_provider", "openai", FAKE)
-            except OSError:
-                pass
         finally:
             os.umask(old)
             store_mod.os.close = real_close
+            store_mod.os.rename = real_rename
+        self.assertGreater(len(raised), 0)
+        self.assertTrue(all(".keys-" in target for target in raised))
         temps = [name for name in os.listdir(self.dir) if name.startswith(".keys-")]
         self.assertEqual(temps, [])
+        self.assertFalse(os.path.lexists(self.path))
         self._assert_no_secret_leftover()
-        if os.path.lexists(self.path):
-            self.assertEqual(stat.S_IMODE(os.lstat(self.path).st_mode), 0o600)
 
     def test_failed_save_does_not_leave_a_readable_secret(self) -> None:
         import cockpit.keys.store as store_mod

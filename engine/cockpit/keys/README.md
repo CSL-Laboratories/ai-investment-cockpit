@@ -21,7 +21,8 @@ world-writable). Each directory component is opened with `O_DIRECTORY|O_NOFOLLOW
 and `.keys.lock` are classified with `lstat` (symlink, fifo, socket, and device are distinct from
 a mode problem) and then opened with `O_NOFOLLOW|O_NONBLOCK`; the fd is checked again so a swap
 between the stat and the open is still refused. Secret bytes are written only after the file mode
-is `0600`. The replacement is a temp file in that directory, `fsync` of the file, `rename`, then
+is `0600`. Any other mode, including `0000`, `0400`, and `0700`, is not owner-only.
+The replacement is a temp file in that directory, `fsync` of the file, `rename`, then
 `fsync` of the directory. If the save fails, the temp file is wiped, unlinked, and the directory
 is `fsync`ed, including when `close` or `unlink` itself fails. Saves and deletes take an exclusive
 `fcntl.flock` on `.keys.lock` around the read-modify-write. A key file or directory that is not

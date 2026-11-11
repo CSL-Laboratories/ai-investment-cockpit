@@ -14,7 +14,7 @@ import tempfile
 import types
 import unittest
 
-from cockpit.keys import KeyRefused, detect_keychain, doctor, doctor_line, store_for_host
+from cockpit.keys import KeyRefused, KeyStore, detect_keychain, doctor, doctor_line, store_for_host
 from cockpit.keys.__main__ import main
 from cockpit.keys.detect import default_key_file
 
@@ -172,6 +172,22 @@ class DoctorTests(unittest.TestCase):
         os.chmod(self.dir, 0o755)
         self.assertEqual(doctor(self.none, self.path)["level"], "fail")
         os.chmod(self.dir, 0o700)
+
+    def test_owner_modes_other_than_0600_fail_doctor(self) -> None:
+        store = KeyStore(keyring=None, key_file=self.path)
+        store.put("model_provider", "acme", FAKE)
+        self.assertEqual(doctor(self.none, self.path)["key_file"], "owner_only")
+        for mode in (0o000, 0o400, 0o700):
+            with self.subTest(mode=oct(mode)):
+                os.chmod(self.path, mode)
+                result = doctor(self.none, self.path)
+                self.assertEqual(result["level"], "fail")
+                self.assertEqual(result["key_file"], f"file_not_owner_only({oct(mode)})")
+                self.assertNotIn(FAKE, str(result))
+                with self.assertRaises(KeyRefused) as ctx:
+                    store.get("model_provider", "acme")
+                self.assertEqual(ctx.exception.cause, "key_file_not_owner_only")
+                self.assertNotIn(FAKE, str(ctx.exception))
 
     def test_writable_ancestor_is_fail_and_creates_nothing(self) -> None:
         outer = os.path.join(self.dir, "open")

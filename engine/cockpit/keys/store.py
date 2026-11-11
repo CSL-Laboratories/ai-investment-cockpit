@@ -384,8 +384,9 @@ def _entry_problem(st: os.stat_result) -> str | None:
         return "special"
     if st.st_uid != os.geteuid():
         return "uid"
-    if st.st_mode & 0o077:
-        return oct(st.st_mode & 0o777)
+    mode = stat.S_IMODE(st.st_mode)
+    if mode != 0o600:
+        return oct(mode)
     return None
 
 
