@@ -238,6 +238,21 @@ class RunCheckOutsideLockTests(unittest.TestCase):
                 pool.call(release.wait, (WAIT,), WAIT, gateway_module._Slots())
             self.assertEqual(caught.exception.code, "run_check_busy")
 
+    def test_a_full_process_pool_is_refused_before_the_charge(self) -> None:
+        release = threading.Event()
+        self.addCleanup(release.set)
+        pool = gateway_module._RUN_CHECKS
+        with mock.patch.object(gateway_module, "_RUN_CHECK_THREADS_MAX", pool._running + 1):
+            with self.assertRaises(Refused):  # another gateway's check hangs and fills the pool
+                pool.call(release.wait, (WAIT,), 0.05, gateway_module._Slots())
+            idle, pool._idle = pool._idle, []  # no idle worker left to take
+            try:
+                outcome = self._submit()
+            finally:
+                pool._idle = idle + pool._idle
+            self.assertEqual((outcome.code, outcome.cause), ("run_check_busy", None))
+            self.assertEqual((self.core.spent, self.core.calls.count("effect.authorize")), (0, 0))
+
     def test_a_saturated_pool_is_refused_before_the_charge(self) -> None:
         release = threading.Event()
         self.addCleanup(release.set)
