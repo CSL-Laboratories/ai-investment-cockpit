@@ -498,7 +498,15 @@ class PaperBook:
     @staticmethod
     def _next_seq(db) -> int:
         db.execute("UPDATE state SET v = v + 1 WHERE k = 'seq'")
-        return db.execute("SELECT v FROM state WHERE k = 'seq'").fetchone()[0]
+        return PaperBook._state_int(db, "seq")
+
+    @staticmethod
+    def _state_int(db, key: str) -> int:
+        """One ``state`` counter, exactly an ``int`` >= 0, or a typed ``book_invalid``."""
+        row = db.execute("SELECT v FROM state WHERE k = ?", (key,)).fetchone()
+        if row is None or type(row[0]) is not int or row[0] < 0:
+            raise Refused("book_invalid")
+        return row[0]
 
     def halt(self) -> int:
         """Set the halt flag in one committed step. Returns the halt's sequence number.
@@ -537,14 +545,22 @@ class PaperBook:
                         already = self._halted_in(db)
                     except Refused:
                         already = False  # a missing or corrupt flag is written halted below
-                    seq = db.execute("SELECT v FROM state WHERE k = 'halt_seq'").fetchone() if already else None
-                    if seq is not None and type(seq[0]) is int and seq[0] > 0:
-                        seq = seq[0]
-                    else:
-                        seq = self._next_seq(db)
-                        for key, value in (("halted", 1), ("halt_seq", seq)):
-                            db.execute("INSERT INTO state VALUES (?, ?) ON CONFLICT (k) DO UPDATE SET v = excluded.v",
-                                       (key, value))
+                    upsert = "INSERT INTO state VALUES (?, ?) ON CONFLICT (k) DO UPDATE SET v = excluded.v"
+                    try:
+                        seq = self._state_int(db, "halt_seq") if already else 0
+                    except Refused:
+                        seq = 0
+                    if seq == 0:
+                        # The halted write comes first and depends on nothing else: a damaged counter
+                        # row still leaves the book halted (``halt_seq`` then stays as it was, and 0
+                        # is returned).
+                        db.execute(upsert, ("halted", 1))
+                        try:
+                            seq = self._next_seq(db)
+                        except Refused:
+                            seq = 0
+                        else:
+                            db.execute(upsert, ("halt_seq", seq))
                     db.execute("COMMIT")
                     return seq
                 except BaseException:
@@ -591,7 +607,7 @@ class PaperBook:
 
     @staticmethod
     def _audit_row(db, row: dict) -> int:
-        halt_seq = db.execute("SELECT v FROM state WHERE k = 'halt_seq'").fetchone()[0]
+        halt_seq = PaperBook._state_int(db, "halt_seq")
         cur = db.execute("INSERT INTO audit (event, stage, code, plugin_id, intent_id, run_id, connection,"
                          " effect_sha256, halt_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                          (row["event"], row["stage"], row.get("code"), row["plugin_id"],
@@ -663,7 +679,7 @@ class PaperBook:
         order = _order_of(effect)  # read once; nothing below reads the intent's fields again
         if gateway.risk_pass(intent) != effect:
             raise Refused("book_direct_refused")
-        gateway._require_sized(intent)  # buys and sells alike
+        gateway._require_sized(intent, order)  # buys and sells alike, on the granted effect
 
         def run(db):
             if self._halted_in(db):
@@ -740,7 +756,7 @@ class PaperBook:
 
     def halt_seq(self) -> int:
         with self._lock:
-            return self._open_db().execute("SELECT v FROM state WHERE k = 'halt_seq'").fetchone()[0]
+            return self._state_int(self._open_db(), "halt_seq")
 
     def close(self) -> None:
         """Close the book. Waits for a statement in flight; every later call refuses ``book_closed``."""
@@ -816,23 +832,33 @@ class OrderGateway:
         return self._book.cancel_all()
 
     @staticmethod
-    def _sized_fields(intent: Intent) -> list:
-        # Types as well as values: a field swapped for an equal-claiming object is a change.
-        return [(type(value), value) for value in (_field(intent, name) for name in _INTENT_FIELDS)]
+    def _sized_order(order: _Order) -> tuple:
+        # Every value the effect carries and the booking writes, with its exact type.
+        return tuple((type(value), value) for value in (order.intent_id, order.account, order.instrument, order.side,
+                                                        order.quantity, order.limit_price_minor, order.run_id,
+                                                        order.connection))
 
     def _remember_sized(self, intent: Intent) -> None:
+        fields = dict(zip(_INTENT_FIELDS, (_field(intent, name) for name in _INTENT_FIELDS)))
+        quantity, price = fields["quantity"], fields["limit_price_minor"]
+        notional = quantity * price if type(quantity) is int and type(price) is int else 0
+        order = _Order(fields["intent_id"], fields["account"], fields["instrument"], fields["side"], quantity, price,
+                       notional, fields["run_id"], fields["connection"])
         with self._sized_lock:
-            self._sized[id(intent)] = (intent, self._sized_fields(intent))
+            self._sized[id(intent)] = (intent, self._sized_order(order))
             while len(self._sized) > SIZED_MAX:
                 del self._sized[next(iter(self._sized))]
 
-    def _require_sized(self, intent: Intent) -> None:
-        """Refuse an order that is not the unchanged intent object this gateway's ``size_buy`` or
-        ``size_sell`` made. The remembered fields include the side, so a sized buy turned into a
-        sell (or the reverse) is refused too."""
+    def _require_sized(self, intent: Intent, order: _Order) -> None:
+        """Refuse an order unless it is the intent object this gateway's ``size_buy`` or
+        ``size_sell`` made and ``order`` (read from the effect the risk pass built, the one that
+        is approved, charged and booked) carries exactly the values it was sized with. The
+        intent is not read again here, so a change racing between the risk pass and this check
+        cannot slip a caller's quantity or side past it. The side is compared too: a sized buy
+        turned into a sell (or the reverse) is refused."""
         with self._sized_lock:
             held = self._sized.get(id(intent))
-        if held is None or held[0] is not intent or self._sized_fields(intent) != held[1]:
+        if held is None or held[0] is not intent or self._sized_order(order) != held[1]:
             raise Refused("quantity_not_sized")
 
     def _check_run(self, order: _Order) -> None:
@@ -983,7 +1009,7 @@ class OrderGateway:
             if self._run_check is None:
                 raise Refused("run_check_missing")  # no booking-point run check: nothing may book
             stage = "size"
-            self._require_sized(intent)  # a caller-sized order, buy or sell, never reaches approval
+            self._require_sized(intent, order)  # a caller-sized order, buy or sell, never reaches approval
             stage = "request"
             # A booked intent id draws no new approval. Only the book is asked: no approval state here.
             if self._book._has_intent(order.intent_id):
@@ -1007,7 +1033,7 @@ class OrderGateway:
             if self._run_check is None:
                 raise Refused("run_check_missing")  # no booking-point run check: nothing may book
             stage = "size"
-            self._require_sized(intent)  # a caller-sized order never reaches the charge or the book
+            self._require_sized(intent, order)  # a caller-sized order never reaches the charge or the book
             # Every local refusal that does not need the core comes before the charge.
             stage = "book"
             if self._book._has_intent(order.intent_id):

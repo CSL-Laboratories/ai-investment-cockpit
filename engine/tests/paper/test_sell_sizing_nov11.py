@@ -153,6 +153,43 @@ class SellSizingTests(unittest.TestCase):
         self.assertEqual((ctx.exception.code, self.core.spent, self.book.orders()), ("quantity_not_sized", spent, []))
         self.assertEqual(self.book.held_shares(ACCT, "MSFT"), 500)
 
+    def test_values_racing_the_sizing_check_are_refused(self) -> None:
+        """The sizing check compares the effect the risk pass built (the one charged and booked),
+        not a second read of the intent. Here the intent carries the caller's values while the
+        risk pass reads it and its sized values again right after, the window a thread flipping
+        the fields would hit."""
+        cases = (("sell_quantity", lambda: self._sell("race-s", 100), {"quantity": 57}),
+                 ("buy_to_sell", lambda: self._buy("race-b"), {"side": "sell", "quantity": 1}))
+        for name, make, swap in cases:
+            with self.subTest(race=name):
+                intent = make()
+                sized_values = {field: getattr(intent, field) for field in swap}
+
+                def racing_risk_pass(target: object, _swap=swap, _back=sized_values) -> dict:
+                    for field, value in _swap.items():
+                        object.__setattr__(target, field, value)
+                    try:
+                        return OrderGateway.risk_pass(self.gw, target)
+                    finally:
+                        for field, value in _back.items():
+                            object.__setattr__(target, field, value)
+                self.gw.risk_pass = racing_risk_pass
+                try:
+                    calls, spent, orders = list(self.core.calls), self.core.spent, self.book.orders()
+                    for attempt in (lambda: self.gw.request_approval(intent),
+                                    lambda: self.gw.submit(intent, "apr_none", AUTHORITY)):
+                        with self.assertRaises(Refused) as ctx:
+                            attempt()
+                        self.assertEqual((ctx.exception.code, ctx.exception.cause), ("quantity_not_sized", None))
+                    self.assertEqual((self.core.calls, self.core.spent, self.book.orders()), (calls, spent, orders))
+                finally:
+                    del self.gw.risk_pass
+                # Control: untouched, the same sized intent books with its sized values.
+                out = self._book(intent)
+                self.assertEqual(out["status"], "paper_working")
+        self.assertEqual([(o[0], o[2]) for o in self.book.orders()], [("race-s", "working"), ("race-b", "working")])
+        self.assertEqual(self.book.held_shares(ACCT, "MSFT"), 499)  # the sized sell of 1, never 57
+
     def test_sell_sizing_validates_like_buy_sizing(self) -> None:
         for kwargs, code in (({"conviction": 0}, "conviction_invalid"), ({"conviction": 10_001}, "conviction_invalid"),
                              ({"conviction": 1_000, "instrument": "NOPE"}, "instrument_not_allowlisted"),
