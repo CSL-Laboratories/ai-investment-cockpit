@@ -209,8 +209,9 @@ class SendTimeWindowTests(InterleaveCase):
             path = self.new_book(0, holdings={(ACCT, "AAPL"): 3})
             gw_a, book_a, core_a = self.gateway(path)
             gw_b, _, _ = self.gateway(path)
-            gate, t, out = self.paused_submit(gw_a, core_a, self.intent(f"s-a{i}", 3, "sell"))
-            self.submit(gw_b, self.intent(f"s-b{i}", 1, "sell"))
+            # Test seam: hand-built sells marked as sized, so the send-time share check is what decides.
+            gate, t, out = self.paused_submit(gw_a, core_a, sized(gw_a, self.intent(f"s-a{i}", 3, "sell")))
+            self.submit(gw_b, sized(gw_b, self.intent(f"s-b{i}", 1, "sell")))
             gate.release()
             self.join(t)
             self.assert_leftover(book_a, f"s-a{i}", out["result"], "holding_insufficient")

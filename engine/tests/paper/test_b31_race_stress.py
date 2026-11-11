@@ -187,8 +187,10 @@ def _iteration(path: str, rng: random.Random, violations: list[str], counters: d
                         gw.cancel_all()
                         continue
                     if after_halt:
-                        intent = Intent(intent_id=intent_id, account=account, instrument=INSTRUMENT, side="sell",
-                                        quantity=1, limit_price_minor=price, run_id="run-1", connection="conn-a")
+                        # Marked as sized (test seam), so the halt is the only thing that can refuse it.
+                        intent = sized(gw, Intent(intent_id=intent_id, account=account, instrument=INSTRUMENT,
+                                                  side="sell", quantity=1, limit_price_minor=price, run_id="run-1",
+                                                  connection="conn-a"))
                     elif roll < 0.45:
                         intent = gw.size_buy(intent_id=intent_id, account=account, instrument=INSTRUMENT,
                                              limit_price_minor=price, conviction_bps=wrng.randint(1, 10_000),
