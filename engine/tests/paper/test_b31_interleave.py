@@ -6,7 +6,7 @@ core double blocks inside ``effect.authorize`` for one intent (after its early f
 passed) while a second ``PaperBook`` connection, as a second process would have, spends the cash
 or shares. B31 (Lucas t1414u; PRODUCT.md d84cdd26a4de2366f3c5d34c4aec5215f822a494 (CSLR-D-012), 4.2): the booking re-reads tracked cash in
 its own ``BEGIN IMMEDIATE`` transaction and refuses; it never clamps or resizes. On the base
-(Cockpit #320 head 9f9010e40d3101acadd5bf90786ccfa902297273) a booking refusal that follows the
+(Cockpit #320) a booking refusal that follows the
 core charge is ``leftover_charge`` with the booking refusal in ``.cause`` (``cash_insufficient``,
 ``holding_insufficient``, ``order_halted``, ``intent_duplicate``); refusals before the charge
 keep their plain codes.
@@ -15,9 +15,11 @@ Checks: the refusal is typed and audited at stage ``book`` as ``leftover_charge:
 nothing is booked for the paused intent; available cash plus working buy notional still equals
 starting cash; one intent id books once across connections.
 
-Run: ``PYTHONPATH=engine python3 -B -m unittest engine/cockpit/paper/tests/test_b31_interleave.py -v``,
+Run: ``PYTHONPATH=engine python3 -B -m unittest engine/tests/paper/test_b31_interleave.py -v``,
 and with ``PYTHON_GIL=0 python3.14t -X gil=0``. ``COCKPIT_RACE_ITERS`` (default 10) repeats
-each forced window. Paper only: the core is a local double that approves every effect.
+each forced window. Paper only: the core is a local double that approves every effect and
+every run. Fixed-quantity buys go through the ``fakecore.sized`` test seam; the buy sized to
+all of the cash comes from the real ``size_buy``.
 """
 
 from __future__ import annotations
@@ -32,9 +34,11 @@ import unittest
 
 from cockpit.paper.core_client import CoreClient, canonical
 from cockpit.paper.gateway import Caps, Intent, OrderGateway, PaperBook, Refused, create_book
+from tests.paper.fakecore import ALLOWLIST, sized
 
 ITERS = int(os.environ.get("COCKPIT_RACE_ITERS", "10"))
 THREADS = 8
+WAIT = 30  # seconds any barrier, gate or join may take before the test fails
 ACCT = "paper-acct"
 PRICE = 10_000
 AUTHORITY = {"profile": "fake", "signature": "fake"}
@@ -49,11 +53,11 @@ class Gate:
 
     def hit(self) -> None:
         self.reached.set()
-        if not self._go.wait(30):
+        if not self._go.wait(WAIT):
             raise TimeoutError("gate never released")
 
     def wait_reached(self) -> None:
-        if not self.reached.wait(30):
+        if not self.reached.wait(WAIT):
             raise TimeoutError("gate never reached")
 
     def release(self) -> None:
@@ -61,7 +65,10 @@ class Gate:
 
 
 class PausingCore:
-    """``csl-core/v0`` double: approves every effect; blocks one intent inside authorize."""
+    """``csl-core/v0`` double: approves every effect; blocks one intent inside authorize.
+
+    ``check`` is the host's run check (the core breaker's ``check``): every run is healthy.
+    """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -83,6 +90,9 @@ class PausingCore:
             body = {"authorized": True, "digest": digest, "charge": None}
         return canonical({"protocol": "csl-core/v0", "ok": True, "result": body})
 
+    def check(self, run_id: str, connection: str, plugin_id: str) -> dict:
+        return {}
+
 
 class InterleaveCase(unittest.TestCase):
     def setUp(self) -> None:
@@ -101,13 +111,18 @@ class InterleaveCase(unittest.TestCase):
         book = PaperBook(path)
         self.addCleanup(book.close)
         core = PausingCore()
-        gw = OrderGateway(plugin_id="csl.cockpit.paper", book=book, core=CoreClient(core), caps=Caps(10**12, 10**6))
+        gw = OrderGateway(plugin_id="csl.cockpit.paper", book=book, core=CoreClient(core), caps=Caps(10**12, 10**6),
+                          allowlist=ALLOWLIST, run_check=core.check)
         return gw, book, core
 
     @staticmethod
     def intent(intent_id: str, qty: int, side: str = "buy") -> Intent:
         return Intent(intent_id=intent_id, account=ACCT, instrument="AAPL", side=side, quantity=qty,
                       limit_price_minor=PRICE, run_id="run-1", connection="conn-a")
+
+    def buy(self, gw, intent_id: str, qty: int) -> Intent:
+        """A fixed-quantity buy, recorded as sized by ``gw`` (the ``fakecore.sized`` test seam)."""
+        return sized(gw, self.intent(intent_id, qty))
 
     @staticmethod
     def submit(gw, intent):
@@ -133,7 +148,7 @@ class InterleaveCase(unittest.TestCase):
         gate.wait_reached()
         return gate, t, out
 
-    def join(self, t: threading.Thread, timeout: float = 30) -> None:
+    def join(self, t: threading.Thread, timeout: float = WAIT) -> None:
         """Join with a bound and report a hang as a failure; the daemon thread is left behind."""
         t.join(timeout)
         self.assertFalse(t.is_alive(), f"submit thread still running after {timeout}s (hung)")
@@ -165,7 +180,7 @@ class SendTimeWindowTests(InterleaveCase):
                                   conviction_bps=10_000, run_id="run-1", connection="conn-a")
             self.assertEqual(sized.quantity, 5)  # sized to all of the cash
             gate, t, out = self.paused_submit(gw_a, core_a, sized)
-            self.submit(gw_b, self.intent(f"b{i}", 1))  # another connection spends one share's cash
+            self.submit(gw_b, self.buy(gw_b, f"b{i}", 1))  # another connection spends one share's cash
             gate.release()
             self.join(t)
             self.assert_leftover(book_a, sized.intent_id, out["result"], "cash_insufficient")
@@ -181,8 +196,8 @@ class SendTimeWindowTests(InterleaveCase):
             path = self.new_book(6 * PRICE)
             gw_a, book_a, core_a = self.gateway(path)
             gw_b, _, _ = self.gateway(path)
-            gate, t, out = self.paused_submit(gw_a, core_a, self.intent(f"a{i}", 5))
-            self.submit(gw_b, self.intent(f"b{i}", 1))
+            gate, t, out = self.paused_submit(gw_a, core_a, self.buy(gw_a, f"a{i}", 5))
+            self.submit(gw_b, self.buy(gw_b, f"b{i}", 1))
             gate.release()
             self.join(t)
             self.assertEqual(out["result"]["status"], "paper_working", out["result"])
@@ -207,7 +222,7 @@ class SendTimeWindowTests(InterleaveCase):
             path = self.new_book(10 * PRICE)
             gw_a, book_a, core_a = self.gateway(path)
             gw_b, _, _ = self.gateway(path)
-            gate, t, out = self.paused_submit(gw_a, core_a, self.intent(f"a{i}", 1))
+            gate, t, out = self.paused_submit(gw_a, core_a, self.buy(gw_a, f"a{i}", 1))
             gw_b.halt()  # the operator halts from another process while A is being authorized
             self.assertTrue(t.daemon)
             gate.release()
@@ -224,9 +239,9 @@ class DuplicateIntentTests(InterleaveCase):
             path = self.new_book(start)
             gw_a, book_a, core_a = self.gateway(path)
             gw_b, _, _ = self.gateway(path)
-            intent = self.intent(f"dup-w{i}", 1)
+            intent = self.buy(gw_a, f"dup-w{i}", 1)
             gate, t, out = self.paused_submit(gw_a, core_a, intent)
-            self.submit(gw_b, intent)  # another connection books the same intent id first
+            self.submit(gw_b, sized(gw_b, intent))  # another connection books the same intent id first
             gate.release()
             self.join(t)
             self.assert_leftover(book_a, intent.intent_id, out["result"], "intent_duplicate")
@@ -247,9 +262,9 @@ class DuplicateIntentTests(InterleaveCase):
             lock = threading.Lock()
 
             def go(n):
-                barrier.wait()
                 try:
-                    self.submit(gws[n][0], self.intent(f"dup{i}", 1))
+                    barrier.wait(WAIT)  # a thread that never arrives breaks the barrier for all
+                    self.submit(gws[n][0], self.buy(gws[n][0], f"dup{i}", 1))
                     code = None
                 except Refused as exc:
                     code = (exc.code, exc.cause)
@@ -262,9 +277,9 @@ class DuplicateIntentTests(InterleaveCase):
             for t in threads:
                 t.start()
             for t in threads:
-                t.join(60)
+                t.join(2 * WAIT)
             hung = sum(t.is_alive() for t in threads)
-            self.assertEqual(hung, 0, f"{hung} thread(s) still running after 60s")
+            self.assertEqual(hung, 0, f"{hung} thread(s) still running after {2 * WAIT}s")
             self.assertEqual(codes.count(None), 1, codes)
             # Plain before the charge (approval or submit saw the booked id), leftover_charge after it.
             allowed = {("intent_duplicate", None), ("leftover_charge", "intent_duplicate")}
