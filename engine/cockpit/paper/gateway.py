@@ -33,8 +33,10 @@ more at booking, with the run and connection of the approved effect and its own 
    are taken, so a check that hangs never keeps a halt or a kill on this book waiting
    (that submit just does not book while it hangs);
 2. a re-verify inside the booking transaction, next to the halt re-read, waited on for at
-   most ``RUN_RECHECK_TIMEOUT_S`` (the check runs on a worker thread; at most
-   ``_RUN_CHECK_WORKERS_MAX`` run at once). The frozen breaker API offers only ``check()``,
+   most ``RUN_RECHECK_TIMEOUT_S`` (the check runs on one of the gateway's own worker
+   threads; at most ``_RUN_CHECK_WORKERS_MAX`` run at once per gateway, and when all of them
+   are still hung ``submit`` is refused ``run_check_busy`` before the charge). The frozen
+   breaker API offers only ``check()``,
    so the re-verify is that same call, bounded by the wait rather than by what it reads. It
    must answer exactly what step 1 answered: a fault, a trip or a different binding
    committed in between is refused with the core's code (``core:run_faulted``, say) or
@@ -44,7 +46,8 @@ more at booking, with the run and connection of the approved effect and its own 
 
 A refusal at either step follows the charge, so it is ``leftover_charge`` with that code as
 the cause, audited at stage ``book``. An error without a typed code, or a result that is
-not a dict with ``str`` keys, is ``run_check_error``. A gateway built without a run check
+not a dict with ``str`` keys, is ``run_check_error``. A ``KeyboardInterrupt`` or
+``SystemExit`` raised by the check is raised again, never turned into a refusal. A gateway built without a run check
 books nothing: ``request_approval`` and ``submit`` refuse ``run_check_missing`` before any
 core call. A fault or trip committed after the re-verify and before the booking's commit
 is not seen.
@@ -172,6 +175,7 @@ import stat
 import sys
 import threading
 import time
+import weakref
 from dataclasses import dataclass
 from typing import Callable, NamedTuple
 
@@ -310,16 +314,20 @@ _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)  # POSIX only; Windows has no symlink-f
 # The longest the booking waits on the run check's re-verify while it holds the book's lock
 # and write lock (see "Run check at the booking point" in the module doc).
 RUN_RECHECK_TIMEOUT_S = 1.0
-_RUN_CHECK_WORKERS_MAX = 8  # run checks in flight at once; past that a check is refused, never queued
+_RUN_CHECK_WORKERS_MAX = 8  # re-verifies in flight at once per gateway; past that refused, never queued
+_RUN_CHECK_WORKER_IDLE_S = 30.0  # an idle re-verify worker exits after this long unused
 
 
 class _BoundedCaller:
     """Runs a host callable on a worker thread and waits at most a given time for it.
 
-    A call that has not returned in time is ``run_check_timeout``; its worker is left to
-    finish, its late result is discarded, and it rejoins the pool only if it ever returns.
-    At most ``_RUN_CHECK_WORKERS_MAX`` calls run at once, so hung checks cannot pile up
-    threads without bound: past that a call is ``run_check_busy`` without waiting.
+    ``call`` returns ``(True, value)`` or ``(False, exception)`` for what the callable did; only
+    the pool's own refusals are raised. A call that has not returned in time is
+    ``run_check_timeout``; its worker is left to finish, its late result is discarded, and it
+    rejoins the pool only if it ever returns. At most ``_RUN_CHECK_WORKERS_MAX`` calls run at
+    once per pool (one pool per gateway), so hung checks cannot pile up threads without bound:
+    past that a call is ``run_check_busy`` without waiting. A forked child starts with an empty
+    pool (the parent's workers do not exist there).
 
     Latency only (no effect on what is decided): without the GIL, ``warm`` wakes an idle
     worker ahead of a call and the worker then polls for up to ``_SPIN_S`` before sleeping
@@ -330,9 +338,17 @@ class _BoundedCaller:
     _SPIN_S = 0.002 if not getattr(sys, "_is_gil_enabled", lambda: True)() else 0.0
 
     def __init__(self) -> None:
+        self._reset()
+        _POOLS.add(self)
+
+    def _reset(self) -> None:
         self._lock = threading.Lock()
         self._idle: list = []
         self._running = 0
+
+    def saturated(self) -> bool:
+        with self._lock:
+            return not self._idle and self._running >= _RUN_CHECK_WORKERS_MAX
 
     def warm(self) -> None:
         if self._SPIN_S:
@@ -350,32 +366,42 @@ class _BoundedCaller:
             else:
                 jobs = None
             self._running += 1
-        if jobs is None:
-            jobs = queue.SimpleQueue()
-            try:
-                threading.Thread(target=self._work, args=(jobs,), daemon=True, name="cockpit-run-check").start()
-            except BaseException:
-                with self._lock:
-                    self._running -= 1
-                raise Refused("run_check_error") from None
         done, box = threading.Lock(), []
-        done.acquire()  # released by the worker once ``box`` holds the outcome
-        start = time.monotonic()
-        jobs.put((fn, args, done, box))
+        alive = jobs is not None  # an idle worker was taken; a new one is alive once started
+        try:
+            if jobs is None:
+                jobs = queue.SimpleQueue()
+                threading.Thread(target=self._work, args=(jobs,), daemon=True, name="cockpit-run-check").start()
+                alive = True
+            done.acquire()  # released by the worker once ``box`` holds the outcome
+            start = time.monotonic()
+            jobs.put((fn, args, done, box))
+        except BaseException as exc:  # nothing was handed over: give the slot (and the worker) back
+            with self._lock:
+                self._running -= 1
+                if alive:
+                    self._idle.append(jobs)
+            if isinstance(exc, Exception):
+                raise Refused("run_check_error") from None
+            raise
         if self._SPIN_S:
             spin_until = start + min(self._SPIN_S, timeout_s)
             while not box and time.monotonic() < spin_until:
                 pass
         if not done.acquire(timeout=max(0.0, start + timeout_s - time.monotonic())):
             raise Refused("run_check_timeout")
-        ok, value = box[0]
-        if not ok:
-            raise value
-        return value
+        return box[0]
 
     def _work(self, jobs) -> None:
         while True:
-            job = jobs.get()
+            try:
+                job = jobs.get(timeout=_RUN_CHECK_WORKER_IDLE_S)
+            except queue.Empty:
+                with self._lock:
+                    if any(idle is jobs for idle in self._idle):  # not taken by a caller: retire
+                        self._idle = [idle for idle in self._idle if idle is not jobs]
+                        return
+                continue  # a caller took this worker and is about to hand it a job
             if job is None:  # warmed: poll briefly for the call that is about to come
                 spin_until = time.monotonic() + self._SPIN_S
                 while jobs.empty() and time.monotonic() < spin_until:
@@ -395,7 +421,9 @@ class _BoundedCaller:
             del job, fn, args, done, box, outcome
 
 
-_RUN_CHECKS = _BoundedCaller()
+_POOLS: "weakref.WeakSet[_BoundedCaller]" = weakref.WeakSet()
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=lambda: [pool._reset() for pool in list(_POOLS)])
 
 
 class _Grant:
@@ -789,7 +817,7 @@ class PaperBook:
         gateway._require_sized(intent, order)  # buys and sells alike, on the granted effect
         # The full host run check, before the book's lock: however long it takes, a halt or a
         # kill on this book is never kept waiting by it.
-        _RUN_CHECKS.warm()  # latency only: the re-verify below then finds its worker awake
+        gateway._run_checks.warm()  # latency only: the re-verify below then finds its worker awake
         checked = gateway._check_run(order, None)
 
         def run(db):
@@ -921,6 +949,7 @@ class OrderGateway:
         self._caps = caps
         self._allowlist = allowlist
         self._run_check = run_check
+        self._run_checks = _BoundedCaller()  # this gateway's re-verify workers; see _BoundedCaller
         self._currency = currency
         self._sized: dict[int, tuple] = {}  # id(intent) -> (the intent, its fields when sized), oldest first
         self._sized_lock = threading.Lock()
@@ -983,12 +1012,18 @@ class OrderGateway:
         if check is None:
             raise Refused("run_check_missing")
         args = (order.run_id, order.connection, self._plugin_id)
-        try:
-            out = check(*args) if timeout_s is None else _RUN_CHECKS.call(check, args, timeout_s)
-        except Refused:
-            raise
-        except BaseException as exc:  # noqa: BLE001 - whatever the check raises, nothing books
-            code = getattr(exc, "code", None)
+        if timeout_s is None:
+            try:
+                ok, out = True, check(*args)
+            except Exception as exc:  # noqa: BLE001 - mapped below; an interrupt is not swallowed
+                ok, out = False, exc
+        else:
+            ok, out = self._run_checks.call(check, args, timeout_s)  # raises only its own refusals
+        if not ok:
+            if not isinstance(out, Exception):
+                raise out  # KeyboardInterrupt or SystemExit raised by the check: never a refusal
+            # Whatever the check raised, nothing books; its typed code is the core's, prefixed.
+            code = getattr(out, "code", None)
             if type(code) is str and _CODE.fullmatch(code):
                 raise Refused("core:" + code) from None
             raise Refused("run_check_error") from None
@@ -1163,6 +1198,8 @@ class OrderGateway:
             self._book.check_funds(order)  # early read; the booking re-checks in its own transaction
             stage = "book"
             self._book._probe_writable()  # a write-locked book is refused before the core charges
+            if self._run_checks.saturated():
+                raise Refused("run_check_busy")  # re-verify workers all hung: refused before the charge
             stage = "authorize"
             try:
                 core = self._core.authorize(effect, approval_id, authority)

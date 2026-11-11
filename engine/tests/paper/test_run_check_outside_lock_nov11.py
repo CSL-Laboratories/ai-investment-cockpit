@@ -28,6 +28,7 @@ import tempfile
 import threading
 import time
 import unittest
+import warnings
 from unittest import mock
 
 from cockpit.paper import gateway as gateway_module
@@ -153,7 +154,7 @@ class RunCheckOutsideLockTests(unittest.TestCase):
     def test_a_reverify_that_hangs_is_bounded_and_lets_the_locks_go(self) -> None:
         release = threading.Event()
         self.addCleanup(release.set)
-        self.check.hooks[1] = _before(lambda: release.wait(WAIT * 3))
+        self.check.hooks[1] = _before(lambda: release.wait(WAIT))
         with mock.patch.object(gateway_module, "RUN_RECHECK_TIMEOUT_S", 0.3):
             t = time.monotonic()
             outcome = self._submit()
@@ -168,7 +169,7 @@ class RunCheckOutsideLockTests(unittest.TestCase):
     def _hung_submit(self, index: int):
         release = threading.Event()
         self.addCleanup(release.set)
-        self.check.hooks[index] = _before(lambda: release.wait(WAIT * 3))
+        self.check.hooks[index] = _before(lambda: release.wait(WAIT))
         result: list = []
         worker = threading.Thread(target=lambda: result.append(self._submit()), daemon=True)
         worker.start()
@@ -212,18 +213,77 @@ class RunCheckOutsideLockTests(unittest.TestCase):
         with mock.patch.object(gateway_module, "_RUN_CHECK_WORKERS_MAX", 2):
             for _ in range(2):
                 with self.assertRaises(Refused) as caught:
-                    pool.call(release.wait, (WAIT * 3,), 0.05)
+                    pool.call(release.wait, (WAIT,), 0.05)
                 self.assertEqual(caught.exception.code, "run_check_timeout")
             t = time.monotonic()
             with self.assertRaises(Refused) as caught:
-                pool.call(release.wait, (WAIT * 3,), WAIT)
+                pool.call(release.wait, (WAIT,), WAIT)
             self.assertEqual(caught.exception.code, "run_check_busy")
             self.assertLess(time.monotonic() - t, 1.0)  # refused at once, never queued
             release.set()
             deadline = time.monotonic() + WAIT
             while pool._running and time.monotonic() < deadline:
                 time.sleep(0.01)
-            self.assertEqual(pool.call(lambda: {"ok": 1}, (), WAIT), {"ok": 1})  # hung workers came back
+            self.assertEqual(pool.call(lambda: {"ok": 1}, (), WAIT), (True, {"ok": 1}))  # hung workers came back
+
+    def test_a_saturated_pool_is_refused_before_the_charge(self) -> None:
+        release = threading.Event()
+        self.addCleanup(release.set)
+        with mock.patch.object(gateway_module, "_RUN_CHECK_WORKERS_MAX", 1):
+            with self.assertRaises(Refused):
+                self.gw._run_checks.call(release.wait, (WAIT,), 0.05)  # one re-verify hung
+            outcome = self._submit()
+            self.assertEqual((outcome.code, outcome.cause), ("run_check_busy", None))
+            self.assertEqual((self.core.spent, self.core.calls.count("effect.authorize")), (0, 0))
+            # Another gateway's pool is its own: a hung check here does not refuse there.
+            other = OrderGateway(plugin_id=DEFAULT_PLUGIN, book=self.book, core=CoreClient(self.core),
+                                 caps=Caps(10**9, 10**6), allowlist=ALLOWLIST, run_check=self.core.check)
+            intent = sized(other, Intent(**dict(BASE.__dict__, intent_id="ol-other")))
+            approval = other.request_approval(intent)["approval_id"]
+            self.core.operator_approves(approval)
+            self.assertEqual(other.submit(intent, approval, AUTHORITY)["status"], "paper_working")
+        self.assertEqual(self.book.orders()[0][0], "ol-other")
+
+    def test_an_interrupt_from_the_check_is_raised_not_turned_into_a_refusal(self) -> None:
+        for index in (0, 1):
+            for interrupt in (KeyboardInterrupt, SystemExit):
+                with self.subTest(call=index, interrupt=interrupt.__name__):
+                    self.setUp()
+                    self.check.hooks[index] = _before(lambda interrupt=interrupt: (_ for _ in ()).throw(interrupt()))
+                    with self.assertRaises(interrupt):
+                        self.gw.submit(self.intent, self.approval, AUTHORITY)
+                    self.assertEqual(self.book.orders(), [])
+                    self.assertFalse(self.book._lock.locked())
+                    self.assertFalse(self.book._db.in_transaction)
+
+    def test_a_check_raising_the_gateways_own_refusal_keeps_the_core_prefix(self) -> None:
+        self.check.hooks[1] = _before(lambda: (_ for _ in ()).throw(Refused("order_halted")))
+        self._assert_nothing_booked(self._submit(), "core:order_halted")
+
+    def test_a_value_of_another_type_is_a_changed_answer(self) -> None:
+        self.check.hooks[0] = lambda answer: dict(answer, probe=1)
+        self.check.hooks[1] = lambda answer: dict(answer, probe=True)  # True == 1, but not the same answer
+        self._assert_nothing_booked(self._submit(), "run_check_changed")
+
+    @unittest.skipUnless(hasattr(os, "fork"), "no fork on this platform")
+    def test_a_forked_child_starts_with_an_empty_pool(self) -> None:
+        self.assertEqual(self._submit()["status"], "paper_working")  # leaves an idle worker behind
+        self.assertTrue(self.gw._run_checks._idle)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)  # fork with threads running
+            pid = os.fork()
+        if pid == 0:  # child: never return into the test runner
+            code = 1
+            try:
+                pool = self.gw._run_checks
+                fresh = (pool._idle, pool._running) == ([], 0)
+                t = time.monotonic()
+                answered = pool.call(lambda: 7, (), 5.0) == (True, 7)
+                code = 0 if fresh and answered and time.monotonic() - t < 1.0 else 2
+            finally:
+                os._exit(code)
+        _, status = os.waitpid(pid, 0)
+        self.assertEqual(os.waitstatus_to_exitcode(status), 0)
 
 
 @unittest.skipIf(e2e.CORE_SKIP is not None, e2e.AWAITING_328)
