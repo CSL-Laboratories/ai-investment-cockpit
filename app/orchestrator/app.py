@@ -178,10 +178,9 @@ def create_app(state, *, auth: ApiKeyAuth | None = None,
     register_quant_routes(app, state)
 
     # Item 5 (#318): the read-only paper panel, behind the same key guard (PRODUCT.md 5.2 / CP0-v2).
-    from .paper_panel import build_paper_panel_router
+    from .paper_panel import mount_paper_panel
     from .recursion_control import ControlApiPanelReader
-    app.include_router(build_paper_panel_router(ControlApiPanelReader(paper_panel_control),
-                                                dependencies=[Depends(guard)]))
+    mount_paper_panel(app, ControlApiPanelReader(paper_panel_control), dependencies=[Depends(guard)])
 
     if quant_snapshots is not None:
         from .auth import keyring_api_key_provider

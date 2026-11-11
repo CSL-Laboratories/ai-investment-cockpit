@@ -31,8 +31,8 @@ from typing import Any
 
 from core.engine_path import import_engine
 
-__all__ = ["PAPER_PANEL_ID", "PanelRefused", "build_paper_panel_router", "paper_panel",
-           "render_paper_panel"]
+__all__ = ["PAPER_PANEL_ID", "PanelRefused", "build_paper_panel_router", "mount_paper_panel",
+           "paper_panel", "render_paper_panel"]
 
 PAPER_PANEL_ID = "cockpit.paper_own_trading"
 PAPER_VENUE_USE = "paper:own_trading"
@@ -153,3 +153,15 @@ def build_paper_panel_router(read: ReadFn, *, dependencies: Sequence[Any]) -> An
         return _render(read, panel)
 
     return router
+
+
+def mount_paper_panel(app: Any, read: ReadFn, *, dependencies: Sequence[Any]) -> None:
+    """Add the panel's two GET routes to ``app`` as plain routes, with the same checks as
+    ``build_paper_panel_router``.
+
+    ``app.include_router`` is not used because newer FastAPI keeps an included router as one
+    entry without a ``path``, and existing app code and tests walk ``app.routes`` by ``path``.
+    """
+    router = build_paper_panel_router(read, dependencies=dependencies)
+    for route in router.routes:
+        app.add_api_route(route.path, route.endpoint, methods=["GET"], dependencies=list(dependencies))

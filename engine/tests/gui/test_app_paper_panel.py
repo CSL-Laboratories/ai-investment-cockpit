@@ -460,6 +460,9 @@ class CreateAppMountTests(unittest.TestCase):
         self.assertEqual(client.get("/panels/cockpit.kalshi_model_fed_read",
                                     headers={"X-API-Key": self.KEY}).status_code, 404)
         self.assertEqual({m for m, _ in spy.calls}, set(pp.paper_panel()["reads"]))
+        # Plain routes, so app code that walks app.routes by path keeps working.
+        panel_routes = {r.path: r.methods for r in client.app.routes if r.path.startswith("/panels")}
+        self.assertEqual(panel_routes, {"/panels": {"GET"}, "/panels/{panel_id}": {"GET"}})
 
     def test_without_a_control_api_the_panel_says_so(self) -> None:
         body = self._client(None).get("/panels/cockpit.paper_own_trading", headers={"X-API-Key": self.KEY}).json()
