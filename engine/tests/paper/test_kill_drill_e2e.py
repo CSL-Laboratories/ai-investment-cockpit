@@ -40,7 +40,7 @@ from tests.paper.test_gemini import MockGemini
 
 OAUTH_VENUES = ("coinbase", "gemini")
 BOOKED = ("drill-1", "drill-2", "drill-3")
-INTENT = replace(e2e.INTENT, quantity=1)  # 10_000 each, inside the profile's 120_000 total
+QUANTITY = 1  # 10_000 each, inside the profile's 120_000 total
 
 
 class _RaisingKill:
@@ -70,12 +70,12 @@ class KillDrillTests(unittest.TestCase):
         self.assertIs(type(w.kill_switch), KillSwitch)
         self.assertIs(type(w.gateway), OrderGateway)
         for intent_id in BOOKED:
-            intent = replace(INTENT, intent_id=intent_id)
+            intent = e2e.sized_buy(w, intent_id, quantity=QUANTITY)
             approval = w.gateway.request_approval(intent)
             self.assertTrue(w.decide(approval)["ok"])
             self.assertEqual(w.gateway.submit(intent, approval["approval_id"], w.profile)["status"],
                              "paper_working")
-        self.held = replace(INTENT, intent_id="drill-held")
+        self.held = e2e.sized_buy(w, "drill-held", quantity=QUANTITY)
         self.held_effect = w.gateway.risk_pass(self.held)
         self.held_approval = w.gateway.request_approval(self.held)
         self.assertTrue(w.decide(self.held_approval)["ok"])
@@ -142,7 +142,7 @@ class KillDrillTests(unittest.TestCase):
         self._refused("order_halted",
                       lambda: w.gateway.submit(self.held, self.held_approval["approval_id"], w.profile))
         # New risk draws no approval.
-        self._refused("order_halted", lambda: w.gateway.request_approval(replace(INTENT, intent_id="drill-new")))
+        self._refused("order_halted", lambda: w.gateway.request_approval(replace(self.held, intent_id="drill-new")))
         self.assertEqual((w.plugin_ops, len(w.drawn)), (ops, drawn))
         self._paper_cancelled(w, venues)
         # Cancels stay allowed while halted.

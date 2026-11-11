@@ -13,6 +13,16 @@ stands for the authenticated caller) is ``run_not_owned``, a run sent on a conne
 than its bound one is ``run_connection_mismatch``, then ``run_faulted``, then
 ``connection_tripped``. ``DEFAULT_RUNS`` pre-binds the run ids the shared fixtures use, owned
 by ``DEFAULT_PLUGIN``.
+
+``FakeCore.check`` is the double of ``ConnectionBreaker.check(run_id, connection, plugin_id)``,
+the callable a host hands the gateway as ``run_check``. It makes the same refusals in the same
+order, raised as ``FakeRefused`` with the core's ``code``, and the transport uses it too.
+
+``ALLOWLIST`` is the instrument allowlist the fake-core suites build their gateways with.
+``sized`` is a test seam, not a product path: it records a hand-built buy in a gateway's private
+sizing memory, standing for a ``size_buy`` that returned exactly that intent, so suites about
+other behaviour keep their fixed quantities. The sizing rule itself is tested through the real
+``size_buy`` in ``test_sizing_allowlist.py``, and the real-core suites size every buy with it.
 """
 
 from __future__ import annotations
@@ -21,10 +31,28 @@ import hashlib
 import json
 
 from cockpit.paper.core_client import canonical
+from cockpit.paper.gateway import Intent, OrderGateway
 
 
 DEFAULT_RUNS = {"run-1": "conn-a", "run-ok": "conn-ok"}
 DEFAULT_PLUGIN = "csl.cockpit.paper"
+ALLOWLIST = frozenset({"AAPL", "MSFT", "XYZ"})
+PROVIDER, MODEL_VERSION = "provider-fake", "model-fake"
+
+
+class FakeRefused(Exception):
+    """Stands for the core's ``Refused``: a typed ``code`` and nothing else."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+def sized(gateway: OrderGateway, intent: Intent) -> Intent:
+    """Test seam (see the module doc): mark a hand-built buy as sized by ``gateway``."""
+    if type(intent) is Intent and intent.side == "buy":
+        gateway._remember_sized(intent)
+    return intent
 
 
 class FakeCore:
@@ -54,6 +82,21 @@ class FakeCore:
         self.run_connection[run_id] = connection
         self.run_owner[run_id] = plugin_id
 
+    def check(self, run_id: str, connection: str, plugin_id: str) -> dict:
+        """The core breaker's ``check``: same refusals, same order, then the run's provider and model."""
+        bound = self.run_connection.get(run_id)
+        if bound is None:
+            raise FakeRefused("run_unknown")
+        if self.run_owner.get(run_id, DEFAULT_PLUGIN) != plugin_id:
+            raise FakeRefused("run_not_owned")
+        if bound != connection:
+            raise FakeRefused("run_connection_mismatch")
+        if run_id in self.faulted_runs:
+            raise FakeRefused("run_faulted")
+        if self.tripped or connection in self.tripped_connections:
+            raise FakeRefused("connection_tripped")
+        return {"provider": PROVIDER, "model_version": MODEL_VERSION}
+
     def _reply(self, ok: bool, body: dict) -> bytes:
         key = "result" if ok else "refusal"
         return canonical({"protocol": "csl-core/v0", "ok": ok, key: body})
@@ -66,17 +109,10 @@ class FakeCore:
         digest = hashlib.sha256(canonical(effect)).hexdigest()
         if "order" not in self.permissions:
             return self._reply(False, {"code": "permission_required"})
-        bound = self.run_connection.get(effect["run_id"])
-        if bound is None:
-            return self._reply(False, {"code": "run_unknown"})
-        if self.run_owner.get(effect["run_id"], DEFAULT_PLUGIN) != effect["plugin_id"]:
-            return self._reply(False, {"code": "run_not_owned"})
-        if bound != effect["connection"]:
-            return self._reply(False, {"code": "run_connection_mismatch"})
-        if effect["run_id"] in self.faulted_runs:
-            return self._reply(False, {"code": "run_faulted"})
-        if self.tripped or effect["connection"] in self.tripped_connections:
-            return self._reply(False, {"code": "connection_tripped"})
+        try:
+            self.check(effect["run_id"], effect["connection"], effect["plugin_id"])
+        except FakeRefused as exc:
+            return self._reply(False, {"code": exc.code})
         if op == "effect.request":
             approval_id = "apr_%d" % len(self.approvals)
             self.approvals[approval_id] = {"digest": digest, "state": "pending"}

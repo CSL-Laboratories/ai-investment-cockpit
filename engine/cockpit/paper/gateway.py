@@ -3,13 +3,15 @@
 The only path that books an order in ``engine/``. Every order goes, in this order:
 
 1. halt check (new risk is refused while halted; cancels stay allowed, Q26);
-2. the deterministic risk pass (paper only, integer money, size and quantity caps,
-   rejecting and never clamping, Q25);
+2. the deterministic risk pass (paper only, integer money, the instrument allowlist, size
+   and quantity caps, rejecting and never clamping, Q25), then the sizing check: a buy
+   must be the unchanged intent this gateway's ``size_buy`` made;
 3. the Recursion core over its protocol: permission, the operator's one-use approval of
    this exact effect, then the installer-signed authority profile and its budgets
    (PRODUCT.md 4.2, O11, K3);
-4. booking, in one SQLite ``BEGIN IMMEDIATE`` transaction that re-reads the halt flag,
-   so a halt committed by any process before the booking wins.
+4. booking, in one SQLite ``BEGIN IMMEDIATE`` transaction that re-reads the halt flag and
+   asks the host's run check again, so a halt, a run fault or a connection trip committed
+   before the booking wins.
 
 Every refusal on ``size_buy``, ``request_approval`` and ``submit`` is written to the book's append-only
 ``audit`` table (stage, typed code, intent, run, connection, effect digest) before the
@@ -17,6 +19,36 @@ typed ``Refused`` is raised, and every booking writes a ``booked`` row in the bo
 own transaction (B15). An intent whose run ended in a fault, or whose connection the
 engine breaker tripped, is refused here with ``core:run_faulted`` or
 ``core:connection_tripped`` (PRODUCT.md 4.2, K1).
+
+Run check at the booking point. The gateway reaches the core only over its transport, so
+the host hands in ``run_check``: the core ``ConnectionBreaker``'s
+``check(run_id, connection, plugin_id)``. It returns a dict for a healthy run and raises
+an error carrying the core's typed ``code`` otherwise (``run_unknown``, ``run_not_owned``,
+``run_connection_mismatch``, ``run_faulted``, ``connection_tripped``). The core runs the
+same check inside ``effect.request`` and ``effect.authorize``; the gateway calls it once
+more inside the booking transaction, next to the halt re-read, with the run and
+connection of the approved effect and its own plugin id. A refusal there follows the
+charge, so it is ``leftover_charge`` with cause ``core:<code>``, audited at stage
+``book``. An error without a typed code, or a result that is not a dict, is
+``run_check_error``. A gateway built without a run check books nothing: ``request_approval``
+and ``submit`` refuse ``run_check_missing`` before any core call. A fault or trip
+committed after the check inside the transaction and before its commit is not seen.
+
+Sizing and the order universe (PRODUCT.md at csl-research d84cdd26, lines 1183-1184 and
+1474-1475): "Proposals carry conviction, not quantity, and the gateway sizes orders
+(grill Q30; O47)." and "The order universe is a static, operator-approved allowlist; no
+model or API changes execution eligibility at runtime." A buy reaches approval or
+booking only as the exact ``Intent`` object this gateway's ``size_buy`` returned, with
+every field unchanged; any other buy is refused ``quantity_not_sized`` (stage ``size``)
+before any core call. The gateway remembers the last ``SIZED_MAX`` intents it sized; an
+older one is refused and must be sized again. A booked one stays remembered, so sending
+it again is still refused ``intent_duplicate``. Sells are
+not sized here: the spec does not say how a sell is sized from conviction, so a sell
+still carries the caller's quantity. The allowlist is a ``frozenset`` of exact ``str``
+instruments given at construction, with no setter. An instrument outside it is refused
+``instrument_not_allowlisted`` in the risk pass and in ``size_buy``, before any core
+call. Where the operator's approval of the list is recorded is not specified yet; like
+the caps, the list is injected and not sourced.
 
 Cash (B31, Lucas t1414u: "size to cash, refuse at the gateway"). The book tracks each
 account's available cash and held shares. ``OrderGateway.size_buy`` turns a conviction
@@ -47,7 +79,10 @@ charged; only a ``leftover_charge`` code does.
 one-shot ``_Grant`` that ``OrderGateway.submit`` mints after the risk pass and the core's
 authorize, bound to that gateway, this book, that intent object and the approved effect.
 At booking, ``_book`` runs that gateway's risk pass again (halt and caps included) and
-refuses unless it returns exactly the granted effect. The module attribute
+refuses unless it returns exactly the granted effect. Every booked value (intent id,
+account, instrument, side, quantity, limit price, reserved notional) is then taken from
+that approved effect, never from the intent object, so a change to the intent after the
+re-check cannot alter what is booked. The module attribute
 ``_GATEWAY_ONLY`` is only the grant's mint key: handing it to ``_book`` books nothing.
 
 In-process Python cannot make a capability unforgeable: code in this process can still
@@ -63,7 +98,8 @@ paper book (zero bytes, not SQLite, or without the tables, columns and state row
 
 Paper only. There is no broker, venue transport, credential or network code here, and
 no Kalshi order code at all (not even demo). Risk logic uses no model, I/O beyond the
-local book, or subprocess. The cap values are injected; they are not sourced yet (F12).
+local book, or subprocess. The cap values and the allowlist are injected; they are not
+sourced yet (F12).
 """
 
 from __future__ import annotations
@@ -74,10 +110,12 @@ import re
 import sqlite3
 import threading
 from dataclasses import dataclass
+from typing import Callable, NamedTuple
 
 from .core_client import MAX_INT, CoreClient, CoreRefused, canonical
 
-__all__ = ["CONVICTION_FULL_BPS", "Caps", "Intent", "OrderGateway", "PaperBook", "Refused", "create_book"]
+__all__ = ["CONVICTION_FULL_BPS", "SIZED_MAX", "Caps", "Intent", "OrderGateway", "PaperBook", "Refused",
+           "create_book"]
 
 PAPER_VENUE = "paper"
 # The rest of the five-field scope the core's ``check_effect`` requires and the installer's
@@ -88,7 +126,9 @@ PAPER_ADAPTER = "paper-book"
 PAPER_ENVIRONMENT = "paper"
 _ID = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
 _INSTRUMENT = re.compile(r"[A-Z0-9][A-Z0-9._-]{0,31}")
+_CODE = re.compile(r"[a-z0-9_]{1,64}")  # a typed refusal code from the host's run check
 CONVICTION_FULL_BPS = 10_000  # conviction is an integer in basis points, 1..10_000
+SIZED_MAX = 1024  # sized buys a gateway remembers; the oldest is dropped and must be sized again
 _GATEWAY_ONLY = object()  # private mint key of ``_Grant``; on its own it books nothing
 
 
@@ -126,6 +166,41 @@ class Intent:
     connection: str
     venue: str = PAPER_VENUE
     mode: str = "paper"
+
+
+_INTENT_FIELDS = ("intent_id", "account", "instrument", "side", "quantity", "limit_price_minor", "run_id",
+                  "connection", "venue", "mode")
+
+
+class _Order(NamedTuple):
+    """The order inside an approved effect: what the core charged and the only values booked."""
+
+    intent_id: str
+    account: str
+    instrument: str
+    side: str
+    quantity: int
+    limit_price_minor: int
+    notional_minor: int
+    run_id: str
+    connection: str
+
+
+def _order_of(effect: object) -> _Order:
+    """Read the order out of an effect ``risk_pass`` returned. Anything else is refused."""
+    try:
+        payload, scope = effect["payload"], effect["scope"]
+        order = _Order(payload["intent_id"], scope["account"], payload["instrument"], payload["side"],
+                       payload["quantity"], payload["limit_price_minor"], effect["amount_minor"],
+                       effect["run_id"], effect["connection"])
+    except (TypeError, KeyError, IndexError):
+        raise Refused("book_direct_refused") from None
+    texts = (order.intent_id, order.account, order.instrument, order.side, order.run_id, order.connection)
+    numbers = (order.quantity, order.limit_price_minor, order.notional_minor)
+    if (any(type(v) is not str for v in texts) or any(type(v) is not int or v <= 0 for v in numbers)
+            or order.side not in ("buy", "sell") or order.notional_minor != order.quantity * order.limit_price_minor):
+        raise Refused("book_direct_refused")
+    return order
 
 
 AUDIT_SCHEMA = ("CREATE TABLE audit (seq INTEGER PRIMARY KEY, event TEXT NOT NULL,"
@@ -345,7 +420,7 @@ class PaperBook:
             return self._held(self._db, account, instrument)
 
     @classmethod
-    def _check_funds(cls, db, intent: Intent) -> None:
+    def _check_funds(cls, db, intent: Intent | _Order) -> None:
         """Refuse an order the account cannot cover. Never clamps or resizes (Q25, B31)."""
         if intent.side == "buy":
             if intent.quantity * intent.limit_price_minor > cls._cash(db, intent.account):
@@ -355,7 +430,7 @@ class PaperBook:
             if intent.quantity > cls._held(db, intent.account, intent.instrument):
                 raise Refused("holding_insufficient")
 
-    def check_funds(self, intent: Intent) -> None:
+    def check_funds(self, intent: Intent | _Order) -> None:
         with self._lock:
             self._check_funds(self._db, intent)
 
@@ -367,9 +442,10 @@ class PaperBook:
         """Write a working order. Not a public API: ``token`` must be the unused ``_Grant`` that
         ``OrderGateway.submit`` minted for this book and this intent object, after the risk pass,
         the funds check and the core's checks (PRODUCT.md 4.2 "One way in"). The grant is spent
-        here, and the gateway's risk pass and caps are run again before anything is written; a
-        refusal from that re-check is raised as it is. A grant can be forged in-process; see the
-        module doc."""
+        here, and the gateway's risk pass, caps and sizing check are run again before anything
+        is written; a refusal from that re-check is raised as it is. What is written comes from
+        the grant's approved effect alone, and the gateway's run check is asked inside the
+        booking transaction. A grant can be forged in-process; see the module doc."""
         if type(token) is not _Grant:
             raise Refused("book_direct_refused")
         with self._lock:
@@ -380,25 +456,30 @@ class PaperBook:
         if (token.book is not self or token.intent is not intent or type(gateway) is not OrderGateway
                 or gateway._book is not self):
             raise Refused("book_direct_refused")
-        if gateway.risk_pass(intent) != token.effect:
+        effect = token.effect
+        order = _order_of(effect)  # read once; nothing below reads the intent's fields again
+        if gateway.risk_pass(intent) != effect:
             raise Refused("book_direct_refused")
+        if order.side == "buy":
+            gateway._require_sized(intent)
 
         def run(db):
             if db.execute("SELECT v FROM state WHERE k = 'halted'").fetchone()[0]:
                 raise Refused("order_halted")
-            if db.execute("SELECT 1 FROM orders WHERE intent_id = ?", (intent.intent_id,)).fetchone():
+            gateway._check_run(order)  # a fault or trip committed before this booking wins
+            if db.execute("SELECT 1 FROM orders WHERE intent_id = ?", (order.intent_id,)).fetchone():
                 raise Refused("intent_duplicate")
-            self._check_funds(db, intent)  # send-time cash check, same transaction as the booking
-            if intent.side == "buy":
+            self._check_funds(db, order)  # send-time cash check, same transaction as the booking
+            if order.side == "buy":
                 db.execute("UPDATE cash SET available_minor = available_minor - ? WHERE account = ?",
-                           (intent.quantity * intent.limit_price_minor, intent.account))
+                           (order.notional_minor, order.account))
             else:
                 db.execute("UPDATE holdings SET available = available - ? WHERE account = ? AND instrument = ?",
-                           (intent.quantity, intent.account, intent.instrument))
+                           (order.quantity, order.account, order.instrument))
             seq = self._next_seq(db)
             db.execute("INSERT INTO orders VALUES (?, ?, ?, ?, ?, ?, ?, 'working')",
-                       (intent.intent_id, seq, intent.account, intent.instrument, intent.side,
-                        intent.quantity, intent.limit_price_minor))
+                       (order.intent_id, seq, order.account, order.instrument, order.side,
+                        order.quantity, order.limit_price_minor))
             if audit is not None:
                 self._audit_row(db, dict(audit, event="booked", stage="book", code=None))
             return seq
@@ -462,15 +543,35 @@ def _field(intent: Intent, name: str) -> object:
 
 
 class OrderGateway:
-    def __init__(self, *, plugin_id: str, book: PaperBook, core: CoreClient, caps: Caps,
-                 currency: str = "USD") -> None:
+    def __init__(self, *, plugin_id: str, book: PaperBook, core: CoreClient, caps: Caps, allowlist: frozenset,
+                 run_check: Callable[[str, str, str], dict] | None = None, currency: str = "USD") -> None:
         if type(caps) is not Caps:
             raise Refused("invalid_cap")
+        if type(allowlist) is not frozenset or any(type(item) is not str or not _INSTRUMENT.fullmatch(item)
+                                                   for item in allowlist):
+            raise Refused("invalid_allowlist")
+        if run_check is not None and not callable(run_check):
+            raise Refused("invalid_run_check")
         self._plugin_id = plugin_id
         self._book = book
         self._core = core
         self._caps = caps
+        self._allowlist = allowlist
+        self._run_check = run_check
         self._currency = currency
+        self._sized: dict[int, tuple] = {}  # id(intent) -> (the intent, its fields when sized), oldest first
+        self._sized_lock = threading.Lock()
+
+    def __setattr__(self, name: str, value: object) -> None:
+        # The order universe is fixed at construction: no setter, and no rebinding either.
+        if name == "_allowlist" and "_allowlist" in self.__dict__:
+            raise Refused("allowlist_immutable")
+        object.__setattr__(self, name, value)
+
+    @property
+    def allowlist(self) -> frozenset:
+        """The operator-approved instruments this gateway was built with. Read only."""
+        return self._allowlist
 
     def halt(self) -> int:
         return self._book.halt()
@@ -478,21 +579,60 @@ class OrderGateway:
     def cancel_all(self) -> int:
         return self._book.cancel_all()
 
+    @staticmethod
+    def _sized_fields(intent: Intent) -> list:
+        # Types as well as values: a field swapped for an equal-claiming object is a change.
+        return [(type(value), value) for value in (_field(intent, name) for name in _INTENT_FIELDS)]
+
+    def _remember_sized(self, intent: Intent) -> None:
+        with self._sized_lock:
+            self._sized[id(intent)] = (intent, self._sized_fields(intent))
+            while len(self._sized) > SIZED_MAX:
+                del self._sized[next(iter(self._sized))]
+
+    def _require_sized(self, intent: Intent) -> None:
+        """Refuse a buy that is not the unchanged intent object this gateway's ``size_buy`` made."""
+        with self._sized_lock:
+            held = self._sized.get(id(intent))
+        if held is None or held[0] is not intent or self._sized_fields(intent) != held[1]:
+            raise Refused("quantity_not_sized")
+
+    def _check_run(self, order: _Order) -> None:
+        """Ask the host's run check about the approved effect's run. Fails closed."""
+        check = self._run_check
+        if check is None:
+            raise Refused("run_check_missing")
+        try:
+            out = check(order.run_id, order.connection, self._plugin_id)
+        except Exception as exc:  # noqa: BLE001 - whatever the check raises, nothing books
+            code = getattr(exc, "code", None)
+            if type(code) is str and _CODE.fullmatch(code):
+                raise Refused("core:" + code) from None
+            raise Refused("run_check_error") from None
+        if type(out) is not dict:
+            raise Refused("run_check_error")
+
     def size_buy(self, *, intent_id: str, account: str, instrument: str, limit_price_minor: int,
                  conviction_bps: int, run_id: str, connection: str) -> Intent:
         """Turn a conviction into a paper buy, sized in code (Q30, O47) and capped at cash (B31).
 
         Shares are the largest whole count within the conviction's share of the notional cap,
         the quantity cap, and the account's tracked available cash. The returned intent
-        already fits; the send-time check still refuses it if cash has since dropped.
+        already fits; the send-time check still refuses it if cash has since dropped. Only
+        this returned object, unchanged, passes ``request_approval`` and ``submit`` as a buy.
         """
         try:
             if type(conviction_bps) is not int or not 0 < conviction_bps <= CONVICTION_FULL_BPS:
                 raise Refused("conviction_invalid")
             if not _positive_int(limit_price_minor, MAX_INT):
                 raise Refused("money_invalid")
-            if type(account) is not str or not _ID.fullmatch(account):
-                raise Refused("intent_invalid")
+            for value in (intent_id, account, run_id, connection):
+                if type(value) is not str or not _ID.fullmatch(value):
+                    raise Refused("intent_invalid")
+            if type(instrument) is not str or not _INSTRUMENT.fullmatch(instrument):
+                raise Refused("instrument_invalid")
+            if instrument not in self._allowlist:
+                raise Refused("instrument_not_allowlisted")
             cash = self._book.available_cash_minor(account)
             target_minor = self._caps.max_notional_minor * conviction_bps // CONVICTION_FULL_BPS
             shares = min(target_minor // limit_price_minor, self._caps.max_quantity, cash // limit_price_minor)
@@ -503,8 +643,10 @@ class OrderGateway:
                               quantity=None, limit_price_minor=limit_price_minor,
                               run_id=run_id, connection=connection)
             raise self._refuse(exc, "size", proposal, None) from None
-        return Intent(intent_id=intent_id, account=account, instrument=instrument, side="buy", quantity=shares,
-                      limit_price_minor=limit_price_minor, run_id=run_id, connection=connection)
+        intent = Intent(intent_id=intent_id, account=account, instrument=instrument, side="buy", quantity=shares,
+                        limit_price_minor=limit_price_minor, run_id=run_id, connection=connection)
+        self._remember_sized(intent)
+        return intent
 
     def risk_pass(self, intent: object) -> dict:
         """Deterministic checks. Returns the exact effect the operator must approve."""
@@ -524,6 +666,8 @@ class OrderGateway:
         instrument = _field(intent, "instrument")
         if type(instrument) is not str or not _INSTRUMENT.fullmatch(instrument):
             raise Refused("instrument_invalid")
+        if instrument not in self._allowlist:
+            raise Refused("instrument_not_allowlisted")
         side = _field(intent, "side")
         if type(side) is not str or side not in ("buy", "sell"):
             raise Refused("side_invalid")
@@ -547,7 +691,10 @@ class OrderGateway:
 
     def _audit_base(self, intent: object, effect: dict | None) -> dict:
         def field(name: str) -> str | None:
-            value = getattr(intent, name, None) if type(intent) is Intent else None
+            if effect is not None:  # the checked effect, not a second read of the intent
+                value = effect["payload"]["intent_id"] if name == "intent_id" else effect[name]
+            else:
+                value = getattr(intent, name, None) if type(intent) is Intent else None
             return value if type(value) is str and _ID.fullmatch(value) else None
         digest = hashlib.sha256(canonical(effect)).hexdigest() if effect is not None else None
         return {"plugin_id": self._plugin_id, "intent_id": field("intent_id"), "run_id": field("run_id"),
@@ -568,12 +715,18 @@ class OrderGateway:
         stage = "risk"
         try:
             effect = self.risk_pass(intent)
+            order = _order_of(effect)  # every later check reads the effect, not the intent again
+            if self._run_check is None:
+                raise Refused("run_check_missing")  # no booking-point run check: nothing may book
+            if order.side == "buy":
+                stage = "size"
+                self._require_sized(intent)  # a caller-sized buy never reaches approval
             stage = "request"
             # A booked intent id draws no new approval. Only the book is asked: no approval state here.
-            if self._book._has_intent(intent.intent_id):
+            if self._book._has_intent(order.intent_id):
                 raise Refused("intent_duplicate")
             stage = "funds"
-            self._book.check_funds(intent)  # cash or held shares, so a doomed order is never approved
+            self._book.check_funds(order)  # cash or held shares, so a doomed order is never approved
             stage = "request"
             try:
                 return self._core.request_approval(effect)
@@ -587,12 +740,18 @@ class OrderGateway:
         stage = "risk"
         try:
             effect = self.risk_pass(intent)
+            order = _order_of(effect)  # every later check reads the effect, not the intent again
+            if self._run_check is None:
+                raise Refused("run_check_missing")  # no booking-point run check: nothing may book
+            if order.side == "buy":
+                stage = "size"
+                self._require_sized(intent)  # a caller-sized buy never reaches the charge or the book
             # Every local refusal that does not need the core comes before the charge.
             stage = "book"
-            if self._book._has_intent(intent.intent_id):
+            if self._book._has_intent(order.intent_id):
                 raise Refused("intent_duplicate")
             stage = "funds"
-            self._book.check_funds(intent)  # early read; the booking re-checks in its own transaction
+            self._book.check_funds(order)  # early read; the booking re-checks in its own transaction
             stage = "authorize"
             try:
                 core = self._core.authorize(effect, approval_id, authority)
@@ -606,14 +765,14 @@ class OrderGateway:
                 seq = self._book._book(intent, grant, audit)
             except Refused as exc:
                 # The core has charged and nothing was booked. Any booking refusal lands here, with
-                # its code as the cause (a halt, the same intent or a funds change during the core
-                # call, or the risk pass re-run at booking refused, for example). There is no
-                # reverse: say so, never a clean refusal.
+                # its code as the cause (a halt, a run fault or connection trip, the same intent or
+                # a funds change during the core call, or the risk pass re-run at booking refused,
+                # for example). There is no reverse: say so, never a clean refusal.
                 raise Refused("leftover_charge", exc.code) from None
             except Exception as exc:
                 raise Refused("leftover_charge", "booking_error:" + type(exc).__name__) from exc
         except Refused as exc:
             # ``from exc.__cause__`` keeps a booking error's cause; every other refusal has none.
             raise self._refuse(exc, stage, intent, effect) from exc.__cause__
-        return {"status": "paper_working", "intent_id": intent.intent_id, "seq": seq,
-                "notional_minor": effect["amount_minor"], "digest": core.get("digest")}
+        return {"status": "paper_working", "intent_id": order.intent_id, "seq": seq,
+                "notional_minor": order.notional_minor, "digest": core.get("digest")}

@@ -20,7 +20,7 @@ from dataclasses import asdict, replace
 
 from cockpit.paper import plugin
 from cockpit.paper.gateway import Caps, Intent, PaperBook, Refused, create_book
-from tests.paper.fakecore import AUTHORITY, FakeCore
+from tests.paper.fakecore import ALLOWLIST, AUTHORITY, FakeCore
 
 FIELDS = dict(intent_id="i-1", account="paper-acct", instrument="AAPL", side="buy", quantity=10,
               limit_price_minor=10_000, run_id="run-1", connection="conn-a")
@@ -66,13 +66,22 @@ class PaperOnlyRefusalTests(unittest.TestCase):
         path = os.path.join(d, "book.db")
         create_book(path, cash_minor={"paper-acct": 10**9})
         self.core = FakeCore(budget_minor=10**9)
-        self.gw = plugin.build(self.core, path, Caps(max_notional_minor=500_000, max_quantity=100))
+        self.gw = plugin.build(self.core, path, Caps(max_notional_minor=500_000, max_quantity=100),
+                               run_check=self.core.check, allowlist=ALLOWLIST)
         self.book = PaperBook(path)  # a second connection, read only here
         self.addCleanup(self.book.close)
 
+    def _sized(self) -> Intent:
+        """The plain paper buy, sized by the gateway: 2_000 bps of the 500_000 cap is 10 shares."""
+        intent = self.gw.size_buy(intent_id=FIELDS["intent_id"], account=FIELDS["account"],
+                                  instrument=FIELDS["instrument"], limit_price_minor=FIELDS["limit_price_minor"],
+                                  conviction_bps=2_000, run_id=FIELDS["run_id"], connection=FIELDS["connection"])
+        self.assertEqual(intent, Intent(**FIELDS))
+        return intent
+
     def _approved_twin(self) -> str:
         """A real, operator-approved approval for the plain paper twin; the core log is then cleared."""
-        approval = self.gw.request_approval(Intent(**FIELDS))["approval_id"]
+        approval = self.gw.request_approval(self._sized())["approval_id"]
         self.core.operator_approves(approval)
         self.core.calls.clear()
         return approval
@@ -103,7 +112,7 @@ class PaperOnlyRefusalTests(unittest.TestCase):
         """The plain paper intent books, so nothing above passed by refusing everything."""
         self.assertEqual(self.book.orders(), [])
         self.assertEqual(self.core.spent, 0)
-        intent = Intent(**FIELDS)
+        intent = self._sized()
         approval = self.gw.request_approval(intent)["approval_id"]
         self.core.operator_approves(approval)
         out = self.gw.submit(intent, approval, AUTHORITY)
@@ -134,7 +143,7 @@ class PaperOnlyRefusalTests(unittest.TestCase):
     def test_intent_mutated_after_its_approval_is_refused_at_submit(self) -> None:
         for venue in ["live"] + RIGGED:
             with self.subTest(venue=repr(venue)):
-                intent = Intent(**FIELDS)
+                intent = self._sized()
                 approval = self.gw.request_approval(intent)["approval_id"]
                 self.core.operator_approves(approval)
                 self.core.calls.clear()

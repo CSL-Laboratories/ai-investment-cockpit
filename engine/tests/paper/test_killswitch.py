@@ -14,7 +14,7 @@ from cockpit.paper.gateway import Caps, OrderGateway, PaperBook, Refused, create
 from cockpit.paper.gemini import GeminiKill
 from cockpit.paper.kalshi import KalshiKill
 from cockpit.paper.killswitch import KillSwitch
-from tests.paper.fakecore import AUTHORITY, FakeCore
+from tests.paper.fakecore import ALLOWLIST, AUTHORITY, FakeCore, sized
 from tests.paper.test_coinbase import MockCoinbase
 from tests.paper.test_gateway import INTENT
 from tests.paper.test_gemini import MockGemini
@@ -35,9 +35,9 @@ class KillSwitchTests(unittest.TestCase):
     def _working_orders(self, count: int) -> None:
         core = FakeCore(budget_minor=10**9)
         gw = OrderGateway(plugin_id="csl.cockpit.paper", book=self.book, core=CoreClient(core),
-                          caps=Caps(10**9, 10**6))
+                          caps=Caps(10**9, 10**6), allowlist=ALLOWLIST, run_check=core.check)
         for i in range(count):
-            intent = replace(INTENT, intent_id=f"w-{i}")
+            intent = sized(gw, replace(INTENT, intent_id=f"w-{i}"))
             approval = gw.request_approval(intent)["approval_id"]
             core.operator_approves(approval)
             gw.submit(intent, approval, AUTHORITY)
@@ -188,7 +188,7 @@ class KillSwitchTests(unittest.TestCase):
         self.assertEqual(self.book.working(), 0)
         core = FakeCore(budget_minor=10**9)
         gw = OrderGateway(plugin_id="csl.cockpit.paper", book=self.book, core=CoreClient(core),
-                          caps=Caps(10**9, 10**6))
+                          caps=Caps(10**9, 10**6), allowlist=ALLOWLIST, run_check=core.check)
         late = replace(INTENT, intent_id="after-kill")
         with self.assertRaises(Refused) as caught:
             gw.request_approval(late)

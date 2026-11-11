@@ -22,7 +22,7 @@ from dataclasses import replace
 
 from cockpit.paper.core_client import CoreClient
 from cockpit.paper.gateway import Caps, Intent, OrderGateway, PaperBook, Refused
-from tests.paper.fakecore import AUTHORITY, FakeCore
+from tests.paper.fakecore import ALLOWLIST, AUTHORITY, FakeCore, sized
 from tests.paper.test_gateway import _book_path
 
 N = 5
@@ -50,7 +50,8 @@ class FakeCoreRunNotOwned(unittest.TestCase):
     def _gateway(self, plugin_id: str) -> tuple[OrderGateway, PaperBook]:
         book = PaperBook(_book_path(self))
         self.addCleanup(book.close)
-        gw = OrderGateway(plugin_id=plugin_id, book=book, core=CoreClient(self.core), caps=Caps(10**9, 10**6))
+        gw = OrderGateway(plugin_id=plugin_id, book=book, core=CoreClient(self.core), caps=Caps(10**9, 10**6),
+                          allowlist=ALLOWLIST, run_check=self.core.check)
         return gw, book
 
     def _code(self, call, *args) -> str | None:
@@ -66,7 +67,7 @@ class FakeCoreRunNotOwned(unittest.TestCase):
         for i in range(N):
             run, conn = "run-x%d" % i, "conn-x%d" % i
             owner_recorded.append(_bind(self.core, run, conn, OTHER))
-            intent = replace(BASE, intent_id="x%d" % i, run_id=run, connection=conn)
+            intent = sized(gw, replace(BASE, intent_id="x%d" % i, run_id=run, connection=conn))
             codes.append(self._code(gw.request_approval, intent))
         self.assertEqual(codes, ["core:run_not_owned"] * N,
                          "a run bound to %r was not refused run_not_owned for %r (owner recorded by "
@@ -82,7 +83,7 @@ class FakeCoreRunNotOwned(unittest.TestCase):
         for i in range(N):
             run = "run-y%d" % i
             _bind(self.core, run, "conn-bound%d" % i, OTHER)
-            intent = replace(BASE, intent_id="y%d" % i, run_id=run, connection="conn-sent%d" % i)
+            intent = sized(gw, replace(BASE, intent_id="y%d" % i, run_id=run, connection="conn-sent%d" % i))
             codes.append(self._code(gw.request_approval, intent))
         self.assertEqual(codes, ["core:run_not_owned"] * N,
                          "the core checks ownership before the connection: run_not_owned must win over "
@@ -97,6 +98,7 @@ class FakeCoreRunNotOwned(unittest.TestCase):
             run, conn = "run-z%d" % i, "conn-z%d" % i
             _bind(self.core, run, conn, OWNER)
             intent = replace(BASE, intent_id="z%d" % i, run_id=run, connection=conn)
+            sized(other_gw, sized(owner_gw, intent))
             approval = owner_gw.request_approval(intent)["approval_id"]
             self.core.operator_approves(approval)
             approvals.append((intent, approval))
@@ -119,7 +121,7 @@ class FakeCoreRunNotOwned(unittest.TestCase):
         for i in range(N):
             run, conn = "run-o%d" % i, "conn-o%d" % i
             _bind(self.core, run, conn, OWNER)
-            intent = replace(BASE, intent_id="o%d" % i, run_id=run, connection=conn)
+            intent = sized(gw, replace(BASE, intent_id="o%d" % i, run_id=run, connection=conn))
             approval = gw.request_approval(intent)["approval_id"]
             self.core.operator_approves(approval)
             self.assertEqual(gw.submit(intent, approval, AUTHORITY)["status"], "paper_working")
