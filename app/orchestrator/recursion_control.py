@@ -22,7 +22,7 @@ from typing import Any
 
 __all__ = ["CONTROL_API_PIN", "ControlApiPanelReader", "ReadRefused"]
 
-CONTROL_API_PIN = "recursion#327@1580d103fb7c0f5983b9fd67d89892f28f215c78"
+CONTROL_API_PIN = "recursion#327@5b7ce29f816a9d18d501f18f4b44932087b35a8c"
 _INSPECT_READ = re.compile(r"operator\.[a-z][a-z0-9_]*\.inspect")
 
 

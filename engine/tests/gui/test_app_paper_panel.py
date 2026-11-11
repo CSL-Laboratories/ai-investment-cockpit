@@ -8,7 +8,10 @@ non-paper venue, and drops other venues' data, including data nested in a paper 
 """
 from __future__ import annotations
 
+import contextlib
+import importlib.util
 import os
+import socket
 import sys
 import tempfile
 import types
@@ -431,7 +434,6 @@ class ControlApiReaderTests(unittest.TestCase):
         self.assertEqual(rc.ControlApiPanelReader(odd)("operator.budgets.inspect")["status_code"], "read_failed")
         with self.assertRaises(TypeError):
             rc.ControlApiPanelReader(object())
-        self.assertEqual(rc.CONTROL_API_PIN, "recursion#327@1580d103fb7c0f5983b9fd67d89892f28f215c78")
 
 
 class CreateAppMountTests(unittest.TestCase):
@@ -469,16 +471,12 @@ class CreateAppMountTests(unittest.TestCase):
         self.assertEqual({v["status_code"] for v in body["reads"].values()}, {"control_api_unavailable"})
 
 
-class ComposeMountTests(unittest.TestCase):
-    """The mount line in app/main.py compose(): the control API passes through to the panel."""
+class _InMemoryKeyring:
+    """A keyring backend kept in memory for one compose() run."""
 
-    def test_compose_passes_the_control_api_to_the_panel(self) -> None:
-        import keyring
+    @staticmethod
+    def make():
         from keyring.backend import KeyringBackend
-
-        from core.secrets import set_secret
-        from main import compose
-        from orchestrator.auth import API_KEY_SECRET_NAME
 
         class _InMemory(KeyringBackend):
             priority = 1  # type: ignore[assignment]
@@ -496,28 +494,207 @@ class ComposeMountTests(unittest.TestCase):
             def delete_password(self, service, username):
                 self.store.pop((service, username), None)
 
-        previous, cwd = keyring.get_keyring(), os.getcwd()
-        keyring.set_keyring(_InMemory())
-        spy = _ControlSpy(serve_o7=True)
-        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
-            try:
-                os.chdir(tmp)
-                with mock.patch.dict(os.environ, {"COCKPIT_HALT_PATH": os.path.join(tmp, "HALT")}):
-                    _, app, _ = compose(db_url=f"sqlite:///{Path(tmp, 'c.db').as_posix()}",
-                                        parquet_root=os.path.join(tmp, "raw"), paper_panel_control=spy)
-                    set_secret(API_KEY_SECRET_NAME, self.KEY)
-                    client = TestClient(app)
-                    path = "/panels/cockpit.paper_own_trading"
-                    self.assertEqual(client.get(path).status_code, 401)
-                    self.assertEqual(client.post(path, headers={"X-API-Key": self.KEY}).status_code, 405)
-                    body = client.get(path, headers={"X-API-Key": self.KEY}).json()
-                    self.assertEqual({v["status_code"] for v in body["reads"].values()}, {"ok"})
-                    self.assertEqual({m for m, _ in spy.calls}, set(pp.paper_panel()["reads"]))
-            finally:
-                os.chdir(cwd)
-                keyring.set_keyring(previous)
+        return _InMemory()
 
-    KEY = "item5-compose-key"
+
+COMPOSE_KEY = "item5-compose-key"
+PANEL_PATH = "/panels/cockpit.paper_own_trading"
+READS = ("operator.positions.inspect", "operator.decisions.inspect", "operator.budgets.inspect")
+
+
+@contextlib.contextmanager
+def _composed(env: dict | None = None, **kwargs):
+    """compose() the real app in a temp dir and yield a TestClient holding the API key."""
+    import keyring
+
+    from core.secrets import set_secret
+    from main import compose
+    from orchestrator.auth import API_KEY_SECRET_NAME
+
+    previous, cwd = keyring.get_keyring(), os.getcwd()
+    keyring.set_keyring(_InMemoryKeyring.make())
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        try:
+            os.chdir(tmp)
+            # A private XDG_RUNTIME_DIR by default, so a connect() client never finds a host socket.
+            base_env = {"COCKPIT_HALT_PATH": os.path.join(tmp, "HALT"), "XDG_RUNTIME_DIR": tmp}
+            with mock.patch.dict(os.environ, {**base_env, **(env or {})}):
+                _, app, _ = compose(db_url=f"sqlite:///{Path(tmp, 'c.db').as_posix()}",
+                                    parquet_root=os.path.join(tmp, "raw"), **kwargs)
+                set_secret(API_KEY_SECRET_NAME, COMPOSE_KEY)
+                yield TestClient(app)
+        finally:
+            os.chdir(cwd)
+            keyring.set_keyring(previous)
+
+
+def _panel(client) -> dict:
+    return client.get(PANEL_PATH, headers={"X-API-Key": COMPOSE_KEY}).json()
+
+
+def _fake_operator_reads(connect) -> dict:
+    """sys.modules entries that make ``recursion_core.control.operator_reads.connect`` this ``connect``."""
+    root, control, reads = (types.ModuleType(n) for n in (
+        "recursion_core", "recursion_core.control", "recursion_core.control.operator_reads"))
+    reads.connect = connect  # type: ignore[attr-defined]
+    root.control, control.operator_reads = control, reads  # type: ignore[attr-defined]
+    return {"recursion_core": root, "recursion_core.control": control,
+            "recursion_core.control.operator_reads": reads}
+
+
+@contextlib.contextmanager
+def _only_these_modules(entries: dict):
+    """Set these sys.modules keys and restore just them (patch.dict would also drop every module the
+    compose() run imported, and SQLAlchemy models cannot be imported twice in one process)."""
+    missing = object()
+    saved = {name: sys.modules.get(name, missing) for name in entries}
+    sys.modules.update(entries)
+    try:
+        yield
+    finally:
+        for name, old in saved.items():
+            if old is missing:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = old
+
+
+class ComposeMountTests(unittest.TestCase):
+    """The mount lines in app/main.py compose(): the control API passes through to the panel, and
+    by default compose wires recursion #327's ``connect()`` client (Lucas, Nov 11 12:00pm PST)."""
+
+    def test_compose_passes_the_control_api_to_the_panel(self) -> None:
+        spy = _ControlSpy(serve_o7=True)
+        with _composed(paper_panel_control=spy) as client:
+            self.assertEqual(client.get(PANEL_PATH).status_code, 401)
+            self.assertEqual(client.post(PANEL_PATH, headers={"X-API-Key": COMPOSE_KEY}).status_code, 405)
+            body = _panel(client)
+        self.assertEqual({v["status_code"] for v in body["reads"].values()}, {"ok"})
+        self.assertEqual({m for m, _ in spy.calls}, set(pp.paper_panel()["reads"]))
+
+    def test_the_pin_is_recursion_327_at_5b7ce29f(self) -> None:
+        self.assertEqual(rc.CONTROL_API_PIN, "recursion#327@5b7ce29f816a9d18d501f18f4b44932087b35a8c")
+
+    def test_compose_wires_a_connect_client_by_default(self) -> None:
+        spy, made = _ControlSpy(serve_o7=True), []
+
+        def connect(*args, **kwargs):
+            made.append((args, kwargs))
+            return spy
+
+        with _only_these_modules(_fake_operator_reads(connect)), _composed() as client:
+            body = _panel(client)
+        self.assertEqual(made, [((), {})])  # connect() with its defaults, once, at compose time
+        self.assertEqual({v["status_code"] for v in body["reads"].values()}, {"ok"})
+        self.assertEqual([m for m, _ in spy.calls], list(pp.paper_panel()["reads"]))
+        self.assertTrue(all(p == {} for _, p in spy.calls))
+
+    def test_an_explicit_control_is_not_replaced_by_connect(self) -> None:
+        spy = _ControlSpy(serve_o7=True)
+
+        def connect(*args, **kwargs):
+            raise AssertionError("connect() must not run when a control is passed")
+
+        with _only_these_modules(_fake_operator_reads(connect)), \
+                _composed(paper_panel_control=spy) as client:
+            body = _panel(client)
+        self.assertEqual({v["status_code"] for v in body["reads"].values()}, {"ok"})
+
+    def test_without_recursion_core_compose_fails_closed(self) -> None:
+        blocked = dict.fromkeys(("recursion_core", "recursion_core.control",
+                                 "recursion_core.control.operator_reads"))
+        with _only_these_modules(blocked), self.assertLogs("cockpit.main", "WARNING") as logs, \
+                _composed() as client:
+            body = _panel(client)
+        self.assertEqual({k: v["status_code"] for k, v in body["reads"].items()},
+                         dict.fromkeys(READS, "control_api_unavailable"))
+        self.assertTrue(any("paper panel control is OFF" in line and "ModuleNotFoundError" in line
+                            for line in logs.output))
+
+    def test_a_broken_recursion_core_also_fails_closed(self) -> None:
+        class _Broken(types.ModuleType):
+            def __getattr__(self, name):
+                raise RuntimeError("broken install")
+
+        entries = _fake_operator_reads(None)
+        entries["recursion_core.control.operator_reads"] = _Broken("recursion_core.control.operator_reads")
+        with _only_these_modules(entries), self.assertLogs("cockpit.main", "WARNING") as logs, \
+                _composed() as client:
+            body = _panel(client)
+        self.assertEqual({k: v["status_code"] for k, v in body["reads"].items()},
+                         dict.fromkeys(READS, "control_api_unavailable"))
+        self.assertTrue(any("paper panel control is OFF" in line and "RuntimeError" in line
+                            for line in logs.output))
+
+
+def _has_operator_reads() -> bool:
+    try:
+        return importlib.util.find_spec("recursion_core.control.operator_reads_socket") is not None
+    except ImportError:
+        return False
+
+
+HAS_RECURSION_CORE = _has_operator_reads()
+HAS_OWNER_ONLY_SOCKET = hasattr(socket, "AF_UNIX") and hasattr(socket, "SO_PEERCRED")
+
+
+@unittest.skipUnless(HAS_RECURSION_CORE, "recursion_core.control.operator_reads_socket is not importable (recursion #327)")
+@unittest.skipUnless(HAS_OWNER_ONLY_SOCKET, "no AF_UNIX with SO_PEERCRED (recursion #327 socket is Linux only)")
+class RealOperatorReadsTests(unittest.TestCase):
+    """compose() with recursion #327 @ 5b7ce29f's real ``connect()`` client and socket server."""
+
+    def setUp(self) -> None:
+        self.runtime = tempfile.mkdtemp(prefix="item5-xdg-")
+        os.chmod(self.runtime, 0o700)
+        self.addCleanup(__import__("shutil").rmtree, self.runtime, True)
+        self.env = {"XDG_RUNTIME_DIR": self.runtime}
+
+    def test_with_no_server_the_panel_shows_control_api_unavailable(self) -> None:
+        with _composed(self.env) as client:
+            body = _panel(client)
+        self.assertEqual({k: v["status_code"] for k, v in body["reads"].items()},
+                         dict.fromkeys(READS, "control_api_unavailable"))
+
+    def test_the_three_reads_render_real_rows_from_the_server(self) -> None:
+        from recursion_core.control.operator_reads import OperatorReads
+        from recursion_core.control.operator_reads_socket import OperatorReadsServer, default_socket_path
+
+        sources = {
+            "positions": lambda: {"venue": "paper", "rows": [{"instrument_id": "MSFT", "qty": "3"}]},
+            "decisions": lambda: {"venue": "paper", "rows": [{"decision_id": "d1", "outcome": "approved"}]},
+            "budgets": lambda: {"venue": "stock", "rows": [{"budget_id": "b1", "remaining_minor": 1000}]},
+        }
+        with mock.patch.dict(os.environ, self.env):
+            path = default_socket_path()
+        self.assertTrue(path.startswith(self.runtime))
+        with OperatorReadsServer(OperatorReads(sources), path), _composed(self.env) as client:
+            body = _panel(client)
+        reads = body["reads"]
+        self.assertEqual({k: v["status_code"] for k, v in reads.items()}, dict.fromkeys(READS, "ok"))
+        self.assertEqual(reads["operator.positions.inspect"]["result"],
+                         {"positions": [{"instrument_id": "MSFT", "qty": "3", "venue": "paper"}]})
+        self.assertEqual(reads["operator.decisions.inspect"]["result"],
+                         {"decisions": [{"decision_id": "d1", "outcome": "approved", "venue": "paper"}]})
+        self.assertEqual(reads["operator.budgets.inspect"]["result"],
+                         {"budgets": [{"budget_id": "b1", "remaining_minor": 1000, "venue": "stock"}]})
+        for data in reads.values():
+            self.assertEqual(data["authority_effect"], "none")
+            self.assertEqual(data["order_path"], "none")
+
+    def test_a_refused_source_stays_visible_and_withholds_its_rows(self) -> None:
+        from recursion_core.control.operator_reads import OperatorReads
+        from recursion_core.control.operator_reads_socket import OperatorReadsServer, default_socket_path
+
+        sources = {"positions": lambda: {"venue": "kalshi_demo", "rows": [{"ticker": "KXDEMO-1"}]}}
+        with mock.patch.dict(os.environ, self.env):
+            path = default_socket_path()
+        with OperatorReadsServer(OperatorReads(sources), path), _composed(self.env) as client:
+            body = _panel(client)
+        positions = body["reads"]["operator.positions.inspect"]
+        self.assertEqual(positions["status_code"], "venue_refused")
+        self.assertNotIn("KXDEMO", repr(body))
+        self.assertEqual(body["reads"]["operator.budgets.inspect"]["status_code"], "ok")
+        self.assertEqual(body["reads"]["operator.budgets.inspect"]["result"], {"budgets": []})
 
 
 if __name__ == "__main__":
