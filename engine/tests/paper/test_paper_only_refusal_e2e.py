@@ -3,7 +3,8 @@
 Every order whose venue or mode is not exactly the paper book's is refused ``paper_only``
 before any side effect: no core call (``effect.request`` or ``effect.authorize``), no
 charge, no booking. Values that only claim to equal ``"paper"`` (a ``str`` subclass, an
-object with rigged ``__eq__``/``__ne__``) are refused like any other venue.
+object whose ``__ne__`` is always false, one whose ``__eq__`` is always true, one with
+both) are refused like any other venue.
 
 Run: ``PYTHONPATH=engine python3 -B -m unittest discover -s engine/tests/paper -t engine -v``.
 No provider, venue, network, credential or keyring is touched.
@@ -23,7 +24,7 @@ from cockpit.paper import plugin
 from cockpit.paper.core_client import CoreClient
 from cockpit.paper.gateway import Caps, Intent, OrderGateway, PaperBook, Refused, create_book
 from cockpit.paper.killswitch import KillSwitch
-from tests.paper.fakecore import AUTHORITY, FakeCore
+from tests.paper.fakecore import ALLOWLIST, AUTHORITY, FakeCore
 
 FIELDS = dict(intent_id="i-1", account="paper-acct", instrument="AAPL", side="buy", quantity=10,
               limit_price_minor=10_000, run_id="run-1", connection="conn-a")
@@ -50,16 +51,39 @@ class AlwaysEqual:
         return "AlwaysEqual()"
 
 
+class NeverUnequal:
+    """Only ``!=`` is rigged: it is always false, so a ``venue != "paper"`` test alone passes it."""
+
+    def __ne__(self, other: object) -> bool:
+        return False
+
+    def __repr__(self) -> str:
+        return "NeverUnequal()"
+
+
+class EqualOnly:
+    """Only ``==`` is rigged: it is always true (and ``!=``, derived from it, always false)."""
+
+    def __eq__(self, other: object) -> bool:
+        return True
+
+    def __hash__(self) -> int:
+        return 0
+
+    def __repr__(self) -> str:
+        return "EqualOnly()"
+
+
 class SubIntent(Intent):
     """An ``Intent`` subclass: not the exact type the gateway accepts."""
 
 
-RIGGED = [StrSub("paper"), AlwaysEqual()]
+RIGGED = [StrSub("paper"), AlwaysEqual(), NeverUnequal(), EqualOnly()]
 VENUES = ["kalshi", "kalshi-demo", "coinbase", "gemini", "live", "paper-book", "PAPER", "Paper", " paper",
           "paper ", "paper\n", "pаper", "ｐａｐｅｒ", "paper​", "", None, 0,
           b"paper"] + RIGGED
 MODES = [None, "", "live", "demo", "PAPER"] + RIGGED
-SIDES = [AlwaysEqual(), StrSub("buy"), "BUY", None]
+SIDES = [AlwaysEqual(), NeverUnequal(), EqualOnly(), StrSub("buy"), StrSub("sell"), "BUY", None]
 
 
 class PaperOnlyRefusalTests(unittest.TestCase):
@@ -67,15 +91,24 @@ class PaperOnlyRefusalTests(unittest.TestCase):
         d = tempfile.mkdtemp(prefix="cockpit-paper-only-")
         self.addCleanup(shutil.rmtree, d, True)
         path = os.path.join(d, "book.db")
-        create_book(path)
+        create_book(path, cash_minor={"paper-acct": 10**9})
         self.core = FakeCore(budget_minor=10**9)
-        self.gw = plugin.build(self.core, path, Caps(max_notional_minor=500_000, max_quantity=100))
+        self.gw = plugin.build(self.core, path, Caps(max_notional_minor=500_000, max_quantity=100),
+                               run_check=self.core.check, allowlist=ALLOWLIST)
         self.book = PaperBook(path)  # a second connection, read only here
         self.addCleanup(self.book.close)
 
+    def _sized(self) -> Intent:
+        """The plain paper buy, sized by the gateway: 2_000 bps of the 500_000 cap is 10 shares."""
+        intent = self.gw.size_buy(intent_id=FIELDS["intent_id"], account=FIELDS["account"],
+                                  instrument=FIELDS["instrument"], limit_price_minor=FIELDS["limit_price_minor"],
+                                  conviction_bps=2_000, run_id=FIELDS["run_id"], connection=FIELDS["connection"])
+        self.assertEqual(intent, Intent(**FIELDS))
+        return intent
+
     def _approved_twin(self) -> str:
         """A real, operator-approved approval for the plain paper twin; the core log is then cleared."""
-        approval = self.gw.request_approval(Intent(**FIELDS))["approval_id"]
+        approval = self.gw.request_approval(self._sized())["approval_id"]
         self.core.operator_approves(approval)
         self.core.calls.clear()
         return approval
@@ -106,7 +139,7 @@ class PaperOnlyRefusalTests(unittest.TestCase):
         """The plain paper intent books, so nothing above passed by refusing everything."""
         self.assertEqual(self.book.orders(), [])
         self.assertEqual(self.core.spent, 0)
-        intent = Intent(**FIELDS)
+        intent = self._sized()
         approval = self.gw.request_approval(intent)["approval_id"]
         self.core.operator_approves(approval)
         out = self.gw.submit(intent, approval, AUTHORITY)
@@ -137,7 +170,7 @@ class PaperOnlyRefusalTests(unittest.TestCase):
     def test_intent_mutated_after_its_approval_is_refused_at_submit(self) -> None:
         for venue in ["live"] + RIGGED:
             with self.subTest(venue=repr(venue)):
-                intent = Intent(**FIELDS)
+                intent = self._sized()
                 approval = self.gw.request_approval(intent)["approval_id"]
                 self.core.operator_approves(approval)
                 self.core.calls.clear()
@@ -165,6 +198,27 @@ class PaperOnlyRefusalTests(unittest.TestCase):
         for side in SIDES:
             with self.subTest(side=repr(side), type=type(side).__name__):
                 self._refused_everywhere("side_invalid", replace(Intent(**FIELDS), side=side))
+        self._control_still_books()
+
+    def test_str_subclass_side_is_a_typed_audited_refusal(self) -> None:
+        """A ``side`` that is a ``str`` subclass equal to ``"buy"`` or ``"sell"`` is the typed
+        ``side_invalid`` with its audit row at request and at submit, never a raw ``ValueError``
+        from the core client's encoder."""
+        for n, side in enumerate((StrSub("buy"), StrSub("sell"))):
+            intent = replace(Intent(**FIELDS), intent_id="side-%d" % n, side=side)
+            for name, attempt in (("request", lambda: self.gw.request_approval(intent)),
+                                  ("submit", lambda: self.gw.submit(intent, BOGUS_APPROVAL, AUTHORITY))):
+                with self.subTest(side=str(side), entry=name):
+                    before = len(self.book.audit())
+                    with self.assertRaises(Refused) as ctx:
+                        attempt()
+                    self.assertEqual((ctx.exception.code, ctx.exception.cause), ("side_invalid", None))
+                    rows = self.book.audit()
+                    self.assertEqual(len(rows), before + 1)
+                    self.assertEqual({k: rows[-1][k] for k in ("seq", "event", "stage", "code", "intent_id")},
+                                     {"seq": ctx.exception.audit_seq, "event": "refused", "stage": "risk",
+                                      "code": "side_invalid", "intent_id": intent.intent_id})
+        self.assertEqual((self.core.calls, self.core.spent, self.book.orders()), ([], 0, []))
         self._control_still_books()
 
     def test_intent_with_a_missing_field_is_refused_typed_before_the_core(self) -> None:
@@ -216,9 +270,10 @@ class PaperOnlyRefusalTests(unittest.TestCase):
     def test_build_keeps_the_composed_kill_switch_reachable(self) -> None:
         """``plugin.build`` returns only the gateway; the switch composed with it must not be lost."""
         self.assertIs(type(self.gw.kill_switch), KillSwitch)
-        composed = plugin.compose(self.core, self._second_book_path(), Caps(500_000, 100))
+        composed = plugin.compose(self.core, self._second_book_path(), Caps(500_000, 100),
+                                  run_check=self.core.check, allowlist=ALLOWLIST)
         self.assertIs(composed.gateway.kill_switch, composed.kill_switch)
-        intent = Intent(**FIELDS)
+        intent = self._sized()
         approval = self.gw.request_approval(intent)["approval_id"]
         self.core.operator_approves(approval)
         self.gw.submit(intent, approval, AUTHORITY)
@@ -232,14 +287,14 @@ class PaperOnlyRefusalTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code, "order_halted")
         # A gateway built on its own has no switch, and says so with None rather than a missing name.
         bare = OrderGateway(plugin_id="csl.cockpit.paper", book=self.book, core=CoreClient(self.core),
-                            caps=Caps(500_000, 100))
+                            caps=Caps(500_000, 100), allowlist=ALLOWLIST, run_check=self.core.check)
         self.assertIsNone(bare.kill_switch)
 
     def _second_book_path(self) -> str:
         d = tempfile.mkdtemp(prefix="cockpit-paper-only-2-")
         self.addCleanup(shutil.rmtree, d, True)
         path = os.path.join(d, "book.db")
-        create_book(path)
+        create_book(path, cash_minor={"paper-acct": 10**9})
         return path
 
     def test_a_missing_field_keeps_the_check_order(self) -> None:

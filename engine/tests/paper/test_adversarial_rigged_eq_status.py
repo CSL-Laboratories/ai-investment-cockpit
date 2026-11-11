@@ -44,7 +44,7 @@ class RiggedEqStatusTests(unittest.TestCase):
         d = tempfile.mkdtemp(prefix="adv-eq-")
         self.addCleanup(shutil.rmtree, d, True)
         path = os.path.join(d, "book.db")
-        create_book(path)
+        create_book(path, cash_minor={"paper-acct": 10**15})
         self.book = PaperBook(path)
         self.addCleanup(self.book.close)
 

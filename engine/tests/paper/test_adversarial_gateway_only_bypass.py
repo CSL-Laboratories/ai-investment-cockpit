@@ -16,7 +16,7 @@ from dataclasses import replace
 import cockpit.paper.gateway as gateway
 from cockpit.paper.core_client import CoreClient
 from cockpit.paper.gateway import Caps, OrderGateway, PaperBook, Refused, create_book
-from tests.paper.fakecore import FakeCore
+from tests.paper.fakecore import ALLOWLIST, FakeCore
 from tests.paper.test_gateway import INTENT
 
 
@@ -25,12 +25,13 @@ class GatewayOnlyBypassTests(unittest.TestCase):
         d = tempfile.mkdtemp(prefix="adv-gw-")
         self.addCleanup(shutil.rmtree, d, True)
         path = os.path.join(d, "book.db")
-        create_book(path)
+        create_book(path, cash_minor={"paper-acct": 10**15})
         self.book = PaperBook(path)
         self.addCleanup(self.book.close)
         self.core = FakeCore(budget_minor=100_000)
         self.gw = OrderGateway(plugin_id="csl.cockpit.paper", book=self.book,
-                               core=CoreClient(self.core), caps=Caps(100_000, 50))
+                               core=CoreClient(self.core), caps=Caps(100_000, 50),
+                               allowlist=ALLOWLIST, run_check=self.core.check)
         self.huge = replace(INTENT, intent_id="huge-1", quantity=999_999_999, limit_price_minor=999_999_999)
 
     def test_risk_pass_refuses_the_oversized_intent(self) -> None:

@@ -28,7 +28,7 @@ from cockpit.paper.gateway import Caps, PaperBook, create_book
 from cockpit.paper.gemini import GeminiKill
 from cockpit.paper.kalshi import KalshiKill
 from cockpit.paper.killswitch import DEFAULT_VENUE_TIMEOUT_S, KillSwitch
-from tests.paper.fakecore import AUTHORITY, FakeCore
+from tests.paper.fakecore import ALLOWLIST, AUTHORITY, FakeCore, sized
 from tests.paper.test_coinbase import MockCoinbase
 from tests.paper.test_gateway import INTENT
 from tests.paper.test_gemini import MockGemini
@@ -135,7 +135,7 @@ class Base(unittest.TestCase):
         d = tempfile.mkdtemp(prefix="cockpit-kill-iso-")
         self.addCleanup(shutil.rmtree, d, True)
         self.path = os.path.join(d, "book.db")
-        create_book(self.path)
+        create_book(self.path, cash_minor={"paper-acct": 10**15})
         self.book = PaperBook(self.path)
         self.addCleanup(self.book.close)
 
@@ -156,9 +156,9 @@ class ConfirmedNeedsRevokeEvidenceTests(Base):
     def test_default_composition_is_paper_only_never_confirmed(self) -> None:
         """No venue composed (the Nov 11 default): halted and paper cancelled is ``paper_only``."""
         core = FakeCore(budget_minor=10**9)
-        composed = plugin.compose(core, self.path, Caps(10**9, 10**6))
+        composed = plugin.compose(core, self.path, Caps(10**9, 10**6), run_check=core.check, allowlist=ALLOWLIST)
         for i in range(4):
-            intent = replace(INTENT, intent_id=f"w-{i}")
+            intent = sized(composed.gateway, replace(INTENT, intent_id=f"w-{i}"))
             approval = composed.gateway.request_approval(intent)["approval_id"]
             core.operator_approves(approval)
             composed.gateway.submit(intent, approval, AUTHORITY)
@@ -460,8 +460,10 @@ class HangingVenueTests(Base):
             with self.subTest(timeout=bad), self.assertRaises(ValueError):
                 KillSwitch(self.book.halt, [], paper_book=self.book, venue_timeout_s=bad)
         with self.assertRaises(ValueError):
-            plugin.compose(FakeCore(), self.path, Caps(10**9, 10**6), venue_timeout_s=0)
-        composed = plugin.compose(FakeCore(), self.path, Caps(10**9, 10**6), venue_timeout_s=2)
+            plugin.compose(FakeCore(), self.path, Caps(10**9, 10**6), run_check=FakeCore().check,
+                           allowlist=ALLOWLIST, venue_timeout_s=0)
+        composed = plugin.compose(FakeCore(), self.path, Caps(10**9, 10**6), run_check=FakeCore().check,
+                                  allowlist=ALLOWLIST, venue_timeout_s=2)
         self.assertEqual(composed.kill_switch._venue_timeout_s, 2)
 
 

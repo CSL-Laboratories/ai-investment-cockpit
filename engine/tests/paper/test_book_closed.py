@@ -24,7 +24,7 @@ from cockpit.paper.core_client import CoreClient
 from cockpit.paper.gateway import Caps, OrderGateway, PaperBook, Refused, create_book
 from cockpit.paper.gemini import GeminiKill
 from cockpit.paper.killswitch import KillSwitch
-from tests.paper.fakecore import AUTHORITY, FakeCore
+from tests.paper.fakecore import ALLOWLIST, AUTHORITY, FakeCore, sized
 from tests.paper.test_gateway import INTENT
 from tests.paper.test_gemini import MockGemini
 
@@ -38,7 +38,7 @@ import json, sys, threading, time
 from dataclasses import replace
 from cockpit.paper.core_client import CoreClient
 from cockpit.paper.gateway import Caps, OrderGateway, PaperBook, Refused
-from tests.paper.fakecore import AUTHORITY, FakeCore
+from tests.paper.fakecore import ALLOWLIST, AUTHORITY, FakeCore, sized
 from tests.paper.test_gateway import INTENT
 
 book = PaperBook(sys.argv[1])
@@ -47,11 +47,12 @@ started = threading.Barrier(4)
 
 def worker(n):
     core = FakeCore(budget_minor=10**12)
-    gw = OrderGateway(plugin_id="csl.cockpit.paper", book=book, core=CoreClient(core), caps=Caps(10**9, 10**6))
+    gw = OrderGateway(plugin_id="csl.cockpit.paper", book=book, core=CoreClient(core), caps=Caps(10**9, 10**6),
+                      allowlist=ALLOWLIST, run_check=core.check)
     started.wait(10)
     end = "ran_out"
     for i in range(20000):
-        intent = replace(INTENT, intent_id="c%d-%d" % (n, i))
+        intent = sized(gw, replace(INTENT, intent_id="c%d-%d" % (n, i)))
         try:
             approval = gw.request_approval(intent)["approval_id"]
             core.operator_approves(approval)
@@ -84,7 +85,7 @@ def _new_book(case: unittest.TestCase) -> str:
     d = tempfile.mkdtemp(prefix="cockpit-closed-")
     case.addCleanup(shutil.rmtree, d, True)
     path = os.path.join(d, "book.db")
-    create_book(path)
+    create_book(path, cash_minor={"paper-acct": 10**15})
     return path
 
 
@@ -94,10 +95,11 @@ class ClosedBookTests(unittest.TestCase):
         self.book = PaperBook(self.path)
         self.addCleanup(self.book.close)
         self.core = FakeCore(budget_minor=10**9)
-        self.gw = OrderGateway(plugin_id="csl.cockpit.paper", book=self.book, core=CoreClient(self.core), caps=CAPS)
+        self.gw = OrderGateway(plugin_id="csl.cockpit.paper", book=self.book, core=CoreClient(self.core), caps=CAPS,
+                               allowlist=ALLOWLIST, run_check=self.core.check)
 
     def _book_one(self, intent_id: str = "w-1") -> None:
-        intent = replace(INTENT, intent_id=intent_id)
+        intent = sized(self.gw, replace(INTENT, intent_id=intent_id))
         approval = self.gw.request_approval(intent)["approval_id"]
         self.core.operator_approves(approval)
         self.gw.submit(intent, approval, AUTHORITY)
@@ -114,6 +116,15 @@ class ClosedBookTests(unittest.TestCase):
         for name in ("halt", "halted", "cancel_all", "working", "orders", "halt_seq"):
             with self.subTest(call=name):
                 self._refused(getattr(self.book, name))
+        row = {"stage": "risk", "code": "x", "plugin_id": "csl.cockpit.paper"}
+        for name, call in (("available_cash_minor", lambda: self.book.available_cash_minor("paper-acct")),
+                           ("held_shares", lambda: self.book.held_shares("paper-acct", "AAPL")),
+                           ("check_funds", lambda: self.book.check_funds(INTENT)),
+                           ("audit", self.book.audit),
+                           ("record_refusal", lambda: self.book.record_refusal(row)),
+                           ("_has_intent", lambda: self.book._has_intent("w-1"))):
+            with self.subTest(call=name):
+                self._refused(call)
         self.book.close()  # closing again neither raises nor reopens
         self._refused(self.book.halted)
         # Nothing was written by the refused calls: a fresh connection sees the order still working.
@@ -123,7 +134,7 @@ class ClosedBookTests(unittest.TestCase):
 
     def test_gateway_on_a_closed_book_refuses_typed_before_the_core(self) -> None:
         self._book_one()
-        fresh = replace(INTENT, intent_id="closed-1")
+        fresh = sized(self.gw, replace(INTENT, intent_id="closed-1"))
         approval = self.gw.request_approval(fresh)["approval_id"]
         self.core.operator_approves(approval)
         self.book.close()
@@ -131,6 +142,9 @@ class ClosedBookTests(unittest.TestCase):
         for name, call in (("request_approval", lambda: self.gw.request_approval(fresh)),
                            ("submit", lambda: self.gw.submit(fresh, approval, AUTHORITY)),
                            ("risk_pass", lambda: self.gw.risk_pass(fresh)),
+                           ("size_buy", lambda: self.gw.size_buy(
+                               intent_id="closed-2", account="paper-acct", instrument="AAPL",
+                               limit_price_minor=10_000, conviction_bps=1, run_id="run-1", connection="conn-a")),
                            ("halt", self.gw.halt), ("cancel_all", self.gw.cancel_all)):
             with self.subTest(call=name):
                 self._refused(call)
@@ -148,7 +162,9 @@ class ClosedBookTests(unittest.TestCase):
                     book.close()
                 return reply
         core = ClosesOnAuthorize(budget_minor=10**9)
-        gw = OrderGateway(plugin_id="csl.cockpit.paper", book=book, core=CoreClient(core), caps=CAPS)
+        gw = OrderGateway(plugin_id="csl.cockpit.paper", book=book, core=CoreClient(core), caps=CAPS,
+                          allowlist=ALLOWLIST, run_check=core.check)
+        sized(gw, intent)
         approval = gw.request_approval(intent)["approval_id"]
         core.operator_approves(approval)
         self._refused(lambda: gw.submit(intent, approval, AUTHORITY), "leftover_charge", "book_closed")
