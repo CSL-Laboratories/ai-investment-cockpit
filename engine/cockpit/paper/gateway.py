@@ -261,6 +261,11 @@ def _schema_columns() -> dict:
 
 
 _BOOK_COLUMNS = _schema_columns()
+# ``audit()`` reads ``AUDIT_COLUMNS`` by name, and the open check compares the audit table with
+# ``_BOOK_COLUMNS["audit"]`` (names and types from ``AUDIT_SCHEMA``). The two must name the same
+# columns in the same order; checked once here, at import, not again on every open.
+if [name for name, _ in _BOOK_COLUMNS["audit"]] != list(AUDIT_COLUMNS):
+    raise RuntimeError("AUDIT_COLUMNS does not match AUDIT_SCHEMA")
 _STATE_ROWS = sorted((key, "integer") for key in _STATE_KEYS)
 
 
@@ -283,15 +288,10 @@ def _check_book_schema(db: sqlite3.Connection) -> None:
         raise Refused("book_without_audit")
     if not {"cash", "holdings"} <= have:
         raise Refused("book_without_cash")
+    # ``state`` and ``orders`` were checked above on this connection; each is read once.
     for table, expected in _BOOK_COLUMNS.items():
-        if _table_columns(db, table) != expected:
+        if table not in ("state", "orders") and _table_columns(db, table) != expected:
             raise Refused("book_invalid")
-    if [name for name, _ in _table_columns(db, "audit")] != list(AUDIT_COLUMNS):
-        raise Refused("book_invalid")
-    rows = db.execute("SELECT k, typeof(v) FROM state WHERE k IN (%s) ORDER BY k"
-                      % ", ".join("?" * len(_STATE_KEYS)), _STATE_KEYS).fetchall()
-    if rows != _STATE_ROWS:
-        raise Refused("book_invalid")
 
 
 def create_book(path: str, *, cash_minor: dict, holdings: dict | None = None) -> None:
