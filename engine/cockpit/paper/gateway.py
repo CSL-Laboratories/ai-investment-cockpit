@@ -37,14 +37,21 @@ committed after the check inside the transaction and before its commit is not se
 Sizing and the order universe (PRODUCT.md at csl-research d84cdd26, lines 1183-1184 and
 1474-1475): "Proposals carry conviction, not quantity, and the gateway sizes orders
 (grill Q30; O47)." and "The order universe is a static, operator-approved allowlist; no
-model or API changes execution eligibility at runtime." A buy reaches approval or
-booking only as the exact ``Intent`` object this gateway's ``size_buy`` returned, with
-every field unchanged; any other buy is refused ``quantity_not_sized`` (stage ``size``)
-before any core call. The gateway remembers the last ``SIZED_MAX`` intents it sized; an
-older one is refused and must be sized again. A booked one stays remembered, so sending
-it again is still refused ``intent_duplicate``. Sells are
-not sized here: the spec does not say how a sell is sized from conviction, so a sell
-still carries the caller's quantity. The allowlist is a ``frozenset`` of exact ``str``
+model or API changes execution eligibility at runtime." An order of either side reaches
+approval or booking only as the exact ``Intent`` object this gateway's ``size_buy`` or
+``size_sell`` returned, with every field unchanged; any other order, including a sell
+built with a caller-chosen quantity and a sized buy whose side was changed to sell, is
+refused ``quantity_not_sized`` (stage ``size``) before any core call. Neither sizer takes
+a quantity. The gateway remembers the last ``SIZED_MAX`` intents it sized; an older one is
+refused and must be sized again. A booked one stays remembered, so sending it again is
+still refused ``intent_duplicate``.
+
+Sells (Lucas, Nov 11: "Size sells from conviction, capped at the position held, no
+caller-set quantity"). ``size_sell`` sizes a sell the way ``size_buy`` sizes a buy, from
+the conviction's share of the notional cap and the quantity cap, and caps the share count
+at the account's held shares available to sell (shares already reserved by a working
+sell are not available). No held shares, or a size under one share, is refused
+``size_zero``, like a buy. The allowlist is a ``frozenset`` of exact ``str``
 instruments given at construction, with no setter. An instrument outside it is refused
 ``instrument_not_allowlisted`` in the risk pass and in ``size_buy``, before any core
 call. Where the operator's approval of the list is recorded is not specified yet; like
@@ -53,8 +60,9 @@ the caps, the list is injected and not sourced.
 Cash (B31, Lucas t1414u: "size to cash, refuse at the gateway"). The book tracks each
 account's available cash and held shares. ``OrderGateway.size_buy`` turns a conviction
 into a buy and caps the share count at available cash, so the approved order already
-fits. The gateway reads the same tracked cash again before the charge and refuses a buy
-over it with ``cash_insufficient``. At send time it reads it once more, inside the
+fits; ``size_sell`` caps a sell at held shares the same way. The gateway reads the same
+tracked cash and shares again before the charge and refuses a buy over cash with
+``cash_insufficient`` and a sell over held shares with ``holding_insufficient``. At send time it reads it once more, inside the
 booking's ``BEGIN IMMEDIATE`` transaction; a buy over it there follows the charge, so it
 is refused with ``leftover_charge`` and cause ``cash_insufficient`` (see below). It never
 clamps or resizes. A booked buy reserves its notional; a booked sell reserves its
@@ -83,12 +91,26 @@ the approval stays unused; its audit row is tried with the same short wait. A lo
 after the probe and before the booking (the probe cannot close that window) still waits the
 full busy timeout at the booking and, if it outlasts it, is a ``leftover_charge``.
 
+Halt state (Lucas, Nov 11: "Keep the durable halt flag as the source of truth, /dev/shm
+only as a fast copy"). Whether the book is halted is only ever read from the book's own
+committed ``state`` row (``halted``), on every check: the risk pass, the booking
+transaction's re-read and ``halted()``. Nothing in ``/dev/shm`` is read as halt state, so a
+copy there that is missing, deleted, stale or corrupt can never lift a halt. The durable
+read fails closed: a ``halted`` row that is missing, not exactly the integer 0 or 1, or
+that cannot be read at all (an I/O error, say) is refused ``halt_unreadable``. No order
+is approved or booked on it (after the charge it is ``leftover_charge`` with that cause),
+and a kill cannot confirm its halt on it. ``halt()`` always writes ``halted = 1`` unless
+the row already reads exactly 1, so it also repairs a missing or corrupt row to halted.
+There is no un-halt.
+
 Halt priority. ``PaperBook.halt`` creates a flag file for the book (in ``/dev/shm`` where it
 exists, else ``<book>-halt``), then takes the write
 lock in a short retry loop instead of SQLite's backing-off busy handler, and removes the flag
 after its commit. Every other writer waits while the flag exists (at most ``HALT_YIELD_S``;
-an older flag was left by a halt that died and is removed), so a stream of refusal or
-booking commits on other connections or processes cannot starve a halt. Reads never wait.
+a flag older than that, dated in the future, or that is not a regular file was left by a
+halt that died, or not made by a halt, and is removed), so a stream of refusal or booking commits on other connections or processes
+cannot starve a halt. The flag only orders writers; it is never read as halt state, and
+its contents are never read. Reads never wait.
 
 ``PaperBook`` has no public booking method. Its private ``_book`` refuses unless handed a
 one-shot ``_Grant`` that ``OrderGateway.submit`` mints after the risk pass and the core's
@@ -130,6 +152,7 @@ import hashlib
 import os
 import re
 import sqlite3
+import stat
 import threading
 import time
 from dataclasses import dataclass
@@ -433,10 +456,13 @@ class PaperBook:
         deadline = None
         while True:
             try:
-                age = time.time() - os.stat(self._halt_flag).st_mtime
+                st = os.lstat(self._halt_flag)
             except OSError:
                 return  # no halt in progress: the usual case, one stat
-            if age > HALT_YIELD_S:
+            age = time.time() - st.st_mtime
+            # Stale, dated in the future, or not a regular file (``halt`` makes one, never following
+            # a link): never a live halt. Removed, and the writer goes on.
+            if not stat.S_ISREG(st.st_mode) or not 0 <= age <= HALT_YIELD_S:
                 try:
                     os.unlink(self._halt_flag)
                 except OSError:
@@ -483,8 +509,11 @@ class PaperBook:
         SQLite's backing-off busy handler, so a stream of refusal or booking commits on other
         connections cannot starve it. The flag is removed after the commit."""
         try:
-            os.close(os.open(self._halt_flag, os.O_WRONLY | os.O_CREAT, 0o600))
-            os.utime(self._halt_flag)
+            fd = os.open(self._halt_flag, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+            try:
+                os.utime(fd)
+            finally:
+                os.close(fd)
         except OSError:
             pass  # no flag: the halt still takes the lock, only without priority
         try:
@@ -504,12 +533,18 @@ class PaperBook:
                 finally:
                     db.execute("PRAGMA busy_timeout=%d" % _BUSY_TIMEOUT_MS)
                 try:
-                    if db.execute("SELECT v FROM state WHERE k = 'halted'").fetchone()[0]:
-                        seq = db.execute("SELECT v FROM state WHERE k = 'halt_seq'").fetchone()[0]
+                    try:
+                        already = self._halted_in(db)
+                    except Refused:
+                        already = False  # a missing or corrupt flag is written halted below
+                    seq = db.execute("SELECT v FROM state WHERE k = 'halt_seq'").fetchone() if already else None
+                    if seq is not None and type(seq[0]) is int and seq[0] > 0:
+                        seq = seq[0]
                     else:
                         seq = self._next_seq(db)
-                        db.execute("UPDATE state SET v = 1 WHERE k = 'halted'")
-                        db.execute("UPDATE state SET v = ? WHERE k = 'halt_seq'", (seq,))
+                        for key, value in (("halted", 1), ("halt_seq", seq)):
+                            db.execute("INSERT INTO state VALUES (?, ?) ON CONFLICT (k) DO UPDATE SET v = excluded.v",
+                                       (key, value))
                     db.execute("COMMIT")
                     return seq
                 except BaseException:
@@ -520,6 +555,18 @@ class PaperBook:
                 os.unlink(self._halt_flag)
             except OSError:
                 pass
+
+    @staticmethod
+    def _halted_in(db) -> bool:
+        """The durable halt flag, read in ``db``. Fails closed: a row that is missing, not exactly
+        the integer 0 or 1, or that cannot be read is ``halt_unreadable``, never "not halted"."""
+        try:
+            row = db.execute("SELECT v FROM state WHERE k = 'halted'").fetchone()
+        except sqlite3.Error:
+            raise Refused("halt_unreadable") from None
+        if row is None or type(row[0]) is not int or row[0] not in (0, 1):
+            raise Refused("halt_unreadable")
+        return row[0] == 1
 
     def _probe_writable(self) -> None:
         """Refuse ``book_locked`` unless this connection can take the book's write lock within
@@ -537,8 +584,10 @@ class PaperBook:
             db.execute("ROLLBACK")
 
     def halted(self) -> bool:
+        """The durable halt flag. Raises ``Refused("halt_unreadable")`` when it cannot be read as
+        exactly 0 or 1 (see the module doc); it never answers ``False`` on a read it could not make."""
         with self._lock:
-            return bool(self._open_db().execute("SELECT v FROM state WHERE k = 'halted'").fetchone()[0])
+            return self._halted_in(self._open_db())
 
     @staticmethod
     def _audit_row(db, row: dict) -> int:
@@ -614,11 +663,10 @@ class PaperBook:
         order = _order_of(effect)  # read once; nothing below reads the intent's fields again
         if gateway.risk_pass(intent) != effect:
             raise Refused("book_direct_refused")
-        if order.side == "buy":
-            gateway._require_sized(intent)
+        gateway._require_sized(intent)  # buys and sells alike
 
         def run(db):
-            if db.execute("SELECT v FROM state WHERE k = 'halted'").fetchone()[0]:
+            if self._halted_in(db):
                 raise Refused("order_halted")
             gateway._check_run(order)  # a fault or trip committed before this booking wins
             if db.execute("SELECT 1 FROM orders WHERE intent_id = ?", (order.intent_id,)).fetchone():
@@ -779,7 +827,9 @@ class OrderGateway:
                 del self._sized[next(iter(self._sized))]
 
     def _require_sized(self, intent: Intent) -> None:
-        """Refuse a buy that is not the unchanged intent object this gateway's ``size_buy`` made."""
+        """Refuse an order that is not the unchanged intent object this gateway's ``size_buy`` or
+        ``size_sell`` made. The remembered fields include the side, so a sized buy turned into a
+        sell (or the reverse) is refused too."""
         with self._sized_lock:
             held = self._sized.get(id(intent))
         if held is None or held[0] is not intent or self._sized_fields(intent) != held[1]:
@@ -809,6 +859,26 @@ class OrderGateway:
         already fits; the send-time check still refuses it if cash has since dropped. Only
         this returned object, unchanged, passes ``request_approval`` and ``submit`` as a buy.
         """
+        return self._size("buy", intent_id=intent_id, account=account, instrument=instrument,
+                          limit_price_minor=limit_price_minor, conviction_bps=conviction_bps, run_id=run_id,
+                          connection=connection)
+
+    def size_sell(self, *, intent_id: str, account: str, instrument: str, limit_price_minor: int,
+                  conviction_bps: int, run_id: str, connection: str) -> Intent:
+        """Turn a conviction into a paper sell, sized in code and capped at the position held.
+
+        Lucas, Nov 11: "Size sells from conviction, capped at the position held, no caller-set
+        quantity". Shares are the largest whole count within the conviction's share of the
+        notional cap, the quantity cap, and the account's held shares of the instrument that
+        are available to sell. There is no quantity argument. Nothing held is ``size_zero``.
+        Only this returned object, unchanged, passes ``request_approval`` and ``submit`` as a sell.
+        """
+        return self._size("sell", intent_id=intent_id, account=account, instrument=instrument,
+                          limit_price_minor=limit_price_minor, conviction_bps=conviction_bps, run_id=run_id,
+                          connection=connection)
+
+    def _size(self, side: str, *, intent_id: str, account: str, instrument: str, limit_price_minor: int,
+              conviction_bps: int, run_id: str, connection: str) -> Intent:
         try:
             if type(conviction_bps) is not int or not 0 < conviction_bps <= CONVICTION_FULL_BPS:
                 raise Refused("conviction_invalid")
@@ -821,17 +891,19 @@ class OrderGateway:
                 raise Refused("instrument_invalid")
             if instrument not in self._allowlist:
                 raise Refused("instrument_not_allowlisted")
-            cash = self._book.available_cash_minor(account)
+            cash = self._book.available_cash_minor(account)  # also refuses an unknown account
+            # Buys are capped at what the cash buys, sells at the shares held and not yet reserved.
+            limit = cash // limit_price_minor if side == "buy" else self._book.held_shares(account, instrument)
             target_minor = self._caps.max_notional_minor * conviction_bps // CONVICTION_FULL_BPS
-            shares = min(target_minor // limit_price_minor, self._caps.max_quantity, cash // limit_price_minor)
+            shares = min(target_minor // limit_price_minor, self._caps.max_quantity, limit)
             if shares < 1:
                 raise Refused("size_zero")
         except Refused as exc:
-            proposal = Intent(intent_id=intent_id, account=account, instrument=instrument, side="buy",
+            proposal = Intent(intent_id=intent_id, account=account, instrument=instrument, side=side,
                               quantity=None, limit_price_minor=limit_price_minor,
                               run_id=run_id, connection=connection)
             raise self._refuse(exc, "size", proposal, None) from None
-        intent = Intent(intent_id=intent_id, account=account, instrument=instrument, side="buy", quantity=shares,
+        intent = Intent(intent_id=intent_id, account=account, instrument=instrument, side=side, quantity=shares,
                         limit_price_minor=limit_price_minor, run_id=run_id, connection=connection)
         self._remember_sized(intent)
         return intent
@@ -910,9 +982,8 @@ class OrderGateway:
             order = _order_of(effect)  # every later check reads the effect, not the intent again
             if self._run_check is None:
                 raise Refused("run_check_missing")  # no booking-point run check: nothing may book
-            if order.side == "buy":
-                stage = "size"
-                self._require_sized(intent)  # a caller-sized buy never reaches approval
+            stage = "size"
+            self._require_sized(intent)  # a caller-sized order, buy or sell, never reaches approval
             stage = "request"
             # A booked intent id draws no new approval. Only the book is asked: no approval state here.
             if self._book._has_intent(order.intent_id):
@@ -935,9 +1006,8 @@ class OrderGateway:
             order = _order_of(effect)  # every later check reads the effect, not the intent again
             if self._run_check is None:
                 raise Refused("run_check_missing")  # no booking-point run check: nothing may book
-            if order.side == "buy":
-                stage = "size"
-                self._require_sized(intent)  # a caller-sized buy never reaches the charge or the book
+            stage = "size"
+            self._require_sized(intent)  # a caller-sized order never reaches the charge or the book
             # Every local refusal that does not need the core comes before the charge.
             stage = "book"
             if self._book._has_intent(order.intent_id):

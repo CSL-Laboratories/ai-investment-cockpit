@@ -19,10 +19,12 @@ the callable a host hands the gateway as ``run_check``. It makes the same refusa
 order, raised as ``FakeRefused`` with the core's ``code``, and the transport uses it too.
 
 ``ALLOWLIST`` is the instrument allowlist the fake-core suites build their gateways with.
-``sized`` is a test seam, not a product path: it records a hand-built buy in a gateway's private
-sizing memory, standing for a ``size_buy`` that returned exactly that intent, so suites about
-other behaviour keep their fixed quantities. The sizing rule itself is tested through the real
-``size_buy`` in ``test_sizing_allowlist.py``, and the real-core suites size every buy with it.
+``sized`` is a test seam, not a product path: it records a hand-built order (buy or sell) in a
+gateway's private sizing memory, standing for a ``size_buy`` or ``size_sell`` that returned
+exactly that intent, so suites about other behaviour (funds, races, the kill path) keep their
+fixed quantities. The sizing rules themselves are tested through the real ``size_buy`` in
+``test_sizing_allowlist.py`` and the real ``size_sell`` in ``test_sell_sizing_nov11.py``, and the
+real-core suites size every order with them.
 """
 
 from __future__ import annotations
@@ -49,8 +51,8 @@ class FakeRefused(Exception):
 
 
 def sized(gateway: OrderGateway, intent: Intent) -> Intent:
-    """Test seam (see the module doc): mark a hand-built buy as sized by ``gateway``."""
-    if type(intent) is Intent and intent.side == "buy":
+    """Test seam (see the module doc): mark a hand-built order as sized by ``gateway``."""
+    if type(intent) is Intent and intent.side in ("buy", "sell"):
         gateway._remember_sized(intent)
     return intent
 

@@ -233,14 +233,18 @@ class CashTests(unittest.TestCase):
     def test_held_share_sell_below_2000_allowed(self) -> None:
         # $500 cash + 10 AAPL at $100 = $1,500 equity, under the $2,000 floor frozen app/ enforces.
         self._gateway(50_000, holdings={(ACCT, "AAPL"): 10})
-        sell = Intent(intent_id="s-1", account=ACCT, instrument="AAPL", side="sell", quantity=10,
-                      limit_price_minor=10_000, run_id="run-1", connection="conn-a")
+        # Full conviction: sized from the conviction and capped at the 10 shares held (Nov 11).
+        sell = self.gw.size_sell(intent_id="s-1", account=ACCT, instrument="AAPL", limit_price_minor=10_000,
+                                 conviction_bps=10_000, run_id="run-1", connection="conn-a")
+        self.assertEqual(sell.quantity, 10)
         self.assertEqual(self.gw.submit(sell, self._approved(sell), AUTHORITY)["status"], "paper_working")
         self.assertEqual(self.book.held_shares(ACCT, "AAPL"), 0)
         self.assertEqual(self.book.available_cash_minor(ACCT), 50_000)  # sells are not sized to cash
-        self._refused("holding_insufficient", self.gw.request_approval, replace(sell, intent_id="s-2", quantity=1))
+        # The funds check behind the sizer (test seam: hand-built sells marked as sized).
         self._refused("holding_insufficient", self.gw.request_approval,
-                      replace(sell, intent_id="s-3", instrument="MSFT", quantity=1))
+                      sized(self.gw, replace(sell, intent_id="s-2", quantity=1)))
+        self._refused("holding_insufficient", self.gw.request_approval,
+                      sized(self.gw, replace(sell, intent_id="s-3", instrument="MSFT", quantity=1)))
 
     def test_held_share_sell_allowed_with_zero_cash_and_small_buy_has_no_floor(self) -> None:
         self._gateway(100, holdings={(ACCT, "AAPL"): 3})
