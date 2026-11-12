@@ -11,8 +11,9 @@ thread its own ``PaperBook`` and halt while the core is authorizing, so two line
 Here four threads share one gateway and one ``PaperBook``, and a second connection halts
 after the booking-time risk pass has returned and before the transaction starts, so only the
 in-transaction re-read can refuse. Each scenario returns its problems as a list; the
-``MutantSelfCheck`` tests run the same scenario with that line neutralised in-process and
-require a non-empty list, so these tests cannot pass vacuously.
+``MutantSelfCheck`` tests keep these checks non-vacuous: the lock check safely records
+competing entrants while still serialising the connection; the halt check neutralises the
+re-read in-process and requires the scenario to report a booking after the halt.
 
 Run: ``PYTHONPATH=engine python3 -B -m unittest engine/tests/paper/test_b31_shared_book.py -v``,
 and with ``python3.14t -X gil=0``. Paper only: the core is a local double that approves
@@ -41,13 +42,29 @@ THREADS = 4
 ROUNDS = 40
 
 
-class _NoLock:
-    """Mutant stand-in for ``PaperBook._lock``: lets every thread through."""
+class _RecordingLock:
+    """Record entrants that would overlap without ``PaperBook._lock``, safely.
+
+    The first entrant holds the real lock until a contender arrives, making the
+    overlap deterministic. No two threads ever enter sqlite through this stand-in.
+    """
+
+    def __init__(self) -> None:
+        self._serial = threading.Lock()
+        self.contended = threading.Event()
 
     def __enter__(self):
+        if not self._serial.acquire(blocking=False):
+            self.contended.set()
+            if not self._serial.acquire(timeout=WAIT):
+                raise AssertionError("recording lock contender timed out")
+        elif not self.contended.wait(WAIT):
+            self._serial.release()
+            raise AssertionError("shared-book stress no longer contends for PaperBook._lock")
         return self
 
     def __exit__(self, *exc):
+        self._serial.release()
         return False
 
 
@@ -220,16 +237,17 @@ class SharedBookTests(Case):
 
 
 class MutantSelfCheck(Case):
-    """The scenarios above notice each line they exist for being removed."""
+    """The scenarios above still depend on the lock and the halt re-read."""
 
     def test_removing_the_in_process_lock_is_noticed(self) -> None:
-        def no_lock(book):
-            book._lock = _NoLock()
+        recording = _RecordingLock()
 
-        for _ in range(5):  # a race: a few tries; the shared connection breaks on the first in practice
-            if self.shared_book_stress(no_lock):
-                return
-        self.fail("shared-book stress passed with PaperBook._lock removed")
+        def record_lock(book):
+            book._lock = recording
+
+        self.assertEqual(self.shared_book_stress(record_lock), [])
+        self.assertTrue(recording.contended.is_set(),
+                        "shared-book stress no longer contends for PaperBook._lock")
 
     def test_removing_the_in_transaction_halt_reread_is_noticed(self) -> None:
         def no_reread(book):

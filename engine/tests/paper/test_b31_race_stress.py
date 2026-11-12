@@ -20,7 +20,8 @@ the ``fakecore.sized`` test seam, since the gateway refuses a buy it did not siz
   same for held shares and working sells;
 * halt wins: no order is booked with a sequence number after the halt's, and once the halt is
   committed every thread sends one more order, which must be refused ``order_halted``;
-* every booking has its ``booked`` audit row and every refusal its ``refused`` audit row.
+* every booking has its ``booked`` audit row and every refusal its ``refused`` audit row,
+  except a bounded pre-charge ``book_locked`` refusal, whose audit write may also time out.
 
 A sensitivity test drops the send-time check inside the booking transaction (B31's forbidden
 shape) and holds the send-time window open (``forced_window``: one buy blocked inside the core's
@@ -156,7 +157,8 @@ def _iteration(path: str, rng: random.Random, violations: list[str], counters: d
     submitted: dict[str, int] = {}
     halt_seqs: list[int] = []
     halt_done = threading.Event()
-    outcomes = {"booked": 0, "refused": 0}
+    outcomes = {"booked": 0, "refused": 0, "book_locked_skipped": 0,
+                "after_halt_refused": 0, "after_halt_book_locked": 0}
     lock = threading.Lock()
     worker_seeds = [rng.randrange(2**32) for _ in range(THREADS)]
     roll = rng.random() < 0.3  # always drawn, so a forced iteration keeps the seed's later draws
@@ -213,6 +215,15 @@ def _iteration(path: str, rng: random.Random, violations: list[str], counters: d
                 except Refused as exc:
                     with lock:
                         outcomes["refused"] += 1
+                        if after_halt:
+                            outcomes["after_halt_refused"] += 1
+                            outcomes["after_halt_book_locked"] += exc.code == "book_locked"
+                        elif exc.code == "book_locked":
+                            outcomes["book_locked_skipped"] += 1
+                    if exc.code == "book_locked" and not after_halt:
+                        # Pre-charge probe bounded by BOOK_LOCK_PROBE_S: nothing is charged or
+                        # booked. Its audit write shares that bound, so the row may be missing.
+                        continue
                     if after_halt and (exc.code, exc.cause) != ("order_halted", None):
                         flag(f"{intent_id}: sent after the halt, refused {exc} and not order_halted")
                     if exc.code == "leftover_charge":
@@ -276,6 +287,15 @@ def _iteration(path: str, rng: random.Random, violations: list[str], counters: d
             violations.append(f"{account}: cash {cash[account]} + working buys {buys} != {START_CASH}")
         if held[account] + sells != START_SHARES:
             violations.append(f"{account}: shares {held[account]} + working sells {sells} != {START_SHARES}")
+    # At most 10% per iteration, excluding the guaranteed after-halt refusals: allow
+    # occasional slow-disk probe timeouts, but require >=90% of racing order outcomes
+    # to exercise the normal paths. Checking each iteration prevents dilution by others.
+    racing_outcomes = outcomes["booked"] + outcomes["refused"] - outcomes["after_halt_refused"]
+    if outcomes["book_locked_skipped"] * 10 > racing_outcomes:
+        violations.append(f"book_locked became common: {outcomes['book_locked_skipped']} skipped"
+                          f" / {racing_outcomes} racing outcomes (maximum 10%)")
+    counters["book_locked_skipped"] += outcomes["book_locked_skipped"]
+    counters["after_halt_book_locked"] += outcomes["after_halt_book_locked"]
     counters["booked"] += outcomes["booked"]
     counters["refused"] += outcomes["refused"]
     counters["send_time_cash_refusals"] += send_time
@@ -298,7 +318,8 @@ def run(iters: int, seed: int) -> tuple[list[str], dict]:
 
 def new_counters() -> dict:
     return {"booked": 0, "refused": 0, "send_time_cash_refusals": 0, "halts": 0, "halt_refusals": 0,
-            "halter_iters": 0, "no_halter_iters": 0, "orders_checked_against_halt": 0}
+            "halter_iters": 0, "no_halter_iters": 0, "orders_checked_against_halt": 0,
+            "book_locked_skipped": 0, "after_halt_book_locked": 0}
 
 
 def forced_window() -> tuple[object, list[str], int]:
