@@ -52,15 +52,20 @@ class _RecordingLock:
     def __init__(self) -> None:
         self._serial = threading.Lock()
         self.contended = threading.Event()
+        self._probe_pending = True
 
     def __enter__(self):
         if not self._serial.acquire(blocking=False):
             self.contended.set()
             if not self._serial.acquire(timeout=WAIT):
                 raise AssertionError("recording lock contender timed out")
-        elif not self.contended.wait(WAIT):
-            self._serial.release()
-            raise AssertionError("shared-book stress no longer contends for PaperBook._lock")
+        elif self._probe_pending:
+            self._probe_pending = False
+            # Fail before the worker join deadline; later calls (including close)
+            # must still run, so a failed probe neither repeats nor blocks cleanup.
+            if not self.contended.wait(WAIT / 3):
+                self._serial.release()
+                raise AssertionError("shared-book stress no longer contends for PaperBook._lock")
         return self
 
     def __exit__(self, *exc):
