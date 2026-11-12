@@ -95,7 +95,7 @@ class KeyStore:
         if backend == "keyring":
             self._keyring.set(self.SERVICE, _account(kind, name), secret)  # type: ignore[union-attr]
             return backend
-        with self._locked_dir() as dir_fd:
+        with self._locked_dir(create_leaf=True) as dir_fd:
             keys = self._read_file(dir_fd)
             keys[name] = secret
             self._write_file(dir_fd, keys)
@@ -106,7 +106,9 @@ class KeyStore:
         if self.backend_for(kind) == "keyring":
             return self._keyring.get(self.SERVICE, _account(kind, name))  # type: ignore[union-attr]
         assert self._path is not None
-        dir_fd = _open_owned_dir(os.path.dirname(os.path.abspath(self._path)))
+        dir_fd = _open_owned_dir(os.path.dirname(os.path.abspath(self._path)), missing_leaf_ok=True)
+        if dir_fd is None:
+            return None
         try:
             _refuse_existing_unless_owner_only(dir_fd, _LOCK_NAME)
             return self._read_file(dir_fd).get(name)
@@ -119,17 +121,23 @@ class KeyStore:
             self._keyring.delete(self.SERVICE, _account(kind, name))  # type: ignore[union-attr]
             return
         with self._locked_dir() as dir_fd:
+            if dir_fd is None:
+                return
             keys = self._read_file(dir_fd)
             if keys.pop(name, None) is not None:
                 self._write_file(dir_fd, keys)
 
     # -- owner-only file ------------------------------------------------------------------
     @contextmanager
-    def _locked_dir(self) -> Iterator[int]:
+    def _locked_dir(self, *, create_leaf: bool = False) -> Iterator[int | None]:
         """Directory fd for the key file, held with an exclusive lock on ``.keys.lock``."""
 
         assert self._path is not None and fcntl is not None
-        dir_fd = _open_owned_dir(os.path.dirname(os.path.abspath(self._path)))
+        dir_fd = _open_owned_dir(os.path.dirname(os.path.abspath(self._path)),
+                                 create_leaf=create_leaf, missing_leaf_ok=not create_leaf)
+        if dir_fd is None:
+            yield None
+            return
         lock_fd = -1
         try:
             lock_fd = _open_lock(dir_fd)
@@ -245,7 +253,8 @@ def key_file_state(path: str) -> str:
         os.close(fd)
 
 
-def _open_owned_dir(directory: str) -> int:
+def _open_owned_dir(directory: str, *, create_leaf: bool = False,
+                    missing_leaf_ok: bool = False) -> int | None:
     """Open ``directory`` and return its fd, after the owned-chain rule. Caller closes it.
 
     Ancestors follow Recursion's ``_owned_chain``: each is root's or ours, and not writable by
@@ -274,7 +283,26 @@ def _open_owned_dir(directory: str) -> int:
             try:
                 nxt = os.open(name, flags | os.O_NOFOLLOW, dir_fd=fd)
             except FileNotFoundError:
-                raise KeyRefused("key_dir_missing", directory) from None
+                if index != len(names) - 1:
+                    raise KeyRefused("key_dir_missing", directory) from None
+                if create_leaf:
+                    # All ancestors were checked through pinned directory fds.
+                    # Only create the leaf; never chmod or repair an existing entry.
+                    try:
+                        os.mkdir(name, 0o700, dir_fd=fd)
+                    except FileExistsError:
+                        pass  # A competing creator must pass the same checks below.
+                    except OSError as exc:
+                        raise KeyRefused("key_dir_not_owner_only", _errno_name(exc)) from None
+                    try:
+                        nxt = os.open(name, flags | os.O_NOFOLLOW, dir_fd=fd)
+                    except OSError as exc:
+                        raise KeyRefused("key_dir_not_owner_only", _errno_name(exc)) from None
+                elif missing_leaf_ok:
+                    os.close(fd)
+                    return None
+                else:
+                    raise KeyRefused("key_dir_missing", directory) from None
             except OSError as exc:
                 raise KeyRefused("key_dir_not_owner_only", _errno_name(exc)) from None
             os.close(fd)

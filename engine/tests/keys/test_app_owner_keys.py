@@ -58,6 +58,9 @@ def _keychain_module(backend: _Backend, module: str = "keyring.backends.SecretSe
         set_password=lambda s, n, v: backend.data.__setitem__((s, n), v),
         delete_password=lambda s, n: backend.data.pop((s, n), None),
     )
+    instance.get_password = mod.get_password
+    instance.set_password = mod.set_password
+    instance.delete_password = mod.delete_password
     return mod
 
 

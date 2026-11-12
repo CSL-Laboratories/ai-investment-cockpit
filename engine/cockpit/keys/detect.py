@@ -8,7 +8,8 @@ Detection is read-only. It never writes, reads or deletes a key in the keychain 
 and it makes no provider, venue or network call. The keyring library is optional and loaded lazily
 through an injectable loader, so tests use fakes and a host without the library reads as "no keychain".
 A backend counts as a keychain only when it is a real one: the library's ``fail`` and ``null``
-backends, a chainer with no usable backends, and any backend with priority <= 0 do not count.
+backends, unknown/file backends, mixed chainers, and unusable OS backends do not count.
+A safe chainer is reduced to its first usable OS backend; storage stays bound to that backend.
 The doctor line names where keys are kept and the key-file state; it never prints a key or its value.
 """
 
@@ -26,6 +27,10 @@ from cockpit.keys.store import KeyStore, key_file_state
 __all__ = ["KeychainStatus", "OsKeyring", "default_key_file", "detect_keychain", "doctor", "doctor_line", "store_for_host"]
 
 _NOT_A_KEYCHAIN = ("keyring.backends.fail", "keyring.backends.null")
+_OS_KEYCHAINS = frozenset((
+    "keyring.backends.SecretService", "keyring.backends.libsecret",
+    "keyring.backends.kwallet", "keyring.backends.macOS", "keyring.backends.Windows",
+))
 
 
 @dataclass(frozen=True)
@@ -40,39 +45,55 @@ def _load_keyring_module() -> Any:
 
 
 def detect_keychain(load: Callable[[], Any] = _load_keyring_module) -> KeychainStatus:
-    """Say whether this host has a usable OS keychain. Read-only; never touches a stored key."""
+    """Say whether this host has a usable OS keychain. Never touches a stored key."""
+    return _detect_backend(load)[0]
 
+
+def _detect_backend(load: Callable[[], Any]) -> tuple[KeychainStatus, Any]:
     try:
         mod = load()
     except ImportError:
-        return KeychainStatus(False, "", "keyring_library_missing")
-    except Exception as exc:  # a broken install reads as no keychain, never as a crash
-        return KeychainStatus(False, "", f"keyring_library_error:{type(exc).__name__}")
+        return KeychainStatus(False, "", "keyring_library_missing"), None
+    except Exception as exc:  # noqa: BLE001 - failed detection never grants keychain access
+        return KeychainStatus(False, "", f"keyring_library_error:{type(exc).__name__}"), None
     try:
         backend = mod.get_keyring()
-    except Exception as exc:
-        return KeychainStatus(False, "", f"keyring_backend_error:{type(exc).__name__}")
-    return _classify(backend)
+        return _select_backend(backend, set())
+    except Exception as exc:  # noqa: BLE001 - failed detection never grants keychain access
+        return KeychainStatus(False, "", f"keyring_backend_error:{type(exc).__name__}"), None
 
 
-def _classify(backend: Any) -> KeychainStatus:
+def _select_backend(backend: Any, seen: set[int]) -> tuple[KeychainStatus, Any]:
+    unavailable = KeychainStatus(False, "", "no_keychain_backend")
+    if id(backend) in seen:
+        return unavailable, None
+    seen = seen | {id(backend)}
     module = type(backend).__module__ or ""
-    name = _backend_name(backend)
-    if module.startswith(_NOT_A_KEYCHAIN):
-        return KeychainStatus(False, "", "no_keychain_backend")
-    children = getattr(backend, "backends", None)
-    if module.startswith("keyring.backends.chainer"):
-        usable = [b for b in (children or ()) if _classify(b).available]
-        if not usable:
-            return KeychainStatus(False, "", "no_keychain_backend")
-        return KeychainStatus(True, ", ".join(_backend_name(b) for b in usable), "ok")
+    if module in _NOT_A_KEYCHAIN:
+        return unavailable, None
+    if module == "keyring.backends.chainer":
+        selected = None
+        for child in backend.backends:
+            # Only the standard non-storing sentinels are safe to ignore.
+            if type(child).__module__ in _NOT_A_KEYCHAIN:
+                continue
+            status, candidate = _select_backend(child, seen)
+            if not status.available:
+                return unavailable, None
+            if selected is None:
+                selected = candidate
+        if selected is None:
+            return unavailable, None
+        return KeychainStatus(True, _backend_name(selected), "ok"), selected
+    if module not in _OS_KEYCHAINS:
+        return unavailable, None
     try:
-        priority = float(getattr(type(backend), "priority", getattr(backend, "priority", 0)))
-    except Exception as exc:  # keyring backends raise from ``priority`` when unusable (e.g. no D-Bus)
-        return KeychainStatus(False, "", f"keychain_unusable:{type(exc).__name__}")
-    if math.isnan(priority) or priority <= 0:
-        return KeychainStatus(False, "", "keychain_unusable:priority")
-    return KeychainStatus(True, name, "ok")
+        priority = float(backend.priority)
+    except Exception as exc:  # noqa: BLE001 - failed detection never grants keychain access
+        return KeychainStatus(False, "", f"keychain_unusable:{type(exc).__name__}"), None
+    if not math.isfinite(priority) or priority <= 0:
+        return KeychainStatus(False, "", "keychain_unusable:priority"), None
+    return KeychainStatus(True, _backend_name(backend), "ok"), backend
 
 
 def _backend_name(backend: Any) -> str:
@@ -82,18 +103,18 @@ def _backend_name(backend: Any) -> str:
 class OsKeyring:
     """Adapter from the keyring library to ``KeyStore``'s injected ``get``/``set``/``delete``."""
 
-    def __init__(self, mod: Any) -> None:
-        self._mod = mod
+    def __init__(self, backend: Any) -> None:
+        self._backend = backend
 
     def get(self, service: str, name: str) -> str | None:
-        return self._mod.get_password(service, name)
+        return self._backend.get_password(service, name)
 
     def set(self, service: str, name: str, secret: str) -> None:
-        self._mod.set_password(service, name, secret)
+        self._backend.set_password(service, name, secret)
 
     def delete(self, service: str, name: str) -> None:
         try:
-            self._mod.delete_password(service, name)
+            self._backend.delete_password(service, name)
         except Exception as exc:
             if type(exc).__name__ != "PasswordDeleteError":
                 raise
@@ -111,8 +132,9 @@ def store_for_host(key_file: str | os.PathLike[str] | None = None,
                    load: Callable[[], Any] = _load_keyring_module) -> tuple[KeyStore, KeychainStatus]:
     """Build the ``KeyStore`` this host should use: the OS keyring if detected, otherwise ``keyring=None``."""
 
-    status = detect_keychain(load)
-    ring = OsKeyring(load()) if status.available else None
+    status, backend = _detect_backend(load)
+    # Pin the checked OS backend, never the mutable global module or chainer.
+    ring = OsKeyring(backend) if status.available else None
     return KeyStore(keyring=ring, key_file=key_file if key_file is not None else default_key_file()), status
 
 

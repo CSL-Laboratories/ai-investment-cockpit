@@ -40,6 +40,10 @@ def _backend(module: str, name: str = "Fake", priority: object = 5, **attrs: obj
 class FakeKeyringModule(types.SimpleNamespace):
     def __init__(self, backend: object) -> None:
         super().__init__(backend=backend, store={}, calls=[])
+        if backend is not None:
+            backend.get_password = self.get_password
+            backend.set_password = self.set_password
+            backend.delete_password = self.delete_password
 
     def get_keyring(self) -> object:
         return self.backend
@@ -58,6 +62,49 @@ class FakeKeyringModule(types.SimpleNamespace):
 
 
 class DetectTests(unittest.TestCase):
+    def test_mixed_chainers_refuse_without_touching_any_backend(self):
+        for module in ("keyrings.alt.file", "keyring.backends.SecretServiceEvil"):
+            for reverse in (False, True):
+                safe = _backend("keyring.backends.SecretService")
+                unsafe = _backend(module)
+                children = [safe, unsafe][::(-1 if reverse else 1)]
+                mod = FakeKeyringModule(_backend("keyring.backends.chainer", backends=children))
+                store, status = store_for_host(load=lambda mod=mod: mod)
+                self.assertFalse(status.available)
+                for kind in ("broker", "venue"):
+                    with self.assertRaises(KeyRefused) as cm:
+                        store.put(kind, "fixture", FAKE)
+                    self.assertEqual(cm.exception.cause, "keychain_required")
+                self.assertEqual(mod.calls, [])
+
+    def test_store_pins_checked_os_backend_not_module_or_chainer(self):
+        safe_mod = FakeKeyringModule(_backend("keyring.backends.SecretService"))
+        unsafe_mod = FakeKeyringModule(_backend("keyrings.alt.file"))
+        chain = _backend("keyring.backends.chainer", backends=[safe_mod.backend])
+        mod = FakeKeyringModule(chain)
+        loads = []
+
+        def load():
+            loads.append(True)
+            return mod if len(loads) == 1 else unsafe_mod
+
+        store, status = store_for_host(load=load)
+        self.assertTrue(status.available)
+        chain.backends = [unsafe_mod.backend]
+        mod.backend = unsafe_mod.backend
+        store.put("broker", "fixture", FAKE)
+        self.assertEqual(store.get("broker", "fixture"), FAKE)
+        store.delete("broker", "fixture")
+        self.assertEqual([c[0] for c in safe_mod.calls], ["set", "get", "delete"])
+        self.assertEqual(unsafe_mod.calls, [])
+        self.assertEqual(mod.calls, [])
+        self.assertEqual(len(loads), 1)
+
+    def test_cyclic_or_unreadable_chain_is_unavailable(self):
+        chain = _backend("keyring.backends.chainer", backends=[])
+        chain.backends.append(chain)
+        self.assertFalse(detect_keychain(lambda: FakeKeyringModule(chain)).available)
+
     def test_real_backend_is_a_keychain_and_detection_touches_no_key(self) -> None:
         mod = FakeKeyringModule(_backend("keyring.backends.SecretService", "SecretService Keyring"))
         status = detect_keychain(lambda: mod)
@@ -98,6 +145,24 @@ class DetectTests(unittest.TestCase):
         status = detect_keychain(lambda: mod)
         self.assertFalse(status.available)
         self.assertTrue(status.reason.startswith("keyring_backend_error"))
+
+    def test_keyrings_alt_and_non_os_file_backends_are_not_keychains(self) -> None:
+        non_os = (
+            _backend("keyrings.alt.file", "PlaintextKeyring", priority=0.5),
+            _backend("keyrings.alt.file", "EncryptedKeyring", priority=0.6),
+            _backend("keyrings.cryptfile.cryptfile", "CryptFileKeyring", priority=2.5),
+            _backend("keyring.backends.chainer", backends=[
+                _backend("keyrings.alt.file", "PlaintextKeyring", priority=0.5),
+            ]),
+        )
+        for backend in non_os:
+            with self.subTest(backend=backend.name):
+                store, status = store_for_host("/tmp/unused-keys.json", lambda b=backend: FakeKeyringModule(b))
+                self.assertFalse(status.available)
+                for kind in ("broker", "venue"):
+                    with self.assertRaises(KeyRefused) as ctx:
+                        store.put(kind, "acme", FAKE)
+                    self.assertEqual(ctx.exception.cause, "keychain_required")
 
 
 @unittest.skipIf(os.name == "nt", "POSIX owner-only file")
