@@ -62,7 +62,8 @@ venue call keeps the cancel leg ``confirmed`` only if that same ``kill``'s fresh
 and probes confirm the credential is still dead; the detail then reads
 ``kept:<this attempt's error>``. If the fresh revoke does not confirm, or the venue
 answers the cancel attempt at all, the earlier confirm is dropped. A cancel that confirms
-in a ``kill`` whose halt call raised does not count.
+in a ``kill`` whose halt call raised does not count. Reuse on a later kill also
+requires that the earlier cancel and revoke ran with the halt read-back confirmed.
 """
 
 from __future__ import annotations
@@ -80,7 +81,11 @@ MAX_LIST_PAGES = 100
 class CoinbaseKillTransport(Protocol):
     """Supplied only by the credential-owning host. Each method is one venue API operation."""
 
-    def list_open_orders(self, cursor: str | None) -> dict: ...  # {"order_ids": [str], "cursor": str | None}
+    # Host-normalized pages: {"order_ids": [str], "cursor": nonempty str | None}.
+    # Optional has_next/truncated must be bools agreeing with cursor presence;
+    # remaining must be an int >= 0, positive exactly when a cursor is present.
+    # Both the initial list and confirmation re-list enforce these indicators.
+    def list_open_orders(self, cursor: str | None) -> dict: ...
     def cancel_order(self, order_id: str) -> dict: ...           # {"order_id": str, "success": bool}
     def revoke_oauth_grant(self) -> RevokeReply: ...             # RevokeReply(http_status); 200 is not proof
     def probe_api_call(self) -> str: ...                         # "unauthorized" | "authorized"
@@ -116,6 +121,16 @@ class CoinbaseKill:
                 raise _Unreadable("unreadable_list")
             ids.extend(page)
             cursor = out.get("cursor")
+            # Optional completion indicators must agree with the cursor. Never
+            # turn an incomplete or contradictory empty page into cancel evidence.
+            for flag in ("has_next", "truncated"):
+                if flag in out and (type(out[flag]) is not bool or out[flag] != (cursor is not None)):
+                    raise _Unreadable("unfinished_list")
+            if "remaining" in out:
+                remaining = out["remaining"]
+                if (type(remaining) is not int or remaining < 0
+                        or (remaining > 0) != (cursor is not None)):
+                    raise _Unreadable("unfinished_list")
             if cursor is None:
                 return ids
             if type(cursor) is not str or not cursor:
@@ -230,7 +245,9 @@ class CoinbaseKill:
             self._revoke()
             revoked_now = self._state["revoke_grant"] == "confirmed"
             if cancelled_now:
-                self._cancel_then_revoke_confirmed = revoked_now
+                # Only evidence collected behind a verified halt can survive
+                # credential revocation and be reused on a later kill.
+                self._cancel_then_revoke_confirmed = revoked_now and self._state["halt"] == "confirmed"
             elif (self._cancel_then_revoke_confirmed and revoked_now
                   and self._detail.get("cancel_orders", "").startswith("list_error:")):
                 # The dead credential cannot list or cancel. This kill's own revoke and probes

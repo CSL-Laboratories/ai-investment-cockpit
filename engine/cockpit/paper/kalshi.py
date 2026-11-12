@@ -61,7 +61,8 @@ venue call keeps the cancel leg ``confirmed`` only if that same ``kill``'s fresh
 and probes confirm the credential is still dead; the detail then reads
 ``kept:<this attempt's error>``. If the fresh revoke does not confirm, or the venue
 answers the cancel attempt at all, the earlier confirm is dropped. A cancel that confirms
-in a ``kill`` whose halt call raised does not count.
+in a ``kill`` whose halt call raised does not count. Reuse on a later kill also
+requires that the earlier cancel and revoke ran with the halt read-back confirmed.
 """
 
 from __future__ import annotations
@@ -240,7 +241,8 @@ class KalshiKill:
             self._revoke()
             revoked_now = self._state["revoke_key"] == "confirmed"
             if cancelled_now:
-                self._cancel_then_revoke_confirmed = revoked_now
+                # Reuse requires cancellation and revocation behind a verified halt.
+                self._cancel_then_revoke_confirmed = revoked_now and self._state["halt"] == "confirmed"
             elif (self._cancel_then_revoke_confirmed and revoked_now
                   and self._detail.get("cancel_all", "").startswith("error:")):
                 # The dead credential cannot list or cancel. This kill's own revoke and probes

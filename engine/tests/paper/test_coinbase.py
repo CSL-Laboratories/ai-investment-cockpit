@@ -512,6 +512,46 @@ class CoinbaseKillTests(unittest.TestCase):
         self.assertEqual(out["status"], "confirmed")
         self.assertTrue(book.halted())
 
+    def test_unfinished_listing_with_null_cursor_keeps_cancel_pending(self) -> None:
+        for extra in ({"has_next": True}, {"has_next": "yes"}, {"truncated": True}, {"remaining": 2}):
+            with self.subTest(extra=extra):
+                venue = MockCoinbase()
+                venue.list_open_orders = lambda cursor, extra=extra: {"order_ids": [], "cursor": None, **extra}
+                out = self._kill(venue).kill()
+                self.assertEqual((out["status"], out["cancel_orders"]), ("pending", "pending"))
+                self.assertIn("unfinished_list", out["detail"]["cancel_orders"])
+
+    def test_listing_metadata_must_be_typed_and_consistent_on_every_page(self):
+        for cursor, extra in (
+            (None, {"remaining": False}), (None, {"remaining": "0"}),
+            (None, {"remaining": -1}), (None, {"truncated": 0}),
+            ("next", {"has_next": False}), ("next", {"remaining": 0}),
+            ("next", {"truncated": False}),
+        ):
+            with self.subTest(cursor=cursor, extra=extra):
+                venue = MockCoinbase()
+                pages = iter([{"order_ids": [], "cursor": cursor, **extra},
+                              {"order_ids": [], "cursor": None}])
+                venue.list_open_orders = lambda _, pages=pages: next(pages)
+                out = self._kill(venue).kill()
+                self.assertEqual(out["detail"]["cancel_orders"], "unfinished_list")
+                self.assertEqual(out["status"], "pending")
+
+    def test_incomplete_confirmation_relist_stays_pending(self):
+        venue = MockCoinbase()
+        pages = iter([{"order_ids": [], "cursor": None},
+                      {"order_ids": [], "cursor": None, "has_next": True}])
+        venue.list_open_orders = lambda _, pages=pages: next(pages)
+        out = self._kill(venue).kill()
+        self.assertEqual(out["detail"]["cancel_orders"], "relist:unfinished_list")
+        self.assertEqual(out["status"], "pending")
+
+    def test_consistent_completion_metadata_can_confirm(self):
+        venue = MockCoinbase()
+        venue.list_open_orders = lambda _: {"order_ids": [], "cursor": None,
+                                            "has_next": False, "truncated": False, "remaining": 0}
+        self.assertEqual(self._kill(venue).kill()["status"], "confirmed")
+
 
 if __name__ == "__main__":
     unittest.main()
