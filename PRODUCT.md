@@ -215,8 +215,8 @@ only emits incomplete results does not satisfy the selected full-tax requirement
 
 ## Economics and evaluation
 
-Use **$2,000 as a provisional paper starting balance** from Lucas's likely minimum
-transfer intention. The owner-stated **approximately $210/month** covers ChatGPT Pro
+Use **[amount] as a provisional paper starting balance** from Lucas's likely minimum
+transfer intention. The owner-stated **approximately [amount]/month** covers ChatGPT Pro
 and OpenCode Go; it is neither verified current pricing nor an all-inclusive expense
 estimate. Contribution amount and timing remain configurable and unset. Owner financial
 context remains in the decision record rather than becoming hardcoded defaults.
@@ -224,7 +224,7 @@ context remains in the decision record rather than becoming hardcoded defaults.
 Separate contributions/withdrawals from returns and compare baselines with matched
 cash flows. Show realized/unrealized P&L, trading and engine costs, tax effects,
 drawdown, uncertainty and expense-coverage surplus/shortfall without double counting.
-At a static $2,000, $210 is a 10.5% monthly subscription-coverage hurdle after trading
+At a static [amount], [amount] is a [percentage] monthly subscription-coverage hurdle after trading
 costs, before other costs, taxes and additional growth. This is arithmetic, not an
 expected return. Paper profits are evaluation results, not cash available for bills.
 
