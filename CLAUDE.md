@@ -216,12 +216,12 @@ For writer collisions, use the [pause and resumption checklist](docs/ci-runbook.
 
 Devin reviews (no longer: its trial expired) → Claude fixes (`claude.yml`) → stuck threads are picked up by
 [`.github/workflows/stuck-thread-watch.yml`](.github/workflows/stuck-thread-watch.yml),
-which asks Codex to mediate (`@codex review`) and records one Linear Triage
-`needs-decision` roll-up per unapproved PR (`Stuck PR threads: <repo>#<PR>`),
-updated in place. Shared keys with the Codex CI/fixer gate:
-`<!-- stuck-pr-threads:owner/repo#N -->` and
-`<!-- codex-gate-mediate:owner/repo:N -->`. Adopt an existing roll-up only by
-the `stuck-pr-threads` HTML marker, never by title. Write Linear only when at
-least one thread is actionable after the per-PR cap and `CODEX_TRIGGER_PAT`
-checks, or to create a missing roll-up after an earlier Linear outage. Humans
-decide. The watcher never resolves threads, pushes, or merges.
+which asks Codex to mediate on the PR (`@codex review`). Since #328 (CSL-862)
+the watcher writes nothing to Linear (`FILE_LINEAR: "false"`), so it no longer
+records or updates the `needs-decision` roll-up per unapproved PR
+(`Stuck PR threads: <repo>#<PR>`), and a roll-up it filed earlier may be
+stale. The Codex CI/fixer gate still files or updates that roll-up on
+MEDIATE. Shared keys: `<!-- stuck-pr-threads:owner/repo#N -->` and
+`<!-- codex-gate-mediate:owner/repo:N -->` (`AGENTS.md` Code Review Rules).
+Humans decide.
+The watcher never resolves threads, pushes, or merges.

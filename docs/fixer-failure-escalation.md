@@ -5,6 +5,10 @@ not run another fixer, reset attempts, synthesize a Claude reply/result,
 apply READY, push, merge or change the resolver. The existing schedule,
 writer queue, delivery identities and mediation markers remain in use.
 
+In this repository the watcher has written nothing to Linear since #328
+(CSL-862) set `FILE_LINEAR` to `"false"`, so the Linear creates, updates and
+roll-ups described below do not happen here; GitHub mediation is unchanged.
+
 ## Evidence required
 
 1. The PR is open, non-draft, same-repository and authored by a current human
