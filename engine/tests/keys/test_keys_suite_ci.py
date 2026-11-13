@@ -10,17 +10,20 @@ method, whatever its class is called, in any test module or test package, or a m
 is there exactly once. Under pytest it reads the running session's own items, after every collection hook
 (including a ``conftest.py``) has run, so a test pytest leaves out (``__test__ = False`` on a class or a
 method, a class not imported here, an item a plugin drops) fails it, and so does a class exposed here twice.
-In a run asked for only some tests (node ids, ``-k``, ``-m``, ``--deselect``, ``--lf``, ``--sw``), and
-under plain unittest, it runs pytest's collection of this file in a child process instead, which sees what
-``--collect-only`` sees. It cannot see a test a plugin skips at run time, a plugin that drops this check
+In a run narrowed by one of these selection options (node ids, ``-k``, ``-m``, ``--deselect``, ``--lf``,
+``--sw``), and under plain unittest, it runs pytest's collection of this file in a child process instead,
+which sees what ``--collect-only`` sees; a run narrowed any other way, such as a plugin's own selection
+option, fails the check. It cannot see a test a plugin skips at run time, a plugin that drops this check
 itself, or a method that is no longer a test at all (one renamed from ``test_...``); without pytest it is
 skipped (CI always has it).
 
 A second check fails if a test module there defines a test class twice, or a test method twice in one
 class, since the later definition replaces the earlier one before either runner sees it. Definitions inside
-blocks of the same scope (``if``, ``for``, ``while``, ``with``, ``try``, ``match``) count; the branches of
-one ``if``/``elif``/``else`` or ``match`` cannot all run, so each counts once. Rebinding a name by
-assignment or import is not checked. The suite is stdlib ``unittest``; a pytest-style test function there
+blocks of the same scope (``if``, ``for``, ``while``, ``with``, ``try``, ``match``) count. Alternatives that
+cannot both run count once: the branches of one ``if``/``elif``/``else`` or ``match``, and the ordinary
+``except`` arms and ``else`` of one ``try``. A ``try`` body and its ``finally`` count on top of whichever of
+those runs, and ``except*`` arms add up, since several can run. Rebinding a name by assignment or import is
+not checked. The suite is stdlib ``unittest``; a pytest-style test function there
 would not be covered.
 """
 from __future__ import annotations
@@ -136,8 +139,10 @@ def _blocks(node: ast.AST) -> Iterator[list[ast.stmt]]:
 
 
 def _defined(body: list[ast.stmt], kinds: tuple[type, ...], prefix: str = "") -> collections.Counter[str]:
-    """How often each name is bound by a definition in this scope, blocks included; the branches of one
-    ``if`` or ``match`` cannot all run, so each name counts once across them."""
+    """How often each name is bound by a definition in this scope, blocks included. Alternatives that
+    cannot both run count once across them: the branches of one ``if`` or ``match``, and the ordinary
+    ``except`` arms and ``else`` of one ``try``. A ``try`` body and its ``finally`` add to whichever runs,
+    and the arms of ``except*`` add up, since several of them can run."""
     found: collections.Counter[str] = collections.Counter()
     for node in body:
         if isinstance(node, kinds) and node.name.startswith(prefix):  # type: ignore[attr-defined]
@@ -149,6 +154,13 @@ def _defined(body: list[ast.stmt], kinds: tuple[type, ...], prefix: str = "") ->
             for case in node.cases:
                 branches |= _defined(case.body, kinds, prefix)
             found += branches
+        elif isinstance(node, (ast.Try, ast.TryStar)):
+            arms: collections.Counter[str] = collections.Counter()
+            for handler in node.handlers:
+                arm = _defined(handler.body, kinds, prefix)
+                arms = arms + arm if isinstance(node, ast.TryStar) else arms | arm
+            found += (_defined(node.body, kinds, prefix) + (arms | _defined(node.orelse, kinds, prefix))
+                      + _defined(node.finalbody, kinds, prefix))
         elif not isinstance(node, _SCOPES):
             for block in _blocks(node):
                 found += _defined(block, kinds, prefix)

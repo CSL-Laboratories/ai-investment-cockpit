@@ -148,15 +148,18 @@ unittest discovery of this folder finds (any test method, whatever its class is 
 or test package here, or a module that fails to import) is among the tests pytest will run from that file,
 exactly once. Under pytest it reads the running session's own items, after every collection hook
 (including any `conftest.py`) has run: a test pytest leaves out, such as one marked `__test__ = False`, an
-item a plugin drops, and a class exposed twice all fail it. In a run asked for only some tests (node ids,
-`-k`, `-m`, `--deselect`, `--lf`, `--sw`), and under plain unittest, it compares pytest's collection of the
-file in a child process instead, which sees only what `--collect-only` sees. It cannot see a test a plugin
-skips at run time, a plugin that drops the check itself, or a method that is no longer a test at all
-(renamed from `test_...`), and it is skipped on an interpreter without pytest; CI has pytest. A second
+item a plugin drops, and a class exposed twice all fail it. In a run narrowed by one of these selection
+options (node ids, `-k`, `-m`, `--deselect`, `--lf`, `--sw`), and under plain unittest, it compares
+pytest's collection of the file in a child process instead, which sees only what `--collect-only` sees; a
+run narrowed any other way, such as a plugin's own selection option, fails the check. It cannot see a test
+a plugin skips at run time, a plugin that drops the check itself, or a method that is no longer a test at
+all (renamed from `test_...`), and it is skipped on an interpreter without pytest; CI has pytest. A second
 check fails when a test module here defines a test class twice, or a test method twice in one class, since
 the later definition replaces the earlier one before either runner sees it. Definitions inside blocks of
-the same scope (`if`, `for`, `while`, `with`, `try`, `match`) count; the branches of one `if`/`elif`/`else`
-or `match` cannot all run, so each counts once. Rebinding a name by assignment or import is not checked.
+the same scope (`if`, `for`, `while`, `with`, `try`, `match`) count. Alternatives that cannot both run
+count once: the branches of one `if`/`elif`/`else` or `match`, and the ordinary `except` arms and `else` of
+one `try`. A `try` body and its `finally` count on top of whichever of those runs, and `except*` arms add
+up, since several can run. Rebinding a name by assignment or import is not checked.
 The suite is stdlib `unittest`; a pytest-style test function here would not be covered. Tests that need an OS
 keychain use the installed `keyring` library's own classes, with their probe and password methods pointed
 at a dict (no real keychain or D-Bus is reached), and are skipped without the library.
