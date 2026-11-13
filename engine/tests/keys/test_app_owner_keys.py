@@ -10,6 +10,7 @@ file. Values come back redacted.
 """
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import stat
@@ -41,7 +42,7 @@ def _no_keychain():
 
 
 class _Backend:
-    """A stand-in OS keychain backend."""
+    """A stand-in OS keychain backend's state: its priority and the values it holds."""
 
     priority = 5
 
@@ -49,19 +50,20 @@ class _Backend:
         self.data: dict = {}
 
 
-def _keychain_module(backend: _Backend, module: str = "keyring.backends.SecretService"):
-    cls = type("Keychain", (), {"priority": backend.priority, "__module__": module})
+def _keychain_module(test: unittest.TestCase, backend: _Backend, module: str = "keyring.backends.SecretService"):
+    """A keyring module whose ``get_keyring()`` returns an instance of the library's own class from
+    ``module`` (Cockpit admits OS keychains by class identity, #326), with that class's probe and
+    password methods pointed at ``backend`` until the test ends. No real keychain is reached."""
+    cls = getattr(importlib.import_module(module), "Keyring")
+    for name, value in (("priority", backend.priority),
+                        ("get_password", lambda self, s, n: backend.data.get((s, n))),
+                        ("set_password", lambda self, s, n, v: backend.data.__setitem__((s, n), v)),
+                        ("delete_password", lambda self, s, n: backend.data.pop((s, n), None))):
+        patcher = mock.patch.object(cls, name, value)
+        patcher.start()
+        test.addCleanup(patcher.stop)
     instance = cls()
-    mod = types.SimpleNamespace(
-        get_keyring=lambda: instance,
-        get_password=lambda s, n: backend.data.get((s, n)),
-        set_password=lambda s, n, v: backend.data.__setitem__((s, n), v),
-        delete_password=lambda s, n: backend.data.pop((s, n), None),
-    )
-    instance.get_password = mod.get_password
-    instance.set_password = mod.set_password
-    instance.delete_password = mod.delete_password
-    return mod
+    return types.SimpleNamespace(get_keyring=lambda: instance)
 
 
 @unittest.skipUnless(POSIX, POSIX_ONLY)
@@ -215,7 +217,7 @@ class _InMemory(keyring.backend.KeyringBackend):
 class KeychainHostTests(unittest.TestCase):
     def test_with_a_keychain_every_kind_goes_to_it(self) -> None:
         backend = _Backend()
-        mod = _keychain_module(backend)
+        mod = _keychain_module(self, backend)
         with tempfile.TemporaryDirectory() as tmp:
             keys = OwnerKeys.for_host(os.path.join(tmp, "k.json"), load=lambda: mod)
             self.assertTrue(keys.keychain)
@@ -233,7 +235,8 @@ class KeychainHostTests(unittest.TestCase):
             with self.subTest(module=module, priority=priority):
                 backend = _Backend()
                 backend.priority = priority
-                status = detect.detect_keychain(lambda: _keychain_module(backend, module))
+                mod = _keychain_module(self, backend, module)
+                status = detect.detect_keychain(lambda: mod)
                 self.assertFalse(status.available)
 
     @unittest.skipUnless(POSIX, POSIX_ONLY)
@@ -242,7 +245,7 @@ class KeychainHostTests(unittest.TestCase):
             os.chmod(tmp, 0o700)
             path = os.path.join(tmp, "k.json")
             OwnerKeys.for_host(path, load=_no_keychain).put("model_provider", "openai", FAKE)
-            mod = _keychain_module(_Backend())
+            mod = _keychain_module(self, _Backend())
             keys = OwnerKeys.for_host(path, load=lambda: mod)
             self.assertEqual(keys.doctor()["level"], "ok")
             os.chmod(path, 0o644)
