@@ -17,6 +17,7 @@ import unittest
 from cockpit.keys import KeyRefused, detect_keychain, doctor, doctor_line, store_for_host
 from cockpit.keys.__main__ import main
 from cockpit.keys.detect import default_key_file
+from cockpit.keys.tests.fakes import untouchable
 
 FAKE = "fake-key-not-real-0123"
 
@@ -62,19 +63,23 @@ class FakeKeyringModule(types.SimpleNamespace):
 
 
 class DetectTests(unittest.TestCase):
-    def test_mixed_chainers_refuse_without_touching_any_backend(self):
+    def test_mixed_chainers_use_the_os_backend_without_touching_the_others(self):
+        # B13 (accepted by Lucas, Nov 12, 2026): a chain of one OS keychain plus other backends uses
+        # the OS keychain; until then (#323) such a chain was refused. The other backend is never read.
         for module in ("keyrings.alt.file", "keyring.backends.SecretServiceEvil"):
             for reverse in (False, True):
-                safe = _backend("keyring.backends.SecretService")
-                unsafe = _backend(module)
-                children = [safe, unsafe][::(-1 if reverse else 1)]
+                safe_mod = FakeKeyringModule(_backend("keyring.backends.SecretService"))
+                unsafe, touched = untouchable(module)
+                children = [safe_mod.backend, unsafe][::(-1 if reverse else 1)]
                 mod = FakeKeyringModule(_backend("keyring.backends.chainer", backends=children))
                 store, status = store_for_host(load=lambda mod=mod: mod)
-                self.assertFalse(status.available)
+                self.assertTrue(status.available)
+                self.assertEqual(status.ignored, (f"{module}.PlaintextKeyring",))
                 for kind in ("broker", "venue"):
-                    with self.assertRaises(KeyRefused) as cm:
-                        store.put(kind, "fixture", FAKE)
-                    self.assertEqual(cm.exception.cause, "keychain_required")
+                    self.assertEqual(store.put(kind, "fixture", FAKE), "keyring")
+                    self.assertEqual(store.get(kind, "fixture"), FAKE)
+                self.assertEqual([c[0] for c in safe_mod.calls], ["set", "get", "set", "get"])
+                self.assertEqual(touched, [])
                 self.assertEqual(mod.calls, [])
 
     def test_store_pins_checked_os_backend_not_module_or_chainer(self):

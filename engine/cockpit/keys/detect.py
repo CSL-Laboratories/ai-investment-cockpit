@@ -8,8 +8,15 @@ Detection is read-only. It never writes, reads or deletes a key in the keychain 
 and it makes no provider, venue or network call. The keyring library is optional and loaded lazily
 through an injectable loader, so tests use fakes and a host without the library reads as "no keychain".
 A backend counts as a keychain only when it is a real one: the library's ``fail`` and ``null``
-backends, unknown/file backends, mixed chainers, and unusable OS backends do not count.
-A safe chainer is reduced to its first usable OS backend; storage stays bound to that backend.
+backends, unknown/file backends, and unusable OS backends do not count.
+
+A keyring chain (the library's ``ChainerBackend``) is reduced to the first backend in it whose module
+is one of the five OS keychains below; every other backend in the chain is ignored and never called,
+not even to read its priority, and the doctor line names it. A chain with no OS keychain is refused.
+Recommendation B13, which Lucas accepted on Nov 12, 2026 ("I agree with all B10-B14 Recommendations"):
+"use the OS backend, name the ignored one in the doctor line".
+The chain is read once, and storage stays bound to the chosen OS backend object, never to the chain
+or the module, so a chain that changes after the check cannot redirect a key to another backend.
 The doctor line names where keys are kept and the key-file state; it never prints a key or its value.
 """
 
@@ -31,6 +38,9 @@ _OS_KEYCHAINS = frozenset((
     "keyring.backends.SecretService", "keyring.backends.libsecret",
     "keyring.backends.kwallet", "keyring.backends.macOS", "keyring.backends.Windows",
 ))
+_CHAINER = "keyring.backends.chainer"
+_NAMED_IGNORED = 8  # the doctor line names at most this many ignored backends, then counts the rest
+_SAFE_NAME = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-<>")
 
 
 @dataclass(frozen=True)
@@ -38,6 +48,7 @@ class KeychainStatus:
     available: bool
     backend: str  # e.g. "SecretService Keyring", or "" when none
     reason: str  # "ok" or why there is none
+    ignored: tuple[str, ...] = ()  # other backends of the chain, never used ("module.Class")
 
 
 def _load_keyring_module() -> Any:
@@ -58,46 +69,61 @@ def _detect_backend(load: Callable[[], Any]) -> tuple[KeychainStatus, Any]:
         return KeychainStatus(False, "", f"keyring_library_error:{type(exc).__name__}"), None
     try:
         backend = mod.get_keyring()
-        return _select_backend(backend, set())
+        if _module_of(backend) == _CHAINER:
+            return _select_from_chain(backend)
+        return _usable_os_backend(backend, ())
     except Exception as exc:  # noqa: BLE001 - failed detection never grants keychain access
         return KeychainStatus(False, "", f"keyring_backend_error:{type(exc).__name__}"), None
 
 
-def _select_backend(backend: Any, seen: set[int]) -> tuple[KeychainStatus, Any]:
-    unavailable = KeychainStatus(False, "", "no_keychain_backend")
-    if id(backend) in seen:
-        return unavailable, None
-    seen = seen | {id(backend)}
-    module = type(backend).__module__ or ""
-    if module in _NOT_A_KEYCHAIN:
-        return unavailable, None
-    if module == "keyring.backends.chainer":
-        selected = None
-        for child in backend.backends:
-            # Only the standard non-storing sentinels are safe to ignore.
-            if type(child).__module__ in _NOT_A_KEYCHAIN:
-                continue
-            status, candidate = _select_backend(child, seen)
-            if not status.available:
-                return unavailable, None
-            if selected is None:
-                selected = candidate
-        if selected is None:
-            return unavailable, None
-        return KeychainStatus(True, _backend_name(selected), "ok"), selected
-    if module not in _OS_KEYCHAINS:
-        return unavailable, None
+def _module_of(obj: Any) -> str:
+    # From the object's real type, never from the instance. Only an exact ``str`` counts, so a str
+    # subclass with its own ``__eq__``/``__hash__`` cannot pass for an allowlisted module name.
+    module = getattr(type(obj), "__module__", "")
+    return module if type(module) is str else ""
+
+
+def _select_from_chain(chain: Any) -> tuple[KeychainStatus, Any]:
+    # Read once: the library recomputes ``ChainerBackend.backends`` on every access.
+    children = tuple(chain.backends)
+    chosen, ignored = None, []
+    for child in children:
+        module = _module_of(child)
+        if module in _NOT_A_KEYCHAIN:
+            continue  # the library's non-storing sentinels
+        if chosen is None and module in _OS_KEYCHAINS:
+            chosen = child
+        else:
+            # Never called, not even for its priority; only its type's name is read.
+            ignored.append(_type_name(child))
+    if chosen is None:
+        return KeychainStatus(False, "", "no_keychain_backend"), None
+    return _usable_os_backend(chosen, tuple(ignored))
+
+
+def _usable_os_backend(backend: Any, ignored: tuple[str, ...]) -> tuple[KeychainStatus, Any]:
+    if _module_of(backend) not in _OS_KEYCHAINS:
+        return KeychainStatus(False, "", "no_keychain_backend"), None
     try:
         priority = float(backend.priority)
     except Exception as exc:  # noqa: BLE001 - failed detection never grants keychain access
         return KeychainStatus(False, "", f"keychain_unusable:{type(exc).__name__}"), None
     if not math.isfinite(priority) or priority <= 0:
         return KeychainStatus(False, "", "keychain_unusable:priority"), None
-    return KeychainStatus(True, _backend_name(backend), "ok"), backend
+    return KeychainStatus(True, _backend_name(backend), "ok", ignored), backend
 
 
 def _backend_name(backend: Any) -> str:
     return str(getattr(backend, "name", "") or type(backend).__name__)
+
+
+def _type_name(obj: Any) -> str:
+    """``module.Class`` of an ignored backend, made safe for a one-line doctor message."""
+    kind = type(obj)
+    module = _module_of(obj) or "?"
+    qualname = getattr(kind, "__qualname__", "")
+    text = f"{module}.{qualname if type(qualname) is str else '?'}"
+    return "".join(ch if ch in _SAFE_NAME else "?" for ch in text)[:120]
 
 
 class OsKeyring:
@@ -120,12 +146,33 @@ class OsKeyring:
                 raise
 
 
+def _home(env: dict[str, str]) -> str:
+    return env.get("HOME") or os.path.expanduser("~")
+
+
 def default_key_file(env: dict[str, str] | None = None) -> str:
     """Owner-only file location (candidate): ``$XDG_CONFIG_HOME/csl-cockpit/model-keys.json``."""
 
     env = dict(os.environ) if env is None else env
-    base = env.get("XDG_CONFIG_HOME") or os.path.join(env.get("HOME") or os.path.expanduser("~"), ".config")
+    base = env.get("XDG_CONFIG_HOME") or os.path.join(_home(env), ".config")
     return os.path.join(base, "csl-cockpit", "model-keys.json")
+
+
+def _config_home_for(path: str, env: dict[str, str]) -> str | None:
+    """The home folder whose missing ``.config`` a first save may create, or ``None``.
+
+    Recommendation B14, which Lucas accepted on Nov 12, 2026: "also create `~/.config` when it is
+    missing, owner-only, and only when the home folder is the user's own". Only for the default file
+    ``~/.config/csl-cockpit/model-keys.json``;
+    any other key file (a custom path, or ``$XDG_CONFIG_HOME`` pointing elsewhere) gets no such help.
+    ``KeyStore`` checks the home folder itself before it creates anything.
+    """
+
+    home = _home(env)
+    if not os.path.isabs(home):
+        return None
+    default = os.path.join(home, ".config", "csl-cockpit", "model-keys.json")
+    return home if os.path.abspath(path) == os.path.abspath(default) else None
 
 
 def store_for_host(key_file: str | os.PathLike[str] | None = None,
@@ -135,7 +182,9 @@ def store_for_host(key_file: str | os.PathLike[str] | None = None,
     status, backend = _detect_backend(load)
     # Pin the checked OS backend, never the mutable global module or chainer.
     ring = OsKeyring(backend) if status.available else None
-    return KeyStore(keyring=ring, key_file=key_file if key_file is not None else default_key_file()), status
+    env = dict(os.environ)
+    path = os.fspath(key_file) if key_file is not None else default_key_file(env)
+    return KeyStore(keyring=ring, key_file=path, config_home=_config_home_for(path, env)), status
 
 
 def _file_state(path: str) -> str:
@@ -149,6 +198,11 @@ def doctor(status: KeychainStatus, key_file: str | os.PathLike[str] | None) -> d
     if status.available:
         out = {"check": "keys", "level": "ok", "keychain": status.backend,
                "model_provider": "keyring", "broker": "keyring", "venue": "keyring"}
+        if status.ignored:
+            named = list(status.ignored[:_NAMED_IGNORED])
+            if len(status.ignored) > _NAMED_IGNORED:
+                named.append(f"and {len(status.ignored) - _NAMED_IGNORED} more")
+            out["ignored_backends"] = ", ".join(named)
         if key_file is not None and os.name != "nt":
             # A model-key file left from a host without a keychain is still checked.
             state = _file_state(os.fspath(key_file))
@@ -174,6 +228,8 @@ def doctor_line(result: dict[str, str]) -> str:
     if result.get("keychain", "none") != "none":
         line = (f"keys: {result['level']} - OS keychain ({result['keychain']}); "
                 "model-provider, broker and venue keys in the keychain")
+        if "ignored_backends" in result:
+            line += f"; other keyring backends ignored: {result['ignored_backends']}"
         if "stale_key_file" in result:
             line += f"; old model-key file {result['stale_key_file']} is not owner-only [{result['key_file']}]"
         return line
