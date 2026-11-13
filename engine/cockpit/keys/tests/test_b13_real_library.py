@@ -11,6 +11,7 @@ Skipped when the library is missing. Every value is made up.
 from __future__ import annotations
 
 import importlib
+import os
 import unittest
 from typing import Any
 from unittest import mock
@@ -23,9 +24,14 @@ try:
     _chainer = importlib.import_module("keyring.backends.chainer")
     _ss = importlib.import_module("keyring.backends.SecretService")
     _libsecret = importlib.import_module("keyring.backends.libsecret")
+    _kwallet = importlib.import_module("keyring.backends.kwallet")
     _windows = importlib.import_module("keyring.backends.Windows")
 except ImportError:  # the keyring library is optional
     _kr_backend = None
+try:
+    _secretstorage = importlib.import_module("secretstorage")  # a keyring dependency on Linux only
+except ImportError:
+    _secretstorage = None
 
 PATH = "/nonexistent-cockpit-b13/model-keys.json"
 
@@ -125,6 +131,53 @@ class RealChainerTests(unittest.TestCase):
         self.assertEqual(status.ignored, ("keyring.backends.libsecret.Keyring",))
         store.put("broker", "fixture", FAKE)
         self.assertEqual((list(ss_data.values()), lib_data, lib_calls), ([FAKE], {}, []))
+
+    @unittest.skipIf(_secretstorage is None, "secretstorage (Linux-only keyring dependency) not installed")
+    def test_kde_host_picks_kwallet_on_the_desktop_and_secret_service_elsewhere(self) -> None:
+        # The library's own priority code decides here; only the D-Bus probes are answered. With both
+        # daemons up, KWallet is 5.1 in a KDE session and 4.9 without XDG_CURRENT_DESKTOP (SSH, a
+        # service, cron), against Secret Service's 5. A key saved in one reads as not saved in the other.
+        class _Conn:
+            def close(self) -> None:
+                pass
+
+        class _Bus:
+            def name_has_owner(self, name: str) -> bool:
+                return name == "org.kde.kwalletd5"
+
+            def list_activatable_names(self) -> list[str]:
+                return ["org.kde.kwalletd5"]
+
+        for target, name, value in ((_secretstorage, "dbus_init", lambda *a, **k: _Conn()),
+                                    (_secretstorage, "check_service_availability", lambda conn: True),
+                                    (_kwallet, "dbus", type("dbus", (), {"SessionBus": staticmethod(lambda mainloop=None: _Bus()),
+                                                                         "DBusException": Exception})),
+                                    (_kwallet, "DBusGMainLoop", lambda: None)):
+            patcher = mock.patch.object(target, name, value, create=True)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        stores: dict[type, dict] = {}
+        for cls in (_ss.Keyring, _kwallet.DBusKeyring):
+            data = stores.setdefault(cls, {})
+            for method, fn in (("get_password", lambda self, s, u, d=data: d.get((s, u))),
+                               ("set_password", lambda self, s, u, p, d=data: d.__setitem__((s, u), p)),
+                               ("delete_password", lambda self, s, u, d=data: d.pop((s, u), None))):
+                patcher = mock.patch.object(cls, method, fn)
+                patcher.start()
+                self.addCleanup(patcher.stop)
+        rings = [_ss.Keyring(), _kwallet.DBusKeyring()]
+        with mock.patch.dict("os.environ", {"XDG_CURRENT_DESKTOP": "KDE"}):
+            desktop, status = store_for_host(PATH, loader(self.real_chain(rings)))
+            self.assertEqual((status.backend, status.ignored),
+                             ("kwallet DBusKeyring", ("keyring.backends.SecretService.Keyring",)))
+            desktop.put("broker", "fixture", FAKE)
+        env = {k: v for k, v in os.environ.items() if k != "XDG_CURRENT_DESKTOP"}
+        with mock.patch.dict("os.environ", env, clear=True):
+            later, status = store_for_host(PATH, loader(self.real_chain(rings)))
+            self.assertEqual((status.backend, status.ignored),
+                             ("SecretService Keyring", ("keyring.backends.kwallet.DBusKeyring",)))
+            self.assertIsNone(later.get("broker", "fixture"))
+        self.assertEqual((len(stores[_kwallet.DBusKeyring]), stores[_ss.Keyring]), (1, {}))
 
     def test_a_real_chain_with_no_os_keychain_is_refused(self) -> None:
         plain, plain_touched = _standin("keyrings.alt.file", "PlaintextKeyring", 0.5)

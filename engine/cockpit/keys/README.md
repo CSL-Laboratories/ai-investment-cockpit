@@ -57,6 +57,14 @@ refused like any other non-keychain host. `store_for_host()` builds the `KeyStor
 and binds it to the chosen OS backend object itself, never to the chain or the module, so a chain or a
 global keyring that changes later cannot redirect a key.
 
+"First" is the library's order, by priority (keyring 25.7.0: Secret Service 5, KWallet 4.9, libsecret
+4.8, Windows 5, macOS 5). The five never tie, so on one host the choice is the same from run to run.
+It can differ between sessions on one host: KWallet's priority is 5.1 when `XDG_CURRENT_DESKTOP`
+contains `KDE`, so on a KDE host where both KWallet and Secret Service answer, the desktop session uses
+KWallet and a session over SSH, in a service or in cron uses Secret Service. A key saved in one then
+reads as "no key saved" in the other (nothing else is consulted), and the doctor line names the
+keychain in use. `PYTHON_KEYRING_BACKEND` set to one OS backend makes every session use that one.
+
 Doctor line: `PYTHONPATH=engine python3 -m cockpit.keys doctor [--key-file PATH]` prints one line,
 for example
 

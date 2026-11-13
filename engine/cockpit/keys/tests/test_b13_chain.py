@@ -205,6 +205,54 @@ class MixedChainTests(unittest.TestCase):
         self.round_trip_every_kind(store)
         self.assertEqual((ss.calls, touched), ([], []))
 
+    def test_two_os_keychains_use_the_first_and_name_the_second(self) -> None:
+        # The two pairs keyring 25.7 can find on one desktop. #323 already used the first; the Liaison
+        # answered "keep #323's rule" (Nov 12, 2026, 8:15 PM PST). Pinned here with the doctor line.
+        pairs = (
+            (("keyring.backends.SecretService", "SecretService Keyring"), ("keyring.backends.libsecret", "libsecret Keyring")),
+            (("keyring.backends.kwallet", "kwallet DBusKeyring"), ("keyring.backends.SecretService", "SecretService Keyring")),
+        )
+        for (first_module, first_name), (second_module, second_name) in pairs:
+            with self.subTest(first=first_module, second=second_module):
+                first, second = os_backend(first_module, first_name), os_backend(second_module, second_name)
+                plain, touched = untouchable(*PLAIN)
+                store, status = store_for_host(PATH, loader(chain([first, second, plain])))
+                self.assertTrue(status.available)
+                self.assertEqual(status.backend, first_name)
+                self.assertEqual(status.ignored, (f"{second_module}.Keyring", ".".join(PLAIN)))
+                for kind in KEY_KINDS:
+                    store.put(kind, "fixture", FAKE)
+                    self.assertEqual(store.get(kind, "fixture"), FAKE)
+                self.assertEqual(len(first.data), len(KEY_KINDS))
+                self.assertEqual((second.calls, second.data, touched), ([], {}, []))
+                self.assertEqual(doctor_line(doctor(status, None)), (
+                    f"keys: ok - OS keychain ({first_name}); model-provider, broker and venue keys in the keychain; "
+                    f"other keyring backends ignored: {second_module}.Keyring, keyrings.alt.file.PlaintextKeyring"))
+
+    def test_a_key_saved_under_another_os_keychain_reads_as_not_saved(self) -> None:
+        # On a KDE host where KWallet and Secret Service both answer, keyring 25.7 ranks KWallet first in a
+        # desktop session (priority 5.1) and Secret Service first over SSH, in a service or in cron (4.9).
+        # A key saved in one reads as "no key saved" in the other; nothing else is ever consulted.
+        kwallet = os_backend("keyring.backends.kwallet", "kwallet DBusKeyring")
+        ss = os_backend()
+        plain = os_backend(PLAIN[0], "file PlaintextKeyring")
+        desktop, status = store_for_host(PATH, loader(chain([kwallet, ss, plain])))
+        self.assertEqual(status.backend, "kwallet DBusKeyring")
+        for kind in KEY_KINDS:
+            desktop.put(kind, "fixture", FAKE)
+        plain.data[("csl-cockpit", "broker:fixture")] = FAKE  # even a copy elsewhere is never read
+        saved = dict(kwallet.data)
+        kwallet.calls.clear()
+        later, status = store_for_host(PATH, loader(chain([ss, kwallet, plain])))
+        self.assertEqual(status.backend, "SecretService Keyring")
+        self.assertEqual(status.ignored, ("keyring.backends.kwallet.Keyring", "keyrings.alt.file.Keyring"))
+        for kind in KEY_KINDS:
+            self.assertIsNone(later.get(kind, "fixture"))
+            later.delete(kind, "fixture")
+        self.assertEqual((kwallet.calls, plain.calls), ([], []))
+        self.assertEqual(kwallet.data, saved)  # the other keychain's keys are left as they are
+        self.assertEqual([op for op, _, _ in ss.calls], ["get", "delete"] * len(KEY_KINDS))
+
     def test_an_unusable_chosen_keychain_refuses_and_falls_through_to_nothing(self) -> None:
         for priority in (0, -1, float("nan"), float("inf"), RuntimeError("no dbus")):
             with self.subTest(priority=repr(priority)):
