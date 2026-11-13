@@ -11,21 +11,31 @@ A backend counts as an OS keychain only when its type *is* one of the keyring li
 listed in ``_OS_CLASSES`` (exact identity: not a subclass, not a look-alike with the same module or
 class name, not a proxy), imported from the library itself; a class whose module will not import here
 is a keychain this host does not have. Its priority must read as a finite number above 0. The library's
-``fail`` and ``null`` backends and every other backend do not count.
+``fail`` and ``null`` backends and every other backend do not count. A refusal says why when the backend
+looks meant as a supported keychain: ``unsupported_keychain_class:<module.Class>`` (it derives from, or
+carries the module and class name of, a supported keychain class but is not that class), or
+``keychain_module_unavailable:<module>:<ExceptionType>`` (its class names a supported keychain whose module
+failed to import here; the exception's message is never shown). A module of a keychain no candidate claims,
+such as another platform's, failing to import is not reported.
 
 A keyring chain (the library's own ``ChainerBackend``, by identity) is read once and reduced to one OS
 keychain: when it holds several, the one first in Cockpit's fixed order (``_OS_CLASSES``), not in the
-library's, so one host picks the same keychain in every session. The other backends in the chain are
-ignored and named in the doctor line; Cockpit sends them no password operation. It does not stop the
-library's own discovery from running a backend's code: building the chain, the library reads every
-member's priority, and a priority that raises there makes detection fail closed (no keychain).
+library's, so one host picks the same keychain in every session that sees the same set of available
+keychain classes and the same explicit backend setting (``PYTHON_KEYRING_BACKEND`` or ``keyringrc.cfg``).
+The other backends in the chain are ignored and named in the doctor line; Cockpit sends them no password
+operation. It does not stop the library's own discovery from running a backend's code: building the
+chain, the library reads every member's priority, and a priority that raises there makes detection fail
+closed (no keychain).
 Recommendation B13, which Lucas accepted on Nov 12, 2026 ("I agree with all B10-B14 Recommendations"):
 "use the OS backend, name the ignored one in the doctor line".
-Storage stays bound to the chosen backend object and its genuine class: every password operation goes
-through that class's own method, never through the chain, the module, or an attribute set on the
-instance later, so neither a chain that changes after the check nor a later swap can redirect a key.
-What this cannot defend against: hostile code already running in this process, such as a replaced
-import of a keyring module or a monkey-patched genuine class.
+Storage stays bound to the chosen backend object and its genuine class (``OsKeyring``): every password
+operation calls that class's own top-level method, so a global keyring or a chain replaced after the check,
+or a top-level password method shadowed on the instance, redirects nothing, and a reassigned ``__class__``
+is refused at use. That is all pinning does: the class's methods still consult the instance, its helpers
+and its state, so code that changes the selected object after the check can redirect a key.
+What this cannot defend against: hostile code already running in this process, such as a replaced import
+of a keyring module, a monkey-patched genuine class, or a changed helper, state or class of the selected
+object.
 The doctor line names where keys are kept and the key-file state; it never prints a key or its value.
 """
 
@@ -38,7 +48,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from cockpit.keys.store import KeyStore, key_file_state
+from cockpit.keys.store import KeyRefused, KeyStore, key_file_state
 
 __all__ = ["KeychainStatus", "OsKeyring", "default_key_file", "detect_keychain", "doctor", "doctor_line", "store_for_host"]
 
@@ -86,7 +96,7 @@ def _detect_backend(load: Callable[[], Any]) -> tuple[KeychainStatus, Any]:
     except ImportError:
         return KeychainStatus(False, "", "keyring_library_missing"), None
     except Exception as exc:  # noqa: BLE001 - failed detection never grants keychain access
-        return KeychainStatus(False, "", f"keyring_library_error:{type(exc).__name__}"), None
+        return KeychainStatus(False, "", f"keyring_library_error:{_safe(type(exc).__name__)}"), None
     try:
         genuine = _Genuine.load()
         backend = mod.get_keyring()
@@ -94,15 +104,16 @@ def _detect_backend(load: Callable[[], Any]) -> tuple[KeychainStatus, Any]:
             return _select_from_chain(backend, genuine)
         return _usable_os_backend(backend, (), genuine)
     except Exception as exc:  # noqa: BLE001 - failed detection never grants keychain access
-        return KeychainStatus(False, "", f"keyring_backend_error:{type(exc).__name__}"), None
+        return KeychainStatus(False, "", f"keyring_backend_error:{_safe(type(exc).__name__)}"), None
 
 
-def _genuine_class(module: str, name: str) -> type | None:
+def _genuine_class(module: str, name: str) -> tuple[type | None, str]:
+    """The library's class ``module.name``, or None and why: the import error's type, never its message."""
     try:
         found = getattr(importlib.import_module(module), name)
-    except Exception:  # noqa: BLE001 - a backend module that will not import here is a keychain this host lacks
-        return None
-    return found if isinstance(found, type) else None
+    except Exception as exc:  # noqa: BLE001 - a backend module that will not import here is a keychain this host lacks
+        return None, type(exc).__name__
+    return (found, "") if isinstance(found, type) else (None, "NotAClass")
 
 
 @dataclass(frozen=True)
@@ -110,14 +121,35 @@ class _Genuine:
     """The keyring library's own classes, imported from the library. Compared only with ``is``."""
 
     os_classes: tuple[type | None, ...]  # in ``_OS_CLASSES`` order; None where it will not import here
+    failures: tuple[str, ...]  # per ``_OS_CLASSES`` entry: the import error's type name, or ""
     sentinels: tuple[type | None, ...]
     chainer: type | None
 
     @classmethod
     def load(cls) -> _Genuine:
-        return cls(tuple(_genuine_class(*spec) for spec in _OS_CLASSES),
-                   tuple(_genuine_class(*spec) for spec in _SENTINEL_CLASSES),
-                   _genuine_class(*_CHAINER_CLASS))
+        found = [_genuine_class(*spec) for spec in _OS_CLASSES]
+        return cls(tuple(kind for kind, _ in found), tuple(failure for _, failure in found),
+                   tuple(_genuine_class(*spec)[0] for spec in _SENTINEL_CLASSES),
+                   _genuine_class(*_CHAINER_CLASS)[0])
+
+    def diagnose(self, obj: Any) -> str | None:
+        """Why a backend that is not admitted looks meant as a supported keychain, or None if it does not.
+
+        For the doctor only; admission never depends on it. Reads the object's type, never the instance.
+        """
+        kind = type(obj)
+        module = _module_of(obj)
+        qualname = getattr(kind, "__qualname__", "")
+        qualname = qualname if type(qualname) is str else ""
+        bases = _true_mro(kind)[1:]
+        for (spec_module, spec_name), genuine, failure in zip(_OS_CLASSES, self.os_classes, self.failures):
+            names_it = module == spec_module and qualname == spec_name
+            if genuine is None:
+                if failure and names_it:
+                    return f"keychain_module_unavailable:{spec_module}:{_safe(failure)}"
+            elif names_it or any(base is genuine for base in bases):
+                return f"unsupported_keychain_class:{_type_name(obj)}"
+        return None
 
     def rank(self, obj: Any) -> int | None:
         """Place of ``type(obj)`` in the fixed order, or None when it is not a genuine OS keychain class."""
@@ -140,13 +172,32 @@ def _module_of(obj: Any) -> str:
     return module if type(module) is str else ""
 
 
+def _true_mro(kind: type) -> tuple[type, ...]:
+    # The interpreter's own MRO for the class, not what a metaclass may claim. Diagnostics only.
+    try:
+        mro = type.__dict__["__mro__"].__get__(kind)
+    except Exception:  # noqa: BLE001 - a class without a readable MRO is simply not diagnosed
+        return ()
+    return mro if type(mro) is tuple else ()
+
+
+def _safe(text: str) -> str:
+    """One line of letters, digits and ``._-<>`` (anything else shown as ``?``), at most 120 characters."""
+    return "".join(ch if ch in _SAFE_NAME else "?" for ch in str(text))[:120]
+
+
+def _refused(reason: str) -> tuple[KeychainStatus, Any]:
+    return KeychainStatus(False, "", reason), None
+
+
 def _select_from_chain(chain: Any, genuine: _Genuine) -> tuple[KeychainStatus, Any]:
     # Read once: the library recomputes ``ChainerBackend.backends`` on every access.
     children = tuple(chain.backends)
     ranked = [(rank, index) for index, rank in enumerate(genuine.rank(child) for child in children)
               if rank is not None]
     if not ranked:
-        return KeychainStatus(False, "", "no_keychain_backend"), None
+        why = next((reason for reason in map(genuine.diagnose, children) if reason), "no_keychain_backend")
+        return _refused(why)
     chosen = min(ranked)[1]  # first in Cockpit's order; the chain's order only breaks a tie (same class twice)
     # Cockpit sends the rest no password operation; only their type's name is read, to name them.
     # The library's non-storing sentinels (fail, null) are skipped without a name.
@@ -157,13 +208,13 @@ def _select_from_chain(chain: Any, genuine: _Genuine) -> tuple[KeychainStatus, A
 
 def _usable_os_backend(backend: Any, ignored: tuple[str, ...], genuine: _Genuine) -> tuple[KeychainStatus, Any]:
     if genuine.rank(backend) is None:
-        return KeychainStatus(False, "", "no_keychain_backend"), None
+        return _refused(genuine.diagnose(backend) or "no_keychain_backend")
     try:
         priority = float(type(backend).priority)  # the genuine class's own probe, not an instance attribute
     except Exception as exc:  # noqa: BLE001 - failed detection never grants keychain access
-        return KeychainStatus(False, "", f"keychain_unusable:{type(exc).__name__}"), None
+        return _refused(f"keychain_unusable:{_safe(type(exc).__name__)}")
     if not math.isfinite(priority) or priority <= 0:
-        return KeychainStatus(False, "", "keychain_unusable:priority"), None
+        return _refused("keychain_unusable:priority")
     return KeychainStatus(True, _backend_name(backend), "ok", ignored), backend
 
 
@@ -172,35 +223,47 @@ def _backend_name(backend: Any) -> str:
 
 
 def _type_name(obj: Any) -> str:
-    """``module.Class`` of an ignored backend, made safe for a one-line doctor message."""
+    """``module.Class`` of a backend, made safe for a one-line doctor message."""
     kind = type(obj)
     module = _module_of(obj) or "?"
     qualname = getattr(kind, "__qualname__", "")
-    text = f"{module}.{qualname if type(qualname) is str else '?'}"
-    return "".join(ch if ch in _SAFE_NAME else "?" for ch in text)[:120]
+    return _safe(f"{module}.{qualname if type(qualname) is str else '?'}")
 
 
 class OsKeyring:
     """Adapter from the keyring library to ``KeyStore``'s injected ``get``/``set``/``delete``.
 
-    Pins the checked backend object and its class at construction. Every call goes through that class's
-    own method, so an attribute set on the instance, or a ``__class__`` reassigned, after the check
-    changes nothing.
+    Pins the checked backend object and its class at construction, and calls that class's own top-level
+    password method with the object. So a global keyring or chain replaced after the check, or a top-level
+    password method shadowed on the instance, redirects nothing; and if the object's ``__class__`` has been
+    reassigned since the check, every call is refused (``keychain_changed``). That is all it does: the
+    class's methods still consult the instance (in keyring 25.7.0, Secret Service's call
+    ``self.get_preferred_collection()``), so code that changes the selected object's helpers or state after
+    the check can redirect a key. Such code is hostile code inside the process, which this module cannot
+    defend against.
     """
 
     def __init__(self, backend: Any) -> None:
         self._backend = backend
         self._cls = type(backend)
 
+    def _checked(self) -> Any:
+        # Not a defence against instance mutation in general (see the class docstring); a cheap refusal of
+        # one visible form of it, a class swapped under the selected object.
+        if type(self._backend) is not self._cls:
+            raise KeyRefused("keychain_changed", "the keychain object's class changed after the check")
+        return self._backend
+
     def get(self, service: str, name: str) -> str | None:
-        return self._cls.get_password(self._backend, service, name)
+        return self._cls.get_password(self._checked(), service, name)
 
     def set(self, service: str, name: str, secret: str) -> None:
-        self._cls.set_password(self._backend, service, name, secret)
+        self._cls.set_password(self._checked(), service, name, secret)
 
     def delete(self, service: str, name: str) -> None:
+        backend = self._checked()
         try:
-            self._cls.delete_password(self._backend, service, name)
+            self._cls.delete_password(backend, service, name)
         except Exception as exc:
             if type(exc).__name__ != "PasswordDeleteError":
                 raise

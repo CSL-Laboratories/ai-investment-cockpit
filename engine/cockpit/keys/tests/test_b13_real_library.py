@@ -325,10 +325,86 @@ class RealChainerTests(unittest.TestCase):
                     self.assertIs(type(chosen), Spoof)  # the library did load the forged class
                     store, status = store_for_host(PATH, loader(chosen))
                     self.assertFalse(status.available)
-                    self.assertEqual(status.reason, "no_keychain_backend")
+                    # Refused, and said: it carries Secret Service's module and class name but is not its class.
+                    self.assertEqual(status.reason, "unsupported_keychain_class:keyring.backends.SecretService.Keyring")
                     with self.assertRaises(KeyRefused):
                         store.put("broker", "fixture", FAKE)
                     self.assertEqual(written, {})
+
+    def test_pinning_with_the_genuine_password_methods(self) -> None:
+        # The second Codex read: keep Secret Service's own get/set/delete_password; fake only the lower-level
+        # I/O (``get_preferred_collection``, on the class, answering an in-memory collection) and the
+        # availability probe. Pinning protects against a replaced global keyring or chain and a shadowed
+        # top-level method, and refuses a reassigned __class__; it does not cover a changed helper or state of
+        # the selected object, which the README puts under hostile code in the process.
+        class Item:
+            def __init__(self, items: dict, key: tuple) -> None:
+                self.items, self.key = items, key
+
+            def is_locked(self) -> bool:
+                return False
+
+            def get_secret(self) -> bytes:
+                return self.items[self.key].encode("utf-8")
+
+            def delete(self) -> None:
+                del self.items[self.key]
+
+        class Collection:
+            def __init__(self) -> None:
+                self.items: dict = {}
+                self.connection = types.SimpleNamespace(close=lambda: None)
+
+            def create_item(self, label: str, attributes: dict, secret: str, replace: bool = False) -> None:
+                self.items[(attributes["service"], attributes["username"])] = secret
+
+            def search_items(self, attributes: dict) -> list:
+                key = (attributes["service"], attributes["username"])
+                return [Item(self.items, key)] if key in self.items else []
+
+        vault, elsewhere = Collection(), Collection()
+        originals = {name: _ss.Keyring.__dict__[name] for name in ("get_password", "set_password", "delete_password")}
+        for name, value in (("priority", 5), ("get_preferred_collection", lambda self: vault)):
+            patcher = mock.patch.object(_ss.Keyring, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        selected = _ss.Keyring()
+        chain = self.real_chain([selected])
+        load = loader(chain)
+        store, status = store_for_host(PATH, load)
+        self.assertEqual(status.backend, "SecretService Keyring")
+        # A replaced global keyring or chain, and shadowed top-level methods, after the check: nothing changes.
+        other = _ss.Keyring()
+        load().backend = other
+        patcher = mock.patch.object(_kr_backend, "get_all_keyring", lambda: [other])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        selected.set_password = lambda s, u, p: elsewhere.create_item("", {"service": s, "username": u}, p)
+        selected.get_password = lambda s, u: "from-the-shadow"
+        selected.delete_password = lambda s, u: None
+        for kind in KEY_KINDS:
+            store.put(kind, "fixture", FAKE)
+            self.assertEqual(store.get(kind, "fixture"), FAKE)
+        self.assertEqual(len(vault.items), len(KEY_KINDS))
+        store.delete("broker", "fixture")
+        self.assertIsNone(store.get("broker", "fixture"))
+        self.assertEqual(elsewhere.items, {})
+        self.assertTrue(all(_ss.Keyring.__dict__[name] is fn for name, fn in originals.items()))
+        # A __class__ reassigned after the check (to a subclass that only changes the helper): refused at use.
+
+        class Swapped(_ss.Keyring):
+            def get_preferred_collection(self) -> Collection:
+                return elsewhere
+
+        forget_class(self, Swapped)
+        selected.__class__ = Swapped
+        for operation in (lambda: store.put("venue", "fixture", FAKE + "-swapped"), lambda: store.get("venue", "fixture"),
+                          lambda: store.delete("venue", "fixture")):
+            with self.assertRaises(KeyRefused) as ctx:
+                operation()
+            self.assertEqual(ctx.exception.cause, "keychain_changed")
+        self.assertEqual(elsewhere.items, {})
+        self.assertEqual(vault.items[("csl-cockpit", "venue:fixture")], FAKE)
 
     def test_a_real_chain_with_no_os_keychain_is_refused(self) -> None:
         plain, plain_touched = _standin("keyrings.alt.file", "PlaintextKeyring", 0.5)

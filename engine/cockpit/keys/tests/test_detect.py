@@ -17,7 +17,7 @@ import unittest
 from cockpit.keys import KeyRefused, detect_keychain, doctor, doctor_line, store_for_host
 from cockpit.keys.__main__ import main
 from cockpit.keys.detect import default_key_file
-from cockpit.keys.tests.fakes import Keychains, loader, recorder, requires_keyring, untouchable
+from cockpit.keys.tests.fakes import KEYRING, Keychains, loader, recorder, requires_keyring, untouchable
 
 FAKE = "fake-key-not-real-0123"
 
@@ -164,14 +164,17 @@ class DetectTests(unittest.TestCase):
         self.assertTrue(status.reason.startswith("keyring_backend_error"))
 
     def test_keyrings_alt_and_non_os_file_backends_are_not_keychains(self) -> None:
-        non_os = (
+        non_os = [
             _backend("keyrings.alt.file", "PlaintextKeyring", priority=0.5),
             _backend("keyrings.alt.file", "EncryptedKeyring", priority=0.6),
             _backend("keyrings.cryptfile.cryptfile", "CryptFileKeyring", priority=2.5),
-            _backend("keyring.backends.chainer", backends=[
-                _backend("keyrings.alt.file", "PlaintextKeyring", priority=0.5),
-            ]),
-        )
+        ]
+        chain = None
+        if KEYRING:
+            # The library's own chain holding only a file backend, so the file child itself is examined (a
+            # look-alike chain would be refused before its child is looked at). Needs the keyring library.
+            chain = self.k.chain([_backend("keyrings.alt.file", "PlaintextKeyring", priority=0.5)])
+            non_os.append(chain)
         for backend in non_os:
             with self.subTest(backend=backend.name):
                 store, status = store_for_host("/tmp/unused-keys.json", lambda b=backend: FakeKeyringModule(b))
@@ -180,6 +183,8 @@ class DetectTests(unittest.TestCase):
                     with self.assertRaises(KeyRefused) as ctx:
                         store.put(kind, "acme", FAKE)
                     self.assertEqual(ctx.exception.cause, "keychain_required")
+        if chain is not None:
+            self.assertEqual(chain.reads, 1)  # its members were enumerated, and the file child refused
 
 
 @unittest.skipIf(os.name == "nt", "POSIX owner-only file")

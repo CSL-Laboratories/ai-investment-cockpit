@@ -16,8 +16,10 @@ import contextlib
 import io
 import itertools
 import unittest
+from unittest import mock
 
 from cockpit.keys import KEY_KINDS, KeyRefused, doctor, doctor_line, store_for_host
+from cockpit.keys import detect as detect_module
 from cockpit.keys.tests.fakes import (
     FAKE, NAMES, Keychains, forget_class, genuine_class, lookalike_chain, loader, recorder, requires_keyring,
     untouchable,
@@ -112,7 +114,9 @@ class MixedChainTests(_Case):
                 fake, touched = untouchable(module, "Keyring")
                 store, status = store_for_host(PATH, loader(fake))
                 self.assertFalse(status.available)
-                self.assertEqual(status.reason, "no_keychain_backend")
+                self.assertEqual(status.reason, "unsupported_keychain_class:keyring.backends.SecretService.Keyring"
+                                 if module == "keyring.backends.SecretService" and type(module) is str
+                                 else "no_keychain_backend")
                 self.assert_refused(store)
                 ss = self.k.os()
                 store, status = store_for_host(PATH, loader(self.k.chain([fake, ss])))
@@ -173,8 +177,78 @@ class MixedChainTests(_Case):
         store.put("broker", "fixture", FAKE)
         self.assertEqual(written, {})
 
-    def test_a_proxy_is_refused_and_no_later_swap_redirects_a_key(self) -> None:
-        # A proxy with forged metadata whose target can change after detection: refused outright.
+    def test_a_refusal_says_why_when_a_backend_looks_meant_as_a_keychain(self) -> None:
+        # The second Codex read: setups #323 accepted and identity now refuses must not collapse into
+        # "no_keychain_backend". The reason names the class (sanitised) or the module and the exception's
+        # type, never its message; a foreign platform's module failing to import is no error on a working host.
+        genuine = genuine_class("SecretService")
+        self.k.os()  # answers SecretService's probe and stores in memory for the genuine instances below
+
+        class DistroKeyring(genuine):  # type: ignore[misc, valid-type]
+            __module__ = "keyring.backends.SecretService"  # a distribution's subclass under the original module
+
+        class Elsewhere(genuine):  # type: ignore[misc, valid-type]
+            __module__ = "vendor.keyring_patch"
+
+        class Hostile(genuine):  # type: ignore[misc, valid-type]
+            __module__ = "evil\nkeys: ok; module"
+
+        for cls in (DistroKeyring, Elsewhere, Hostile):
+            forget_class(self, cls)
+            type.__setattr__(cls, "__qualname__", cls.__name__)
+        type.__setattr__(Hostile, "__qualname__", "Keyring,\x1b[2J")
+        cases = {
+            "distribution subclass": (DistroKeyring(), "unsupported_keychain_class:keyring.backends.SecretService.DistroKeyring"),
+            "external subclass": (Elsewhere(), "unsupported_keychain_class:vendor.keyring_patch.Elsewhere"),
+            "forged exact name": (recorder("keyring.backends.SecretService", "Keyring"),
+                                  "unsupported_keychain_class:keyring.backends.SecretService.Keyring"),
+            "hostile names, sanitised": (Hostile(), "unsupported_keychain_class:evil?keys??ok??module.Keyring???2J"),
+            "plain file backend": (recorder(), "no_keychain_backend"),
+        }
+        for label, (backend, reason) in cases.items():
+            with self.subTest(label):
+                store, status = store_for_host(PATH, loader(backend))
+                self.assertEqual((status.available, status.reason), (False, reason))
+                line = doctor_line(doctor(status, None))
+                self.assertIn(f"no OS keychain ({reason})", line)
+                self.assertEqual(len(line.splitlines()), 1)
+                self.assert_refused(store)
+                store, status = store_for_host(PATH, loader(self.k.chain([recorder(), backend])))
+                self.assertEqual((status.available, status.reason), (False, reason))  # the same inside a chain
+
+        real_import = detect_module.importlib.import_module
+
+        def failing(names: tuple[str, ...]) -> object:
+            def import_module(name: str) -> object:
+                if name in names:
+                    raise ImportError("secret_fixture_message_never_shown")
+                return real_import(name)
+            return import_module
+
+        # A genuine Secret Service object whose module will not import at verification: refused, and said.
+        backend = self.k.os()
+        with mock.patch.object(detect_module.importlib, "import_module", failing(("keyring.backends.SecretService",))):
+            store, status = store_for_host(PATH, loader(backend))
+        self.assertEqual((status.available, status.reason),
+                         (False, "keychain_module_unavailable:keyring.backends.SecretService:ImportError"))
+        self.assertNotIn("secret_fixture_message", doctor_line(doctor(status, None)))
+        self.assert_refused(store)
+        self.assertEqual(backend.calls, [])
+        # Another platform's keychain modules failing to import change nothing on a working host, and are not
+        # reported for a backend that does not claim them.
+        foreign = ("keyring.backends.macOS", "keyring.backends.Windows", "keyring.backends.libsecret")
+        with mock.patch.object(detect_module.importlib, "import_module", failing(foreign)):
+            store, status = store_for_host(PATH, loader(self.k.chain([recorder(), self.k.os()])))
+            self.assertEqual((status.available, status.reason), (True, "ok"))
+            _, status = store_for_host(PATH, loader(recorder()))
+            self.assertEqual(status.reason, "no_keychain_backend")
+
+    def test_a_proxy_is_refused_a_shadowing_method_is_ignored_and_a_swapped_class_is_refused(self) -> None:
+        # What pinning does, and only that (the second Codex read): a proxy with forged metadata whose target
+        # can change after detection is refused outright; a top-level password method shadowed on the
+        # selected instance is ignored; a __class__ reassigned after the check is refused at use. Helpers or
+        # state of the selected object changed after the check are outside what pinning covers; see
+        # test_b13_real_library for the genuine password methods.
         target = self.k.os()
         plain = recorder()
 
@@ -202,13 +276,18 @@ class MixedChainTests(_Case):
         proxy.target = plain
         self.assert_refused(store)
         self.assertEqual(plain.calls, [])
-        # A genuine object passes; changing its instance attributes or its __class__ afterwards does not
-        # redirect anything: every call goes through the genuine class's own method.
+        # A genuine object passes. A top-level password method shadowed on the instance afterwards is
+        # ignored: every call goes through the genuine class's own method.
         genuine = self.k.os()
         store, status = store_for_host(PATH, loader(genuine))
         self.assertTrue(status.available)
         genuine.set_password = plain.set_password
         genuine.get_password = plain.get_password
+        genuine.delete_password = plain.delete_password
+        self.round_trip_every_kind(store)
+        self.assertEqual((plain.calls, plain.data), ([], {}))
+        # A __class__ reassigned afterwards is refused at use, for every operation and every kind.
+        store.put("venue", "fixture", FAKE)
 
         class Swapped(type(genuine)):  # type: ignore[misc]
             def set_password(self, service: str, name: str, secret: str) -> None:
@@ -216,10 +295,14 @@ class MixedChainTests(_Case):
 
         forget_class(self, Swapped)
         genuine.__class__ = Swapped
-        store.put("venue", "fixture", FAKE)
-        self.assertEqual(store.get("venue", "fixture"), FAKE)
+        for kind in KEY_KINDS:
+            for operation in (lambda: store.put(kind, "fixture", FAKE + "-swapped"), lambda: store.get(kind, "fixture"),
+                              lambda: store.delete(kind, "fixture")):
+                with self.assertRaises(KeyRefused) as ctx:
+                    operation()
+                self.assertEqual(ctx.exception.cause, "keychain_changed")
         self.assertEqual((plain.calls, plain.data), ([], {}))
-        self.assertEqual(list(genuine.data.values()), [FAKE])
+        self.assertEqual(list(genuine.data.values()), [FAKE])  # the earlier key is still where it was
 
     def test_an_imitation_chainer_is_not_read_as_a_chain(self) -> None:
         for module in ("keyring.backends.chainer", "keyring.backends.chainerX", "keyring.backends.chainer.evil"):
@@ -249,12 +332,16 @@ class MixedChainTests(_Case):
         self.assertEqual(ch.calls, [])
 
     def test_the_chain_is_read_once(self) -> None:
-        ss = self.k.os()
-        ch = self.k.chain([ss, recorder()])
+        # After the first read the chain would answer only the plaintext store; nothing reads it again.
+        ss, plain = self.k.os(), recorder()
+        ch = self.k.chain([ss, plain])
         store, status = store_for_host(PATH, loader(ch))
         self.assertTrue(status.available)
+        ch.children = [plain]
         self.round_trip_every_kind(store)
         self.assertEqual(ch.reads, 1)
+        self.assertEqual((plain.calls, plain.data), ([], {}))
+        self.assertEqual(len(ss.calls), 4 * len(KEY_KINDS))
 
     def test_a_chain_without_an_os_keychain_is_still_refused(self) -> None:
         def plain() -> tuple[object, list]:
@@ -401,23 +488,30 @@ class MixedChainTests(_Case):
         # nothing if it never held the key, or an older key left there, even one "deleted" since in the
         # other keychain (a delete reaches only the selected keychain). Never anything from an unselected
         # store. Codex's "switching" case, pinned as it is.
-        kwallet, ss = self.k.os("KWallet5"), self.k.os()
-        plain = recorder()
-        plain.data[("csl-cockpit", "broker:fixture")] = FAKE + "-plain"  # never read
-        first, _ = store_for_host(PATH, loader(self.k.chain([kwallet, plain])))
-        first.put("broker", "fixture", FAKE + "-OLD")
-        second, status = store_for_host(PATH, loader(self.k.chain([ss, plain])))
-        self.assertEqual(status.backend, "SecretService Keyring")
-        self.assertIsNone(second.get("broker", "fixture"))  # an empty destination: "no key saved"
-        second.put("broker", "fixture", FAKE + "-NEW")
-        second.delete("broker", "fixture")
-        kwallet_calls = list(kwallet.calls)
-        third, status = store_for_host(PATH, loader(self.k.chain([kwallet, plain])))
-        self.assertEqual(status.backend, "kwallet DBusKeyring")
-        self.assertEqual(third.get("broker", "fixture"), FAKE + "-OLD")  # the older key comes back
-        self.assertEqual(kwallet.calls[len(kwallet_calls):], [("get", "csl-cockpit", "broker:fixture")])
-        self.assertEqual(plain.calls, [])
-        self.assertEqual([op for op, _, _ in ss.calls], ["get", "set", "delete"])  # nothing since
+        for kind in KEY_KINDS:
+            with self.subTest(kind=kind):
+                kwallet, ss = self.k.os("KWallet5"), self.k.os()
+                plain = recorder()
+                plain.data[("csl-cockpit", f"{kind}:fixture")] = FAKE + "-plain"  # never read
+                first, status = store_for_host(PATH, loader(self.k.chain([kwallet, plain])))
+                self.assertEqual(status.ignored, ("keyrings.alt.file.PlaintextKeyring",))
+                first.put(kind, "fixture", FAKE + "-OLD")
+                second, status = store_for_host(PATH, loader(self.k.chain([ss, plain])))
+                self.assertEqual((status.backend, status.ignored),
+                                 ("SecretService Keyring", ("keyrings.alt.file.PlaintextKeyring",)))
+                self.assertIsNone(second.get(kind, "fixture"))  # an empty destination: "no key saved"
+                second.put(kind, "fixture", FAKE + "-NEW")
+                second.delete(kind, "fixture")
+                self.assertEqual(ss.data, {})
+                kwallet_calls = list(kwallet.calls)
+                third, status = store_for_host(PATH, loader(self.k.chain([kwallet, plain])))
+                self.assertEqual(status.backend, "kwallet DBusKeyring")
+                self.assertEqual(third.get(kind, "fixture"), FAKE + "-OLD")  # the older key comes back
+                self.assertEqual(kwallet.calls[len(kwallet_calls):], [("get", "csl-cockpit", f"{kind}:fixture")])
+                self.assertEqual(kwallet.data, {("csl-cockpit", f"{kind}:fixture"): FAKE + "-OLD"})
+                self.assertEqual(plain.calls, [])
+                self.assertEqual(plain.data, {("csl-cockpit", f"{kind}:fixture"): FAKE + "-plain"})
+                self.assertEqual([op for op, _, _ in ss.calls], ["get", "set", "delete"])  # nothing since
 
     def test_an_unusable_chosen_keychain_refuses_and_falls_through_to_nothing(self) -> None:
         for priority in (0, -1, float("nan"), float("inf"), RuntimeError("no dbus")):

@@ -52,7 +52,12 @@ another class that copies a module or class name), and its priority, read from t
 number above 0. A class whose module will not import on this host is a keychain this host does not
 have. The library's `fail` and `null` backends, `keyrings.alt` and any other file, unknown or
 look-alike backend are not keychains, so a plaintext keyring is never treated as one for broker or
-venue secrets.
+venue secrets. When the refused backend looks meant as a supported keychain, the doctor says why:
+`unsupported_keychain_class:<module.Class>` (it derives from, or carries the module and class name of, a
+supported class but is not that class, as a distribution's own subclass would) or
+`keychain_module_unavailable:<module>:<ExceptionType>` (its class names a supported keychain whose module
+failed to import here; the exception's message is never shown). Another keychain's module failing to
+import, such as another platform's, is not reported when nothing claims it.
 
 When the library hands back its own chain of several backends (`keyring.backends.chainer`'s class,
 also by identity), the chain is read once and one OS keychain in it is used; every other backend in
@@ -62,13 +67,17 @@ the library reads every member's priority (in 25.7.0, twice: to filter and to so
 `get_keyring()` may first initialize installed plugins. A priority that raises there makes detection
 fail closed ("no keychain"). A chain with no OS keychain is refused like any other non-keychain host.
 `store_for_host()` builds the `KeyStore` from that answer and binds it to the chosen backend object and
-its genuine class: every save, read and delete goes through that class's own method, never through the
-chain, the module, or an attribute set on the instance later, so a chain, a global keyring or an
-instance that changes after the check cannot redirect a key.
+its genuine class: every save, read and delete calls that class's own top-level password method with
+the object. That protects against a global keyring or a chain replaced after the check and against a
+top-level password method shadowed on the instance, and a reassigned `__class__` is refused at use
+(`keychain_changed`). It does no more: the class's methods still consult the object (in keyring 25.7.0,
+Secret Service's call `self.get_preferred_collection()`), so code that changes the selected object's
+helpers or state after the check can redirect a key.
 
 What this cannot defend against: hostile code already running in the Python process. A replaced import
-of a keyring module, a monkey-patched genuine class, or a malicious plugin that the library initializes
-can do anything this code can; the runtime and its installed packages have to be trusted.
+of a keyring module, a monkey-patched genuine class, a changed helper, state or class of the selected
+object, or a malicious plugin that the library initializes can do anything this code can; the runtime
+and its installed packages have to be trusted.
 
 When the chain holds several OS keychains, Cockpit uses the first in its own fixed order: Secret
 Service, KWallet 5, libsecret, KWallet 4 (macOS and Windows are never chained with these). Lucas, Nov
@@ -77,8 +86,9 @@ fixed order". That is keyring 25.7.0's order by priority (5, 4.9, 4.8, 3.9) ever
 `XDG_CURRENT_DESKTOP` contains `KDE` (normally a KDE desktop session), where the library raises KWallet 5
 to 5.1, above Secret Service's 5 (and KWallet 4 to 4.1, still below libsecret). With the library's order
 one KDE host would use KWallet in its desktop session and Secret Service over SSH, in a service or in
-cron; with the fixed order every session on that host uses Secret Service. `PYTHON_KEYRING_BACKEND` set
-to one OS backend makes every session use that one.
+cron; with the fixed order every session on that host uses Secret Service, as long as the sessions see
+the same set of available keychain classes and the same explicit backend setting. `PYTHON_KEYRING_BACKEND`
+(or `keyringrc.cfg`) set to one OS backend makes every session that has it use that one.
 
 A change of keychain reads what the newly selected keychain holds. The order is fixed, but which
 keychains answer can still differ between sessions or library versions (a daemon reachable only on the
@@ -111,7 +121,9 @@ PYTHONPATH=engine python3 -B -m unittest discover -s engine/cockpit/keys/tests -
 ```
 
 CI runs `engine/tests`; `engine/tests/keys/test_keys_suite_ci.py` imports this folder's test classes so
-that the same step collects and runs them, and fails if a test class is added here without being
-imported there. Tests that need an OS keychain use the installed `keyring` library's own classes, with
+that the same step collects and runs them, and fails if unittest discovery of this folder finds a
+runnable test (any test method, whatever its class is called, in any test module or test package here)
+that the CI file does not collect. The suite is stdlib `unittest`; a pytest-style test function here
+would not be covered. Tests that need an OS keychain use the installed `keyring` library's own classes, with
 their probe and password methods pointed at a dict (no real keychain or D-Bus is reached), and are
 skipped without the library.
