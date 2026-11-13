@@ -17,11 +17,13 @@ carries the module and class name of, a supported keychain class but is not that
 ``keychain_module_unavailable:<module>:<ExceptionType>`` (its class names a supported keychain whose module
 failed to import here; the exception's message is never shown). The library's chainer gets the same two:
 ``unsupported_keyring_chain:<module.Class>`` (a chain that derives from, or carries the module and class name
-of, the library's ``ChainerBackend``; Cockpit never reads its members) or
-``keychain_module_unavailable:keyring.backends.chainer:<ExceptionType>``. A module no candidate claims, such
-as another platform's keychain, failing to import is not reported. A reason may name the refused class or an
-exception's class: identifiers of code already running in this process, sanitised to one line, never an
-exception's message or a value.
+of, the library's ``ChainerBackend``; Cockpit does not read its members) or
+``keychain_module_unavailable:keyring.backends.chainer:<ExceptionType>``, and the library's own chain found
+inside another chain gives ``unsupported_nested_keyring_chain`` (the inner chain is not read). A module no
+candidate claims, such as another platform's keychain, failing to import is not reported. A reason may name
+the refused class or an exception's class, read from the interpreter's own type fields (no metaclass hook
+runs), cleaned to one line and capped by ``_safe``; Cockpit does not read exception messages or stored values
+for it. The selected keychain is shown by Cockpit's own name for its class, never by the class's text.
 
 A keyring chain (the library's own ``ChainerBackend``, by identity) is read once and reduced to one OS
 keychain: when it holds several, the one first in Cockpit's fixed order (``_OS_CLASSES``), not in the
@@ -41,7 +43,7 @@ and its state, so code that changes the selected object after the check can redi
 What this cannot defend against: hostile code already running in this process, such as a replaced import
 of a keyring module, a monkey-patched genuine class, or a changed helper, state or class of the selected
 object.
-The doctor line names where keys are kept and the key-file state; it never prints a key or its value.
+The doctor line names where keys are kept and the key-file state; it reads no stored key or value.
 """
 
 from __future__ import annotations
@@ -101,7 +103,7 @@ def _detect_backend(load: Callable[[], Any]) -> tuple[KeychainStatus, Any]:
     except ImportError:
         return KeychainStatus(False, "", "keyring_library_missing"), None
     except Exception as exc:  # noqa: BLE001 - failed detection never grants keychain access
-        return KeychainStatus(False, "", f"keyring_library_error:{_safe(type(exc).__name__)}"), None
+        return KeychainStatus(False, "", f"keyring_library_error:{_exception_name(exc)}"), None
     try:
         genuine = _Genuine.load()
         backend = mod.get_keyring()
@@ -109,7 +111,7 @@ def _detect_backend(load: Callable[[], Any]) -> tuple[KeychainStatus, Any]:
             return _select_from_chain(backend, genuine)
         return _usable_os_backend(backend, (), genuine)
     except Exception as exc:  # noqa: BLE001 - failed detection never grants keychain access
-        return KeychainStatus(False, "", f"keyring_backend_error:{_safe(type(exc).__name__)}"), None
+        return KeychainStatus(False, "", f"keyring_backend_error:{_exception_name(exc)}"), None
 
 
 def _genuine_class(module: str, name: str) -> tuple[type | None, str]:
@@ -117,7 +119,7 @@ def _genuine_class(module: str, name: str) -> tuple[type | None, str]:
     try:
         found = getattr(importlib.import_module(module), name)
     except Exception as exc:  # noqa: BLE001 - a backend module that will not import here is a keychain this host lacks
-        return None, type(exc).__name__
+        return None, _type_field(type(exc), "__name__") or "?"
     return (found, "") if isinstance(found, type) else (None, "NotAClass")
 
 
@@ -142,13 +144,14 @@ class _Genuine:
         """Why a backend that is not admitted looks meant as a supported keychain or as the library's chain,
         or None if it does not.
 
-        For the doctor only; admission never depends on it. Reads the object's type, never the instance, so
-        a chain is never enumerated here.
+        For the doctor only; admission never depends on it. Reads only the interpreter's own fields of the
+        object's type (no instance attribute, no metaclass hook), so a chain is not enumerated here.
         """
         kind = type(obj)
-        module = _module_of(obj)
-        qualname = getattr(kind, "__qualname__", "")
-        qualname = qualname if type(qualname) is str else ""
+        if self.chainer is not None and kind is self.chainer:
+            return "unsupported_nested_keyring_chain"  # the library's own chain inside another: not read
+        module = _type_field(kind, "__module__")
+        qualname = _type_field(kind, "__qualname__")
         bases = _true_mro(kind)[1:]
         candidates = [(spec, genuine, failure, "unsupported_keychain_class")
                       for spec, genuine, failure in zip(_OS_CLASSES, self.os_classes, self.failures)]
@@ -158,8 +161,7 @@ class _Genuine:
             if genuine is None:
                 if failure and names_it:
                     return f"keychain_module_unavailable:{spec_module}:{_safe(failure)}"
-            elif kind is not genuine and (names_it or any(base is genuine for base in bases)):
-                # (the library's own chainer, met only inside another chain, is not diagnosed)
+            elif names_it or any(base is genuine for base in bases):
                 return f"{unsupported}:{_type_name(obj)}"
         return None
 
@@ -178,10 +180,21 @@ class _Genuine:
         return any(genuine is not None and type(obj) is genuine for genuine in self.sentinels)
 
 
-def _module_of(obj: Any) -> str:
-    # For display only (admission is by class identity). Only an exact ``str`` is shown.
-    module = getattr(type(obj), "__module__", "")
-    return module if type(module) is str else ""
+def _type_field(kind: type, field: str) -> str:
+    """``kind.__module__``, ``__qualname__`` or ``__name__`` as the interpreter stores it, or "".
+
+    Read through ``type``'s own descriptor, so a metaclass of the class (code of the refused backend)
+    is not consulted; only an exact ``str`` is used. For display only: admission is by class identity.
+    """
+    try:
+        value = type.__dict__[field].__get__(kind)
+    except Exception:  # noqa: BLE001 - an unreadable field is shown as unknown
+        return ""
+    return value if type(value) is str else ""
+
+
+def _exception_name(exc: BaseException) -> str:
+    return _safe(_type_field(type(exc), "__name__") or "?")
 
 
 def _true_mro(kind: type) -> tuple[type, ...]:
@@ -219,27 +232,29 @@ def _select_from_chain(chain: Any, genuine: _Genuine) -> tuple[KeychainStatus, A
 
 
 def _usable_os_backend(backend: Any, ignored: tuple[str, ...], genuine: _Genuine) -> tuple[KeychainStatus, Any]:
-    if genuine.rank(backend) is None:
+    rank = genuine.rank(backend)
+    if rank is None:
         return _refused(genuine.diagnose(backend) or "no_keychain_backend")
     try:
         priority = float(type(backend).priority)  # the genuine class's own probe, not an instance attribute
     except Exception as exc:  # noqa: BLE001 - failed detection never grants keychain access
-        return _refused(f"keychain_unusable:{_safe(type(exc).__name__)}")
+        return _refused(f"keychain_unusable:{_exception_name(exc)}")
     if not math.isfinite(priority) or priority <= 0:
         return _refused("keychain_unusable:priority")
-    return KeychainStatus(True, _backend_name(backend), "ok", ignored), backend
+    return KeychainStatus(True, _display_name(rank), "ok", ignored), backend
 
 
-def _backend_name(backend: Any) -> str:
-    return str(getattr(type(backend), "name", "") or type(backend).__name__)
+def _display_name(rank: int) -> str:
+    # Cockpit's own name for an admitted class ("SecretService Keyring", "kwallet DBusKeyring", ...), the
+    # library's naming scheme applied to the fixed list: nothing the class itself says is shown.
+    module, name = _OS_CLASSES[rank]
+    return f"{module.rpartition('.')[2]} {name}"
 
 
 def _type_name(obj: Any) -> str:
     """``module.Class`` of a backend, made safe for a one-line doctor message."""
     kind = type(obj)
-    module = _module_of(obj) or "?"
-    qualname = getattr(kind, "__qualname__", "")
-    return _safe(f"{module}.{qualname if type(qualname) is str else '?'}")
+    return _safe(f"{_type_field(kind, '__module__') or '?'}.{_type_field(kind, '__qualname__') or '?'}")
 
 
 class OsKeyring:

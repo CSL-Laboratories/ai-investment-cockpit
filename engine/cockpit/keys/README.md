@@ -58,9 +58,11 @@ supported class but is not that class, as a distribution's own subclass would) o
 `keychain_module_unavailable:<module>:<ExceptionType>` (its class names a supported keychain whose module
 failed to import here; the exception's message is never shown). The library's chain gets the same two:
 `unsupported_keyring_chain:<module.Class>` (it derives from, or carries the module and class name of, the
-library's `ChainerBackend` but is not that class; Cockpit never reads its members) or
-`keychain_module_unavailable:keyring.backends.chainer:<ExceptionType>`. Another module failing to import,
-such as another platform's keychain, is not reported when nothing claims it.
+library's `ChainerBackend` but is not that class; Cockpit does not read its members) or
+`keychain_module_unavailable:keyring.backends.chainer:<ExceptionType>`. The library's own chain found
+inside the chain Cockpit reads gives `unsupported_nested_keyring_chain`; Cockpit does not read the inner
+chain. Another module failing to import, such as another platform's keychain, is not reported when nothing
+claims it.
 
 When the library hands back its own chain of several backends (`keyring.backends.chainer`'s class,
 also by identity), the chain is read once and one OS keychain in it is used; every other backend in
@@ -112,21 +114,25 @@ keys: warn - no OS keychain (no_keychain_backend); model-provider keys in owner-
 Ignored backends are named as `module.Class` (at most eight, then a count), with any character
 outside letters, digits and `._-<>` shown as `?`. `ok` and `warn` exit 0; `fail` (key file or
 directory not owner-only, no file configured, or no owner-only file on this platform) exits 1. It
-never prints a key or its value. A missing key folder or `~/.config` shows as `[dir_missing]`; the
-doctor never creates it.
+reads no stored key or value. A missing key folder or `~/.config` shows as `[dir_missing]`; the doctor
+never creates it.
 
-What the doctor line shows of a backend is the name of code running in this process, never data it
-holds. An ignored backend, and the refused class in `unsupported_keychain_class` or
-`unsupported_keyring_chain`, are named by that class's module and class name; `keychain_module_unavailable`,
-`keychain_unusable`, `keyring_backend_error` and `keyring_library_error` name an exception's class. The
-backend's code chooses those names and can put any text in them, a made-up path or marker included, so
-each is cut to one line of letters, digits and `._-<>` (anything else shown as `?`) and at most 120
-characters. An exception's message and a stored key or value are never shown. This is accepted, rather
-than fixed categories with trusted names only, for two reasons: Lucas's B13 decision asks the doctor to
-"name the ignored one", which only the backend's own class can name; and code able to choose a class name
-already runs inside the process with everything the doctor could reveal (the trust boundary above), so
-showing its name gives it nothing. A fixed category would tell the user that a backend was refused but
-not which installed class to look at.
+What the doctor line shows of a backend, and the one rule for it. The selected keychain is shown by
+Cockpit's own name for its class (`SecretService Keyring`, `kwallet DBusKeyring`, `libsecret Keyring`,
+`kwallet DBusKeyringKWallet4`, `macOS Keyring`, `Windows WinVaultKeyring`), never by anything the class
+says about itself. Every other name comes from a backend: an ignored backend, and the refused class in
+`unsupported_keychain_class` or `unsupported_keyring_chain`, are named by that class's module and class
+name; `keychain_module_unavailable`, `keychain_unusable`, `keyring_backend_error` and
+`keyring_library_error` name an exception's class. Cockpit reads those names from the interpreter's own
+type fields, so no metaclass hook of the class runs, and cuts each to one line of letters, digits and
+`._-<>` (anything else shown as `?`) and at most 120 characters. It does not read stored values or
+exception messages to build the line, and it does not inspect what a name says: the backend's code chose
+the name and can put any text in it, a made-up path or a key-shaped string included. This is accepted,
+rather than fixed categories with trusted names only, for two reasons: Lucas's B13 decision asks the
+doctor to "name the ignored one", which only the backend's own class can name; and code able to choose a
+class name already runs inside the process with everything the doctor could reveal (the trust boundary
+above), so showing its name gives it nothing. A fixed category would tell the user that a backend was
+refused but not which installed class to look at.
 
 Not here yet: wiring into a Cockpit settings surface or the frozen `app/` doctor.
 
@@ -137,14 +143,20 @@ PYTHONPATH=engine python3 -B -m unittest discover -s engine/cockpit/keys/tests -
 ```
 
 CI runs `engine/tests`; `engine/tests/keys/test_keys_suite_ci.py` imports this folder's test classes so
-that the same step collects and runs them. Its coverage check runs pytest's own collection of that file
-(in a child process, with the same interpreter) and fails unless every runnable test that unittest
-discovery of this folder finds (any test method, whatever its class is called, in any test module or test
-package here, or a module that fails to import) is collected exactly once: a test pytest leaves out, such
-as one marked `__test__ = False`, fails it, and so does a class exposed twice. It also fails when a test
-module here defines a test class twice, or a test method twice in one class, since the later definition
-replaces the earlier one before either runner sees it. It cannot see a method that is no longer a test
-at all (renamed from `test_...`), and it is skipped on an interpreter without pytest; CI has pytest. The
-suite is stdlib `unittest`; a pytest-style test function here would not be covered. Tests that need an OS
+that the same step collects and runs them. Its coverage check fails unless every runnable test that
+unittest discovery of this folder finds (any test method, whatever its class is called, in any test module
+or test package here, or a module that fails to import) is among the tests pytest will run from that file,
+exactly once. Under pytest it reads the running session's own items, after every collection hook
+(including any `conftest.py`) has run: a test pytest leaves out, such as one marked `__test__ = False`, an
+item a plugin drops, and a class exposed twice all fail it. In a run asked for only some tests (node ids,
+`-k`, `-m`, `--deselect`, `--lf`, `--sw`), and under plain unittest, it compares pytest's collection of the
+file in a child process instead, which sees only what `--collect-only` sees. It cannot see a test a plugin
+skips at run time, a plugin that drops the check itself, or a method that is no longer a test at all
+(renamed from `test_...`), and it is skipped on an interpreter without pytest; CI has pytest. A second
+check fails when a test module here defines a test class twice, or a test method twice in one class, since
+the later definition replaces the earlier one before either runner sees it. Definitions inside blocks of
+the same scope (`if`, `for`, `while`, `with`, `try`, `match`) count; the branches of one `if`/`elif`/`else`
+or `match` cannot all run, so each counts once. Rebinding a name by assignment or import is not checked.
+The suite is stdlib `unittest`; a pytest-style test function here would not be covered. Tests that need an OS
 keychain use the installed `keyring` library's own classes, with their probe and password methods pointed
 at a dict (no real keychain or D-Bus is reached), and are skipped without the library.

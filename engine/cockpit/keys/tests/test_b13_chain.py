@@ -352,6 +352,45 @@ class MixedChainTests(_Case):
                 store, status = store_for_host(PATH, loader(self.k.chain([recorder(), backend])))
                 self.assertEqual((status.available, status.reason), (False, reason))
         self.assertEqual(reads, [])
+        # The library's own chain inside the library's chain (the fourth Codex read): a fixed reason, and the
+        # inner chain is not read, although it holds a genuine OS keychain.
+        inner = self.k.chain([ss])
+        store, status = store_for_host(PATH, loader(self.k.chain([recorder(), inner])))
+        self.assertEqual((status.available, status.reason), (False, "unsupported_nested_keyring_chain"))
+        self.assert_refused(store)
+        self.assertEqual(inner.reads, 0)
+        # A refused chain whose metaclass hooks its name fields: it is named from the interpreter's own type
+        # fields, so none of its code runs (the hook would also read the chain's members).
+        hooked: list[str] = []
+        chainer = genuine_class_chainer()
+
+        class Meta(type(chainer)):  # type: ignore[misc]
+            def __getattribute__(cls, name: str) -> object:
+                if name in ("__module__", "__qualname__", "__name__", "__mro__"):
+                    hooked.append(name)
+                return super().__getattribute__(name)
+
+        class HookedChain(chainer, metaclass=Meta):  # type: ignore[misc]
+            backends = _Members("hooked")
+
+        forget_class(self, HookedChain)
+        type.__setattr__(HookedChain, "__qualname__", "HookedChain")
+        hooked.clear()
+        store, status = store_for_host(PATH, loader(HookedChain()))
+        self.assertEqual((status.available, status.reason), (False, f"unsupported_keyring_chain:{__name__}.HookedChain"))
+        self.assertEqual((hooked, reads), ([], []))
+
+        class ErrorMeta(type):
+            def __getattribute__(cls, name: str) -> object:
+                if name in ("__module__", "__qualname__", "__name__"):
+                    hooked.append(name)
+                return super().__getattribute__(name)
+
+        class HookedError(Exception, metaclass=ErrorMeta):
+            pass
+
+        store, status = store_for_host(PATH, loader(self.k.os("KWallet5", priority=HookedError("never shown"))))
+        self.assertEqual((status.available, status.reason, hooked), (False, "keychain_unusable:HookedError", []))
         # The library's own chain while its module will not import at verification: refused, said, not read.
         chain, kwallet = self.k.chain([recorder(), self.k.os()]), self.k.os("KWallet5")
         real_import = detect_module.importlib.import_module
@@ -429,7 +468,7 @@ class MixedChainTests(_Case):
                 made = [make() for make in makers]
                 store, status = store_for_host(PATH, loader(self.k.chain([kid for kid, _ in made])))
                 self.assertFalse(status.available)
-                self.assertEqual(status.reason, "no_keychain_backend")
+                self.assertEqual(status.reason, "unsupported_nested_keyring_chain" if label == "keychain only inside a nested chain" else "no_keychain_backend")
                 self.assertEqual(status.ignored, ())
                 self.assert_refused(store)
                 self.assertEqual([record for _, record in made], [[] for _ in made])
@@ -608,6 +647,25 @@ class DoctorLineTests(_Case):
         ignored = line.split("other keyring backends ignored: ", 1)[1]
         self.assertNotIn(";", ignored)
         self.assertNotIn(",", ignored)
+
+    def test_the_selected_keychain_is_named_by_cockpit_not_by_its_class(self) -> None:
+        # The fourth Codex read: the selected keychain's name came from the class itself, uncleaned. Now it is
+        # Cockpit's own name for the admitted class, so a changed class name or module shows nowhere.
+        for kind in ("SecretService", "KWallet5", "libsecret", "KWallet4", "macOS", "Windows"):
+            with self.subTest(kind):
+                backend = self.k.os(kind)
+                cls = type(backend)
+                saved = (cls.__name__, cls.__dict__["__module__"])
+                self.addCleanup(setattr, cls, "__module__", saved[1])
+                self.addCleanup(setattr, cls, "__name__", saved[0])
+                cls.__name__ = cls.__module__ = FAKE + " /made-up/folder\n\x1b[31m" + "Z" * 140
+                _, status = store_for_host(PATH, loader(self.k.chain([backend])))
+                line = doctor_line(doctor(status, None))
+                cls.__name__, cls.__module__ = saved
+                self.assertEqual(status.backend, NAMES[kind])
+                self.assertEqual(len(line.splitlines()), 1)
+                self.assertNotIn(FAKE, line)
+                self.assertIn(f"OS keychain ({NAMES[kind]})", line)
 
     def test_a_long_list_of_ignored_backends_is_capped(self) -> None:
         extras = [untouchable(f"extra.backend{i}", "Keyring")[0] for i in range(11)]
