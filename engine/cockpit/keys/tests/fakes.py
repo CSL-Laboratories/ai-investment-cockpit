@@ -11,10 +11,15 @@ D-Bus. Look-alikes (``untouchable``, ``recorder``) are plain classes and are nev
 from __future__ import annotations
 
 import importlib
+import os
+import shutil
+import tempfile
 import types
 import unittest
 from typing import Any
 from unittest import mock
+
+from cockpit.keys import store as _store
 
 FAKE = "fake-key-not-real-0123"
 
@@ -181,6 +186,36 @@ def lookalike_chain(children: list[Any], module: str = "keyring.backends.chainer
     obj = type("ChainerBackend", (), {"__module__": module})()
     obj.backends, obj.calls = list(children), []
     return obj
+
+
+# B24: the keychain record is kept where this module has an owner-only file (not on Windows). There the
+# first broker or venue save on a keychain host reads Cockpit's marker in the selected keychain (absent)
+# and writes it, so that keychain holds one item more than the keys.
+RECORDS = _store._owner_only_supported()
+MARKER = ("csl-cockpit", "cockpit-keychain-record")
+MARKER_OPS = ["get", "set"] if RECORDS else []
+MARKER_CALLS = len(MARKER_OPS)
+MARKER_ITEMS = 1 if RECORDS else 0
+UNRECORDED_KINDS = tuple(kind for kind in ("model_provider", "broker", "venue")
+                         if not RECORDS or kind not in _store.RECORD_KINDS)
+
+
+def with_marker(data: dict, keychain: str) -> dict:
+    """``data`` as the selected keychain holds it once a broker or venue key was saved there (B24)."""
+    return {**data, MARKER: keychain} if RECORDS else dict(data)
+
+
+def key_file(test: unittest.TestCase) -> str:
+    """A key file path in a new temp folder of this user's, removed after the test: one call is one host.
+
+    B24: on a keychain host the first broker or venue save writes Cockpit's keychain record beside the key
+    file, so a test host needs a real folder of its own (the tests used a path that did not exist, because
+    a keychain host used to touch nothing there). Tests that model later runs on the same host reuse one path.
+    """
+
+    root = tempfile.mkdtemp(prefix="cockpit-host-")
+    test.addCleanup(shutil.rmtree, root, True)
+    return os.path.join(root, "model-keys.json")
 
 
 def loader(backend: Any) -> Any:

@@ -17,7 +17,9 @@ import unittest
 from cockpit.keys import KeyRefused, detect_keychain, doctor, doctor_line, store_for_host
 from cockpit.keys.__main__ import main
 from cockpit.keys.detect import default_key_file
-from cockpit.keys.tests.fakes import KEYRING, Keychains, loader, recorder, requires_keyring, untouchable
+from cockpit.keys.tests.fakes import (
+    KEYRING, MARKER_OPS, Keychains, key_file, loader, recorder, requires_keyring, untouchable,
+)
 
 FAKE = "fake-key-not-real-0123"
 
@@ -78,13 +80,13 @@ class DetectTests(unittest.TestCase):
                 unsafe, touched = untouchable(module)
                 children = [safe, unsafe][::(-1 if reverse else 1)]
                 chain = self.k.chain(children)
-                store, status = store_for_host(load=loader(chain))
+                store, status = store_for_host(key_file(self), loader(chain))  # never the tester's own file
                 self.assertTrue(status.available)
                 self.assertEqual(status.ignored, (f"{module}.PlaintextKeyring",))
                 for kind in ("broker", "venue"):
                     self.assertEqual(store.put(kind, "fixture", FAKE), "keyring")
                     self.assertEqual(store.get(kind, "fixture"), FAKE)
-                self.assertEqual([c[0] for c in safe.calls], ["set", "get", "set", "get"])
+                self.assertEqual([c[0] for c in safe.calls], MARKER_OPS + ["set", "get", "set", "get"])
                 self.assertEqual(touched, [])
                 self.assertEqual(chain.calls, [])
 
@@ -102,14 +104,14 @@ class DetectTests(unittest.TestCase):
             loads.append(True)
             return mod if len(loads) == 1 else unsafe_mod
 
-        store, status = store_for_host(load=load)
+        store, status = store_for_host(key_file(self), load)  # never the tester's own file
         self.assertTrue(status.available)
         chain.children = [unsafe]
         mod.backend = unsafe
         store.put("broker", "fixture", FAKE)
         self.assertEqual(store.get("broker", "fixture"), FAKE)
         store.delete("broker", "fixture")
-        self.assertEqual([c[0] for c in safe.calls], ["set", "get", "delete"])
+        self.assertEqual([c[0] for c in safe.calls], MARKER_OPS + ["set", "get", "delete"])
         self.assertEqual(unsafe.calls, [])
         self.assertEqual(chain.calls, [])
         self.assertEqual(len(loads), 1)
