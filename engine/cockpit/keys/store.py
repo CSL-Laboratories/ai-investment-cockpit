@@ -54,8 +54,10 @@ __all__ = ["KEY_KINDS", "KeyRefused", "KeyStore", "Keyring", "key_file_state"]
 
 KEY_KINDS = ("model_provider", "broker", "venue")
 FILE_KINDS = ("model_provider",)
-_NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
-_FILE_VERSION = 1
+# A key name, matched against the whole string only (``fullmatch``): ``$`` with ``match`` also accepts a
+# name that ends in a line break (R6 finding 10(d); B23, Lucas, Nov 13, 2026: "Fix before landing").
+_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
+_FILE_VERSION = 1  # compared as an int that is not a bool: ``True == 1`` and ``1.0 == 1`` are both true
 _LOCK_NAME = ".keys.lock"
 
 
@@ -183,12 +185,12 @@ class KeyStore:
             data = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, ValueError):
             raise KeyRefused("key_file_malformed") from None
-        if not isinstance(data, Mapping) or data.get("version") != _FILE_VERSION or not isinstance(data.get("keys"), Mapping):
+        if not isinstance(data, Mapping) or not _is_version(data.get("version")) or not isinstance(data.get("keys"), Mapping):
             raise KeyRefused("key_file_malformed")
         if type(data.get("kind")) is not str or data.get("kind") != "model_provider":
             raise KeyRefused("key_file_malformed", "kind")
         keys = data["keys"]
-        if not all(isinstance(k, str) and _NAME.match(k) and isinstance(v, str) for k, v in keys.items()):
+        if not all(isinstance(k, str) and _NAME.fullmatch(k) and isinstance(v, str) for k, v in keys.items()):
             raise KeyRefused("key_file_malformed")
         return dict(keys)
 
@@ -441,9 +443,13 @@ def _kind(kind: object) -> str:
 
 
 def _name(name: object) -> str:
-    if not isinstance(name, str) or not _NAME.match(name):
+    if not isinstance(name, str) or not _NAME.fullmatch(name):
         raise KeyRefused("key_name_malformed")
     return name
+
+
+def _is_version(value: object) -> bool:
+    return type(value) is int and value == _FILE_VERSION  # not a bool (a subclass of int), not a float
 
 
 def _account(kind: str, name: str) -> str:
