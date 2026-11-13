@@ -3,13 +3,14 @@
 A subscription-powered investing application connecting cited research, qualified
 strategies and controlled paper positions, with Discord and host interaction.
 
-**Product contract adopted 2026-09-09:** [PRODUCT.md](PRODUCT.md) defines the autonomous
-paper MVP, Windows/Linux support, full selected tax calculations and release acceptance.
+**Product contract:** `contracts/PRODUCT.md` in CSL-Laboratories/csl-research, at the commit
+pinned below, governs Cockpit (Lucas, Nov 12, 2026). The local [PRODUCT.md](PRODUCT.md)
+(adopted 2026-09-09) and `docs/replacement/` yield to it where they differ.
 The [delivery plan](docs/product-delivery.md) maps the integrated work and required
 reviews. The current runtime remains human-gated while that target is implemented;
 adopting the contract does not enable autonomous paper or live trading.
 
-Product spec pin (proposed, not governing; `tools/check_product_pin.py` checks it): [contract/PRODUCT.pin.json](contract/PRODUCT.pin.json) names contracts/PRODUCT.md in CSL-Laboratories/csl-research at commit d84cdd26a4de2366f3c5d34c4aec5215f822a494, SHA-256 e1d5fb8c02594b2ca88281113ffc14e6f3125daded2a00d45739cfb9d2ed04dd.
+Product spec pin (`tools/check_product_pin.py` checks it): [contract/PRODUCT.pin.json](contract/PRODUCT.pin.json) names contracts/PRODUCT.md in CSL-Laboratories/csl-research at commit d84cdd26a4de2366f3c5d34c4aec5215f822a494, SHA-256 e1d5fb8c02594b2ca88281113ffc14e6f3125daded2a00d45739cfb9d2ed04dd.
 
 > **Status (2026-08-24): foundation and quant engine built; paper-reliability MVP not yet
 > complete; no live trading.** On PR #53's source tree, byte-identical to clean merged main
@@ -41,7 +42,7 @@ are not enabled; see
 | `docs/` | The design corpus — research → architecture → build → security → enhancements. **Start at [`docs/README.md`](docs/README.md).** |
 | `app/` | The code, per the WP0–WP9 scaffold ([`docs/build-scaffold-ultracode.md`](docs/build-scaffold-ultracode.md)). |
 | `app/quant/` | The QT quant engine — real FIFO order book, strategies, replay, costs, PnL. **Read [`docs/quant-engine.md`](docs/quant-engine.md) before changing anything here**; it carries the containment argument. |
-| `.github/workflows/ci.yml` | Optional manually dispatched hosted parity check. The authoritative merge gates run locally under `DEC-09`. |
+| `.github/workflows/ci.yml` | Hosted CI on every PR; its `linux-gates` job is the required check on `main`. The release-blocking platform matrix still runs locally under `DEC-09`. |
 | `docs/setup/accounts-and-keys.md` | How to provision accounts/keys into the host OS credential store through `keyring`. |
 
 ## The load-bearing rules (never weaken silently)
@@ -142,5 +143,5 @@ toggle. See [`AGENTS.md`](AGENTS.md) and
 
 - Provision accounts + keys into the host OS credential store — [`docs/setup/accounts-and-keys.md`](docs/setup/accounts-and-keys.md).
 - Re-verify the moving targets before the full-scale/live stage — the dated snapshot `setup/moving-targets-refresh-2026-07-06.md` moved to csl-research [`contracts/ai-investment-cockpit/history/setup/moving-targets-refresh-2026-07-06.md`](https://github.com/CSL-Laboratories/csl-research/blob/c6587b65ceb9672a0ea5e88ce2f3aa8167721067/contracts/ai-investment-cockpit/history/setup/moving-targets-refresh-2026-07-06.md) at `c6587b65ceb9672a0ea5e88ce2f3aa8167721067` (the merge of csl-research #299, CSL-588).
-- **Keep this repository private.** Secrets live in keyring, never in the repo (Invariant 4).
+- **This repository is public.** Secrets live in keyring, never in the repo (Invariant 4).
 - Not financial advice; personal-use experiment with capped, loss-tolerable downside.

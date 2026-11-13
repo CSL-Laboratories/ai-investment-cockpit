@@ -164,7 +164,7 @@ Agents usually post through a developer's account, so readers cannot tell who
 wrote a comment from the author field. Make it visible in the text.
 
 - **Agent comment** (status, evidence, proposals): start with
-  `Agent (<tool/session>, for <developer>):`. It carries no authority.
+  `Agent (<Service> <Lane>, for <developer>):`. It carries no authority.
 - **Developer-approved comment**: counts as that developer's personal receipt
   (Lucas's decision, CSL-353 comment 6e602e3a; in force in this repository from the
   merge of the AGENTS.md section, CSL-354 comment f5bcb490) only when all of these
@@ -180,8 +180,7 @@ wrote a comment from the author field. Make it visible in the text.
   5. No accepted contract requires an exact authenticated human receipt for it.
      `docs/replacement/program.json`, R2a, recursion program receipts and other
      accepted contracts keep their own receipt rules unless amended. GitHub
-     review approvals follow "Review roles" and the founder approval rule in
-     AGENTS.md.
+     review approvals follow "Review roles" in AGENTS.md.
 - **Never** post decision language ("approved", "accepted", "restricted",
   "decided") as an agent comment without that marker. Quote and link the human's
   comment instead.

@@ -6,7 +6,6 @@ Touches other repos? (link the cross-repo Linear issue)
 <!-- What changed and why. -->
 
 ## Checklist
-- [ ] Devin review completed on the current head commit
 - [ ] All review threads resolved (or answered with rationale); no unresolved threads on the current head
 - [ ] Tests run locally and/or green in CI (name the commands and the exact tested head)
 - [ ] Required current-head reviews and checks per `AGENTS.md` Review roles / Review loop

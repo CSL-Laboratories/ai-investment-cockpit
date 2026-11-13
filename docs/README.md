@@ -7,6 +7,10 @@ last-verified: 2026-10-15
 
 # Docs index
 
+The governing product contract is csl-research `contracts/PRODUCT.md`, pinned in
+[`contract/PRODUCT.pin.json`](../contract/PRODUCT.pin.json) (Lucas, Nov 12, 2026). Where the
+contracts below differ from it, it governs.
+
 ## Accepted replacement product contract — CSL-212
 
 Lucas directed a full Cockpit product reset on 2026-10-16. Start replacement
