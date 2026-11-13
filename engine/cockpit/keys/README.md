@@ -24,6 +24,12 @@ A file, lock or directory that is not owner-only is refused on read and write an
 silently. The keyring is injected; nothing here imports a keyring library or calls a provider,
 venue or network. Frozen `app/` keeps its own keyring code and is untouched.
 
+Key names and the file (B23; Lucas, Nov 13, 2026: "Fix before landing (Recommended)"). A key name is 1
+to 64 characters of `a-z`, `0-9`, `.`, `_` and `-`, starting with a letter or a digit, matched against the
+whole name, so a name ending in a line break is refused (`key_name_malformed`), as an argument and as a
+name stored in the file. The file must say `"version": 1` as an integer: `true` or `1.0` makes it
+malformed (`key_file_malformed`), though both compare equal to 1 in Python.
+
 First save (owner-only file). Candidate default file: `$XDG_CONFIG_HOME/csl-cockpit/model-keys.json`
 (`~/.config/csl-cockpit/model-keys.json` when unset). Before the first save, `get` returns `None` and
 `delete` does nothing; neither creates anything. The first save creates what is missing, `0700`,
@@ -95,12 +101,45 @@ cron; with the fixed order every session on that host uses Secret Service, as lo
 the same set of available keychain classes and the same explicit backend setting. `PYTHON_KEYRING_BACKEND`
 (or `keyringrc.cfg`) set to one OS backend makes every session that has it use that one.
 
-A change of keychain reads what the newly selected keychain holds. The order is fixed, but which
-keychains answer can still differ between sessions or library versions (a daemon reachable only on the
-desktop). A run that selects a different keychain from the one a key was saved in reads nothing if
-that keychain never held the key, or an older key left there earlier, even one deleted since in the
-other keychain: a delete reaches only the selected keychain. No unselected store is ever consulted, and
-the doctor line names the keychain in use. Cockpit does not remember which keychain it used before.
+A change of keychain (B24). The order is fixed, but which keychains answer can still differ between
+sessions or library versions (a daemon reachable only on the desktop). Lucas, Nov 13, 2026, asked what
+Cockpit should do when a later run selects a different keychain from the one it saved a broker or venue
+key in: "Remember and refuse (Recommended)". So Cockpit remembers which keychain holds broker and venue
+keys:
+
+- **The record.** The first broker or venue save on a keychain host writes `.keychain.json` beside the key
+  file (by default `~/.config/csl-cockpit/.keychain.json`), under the key file's own rules: the same
+  owned chain of folders, `0600` in `0700`, owned by the running user, no link followed, replaced
+  atomically under `.keys.lock`, never repaired. It holds only Cockpit's own name for the keychain, the one
+  the doctor shows: `{"version": 1, "keychain": "SecretService Keyring"}`, plus `"previous"` after an
+  accepted switch. Never a key. With it Cockpit writes one non-secret marker into that keychain (service
+  `csl-cockpit`, account `cockpit-keychain-record`, the keychain's name as its value), so a record deleted
+  later is not taken for "never recorded".
+- **Same keychain.** Two runs have the same keychain when the admitted class is the same entry of the
+  fixed list (identity, as in admission); the record compares Cockpit's name for that entry.
+- **Refused, never re-recorded.** Broker and venue `get`, `put` and `delete` are refused when the record
+  names another keychain (`keychain_differs`), when the keychain holds the marker but the record is gone
+  (`keychain_record_missing`), when the record is malformed (`keychain_record_malformed`: not JSON, another
+  field, a `version` that is not the integer 1, a name not in the fixed list, over 4 KiB), a link, a folder,
+  a FIFO, another user's or not owner-only (`keychain_record_not_owner_only`), or cannot be read
+  (`keychain_record_unreadable`), and when a folder on the way is not owner-only (`key_dir_not_owner_only`).
+  The keychain this run selected is sent nothing. If the record cannot be written, the save is refused and
+  no key is stored.
+- **The way out**, named in each refusal and in the doctor line: make the recorded keychain available
+  again, or record the change with `python -m cockpit.keys accept-keychain "<name>"`, where the name is
+  exactly the keychain this run selected. It runs only at an interactive terminal, keeps the old keychain
+  as `"previous"`, and from then on the doctor line says the keychain was switched. It replaces a record
+  that is malformed; a link or a loose record is refused, and you remove it yourself. Code running as the
+  same user can still rewrite the record, as it can read the keychain itself: the step makes a switch
+  deliberate and visible, not impossible.
+- **Nothing to compare.** With no record and no marker (keys saved before this rule, or none yet), reads
+  and deletes work as before and create nothing; the next broker or venue save records the keychain
+  selected then. If that run selected a different keychain from the one older keys are in, Cockpit cannot
+  know.
+- **Not covered.** Model-provider keys are neither recorded nor refused: on a keychain host a run that
+  selects another keychain reads what that keychain holds (nothing, or an older key), and in the
+  owner-only file nothing changes. Windows keeps no record, since this module has no owner-only file there
+  and only the Windows vault can be selected there. macOS works as Linux does.
 
 Doctor line: `PYTHONPATH=engine python3 -m cockpit.keys doctor [--key-file PATH]` prints one line,
 for example
@@ -108,6 +147,7 @@ for example
 ```
 keys: ok - OS keychain (SecretService Keyring); model-provider, broker and venue keys in the keychain
 keys: ok - OS keychain (Windows WinVaultKeyring); model-provider, broker and venue keys in the keychain; other keyring backends ignored: some_helper.module.CredentialHelper
+keys: fail - OS keychain (kwallet DBusKeyring); model-provider keys in the keychain; broker and venue keys refused (keychain_differs): saved in SecretService Keyring, this run selected kwallet DBusKeyring; to keep broker and venue keys in kwallet DBusKeyring, run at a terminal: python -m cockpit.keys accept-keychain 'kwallet DBusKeyring'; or make SecretService Keyring available again
 keys: warn - no OS keychain (no_keychain_backend); model-provider keys in owner-only file /home/u/.config/csl-cockpit/model-keys.json [no_file_yet]; broker and venue keys refused (keychain_required)
 ```
 
@@ -162,4 +202,6 @@ one `try`. A `try` body and its `finally` count on top of whichever of those run
 up, since several can run. Rebinding a name by assignment or import is not checked.
 The suite is stdlib `unittest`; a pytest-style test function here would not be covered. Tests that need an OS
 keychain use the installed `keyring` library's own classes, with their probe and password methods pointed
-at a dict (no real keychain or D-Bus is reached), and are skipped without the library.
+at a dict (no real keychain or D-Bus is reached), and are skipped without the library. Each test host gets
+its own temp key folder (`fakes.key_file`), since a broker or venue save now writes the keychain record
+beside the key file (B24); no test uses the tester's own default key file.
