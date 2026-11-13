@@ -10,7 +10,7 @@ last-verified: 2026-09-14
 
 Use the reviewed branch `codex/swarm-rebase-2026-09-14`, based on
 `f24f9a8dc9e0fda00ffc56109374ebd05fe519b1`, in
-`C:\Users\drfoo\GitHub\ai-investment-cockpit`. After successful local validation,
+[operator checkout path]. After successful local validation,
 the operator authorized commit, push and a draft PR. Select that published branch
 in Cursor Cloud, or its eventual merged main. Confirm the source
 revision includes this handoff and the RW-33 evidence; never silently run against

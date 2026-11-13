@@ -104,8 +104,8 @@ quality or an unqualified evaluator means unverified evidence, not an automatic 
 
 ## Economic baseline and reports
 
-Use $2,000 as a provisional paper balance derived from Lucas's likely minimum-transfer
-intention. The owner-stated $210/month covers ChatGPT Pro and OpenCode Go; it is not a
+Use [amount] as a provisional paper balance derived from Lucas's likely minimum-transfer
+intention. The owner-stated [amount]/month covers ChatGPT Pro and OpenCode Go; it is not a
 verified price quote or the total of every possible operating cost. Preserve that full
 expense-coverage target while separately identifying any shared-use allocation.
 
@@ -115,10 +115,10 @@ Disclose whether costs are deducted in the simulated cash ledger or in the econo
 comparison; never deduct them twice. Compare portfolios with matched external cash
 flows. A recurring contribution cannot be counted as investment gain.
 
-At $2,000, the stated subscriptions alone require $210 / $2,000 = 10.5% per month
+At [amount], the stated subscriptions alone require [amount] / [amount] = [percentage] per month
 after trading costs to be covered at that static balance. This is an arithmetic hurdle,
 not expected performance. Other costs, taxes and additional growth are separate.
-The owner reports $500/month of student funding for the coming year but has not selected
+The owner reports [amount]/month of student funding for the coming year but has not selected
 a contribution percentage; do not assume that funding is all investable or indefinite.
 Contribution scenarios require explicit amounts and timing. Show a reference scenario
 without assumed future contributions and preserve losses and periods below the target.

@@ -75,15 +75,15 @@ runtime review and empirical qualification remain separate from ratification.
 | PD-032 | decided — Round 7a Q24 | When required inputs are unavailable, block new or increased exposure for affected actions, monitor existing paper positions and allow only preapproved protective actions whose own requirements pass. Detailed handling of orders, partial fills, uncertain submissions and reconciliation remains to be specified. |
 | PD-033 | decided — Round 7b Q25 | Launch with two or three distinct strategies, selected through bounded feasibility comparison including the existing cash-merger strategy and approved by Lucas. Each requires its own evidence/evaluation; parameter variants do not satisfy the count. |
 | PD-034 | decided requirement — Round 7b Q25 | Expand the strategy suite after launch and retain explicit reminders/roadmap follow-up. Two or three is not a permanent ceiling. Reminder cadence and candidate-review mechanics remain open; additions still require evaluation and owner activation. |
-| PD-035 | owner economic objective — Round 7b Q25 | Eventually achieve profitable growth exceeding expenses estimated at about $210/month. This is a target to evaluate, not a verified cost total, spending authorization, return promise or replacement of PD-024's MVP completion criterion. Capital baseline and expense components remain open. |
+| PD-035 | owner economic objective — Round 7b Q25 | Eventually achieve profitable growth exceeding expenses estimated at about [amount]/month. This is a target to evaluate, not a verified cost total, spending authorization, return promise or replacement of PD-024's MVP completion criterion. Capital baseline and expense components remain open. |
 | PD-036 | decided — Round 7b Q26 | The engine decides holding horizons within approved strategy evidence, data/execution capabilities and policy. No universal days-to-months restriction is selected; exact supported horizons follow feasibility and strategy contracts. |
-| PD-037 | owner-stated expense scope — Round 7c Q27 | Approximately $210/month covers ChatGPT Pro plus OpenCode Go subscriptions. This is the owner's expense assumption, not independently verified pricing or an all-inclusive engine-cost estimate. |
-| PD-038 | owner funding/capital context; provisional paper assumption — Round 7c Q27 | Lucas receives $500/month of student funding for the coming year, wants to contribute a percentage of monthly income, and is likely to transfer a minimum of $2,000. Use $2,000 provisionally for paper evaluation; exact deposit and contribution rate remain unset. No live allocation/transfer is authorized and the entire funding stream is not assumed investable. |
+| PD-037 | owner-stated expense scope — Round 7c Q27 | Approximately [amount]/month covers ChatGPT Pro plus OpenCode Go subscriptions. This is the owner's expense assumption, not independently verified pricing or an all-inclusive engine-cost estimate. |
+| PD-038 | owner funding/capital context; provisional paper assumption — Round 7c Q27 | Lucas receives [amount]/month of student funding for the coming year, wants to contribute a percentage of monthly income, and is likely to transfer a minimum of [amount]. Use [amount] provisionally for paper evaluation; exact deposit and contribution rate remain unset. No live allocation/transfer is authorized and the entire funding stream is not assumed investable. |
 | PD-039 | decided — Round 8a Q28 | At least 20 market days of unattended paper observation on the primary Linux deployment, plus required workflow coverage and applicable strategy-evidence gates. Longer lifecycles or incomplete evidence may extend it; the minimum is not proof of profitability. |
 | PD-040 | decided — Round 8a Q29 | Monthly expansion summaries plus notifications when candidates are ready for owner activation review. Include progress, missing evidence and next steps. No daily review obligation, automatic activation or budget increase follows from the cadence. |
 | PD-041 | decided — Round 8b Q30 | Newly researched stocks/ETFs enter paper-execution eligibility automatically within owner-approved rules after required evidence, instrument, strategy and risk checks. Submission/research alone grants no eligibility. Requires a scoped reviewed replacement of the current static allowlist, preserving the single order path. |
 | PD-042 | decided — Round 8b Q31 | Full investment-tax calculations are MVP scope, replacing the recommendation to defer the tax engine. Jurisdiction, account type, tax-year coverage, complete inputs and verified rules need specification; a full personal-return preparation/filing service is not selected. |
-| PD-043 | decided — Round 8c Q32 | Tax support must be configurable and cover taxable brokerage and retirement accounts. Lucas identifies Fremont, California, United States as his residence; other taxpayer facts are not inferred. |
+| PD-043 | decided — Round 8c Q32 | Tax support must be configurable and cover taxable brokerage and retirement accounts. Lucas identifies [place of residence] as his residence; other taxpayer facts are not inferred. |
 | PD-044 | decided — Round 8c Q33 | Validated US federal and California calculations at launch, with an extensible jurisdiction interface for additional verified rule sets. Unsupported jurisdictions remain explicit. |
 | PD-045 | decided — Round 8c Q34 | Traditional/Roth IRAs plus 401(k), 403(b) and governmental 457(b) accounts at launch, with account-specific rules. SEP/SIMPLE and inherited cases were not selected for launch coverage. Tax-calculation capability is separate from broker account-trading support. |
 | PD-046 | decided — Round 9 Q35 | Missing personal tax context permits continued paper operation using an explicitly configured scenario, with missing personal inputs visible. Actions requiring an unverified tax restriction remain blocked. Full tax-engine release coverage is still required. |
@@ -108,7 +108,7 @@ During failures, monitor positions and permit only qualifying preapproved protec
 actions while affected new/increased exposure is blocked.
 Launch with two or three strategies, keep future expansion and reminders explicit,
 and let the engine select supported holding horizons. Evaluate progress toward
-profitable growth beyond the owner's approximate $210/month expense benchmark.
+profitable growth beyond the owner's approximate [amount]/month expense benchmark.
 PD-048 adopts the detailed operating, tax, acceptance and delivery contracts. Specific
 strategy qualification, owner deployment configuration and reviewed runtime amendments
 remain required implementation work. Historical recommendations below retain their
@@ -145,7 +145,7 @@ consolidated contracts; unresolved empirical questions still require evidence.
 | 6b | Architecture and integration dependency | complete through PD-029 | Persistent cockpit plus integrations; standalone MVP, Recursion when qualified |
 | 7a | Engine releases and failure recovery | complete through PD-032; detailed contracts adopted under PD-048 | Owner-approved software releases, checked automatic recovery, human-released holds and permitted protective actions |
 | 7b | Initial strategy-suite contract | complete through PD-036 | Two or three launch strategies, expansion reminders, economic objective and engine-selected horizons |
-| 7c | Economic evaluation baseline | answered through PD-038; contribution rate unset | Owner-stated subscription expense, provisional $2,000 paper balance and contribution context |
+| 7c | Economic evaluation baseline | answered through PD-038; contribution rate unset | Owner-stated subscription expense, provisional [amount] paper balance and contribution context |
 | 8a | Release evidence and expansion review | complete through PD-040 | At least 20 market days plus coverage; monthly expansion summaries and candidate-ready notifications |
 | 8b | Final scope boundaries | complete through PD-042 | Automatic eligibility under approved rules; full investment-tax calculations in MVP |
 | 8c | Tax coverage | complete through PD-045 | US federal and California first; taxable brokerage, Traditional/Roth IRAs and common workplace plans; extensible verified rules |
@@ -812,12 +812,12 @@ under the selected development, evaluation and owner-activation process.
 **Answer (2026-09-09):** “Go with two or three, but please make sure to make reminders
 that the strategies need to be expanded in the future. The more strategies, the higher
 the trading plane and potential ROI. We are trying to make a margin of profit that
-succeeds so that it outweighs my expenses in growth eventually (around $210/month)”
+succeeds so that it outweighs my expenses in growth eventually (around [amount]/month)”
 
 **Recorded decisions:** PD-033 selects two or three launch strategies under the
 proposed feasibility/evaluation/owner-approval process. PD-034 makes future expansion
 and reminders explicit, rather than treating the launch count as a permanent limit.
-PD-035 records eventual profitable growth beyond approximately $210/month in expenses
+PD-035 records eventual profitable growth beyond approximately [amount]/month in expenses
 as an economic objective. The exact expense components and starting capital are not
 yet established. The owner's expectation that more strategies improve opportunity/ROI
 is a hypothesis to evaluate, not evidence of a monotonic return increase.
@@ -854,30 +854,30 @@ answer does not itself require or certify all intraday/high-frequency capabiliti
 
 ### Q27. What capital and expense baseline should the economic evaluation use?
 
-Question presented: “To evaluate your goal of eventually covering roughly $210/month
+Question presented: “To evaluate your goal of eventually covering roughly [amount]/month
 and growing beyond it, what starting paper balance should we model, and what expenses
-does the $210 include (for example, subscriptions, hosting, or data)? Approximate figures
+does the [amount] include (for example, subscriptions, hosting, or data)? Approximate figures
 are enough; these are evaluation assumptions, not a commitment of real capital.”
 
 Use owner-provided assumptions to make the economic target measurable. Keep the
 expense-coverage goal distinct from hard spending limits and the live-capital gates;
 do not invent a starting balance or assume the figure includes every engine cost.
 
-**Answer (2026-09-09):** “the $210 pays for the ChatGPT Pro subscription + Opencode Go
-subscription. I'm currently receiving $500/month for the next year in student funding.
+**Answer (2026-09-09):** “the [amount] pays for the ChatGPT Pro subscription + Opencode Go
+subscription. I'm currently receiving [amount]/month for the next year in student funding.
 I'm trying to develop and make something for myself where I can pour a percentage of
 my monthly income in and grow the money simultaneously. I'm likely going to transfer
-a minimum of 2k.”
+a minimum of [amount].”
 
-**Recorded decisions/context:** PD-037 identifies the $210/month expense as the two
+**Recorded decisions/context:** PD-037 identifies the [amount]/month expense as the two
 subscriptions. PD-038 records the funding and contribution intention and the likely
-minimum transfer. A $2,000 paper starting balance is a provisional evaluation assumption
+minimum transfer. A [amount] paper starting balance is a provisional evaluation assumption
 derived from that answer, not a definitive deposit instruction. No contribution
-percentage or schedule was supplied. Do not assume $500/month is entirely available
+percentage or schedule was supplied. Do not assume [amount]/month is entirely available
 for investment, infer other income/expenses, or extend the stated funding indefinitely.
 
-**Derived arithmetic, not a return forecast:** $210 / $2,000 = 10.5% per month to
-cover the stated subscriptions at a static $2,000 balance after trading costs, before
+**Derived arithmetic, not a return forecast:** [amount] / [amount] = [percentage] per month to
+cover the stated subscriptions at a static [amount] balance after trading costs, before
 additional growth, other costs and taxes. This was checked with decimal arithmetic.
 Do not present the target as demonstrated or routinely attainable. The selected
 MVP remains paper-first and does not authorize the intended future transfer.
@@ -989,8 +989,8 @@ This information determines the applicable rules and required inputs for PD-042.
 Research official sources after the owner identifies the intended coverage. The
 workstation timezone and use of US stocks do not establish personal tax jurisdiction.
 
-**Answer (2026-09-09):** “It should be configurable, but I reside in Fremont,
-California in the United States. It should support brokerage accounts and retirement
+**Answer (2026-09-09):** “It should be configurable, but I reside in
+[place of residence]. It should support brokerage accounts and retirement
 accounts”
 
 **Recorded decision:** PD-043. Support configurable tax contexts and both taxable
@@ -1153,10 +1153,10 @@ product approval is pending and no runtime or empirical PASS is implied.
   records official IRS/FTB source findings and proposed input/calculation/validation
   requirements. Current-year qualification, implementation and reference evidence are
   still required; reviewed publications are not a working or validated tax engine.
-- PD-037 scopes the owner-stated $210/month to subscriptions; PD-038 supplies a likely
-  minimum transfer from which $2,000 is used provisionally for paper evaluation. These
+- PD-037 scopes the owner-stated [amount]/month to subscriptions; PD-038 supplies a likely
+  minimum transfer from which [amount] is used provisionally for paper evaluation. These
   are not independently verified pricing/account observations or transfer authority.
-  Contribution rate, other operating costs and tax treatment remain open. The 10.5%
+  Contribution rate, other operating costs and tax treatment remain open. The [percentage]
   monthly subscription-coverage hurdle is arithmetic, not expected strategy performance.
 - General financial reference checked for Q25: the SEC explains that
   [fees and expenses reduce investment returns](https://www.investor.gov/introduction-investing/general-resources/news-alerts/alerts-bulletins/investor-bulletins/updated)

@@ -9,8 +9,8 @@ last-verified: 2026-09-09
 PD-042 through PD-045 select full investment-tax calculations for the MVP, US federal
 and California coverage first, and taxable brokerage accounts plus Traditional/Roth
 IRAs, 401(k), 403(b) and governmental 457(b) accounts. Jurisdictions are configurable
-and further verified rule sets can be added. Lucas identifies Fremont, California,
-United States as his residence; that statement does not establish filing status,
+and further verified rule sets can be added. Lucas identifies [place of residence]
+as his residence; that statement does not establish filing status,
 tax residency for an entire year, income classification or any account's actual type.
 
 The selected scope and calculation, input and validation contracts were adopted

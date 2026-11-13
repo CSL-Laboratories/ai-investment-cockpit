@@ -149,7 +149,7 @@ cockpit's limits must admit the work without duplicating charges or reservations
 Before operation, require owner-configured aggregate inference ceilings, accounting
 windows, concurrency/deadline limits, fallback routes, paper capital/exposure/loss
 limits, settlement policy and monitoring reserves. These are mandatory configuration,
-not values inferred from $210 subscriptions, $500 funding or the provisional $2,000
+not values inferred from [amount] subscriptions, [amount] funding or the provisional [amount]
 paper baseline. Increasing a hard cap needs owner approval. Allocate within approved
 limits and preserve enough admitted resources for required monitoring/protection.
 
