@@ -137,9 +137,14 @@ PYTHONPATH=engine python3 -B -m unittest discover -s engine/cockpit/keys/tests -
 ```
 
 CI runs `engine/tests`; `engine/tests/keys/test_keys_suite_ci.py` imports this folder's test classes so
-that the same step collects and runs them, and fails if unittest discovery of this folder finds a
-runnable test (any test method, whatever its class is called, in any test module or test package here)
-that the CI file does not collect. The suite is stdlib `unittest`; a pytest-style test function here
-would not be covered. Tests that need an OS keychain use the installed `keyring` library's own classes, with
-their probe and password methods pointed at a dict (no real keychain or D-Bus is reached), and are
-skipped without the library.
+that the same step collects and runs them. Its coverage check runs pytest's own collection of that file
+(in a child process, with the same interpreter) and fails unless every runnable test that unittest
+discovery of this folder finds (any test method, whatever its class is called, in any test module or test
+package here, or a module that fails to import) is collected exactly once: a test pytest leaves out, such
+as one marked `__test__ = False`, fails it, and so does a class exposed twice. It also fails when a test
+module here defines a test class twice, or a test method twice in one class, since the later definition
+replaces the earlier one before either runner sees it. It cannot see a method that is no longer a test
+at all (renamed from `test_...`), and it is skipped on an interpreter without pytest; CI has pytest. The
+suite is stdlib `unittest`; a pytest-style test function here would not be covered. Tests that need an OS
+keychain use the installed `keyring` library's own classes, with their probe and password methods pointed
+at a dict (no real keychain or D-Bus is reached), and are skipped without the library.
