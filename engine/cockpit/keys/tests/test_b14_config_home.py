@@ -12,13 +12,14 @@ Temp directories and made-up keys only; no real keyring, provider, venue or netw
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import stat
 import tempfile
 import threading
 import unittest
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from unittest import mock
 
 from cockpit.keys import KeychainStatus, KeyRefused, KeyStore, doctor, store_for_host
@@ -33,6 +34,27 @@ def _absent() -> object:
 
 def _mode(path: str) -> int:
     return stat.S_IMODE(os.lstat(path).st_mode)
+
+
+@contextlib.contextmanager
+def _as_root() -> Iterator[None]:
+    """The store as root runs it, without root: the effective uid, and every owner a stat call reads as
+    this user's, read 0, as in a user namespace that maps this user to root. Root's right to write in
+    any folder is not simulated, so this is used only where the store refuses before it writes."""
+    me = os.geteuid()
+
+    def seen_by_root(read: Callable[..., os.stat_result]) -> Callable[..., os.stat_result]:
+        def as_root_sees_it(*args: object, **kwargs: object) -> os.stat_result:
+            st = read(*args, **kwargs)
+            if st.st_uid != me:
+                return st
+            kind, (fields, extra) = st.__reduce__()  # the same stat result, only st_uid changed
+            return kind((*fields[:4], 0, *fields[5:]), extra)
+        return as_root_sees_it
+
+    with mock.patch.multiple(os, geteuid=lambda: 0, fstat=seen_by_root(os.fstat),
+                             lstat=seen_by_root(os.lstat), stat=seen_by_root(os.stat)):
+        yield
 
 
 @unittest.skipUnless(POSIX, "owner-only file requires POSIX")
@@ -147,13 +169,37 @@ class FreshAccountTests(unittest.TestCase):
                 self.assertEqual(_mode(self.home), mode)
 
     # -- the home folder ------------------------------------------------------------------------
-    def test_home_writable_by_others_gets_nothing_and_is_never_repaired(self) -> None:
+    def writable_home_cause(self, mode: int) -> str:
+        # Each of these homes fails the ancestor rule (key_dir_not_owner_only), except one: as root the
+        # home is root's own, so a sticky 0o1777 home passes that rule, as /tmp does, and the home rule
+        # then refuses to make .config in it (key_dir_missing). Either way nothing is made or repaired.
+        root_sticky = mode == 0o1777 and os.geteuid() == 0 == os.lstat(self.home).st_uid
+        return "key_dir_missing" if root_sticky else "key_dir_not_owner_only"
+
+    def assert_every_writable_home_gets_nothing(self) -> None:
         for mode in (0o770, 0o775, 0o777, 0o757, 0o720, 0o702, 0o1777):
             with self.subTest(mode=oct(mode)):
                 os.chmod(self.home, mode)
-                self.every_operation_refused(self.store(), "key_dir_not_owner_only")
+                self.every_operation_refused(self.store(), self.writable_home_cause(mode))
                 self.assertEqual(_mode(self.home), mode)
                 self.assertEqual(os.listdir(self.home), [])
+
+    def test_home_writable_by_others_gets_nothing_and_is_never_repaired(self) -> None:
+        self.assert_every_writable_home_gets_nothing()
+        os.chmod(self.home, 0o700)  # the user fixes it; Cockpit never does
+        self.assert_saved_owner_only(self.store())
+
+    def test_as_root_a_home_writable_by_others_gets_nothing_either(self) -> None:
+        # The hosted Codex review of #326 at b9ebe2ed: run as root, the test above expected
+        # key_dir_not_owner_only for 0o1777 and got key_dir_missing. This runs root's branch in every
+        # CI run, through the home rule: the refusal names it, and the home is left as it was.
+        with _as_root():
+            self.assertEqual((os.geteuid(), os.lstat(self.home).st_uid), (0, 0))
+            self.assert_every_writable_home_gets_nothing()
+            exc = self.refused("key_dir_missing", self.store().put, "model_provider", "openai", FAKE)
+            self.assertIn("not created: home folder is not the user's own or is writable by others (0o777)",
+                          str(exc))
+        self.assertEqual((_mode(self.home), os.listdir(self.home)), (0o1777, []))
         os.chmod(self.home, 0o700)  # the user fixes it; Cockpit never does
         self.assert_saved_owner_only(self.store())
 
