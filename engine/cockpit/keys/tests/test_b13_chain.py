@@ -193,59 +193,151 @@ class MixedChainTests(unittest.TestCase):
         store, status = store_for_host(PATH, loader(chain([untouchable(*PLAIN)[0], ss])))
         self.assertTrue(status.available)  # the same chain with a keychain in it is used
 
-    def test_only_the_first_os_keychain_of_a_chain_is_used(self) -> None:
-        # #323 already used the first of several OS keychains; B13 keeps that and names the rest.
-        kwallet = os_backend("keyring.backends.kwallet", "kwallet DBusKeyring")
-        ss = os_backend()
-        plain, touched = untouchable(*PLAIN)
-        store, status = store_for_host(PATH, loader(chain([kwallet, ss, plain])))
-        self.assertTrue(status.available)
-        self.assertEqual(status.backend, "kwallet DBusKeyring")
-        self.assertEqual(status.ignored, ("keyring.backends.SecretService.Keyring", "keyrings.alt.file.PlaintextKeyring"))
-        self.round_trip_every_kind(store)
-        self.assertEqual((ss.calls, touched), ([], []))
-
-    def test_two_os_keychains_use_the_first_and_name_the_second(self) -> None:
-        # The two pairs keyring 25.7 can find on one desktop. #323 already used the first; the Liaison
-        # answered "keep #323's rule" (Nov 12, 2026, 8:15 PM PST). Pinned here with the doctor line.
-        pairs = (
-            (("keyring.backends.SecretService", "SecretService Keyring"), ("keyring.backends.libsecret", "libsecret Keyring")),
-            (("keyring.backends.kwallet", "kwallet DBusKeyring"), ("keyring.backends.SecretService", "SecretService Keyring")),
-        )
-        for (first_module, first_name), (second_module, second_name) in pairs:
-            with self.subTest(first=first_module, second=second_module):
-                first, second = os_backend(first_module, first_name), os_backend(second_module, second_name)
+    def test_secret_service_is_used_before_kwallet_in_any_chain_order(self) -> None:
+        # Option B: Cockpit's fixed order among OS keychains, not the chain's (the library's) order.
+        for order in ((0, 1, 2), (1, 0, 2), (2, 1, 0), (1, 2, 0)):
+            with self.subTest(order=order):
+                kwallet = os_backend("keyring.backends.kwallet", "kwallet DBusKeyring", qualname="DBusKeyring")
+                ss = os_backend()
                 plain, touched = untouchable(*PLAIN)
-                store, status = store_for_host(PATH, loader(chain([first, second, plain])))
+                members = [kwallet, ss, plain]
+                store, status = store_for_host(PATH, loader(chain([members[i] for i in order])))
                 self.assertTrue(status.available)
-                self.assertEqual(status.backend, first_name)
-                self.assertEqual(status.ignored, (f"{second_module}.Keyring", ".".join(PLAIN)))
+                self.assertEqual(status.backend, "SecretService Keyring")
+                names = {0: "keyring.backends.kwallet.DBusKeyring", 2: ".".join(PLAIN)}
+                self.assertEqual(status.ignored, tuple(names[i] for i in order if i != 1))
+                self.round_trip_every_kind(store)
+                self.assertEqual((kwallet.calls, touched), ([], []))
+
+    def test_two_os_keychains_follow_cockpits_order_and_name_the_other(self) -> None:
+        # The two pairs keyring 25.7 can find on one desktop, in the order the library hands them over.
+        pairs = (
+            (("keyring.backends.SecretService", "SecretService Keyring"), ("keyring.backends.libsecret", "libsecret Keyring"), 0),
+            (("keyring.backends.kwallet", "kwallet DBusKeyring"), ("keyring.backends.SecretService", "SecretService Keyring"), 1),
+        )
+        for (first_module, first_name), (second_module, second_name), pick in pairs:
+            with self.subTest(first=first_module, second=second_module):
+                pair = [os_backend(first_module, first_name), os_backend(second_module, second_name)]
+                used, other = pair[pick], pair[1 - pick]
+                plain, touched = untouchable(*PLAIN)
+                store, status = store_for_host(PATH, loader(chain([*pair, plain])))
+                self.assertTrue(status.available)
+                self.assertEqual(status.backend, used.name)
+                other_name = f"{type(other).__module__}.Keyring"
+                self.assertEqual(status.ignored, (other_name, ".".join(PLAIN)))
                 for kind in KEY_KINDS:
                     store.put(kind, "fixture", FAKE)
                     self.assertEqual(store.get(kind, "fixture"), FAKE)
-                self.assertEqual(len(first.data), len(KEY_KINDS))
-                self.assertEqual((second.calls, second.data, touched), ([], {}, []))
+                self.assertEqual(len(used.data), len(KEY_KINDS))
+                self.assertEqual((other.calls, other.data, touched), ([], {}, []))
                 self.assertEqual(doctor_line(doctor(status, None)), (
-                    f"keys: ok - OS keychain ({first_name}); model-provider, broker and venue keys in the keychain; "
-                    f"other keyring backends ignored: {second_module}.Keyring, keyrings.alt.file.PlaintextKeyring"))
+                    f"keys: ok - OS keychain ({used.name}); model-provider, broker and venue keys in the keychain; "
+                    f"other keyring backends ignored: {other_name}, keyrings.alt.file.PlaintextKeyring"))
+
+    def test_one_kde_host_picks_the_same_keychain_in_both_session_kinds(self) -> None:
+        # keyring 25.7 hands over a desktop session's chain and an SSH, service or cron session's chain in
+        # different orders (KWallet 5.1 against 4.9; logs/72_order_stability.log). Cockpit picks the same
+        # keychain from both, so a key saved in one session is found in the other.
+        def kw5() -> object:
+            return os_backend("keyring.backends.kwallet", "kwallet DBusKeyring", qualname="DBusKeyring")
+
+        def kw4() -> object:
+            return os_backend("keyring.backends.kwallet", "kwallet DBusKeyringKWallet4", qualname="DBusKeyringKWallet4")
+
+        cases = {
+            # name: (makers, desktop order, other order, expected keychain)
+            "SecretService + KWallet 5": ([os_backend, kw5], (1, 0), (0, 1), "SecretService Keyring"),
+            "SecretService + KWallet 5 + KWallet 4": ([os_backend, kw5, kw4], (1, 0, 2), (0, 1, 2), "SecretService Keyring"),
+            "KWallet 5 only": ([kw5], (0,), (0,), "kwallet DBusKeyring"),
+            "KWallet 5 + KWallet 4": ([kw5, kw4], (0, 1), (0, 1), "kwallet DBusKeyring"),
+            "SecretService + libsecret (GNOME)": ([os_backend, lambda: os_backend("keyring.backends.libsecret", "libsecret Keyring")],
+                                                  (0, 1), (0, 1), "SecretService Keyring"),
+        }
+        for label, (makers, desktop_order, other_order, expected) in cases.items():
+            with self.subTest(label):
+                rings = [make() for make in makers]
+                desktop, status = store_for_host(PATH, loader(chain([rings[i] for i in desktop_order])))
+                self.assertEqual(status.backend, expected)
+                desktop_ignored = status.ignored
+                desktop.put("broker", "fixture", FAKE)
+                elsewhere, status = store_for_host(PATH, loader(chain([rings[i] for i in other_order])))
+                self.assertEqual(status.backend, expected)
+                self.assertEqual(sorted(status.ignored), sorted(desktop_ignored))
+                self.assertEqual(elsewhere.get("broker", "fixture"), FAKE)
+                used = [ring for ring in rings if ring.name == expected]
+                self.assertEqual([len(ring.data) for ring in rings], [1 if ring in used else 0 for ring in rings])
+
+    def test_every_pair_of_os_keychains_follows_the_fixed_order(self) -> None:
+        # keyring 25.7.0's priorities in a KDE desktop session and elsewhere; the library chains by priority.
+        priority = {"desktop": {"SS": 5, "KW5": 5.1, "LIB": 4.8, "KW4": 4.1},
+                    "elsewhere": {"SS": 5, "KW5": 4.9, "LIB": 4.8, "KW4": 3.9}}
+        make = {
+            "SS": lambda: os_backend(),
+            "KW5": lambda: os_backend("keyring.backends.kwallet", "kwallet DBusKeyring", qualname="DBusKeyring"),
+            "LIB": lambda: os_backend("keyring.backends.libsecret", "libsecret Keyring"),
+            "KW4": lambda: os_backend("keyring.backends.kwallet", "kwallet DBusKeyringKWallet4",
+                                      qualname="DBusKeyringKWallet4"),
+        }
+        # pair: (library's pick on a KDE desktop, library's pick elsewhere, Cockpit's pick in both)
+        table = {
+            ("SS", "LIB"): ("SS", "SS", "SS"),
+            ("SS", "KW5"): ("KW5", "SS", "SS"),  # the one pair the library flips
+            ("SS", "KW4"): ("SS", "SS", "SS"),
+            ("KW5", "LIB"): ("KW5", "KW5", "KW5"),
+            ("KW5", "KW4"): ("KW5", "KW5", "KW5"),
+            ("LIB", "KW4"): ("LIB", "LIB", "LIB"),
+        }
+        for pair, (lib_desktop, lib_elsewhere, cockpit) in table.items():
+            for session, library_pick in (("desktop", lib_desktop), ("elsewhere", lib_elsewhere)):
+                with self.subTest(pair=pair, session=session):
+                    order = sorted(pair, key=lambda key: priority[session][key], reverse=True)
+                    self.assertEqual(order[0], library_pick)  # what the library itself would use
+                    rings = {key: make[key]() for key in pair}
+                    store, status = store_for_host(PATH, loader(chain([rings[key] for key in order])))
+                    self.assertEqual(status.backend, rings[cockpit].name)
+                    store.put("broker", "fixture", FAKE)
+                    other = next(key for key in pair if key != cockpit)
+                    self.assertEqual((len(rings[cockpit].data), rings[other].calls), (1, []))
+                    self.assertIn(f"other keyring backends ignored: {type(rings[other]).__module__}."
+                                  f"{type(rings[other]).__qualname__}", doctor_line(doctor(status, None)))
+
+    def test_a_tie_in_the_fixed_order_keeps_the_chains_order(self) -> None:
+        # Two KWallet classes the order does not list share the module's place; the chain's order decides.
+        first = os_backend("keyring.backends.kwallet", "kwallet Future", qualname="FutureKWallet")
+        second = os_backend("keyring.backends.kwallet", "kwallet Other", qualname="OtherKWallet")
+        for pair in ((first, second), (second, first)):
+            with self.subTest(first=pair[0].name):
+                _, status = store_for_host(PATH, loader(chain(list(pair))))
+                self.assertEqual(status.backend, pair[0].name)
+        _, status = store_for_host(PATH, loader(chain([first, os_backend("keyring.backends.libsecret", "libsecret Keyring")])))
+        self.assertEqual(status.backend, "libsecret Keyring")  # listed classes come before the module fallback
+
+    def test_the_librarys_sentinels_are_skipped_without_a_name(self) -> None:
+        fail = os_backend("keyring.backends.fail", "fail Keyring")
+        null = os_backend("keyring.backends.null", "null Keyring")
+        ss = os_backend()
+        store, status = store_for_host(PATH, loader(chain([fail, ss, null, untouchable(*PLAIN)[0]])))
+        self.assertEqual((status.backend, status.ignored), ("SecretService Keyring", (".".join(PLAIN),)))
+        self.round_trip_every_kind(store)
+        self.assertEqual((fail.calls, null.calls), ([], []))
 
     def test_a_key_saved_under_another_os_keychain_reads_as_not_saved(self) -> None:
-        # On a KDE host where KWallet and Secret Service both answer, keyring 25.7 ranks KWallet first in a
-        # desktop session (priority 5.1) and Secret Service first over SSH, in a service or in cron (4.9).
-        # A key saved in one reads as "no key saved" in the other; nothing else is ever consulted.
+        # The order is fixed, but which keychains answer can still differ between sessions (a daemon
+        # reachable on the desktop and not over SSH). A key saved under one then reads as "no key saved"
+        # under the other; nothing else is ever consulted.
         kwallet = os_backend("keyring.backends.kwallet", "kwallet DBusKeyring")
         ss = os_backend()
         plain = os_backend(PLAIN[0], "file PlaintextKeyring")
-        desktop, status = store_for_host(PATH, loader(chain([kwallet, ss, plain])))
+        desktop, status = store_for_host(PATH, loader(chain([kwallet, plain])))
         self.assertEqual(status.backend, "kwallet DBusKeyring")
         for kind in KEY_KINDS:
             desktop.put(kind, "fixture", FAKE)
         plain.data[("csl-cockpit", "broker:fixture")] = FAKE  # even a copy elsewhere is never read
         saved = dict(kwallet.data)
         kwallet.calls.clear()
-        later, status = store_for_host(PATH, loader(chain([ss, kwallet, plain])))
+        later, status = store_for_host(PATH, loader(chain([ss, plain])))
         self.assertEqual(status.backend, "SecretService Keyring")
-        self.assertEqual(status.ignored, ("keyring.backends.kwallet.Keyring", "keyrings.alt.file.Keyring"))
+        self.assertEqual(status.ignored, ("keyrings.alt.file.Keyring",))
         for kind in KEY_KINDS:
             self.assertIsNone(later.get(kind, "fixture"))
             later.delete(kind, "fixture")

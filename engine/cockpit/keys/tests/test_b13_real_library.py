@@ -10,8 +10,10 @@ Skipped when the library is missing. Every value is made up.
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import os
+import types
 import unittest
 from typing import Any
 from unittest import mock
@@ -21,6 +23,7 @@ from cockpit.keys.tests.fakes import FAKE, loader
 
 try:
     _kr_backend = importlib.import_module("keyring.backend")
+    _core = importlib.import_module("keyring.core")
     _chainer = importlib.import_module("keyring.backends.chainer")
     _ss = importlib.import_module("keyring.backends.SecretService")
     _libsecret = importlib.import_module("keyring.backends.libsecret")
@@ -123,7 +126,7 @@ class RealChainerTests(unittest.TestCase):
         self.assertEqual(len(data), 3)
         self.assertEqual(touched, [])
 
-    def test_two_real_os_keychains_use_the_first_in_the_library_order(self) -> None:
+    def test_two_real_os_keychains_use_secret_service_before_libsecret(self) -> None:
         lib, lib_data, lib_calls = self.real_os_backend(_libsecret.Keyring, 4.8)
         ss, ss_data, _ = self.real_os_backend(_ss.Keyring, 5)
         store, status = store_for_host(PATH, loader(self.real_chain([lib, ss])))
@@ -133,51 +136,99 @@ class RealChainerTests(unittest.TestCase):
         self.assertEqual((list(ss_data.values()), lib_data, lib_calls), ([FAKE], {}, []))
 
     @unittest.skipIf(_secretstorage is None, "secretstorage (Linux-only keyring dependency) not installed")
-    def test_kde_host_picks_kwallet_on_the_desktop_and_secret_service_elsewhere(self) -> None:
-        # The library's own priority code decides here; only the D-Bus probes are answered. With both
-        # daemons up, KWallet is 5.1 in a KDE session and 4.9 without XDG_CURRENT_DESKTOP (SSH, a
-        # service, cron), against Secret Service's 5. A key saved in one reads as not saved in the other.
+    def linux_host(self, stack: contextlib.ExitStack, *, ss: bool, kw5: bool, kw4: bool,
+                   lib: bool) -> tuple[list[type], dict[type, dict]]:
+        """Answer the daemon probes of the library's Linux OS backends (only the probes; the priority
+        code is the library's), and point each answering class's password methods at its own dict."""
+
         class _Conn:
             def close(self) -> None:
                 pass
 
+        owners = [name for name, up in (("org.kde.kwalletd5", kw5), ("org.kde.kwalletd", kw4)) if up]
+
         class _Bus:
             def name_has_owner(self, name: str) -> bool:
-                return name == "org.kde.kwalletd5"
+                return name in owners
 
             def list_activatable_names(self) -> list[str]:
-                return ["org.kde.kwalletd5"]
+                return list(owners)
 
+        class _GError(Exception):
+            pass
+
+        dbus = type("dbus", (), {"SessionBus": staticmethod(lambda mainloop=None: _Bus()), "DBusException": Exception})
+        secret = types.SimpleNamespace(ServiceFlags=types.SimpleNamespace(OPEN_SESSION=1),
+                                       Service=types.SimpleNamespace(get_sync=lambda flags, cancellable: object()))
         for target, name, value in ((_secretstorage, "dbus_init", lambda *a, **k: _Conn()),
-                                    (_secretstorage, "check_service_availability", lambda conn: True),
-                                    (_kwallet, "dbus", type("dbus", (), {"SessionBus": staticmethod(lambda mainloop=None: _Bus()),
-                                                                         "DBusException": Exception})),
-                                    (_kwallet, "DBusGMainLoop", lambda: None)):
-            patcher = mock.patch.object(target, name, value, create=True)
-            patcher.start()
-            self.addCleanup(patcher.stop)
-        stores: dict[type, dict] = {}
-        for cls in (_ss.Keyring, _kwallet.DBusKeyring):
-            data = stores.setdefault(cls, {})
+                                    (_secretstorage, "check_service_availability", lambda conn: ss),
+                                    (_kwallet, "dbus", dbus), (_kwallet, "DBusGMainLoop", lambda: None),
+                                    (_libsecret, "available", lib), (_libsecret, "Secret", secret),
+                                    (_libsecret, "GLib", types.SimpleNamespace(Error=_GError)),
+                                    (_kr_backend, "_limit", None)):
+            stack.enter_context(mock.patch.object(target, name, value, create=True))
+        classes = [cls for cls, up in ((_ss.Keyring, ss), (_kwallet.DBusKeyring, kw5), (_libsecret.Keyring, lib),
+                                       (_kwallet.DBusKeyringKWallet4, kw4)) if up]
+        stores: dict[type, dict] = {cls: {} for cls in classes}
+        for cls, data in stores.items():
             for method, fn in (("get_password", lambda self, s, u, d=data: d.get((s, u))),
                                ("set_password", lambda self, s, u, p, d=data: d.__setitem__((s, u), p)),
                                ("delete_password", lambda self, s, u, d=data: d.pop((s, u), None))):
-                patcher = mock.patch.object(cls, method, fn)
-                patcher.start()
-                self.addCleanup(patcher.stop)
-        rings = [_ss.Keyring(), _kwallet.DBusKeyring()]
-        with mock.patch.dict("os.environ", {"XDG_CURRENT_DESKTOP": "KDE"}):
-            desktop, status = store_for_host(PATH, loader(self.real_chain(rings)))
-            self.assertEqual((status.backend, status.ignored),
-                             ("kwallet DBusKeyring", ("keyring.backends.SecretService.Keyring",)))
-            desktop.put("broker", "fixture", FAKE)
-        env = {k: v for k, v in os.environ.items() if k != "XDG_CURRENT_DESKTOP"}
-        with mock.patch.dict("os.environ", env, clear=True):
-            later, status = store_for_host(PATH, loader(self.real_chain(rings)))
-            self.assertEqual((status.backend, status.ignored),
-                             ("SecretService Keyring", ("keyring.backends.kwallet.DBusKeyring",)))
-            self.assertIsNone(later.get("broker", "fixture"))
-        self.assertEqual((len(stores[_kwallet.DBusKeyring]), stores[_ss.Keyring]), (1, {}))
+                stack.enter_context(mock.patch.object(cls, method, fn))
+        return classes, stores
+
+    @unittest.skipIf(_secretstorage is None, "secretstorage (Linux-only keyring dependency) not installed")
+    def test_one_kde_host_picks_the_same_keychain_in_every_session(self) -> None:
+        # The library's own priority code orders the chain; only the daemon probes are answered. KWallet is
+        # 5.1 in a KDE desktop session and 4.9 without XDG_CURRENT_DESKTOP (SSH, a service, cron), against
+        # Secret Service's 5, so the library's order flips between sessions. Cockpit's fixed order (Lucas:
+        # "Yes, fixed order") picks the same keychain in both, and a key saved on the desktop is found elsewhere.
+        cases = {
+            # name: (Secret Service, KWallet 5, KWallet 4, libsecret answer; expected keychain)
+            "SecretService + KWallet 5": ((True, True, False, False), "SecretService Keyring"),
+            "SecretService + KWallet 5 + KWallet 4": ((True, True, True, False), "SecretService Keyring"),
+            "KWallet 5 only": ((False, True, False, False), "kwallet DBusKeyring"),
+            "libsecret + KWallet 4": ((False, False, True, True), "libsecret Keyring"),
+            "all four": ((True, True, True, True), "SecretService Keyring"),
+        }
+        no_desktop = {k: v for k, v in os.environ.items() if k != "XDG_CURRENT_DESKTOP"}
+        for label, ((ss_up, kw5_up, kw4_up, lib_up), expected) in cases.items():
+            with self.subTest(label), contextlib.ExitStack() as stack:
+                classes, stores = self.linux_host(stack, ss=ss_up, kw5=kw5_up, kw4=kw4_up, lib=lib_up)
+                rings = [cls() for cls in classes]
+                picks = []
+                for env, clear in (({"XDG_CURRENT_DESKTOP": "KDE"}, False), (no_desktop, True)):
+                    with mock.patch.dict("os.environ", env, clear=clear):
+                        chain = self.real_chain(rings)
+                        library_order = [type(b).__name__ for b in chain.backends]
+                        store, status = store_for_host(PATH, loader(chain))
+                        picks.append((status.backend, sorted(status.ignored)))
+                        if not picks[1:]:
+                            store.put("broker", "fixture", FAKE)
+                        else:
+                            self.assertEqual(store.get("broker", "fixture"), FAKE)
+                    if kw5_up and ss_up:  # the library's own order does flip between the two sessions
+                        self.assertEqual(library_order[0], "DBusKeyring" if not clear else "Keyring")
+                self.assertEqual([backend for backend, _ in picks], [expected, expected])
+                self.assertEqual(picks[0][1], picks[1][1])
+                self.assertEqual(sum(len(data) for data in stores.values()), 1)
+
+    @unittest.skipIf(_secretstorage is None, "secretstorage (Linux-only keyring dependency) not installed")
+    def test_python_keyring_backend_still_pins_one_keychain(self) -> None:
+        # With PYTHON_KEYRING_BACKEND set, the library's own selection returns that one backend, not a
+        # chain, and Cockpit uses it in every session, whatever the fixed order would pick from a chain.
+        no_desktop = {k: v for k, v in os.environ.items() if k not in ("XDG_CURRENT_DESKTOP", "PYTHON_KEYRING_BACKEND")}
+        with contextlib.ExitStack() as stack:
+            _, stores = self.linux_host(stack, ss=True, kw5=True, kw4=False, lib=False)
+            for env, clear in (({"XDG_CURRENT_DESKTOP": "KDE"}, False), (no_desktop, True)):
+                env = dict(env, PYTHON_KEYRING_BACKEND="keyring.backends.kwallet.DBusKeyring")
+                with mock.patch.dict("os.environ", env, clear=clear):
+                    chosen = _core._detect_backend()
+                    self.assertIs(type(chosen), _kwallet.DBusKeyring)
+                    store, status = store_for_host(PATH, loader(chosen))
+                    self.assertEqual((status.backend, status.ignored), ("kwallet DBusKeyring", ()))
+                    store.put("broker", "fixture", FAKE)
+            self.assertEqual((len(stores[_kwallet.DBusKeyring]), stores[_ss.Keyring]), (1, {}))
 
     def test_a_real_chain_with_no_os_keychain_is_refused(self) -> None:
         plain, plain_touched = _standin("keyrings.alt.file", "PlaintextKeyring", 0.5)

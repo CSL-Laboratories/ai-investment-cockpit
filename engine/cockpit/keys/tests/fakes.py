@@ -12,10 +12,10 @@ FAKE = "fake-key-not-real-0123"
 
 
 def os_backend(module: str = "keyring.backends.SecretService", name: str = "SecretService Keyring",
-               priority: object = 5) -> Any:
+               priority: object = 5, qualname: str = "Keyring") -> Any:
     """A stand-in OS keychain backend that records each call and keeps values in a dict."""
 
-    backend = type("Keyring", (), {"__module__": module, "name": name, "priority": priority})()
+    backend = type(qualname, (), {"__module__": module, "name": name, "priority": priority})()
     backend.calls, backend.data = [], {}
 
     def get_password(service: str, name: str) -> str | None:

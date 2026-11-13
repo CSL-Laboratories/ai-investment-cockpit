@@ -51,19 +51,24 @@ and `null` backends, `keyrings.alt` and any other file, unknown or look-alike ba
 keychains, so a plaintext keyring is never treated as one for broker or venue secrets.
 
 When the library hands back its chain of several backends (`keyring.backends.chainer`), the chain is
-read once and the first OS keychain in it is used; every other backend in the chain is ignored, never
+read once and one OS keychain in it is used; every other backend in the chain is ignored, never
 called (not even for its priority) and named in the doctor line. A chain with no OS keychain is
 refused like any other non-keychain host. `store_for_host()` builds the `KeyStore` from that answer
 and binds it to the chosen OS backend object itself, never to the chain or the module, so a chain or a
 global keyring that changes later cannot redirect a key.
 
-"First" is the library's order, by priority (keyring 25.7.0: Secret Service 5, KWallet 4.9, libsecret
-4.8, Windows 5, macOS 5). The five never tie, so on one host the choice is the same from run to run.
-It can differ between sessions on one host: KWallet's priority is 5.1 when `XDG_CURRENT_DESKTOP`
-contains `KDE`, so on a KDE host where both KWallet and Secret Service answer, the desktop session uses
-KWallet and a session over SSH, in a service or in cron uses Secret Service. A key saved in one then
-reads as "no key saved" in the other (nothing else is consulted), and the doctor line names the
-keychain in use. `PYTHON_KEYRING_BACKEND` set to one OS backend makes every session use that one.
+When the chain holds several OS keychains, Cockpit uses the first in its own fixed order: Secret
+Service, KWallet 5 (`kwallet.DBusKeyring`), libsecret, KWallet 4 (`kwallet.DBusKeyringKWallet4`), any
+other KWallet class (macOS and Windows are never chained with these). Lucas, Nov 12, 2026, asked "On KDE,
+should Cockpit use the same keychain in every session (a fixed order)?": "Yes, fixed order". That is
+keyring 25.7.0's order by priority (5, 4.9, 4.8, 3.9) everywhere except a KDE desktop session, where the
+library raises KWallet 5 to 5.1, above Secret Service's 5 (and KWallet 4 to 4.1, still below libsecret).
+With the library's order one KDE host would use KWallet in its desktop session and Secret Service over
+SSH, in a service or in cron, and a key saved in one would read as "no key saved" in the other; with
+the fixed order every session on that host uses Secret Service. A key can still read as "no key saved" when a different set of keychains answers in
+another session (a daemon reachable only on the desktop); nothing else is ever consulted, and the
+doctor line names the keychain in use. `PYTHON_KEYRING_BACKEND` set to one OS backend makes every
+session use that one.
 
 Doctor line: `PYTHONPATH=engine python3 -m cockpit.keys doctor [--key-file PATH]` prints one line,
 for example

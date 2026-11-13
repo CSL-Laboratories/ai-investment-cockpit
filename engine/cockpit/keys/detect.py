@@ -10,9 +10,11 @@ through an injectable loader, so tests use fakes and a host without the library 
 A backend counts as a keychain only when it is a real one: the library's ``fail`` and ``null``
 backends, unknown/file backends, and unusable OS backends do not count.
 
-A keyring chain (the library's ``ChainerBackend``) is reduced to the first backend in it whose module
-is one of the five OS keychains below; every other backend in the chain is ignored and never called,
-not even to read its priority, and the doctor line names it. A chain with no OS keychain is refused.
+A keyring chain (the library's ``ChainerBackend``) is reduced to one backend whose module is one of
+the five OS keychains below: when it holds several, the one first in Cockpit's fixed order
+(``_OS_ORDER``), not in the library's, so one host picks the same keychain in every session. Every
+other backend in the chain is ignored and never called, not even to read its priority, and the doctor
+line names it. A chain with no OS keychain is refused.
 Recommendation B13, which Lucas accepted on Nov 12, 2026 ("I agree with all B10-B14 Recommendations"):
 "use the OS backend, name the ignored one in the doctor line".
 The chain is read once, and storage stays bound to the chosen OS backend object, never to the chain
@@ -38,6 +40,25 @@ _OS_KEYCHAINS = frozenset((
     "keyring.backends.SecretService", "keyring.backends.libsecret",
     "keyring.backends.kwallet", "keyring.backends.macOS", "keyring.backends.Windows",
 ))
+# Which OS keychain a chain of several uses. Lucas, Nov 12, 2026, asked "On KDE, should Cockpit use the
+# same keychain in every session (a fixed order)?": "Yes, fixed order". This is keyring 25.7.0's own order
+# outside a KDE desktop session (Secret Service 5, KWallet 5 4.9, libsecret 4.8, KWallet 4 3.9); the
+# library raises KWallet to 5.1 (and KWallet 4 to 4.1) when XDG_CURRENT_DESKTOP contains KDE, so with its
+# order one host would use KWallet in its desktop session and Secret Service over SSH, in a service or in
+# cron. A fixed order picks the same keychain in every session. Entries are a class ("module.Class") or,
+# as a fallback, a module; macOS and Windows never share a chain with the others. A tie keeps the chain's
+# order.
+_OS_ORDER = (
+    "keyring.backends.SecretService",
+    "keyring.backends.kwallet.DBusKeyring",  # KWallet 5
+    "keyring.backends.libsecret",
+    "keyring.backends.kwallet.DBusKeyringKWallet4",  # KWallet 4
+    "keyring.backends.kwallet",  # any other KWallet class
+    "keyring.backends.macOS",
+    "keyring.backends.Windows",
+)
+_OS_RANK = {key: rank for rank, key in enumerate(_OS_ORDER)}
+assert _OS_KEYCHAINS <= _OS_RANK.keys()
 _CHAINER = "keyring.backends.chainer"
 _NAMED_IGNORED = 8  # the doctor line names at most this many ignored backends, then counts the rest
 _SAFE_NAME = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-<>")
@@ -86,19 +107,25 @@ def _module_of(obj: Any) -> str:
 def _select_from_chain(chain: Any) -> tuple[KeychainStatus, Any]:
     # Read once: the library recomputes ``ChainerBackend.backends`` on every access.
     children = tuple(chain.backends)
-    chosen, ignored = None, []
-    for child in children:
-        module = _module_of(child)
-        if module in _NOT_A_KEYCHAIN:
-            continue  # the library's non-storing sentinels
-        if chosen is None and module in _OS_KEYCHAINS:
-            chosen = child
-        else:
-            # Never called, not even for its priority; only its type's name is read.
-            ignored.append(_type_name(child))
-    if chosen is None:
+    modules = [_module_of(child) for child in children]
+    ranked = [(_os_rank(child, module), index) for index, (child, module) in enumerate(zip(children, modules))
+              if module in _OS_KEYCHAINS]
+    if not ranked:
         return KeychainStatus(False, "", "no_keychain_backend"), None
-    return _usable_os_backend(chosen, tuple(ignored))
+    chosen = min(ranked)[1]  # first in Cockpit's order; the chain's order only breaks a tie
+    # The rest are never called, not even for their priority; only their type's name is read.
+    # The library's non-storing sentinels (fail, null) are skipped without a name.
+    ignored = tuple(_type_name(child) for index, (child, module) in enumerate(zip(children, modules))
+                    if index != chosen and module not in _NOT_A_KEYCHAIN)
+    return _usable_os_backend(children[chosen], ignored)
+
+
+def _os_rank(backend: Any, module: str) -> int:
+    # The class's place in ``_OS_ORDER`` if listed, else its module's. Read from the type, never the instance.
+    qualname = getattr(type(backend), "__qualname__", "")
+    if type(qualname) is str and f"{module}.{qualname}" in _OS_RANK:
+        return _OS_RANK[f"{module}.{qualname}"]
+    return _OS_RANK[module]
 
 
 def _usable_os_backend(backend: Any, ignored: tuple[str, ...]) -> tuple[KeychainStatus, Any]:
