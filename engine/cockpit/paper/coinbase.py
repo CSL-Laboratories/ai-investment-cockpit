@@ -13,9 +13,12 @@ committed step:
   A failed or unreadable cancel never skips the others;
 * the open orders are then listed again. Cancel is ``confirmed`` only when every order
   listed was confirmed cancelled and the venue lists none open. An order placed between
-  the two listings, a list error, or a page cap reached keeps it ``pending``. An order
-  the venue still lists after a success reply is dropped from ``cancelled`` and is
-  cancelled again on the next ``kill``;
+  the two listings, a list error, or a page cap reached keeps it ``pending``. A first
+  listing that cannot be finished (a list error, unreadable page, the page cap, or an
+  indicator that disagrees with the cursor) also keeps it ``pending``, but cancellation
+  is still attempted once for each readable order id it showed before the revoke.
+  An order the venue still lists after a success reply is dropped from ``cancelled``
+  and is cancelled again on the next ``kill``;
 * the OAuth grant is revoked. The transport returns a typed ``RevokeReply`` carrying the
   venue's HTTP status. A 200 is not proof that access is gone (RFC 7009 servers answer
   200 even for an invalid or already-revoked token), so two probes always run after the
@@ -64,6 +67,7 @@ and probes confirm the credential is still dead; the detail then reads
 answers the cancel attempt at all, the earlier confirm is dropped. A cancel that confirms
 in a ``kill`` whose halt call raised does not count. Reuse on a later kill also
 requires that the earlier cancel and revoke ran with the halt read-back confirmed.
+After a venue is re-authorized and trading resumes, the host builds new venue-kill objects.
 """
 
 from __future__ import annotations
@@ -93,7 +97,11 @@ class CoinbaseKillTransport(Protocol):
 
 
 class _Unreadable(Exception):
-    pass
+    """The listing cannot be finished. ``ids`` holds every order id read before that."""
+
+    def __init__(self, why: str, ids: list[str] | None = None) -> None:
+        super().__init__(why)
+        self.ids = list(ids or ())
 
 
 class CoinbaseKill:
@@ -115,39 +123,40 @@ class CoinbaseKill:
         ids: list[str] = []
         cursor = None
         for _ in range(MAX_LIST_PAGES):
-            out = self._transport.list_open_orders(cursor)
+            try:
+                out = self._transport.list_open_orders(cursor)
+            except Exception as exc:  # noqa: BLE001 - preserve earlier pages for cancellation
+                if cursor is None:
+                    raise  # Only failure on the first call may reuse earlier kill evidence.
+                raise _Unreadable("partial_list_error:" + type(exc).__name__, ids) from exc
             page = out.get("order_ids") if type(out) is dict else None
-            if type(page) is not list or not all(type(i) is str and i for i in page):
-                raise _Unreadable("unreadable_list")
-            ids.extend(page)
+            if type(page) is not list:
+                raise _Unreadable("unreadable_list", ids)
+            readable = [i for i in page if type(i) is str and i]
+            ids.extend(readable)
+            if len(readable) != len(page):
+                raise _Unreadable("unreadable_list", ids)
             cursor = out.get("cursor")
             # Optional completion indicators must agree with the cursor. Never
             # turn an incomplete or contradictory empty page into cancel evidence.
             for flag in ("has_next", "truncated"):
                 if flag in out and (type(out[flag]) is not bool or out[flag] != (cursor is not None)):
-                    raise _Unreadable("unfinished_list")
+                    raise _Unreadable("unfinished_list", ids)
             if "remaining" in out:
                 remaining = out["remaining"]
                 if (type(remaining) is not int or remaining < 0
                         or (remaining > 0) != (cursor is not None)):
-                    raise _Unreadable("unfinished_list")
+                    raise _Unreadable("unfinished_list", ids)
             if cursor is None:
                 return ids
             if type(cursor) is not str or not cursor:
-                raise _Unreadable("unreadable_list")
-        raise _Unreadable("list_page_cap")
+                raise _Unreadable("unreadable_list", ids)
+        raise _Unreadable("list_page_cap", ids)
 
-    def _cancel(self) -> None:
-        try:
-            listed = self._list()
-        except _Unreadable as exc:
-            self._detail["cancel_orders"] = str(exc)
-            return
-        except Exception as exc:  # noqa: BLE001 - any failure is "unknown", never "done"
-            self._detail["cancel_orders"] = "list_error:" + type(exc).__name__
-            return
+    def _cancel_each(self, order_ids: list[str]) -> int:
+        """Cancel each order by its own call. Returns how many did not confirm."""
         failed = 0
-        for order_id in listed:
+        for order_id in order_ids:
             # The venue listing it open outranks any earlier success reply: cancel it again.
             self._cancelled.discard(order_id)
             try:
@@ -159,6 +168,21 @@ class CoinbaseKill:
                 self._cancelled.add(order_id)
             else:
                 failed += 1
+        return failed
+
+    def _cancel(self) -> None:
+        try:
+            listed = self._list()
+        except _Unreadable as exc:
+            # The listing cannot be finished, so the leg stays pending and nothing is confirmed.
+            # The orders it did list are still cancelled: after the revoke nothing here can.
+            self._cancel_each(list(dict.fromkeys(exc.ids)))
+            self._detail["cancel_orders"] = str(exc)
+            return
+        except Exception as exc:  # noqa: BLE001 - any failure is "unknown", never "done"
+            self._detail["cancel_orders"] = "list_error:" + type(exc).__name__
+            return
+        failed = self._cancel_each(listed)
         if failed:
             self._detail["cancel_orders"] = "unconfirmed:%d" % failed
             return
