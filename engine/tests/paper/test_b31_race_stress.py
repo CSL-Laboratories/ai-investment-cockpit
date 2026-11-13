@@ -22,6 +22,9 @@ the ``fakecore.sized`` test seam, since the gateway refuses a buy it did not siz
   committed every thread sends one more order, which must be refused ``order_halted``;
 * every booking has its ``booked`` audit row and every refusal its ``refused`` audit row,
   except a bounded pre-charge ``book_locked`` refusal, whose audit write may also time out.
+  That refusal is skipped only before the halt and before the charge: a ``book_locked`` for an
+  order sent or submitted after the committed halt, or for an intent the core has authorized,
+  is still a violation.
 
 A sensitivity test drops the send-time check inside the booking transaction (B31's forbidden
 shape) and holds the send-time window open (``forced_window``: one buy blocked inside the core's
@@ -76,11 +79,13 @@ class ApprovingCore:
 
     ``check`` is the host's run check: every run is healthy. ``pause`` blocks the named intent
     inside ``authorize``, after the gateway's early funds read and before its booking.
+    ``charged`` says whether ``authorize`` (the charge) was ever called for an intent id.
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._n = 0
+        self._authorized: set[str] = set()
         self.pause: dict[str, Gate] = {}
 
     def request_approval(self, effect: dict) -> dict:
@@ -88,7 +93,13 @@ class ApprovingCore:
             self._n += 1
             return {"approval_id": f"appr-{self._n}"}
 
+    def charged(self, intent_id: str) -> bool:
+        with self._lock:
+            return intent_id in self._authorized
+
     def authorize(self, effect: dict, approval_id: str, authority) -> dict:
+        with self._lock:
+            self._authorized.add(effect["payload"]["intent_id"])
         gate = self.pause.get(effect["payload"]["intent_id"])
         if gate is not None:
             gate.hit()
@@ -163,6 +174,7 @@ def _iteration(path: str, rng: random.Random, violations: list[str], counters: d
     worker_seeds = [rng.randrange(2**32) for _ in range(THREADS)]
     roll = rng.random() < 0.3  # always drawn, so a forced iteration keeps the seed's later draws
     with_halter = roll if halt is None else halt
+    approvals_ready = threading.Barrier(THREADS + 1) if with_halter else None
 
     def flag(message: str) -> None:
         with lock:
@@ -173,6 +185,14 @@ def _iteration(path: str, rng: random.Random, violations: list[str], counters: d
         book = PaperBook(path)
         gw = new_gateway(book, core, caps)
         try:
+            if with_halter:
+                # Approve before the halt so the guaranteed after-halt order reaches submit.
+                halted_intent = sized(gw, Intent(
+                    intent_id=f"t{n}-after-halt", account=ACCOUNTS[n % len(ACCOUNTS)],
+                    instrument=INSTRUMENT, side="sell", quantity=1, limit_price_minor=5_000,
+                    run_id="run-1", connection="conn-a"))
+                halted_approval = gw.request_approval(halted_intent)["approval_id"]
+                approvals_ready.wait(WAIT)
             for i in range(ORDERS + with_halter):
                 after_halt = i == ORDERS
                 if after_halt:
@@ -184,15 +204,13 @@ def _iteration(path: str, rng: random.Random, violations: list[str], counters: d
                     account = wrng.choice(ACCOUNTS)
                     price = wrng.choice((5_000, 10_000, 25_000))
                     roll = wrng.random()
+                submit_after_halt = False  # set just before submit: whether the halt had committed by then
                 try:
                     if roll < 0.08:
                         gw.cancel_all()
                         continue
                     if after_halt:
-                        # Marked as sized (test seam), so the halt is the only thing that can refuse it.
-                        intent = sized(gw, Intent(intent_id=intent_id, account=account, instrument=INSTRUMENT,
-                                                  side="sell", quantity=1, limit_price_minor=price, run_id="run-1",
-                                                  connection="conn-a"))
+                        intent = halted_intent
                     elif roll < 0.45:
                         intent = gw.size_buy(intent_id=intent_id, account=account, instrument=INSTRUMENT,
                                              limit_price_minor=price, conviction_bps=wrng.randint(1, 10_000),
@@ -202,29 +220,38 @@ def _iteration(path: str, rng: random.Random, violations: list[str], counters: d
                         intent = sized(gw, Intent(intent_id=intent_id, account=account, instrument=INSTRUMENT,
                                                   side=side, quantity=wrng.randint(1, 40), limit_price_minor=price,
                                                   run_id="run-1", connection="conn-a"))
-                    approval = gw.request_approval(intent)["approval_id"]
+                    approval = halted_approval if after_halt else gw.request_approval(intent)["approval_id"]
                     time.sleep(0)  # the operator approves; other threads spend cash meanwhile
+                    # On a successful halt, halt_done is set after commit. A submit starting once it
+                    # is set must refuse order_halted; a failed halt separately fails the iteration.
+                    submit_after_halt = halt_done.is_set()
                     out = gw.submit(intent, approval, None)
                     with lock:
                         submitted[intent_id] = intent.quantity
                         outcomes["booked"] += 1
                     if out["notional_minor"] != intent.quantity * intent.limit_price_minor:
                         flag(f"{intent_id}: notional {out['notional_minor']} != submitted quantity x price")
-                    if after_halt:
+                    if after_halt or submit_after_halt:
                         flag(f"{intent_id}: booked after the halt was committed")
                 except Refused as exc:
+                    halted_order = after_halt or submit_after_halt
                     with lock:
                         outcomes["refused"] += 1
                         if after_halt:
                             outcomes["after_halt_refused"] += 1
                             outcomes["after_halt_book_locked"] += exc.code == "book_locked"
-                        elif exc.code == "book_locked":
-                            outcomes["book_locked_skipped"] += 1
-                    if exc.code == "book_locked" and not after_halt:
+                    if exc.code == "book_locked" and not halted_order and not core.charged(intent_id):
                         # Pre-charge probe bounded by BOOK_LOCK_PROBE_S: nothing is charged or
                         # booked. Its audit write shares that bound, so the row may be missing.
+                        # Skipped only as that refusal: not for an order sent or submitted after
+                        # the halt committed (that is order_halted), and not once the core has
+                        # charged the intent (after the charge a refusal is leftover_charge).
+                        with lock:
+                            outcomes["book_locked_skipped"] += 1
                         continue
-                    if after_halt and (exc.code, exc.cause) != ("order_halted", None):
+                    if exc.code == "book_locked" and core.charged(intent_id):
+                        flag(f"{intent_id}: refused {exc} after the core charge, not leftover_charge")
+                    if halted_order and (exc.code, exc.cause) != ("order_halted", None):
                         flag(f"{intent_id}: sent after the halt, refused {exc} and not order_halted")
                     if exc.code == "leftover_charge":
                         if exc.cause == "booking_error:IntegrityError" \
@@ -243,6 +270,7 @@ def _iteration(path: str, rng: random.Random, violations: list[str], counters: d
             book.close()
 
     def halter() -> None:
+        approvals_ready.wait(WAIT)
         time.sleep(rng.random() * 0.02)
         book = PaperBook(path)
         try:
