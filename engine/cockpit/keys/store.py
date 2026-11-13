@@ -17,7 +17,15 @@ allowed for user-entered model-provider keys only; broker and venue keys stay ke
 * a ``broker`` or ``venue`` key goes only in the OS keyring; with no keyring it is refused, never
   written to a file;
 * an existing key file, lock or directory that is not owner-only is refused on read and on write,
-  and is never repaired silently.
+  and is never repaired silently;
+* the first save creates the missing key folder (the leaf) ``0700`` after every ancestor passed the
+  check. When the store is given ``config_home`` (``store_for_host`` does so only for the default
+  file ``~/.config/csl-cockpit/model-keys.json``) and ``<config_home>/.config`` is missing, the first
+  save also creates that ``.config`` ``0700``, but only when the home folder is a directory owned by
+  the running user and not group- or world-writable; every component is still opened with
+  ``O_NOFOLLOW``, so nothing on the path may be a symlink. Nothing else is ever created, and an
+  entry that exists, or that a competing process creates first, must pass the same checks as any
+  existing one. Before that first save, ``get`` returns ``None`` and ``delete`` does nothing.
 
 The keyring is injected (``get``/``set``/``delete``); this module imports no keyring library and makes
 no provider, venue or network call. Error messages name the key, never its value. Frozen ``app/`` keeps
@@ -68,9 +76,12 @@ class Keyring(Protocol):
 class KeyStore:
     SERVICE = "csl-cockpit"
 
-    def __init__(self, *, keyring: Keyring | None, key_file: str | os.PathLike[str] | None = None) -> None:
+    def __init__(self, *, keyring: Keyring | None, key_file: str | os.PathLike[str] | None = None,
+                 config_home: str | os.PathLike[str] | None = None) -> None:
         self._keyring = keyring
         self._path = os.fspath(key_file) if key_file is not None else None
+        # The home folder whose missing ``.config`` the first save may create (see module docstring).
+        self._config_home = os.fspath(config_home) if config_home is not None else None
 
     # -- public ---------------------------------------------------------------------------
     def backend_for(self, kind: str) -> str:
@@ -95,7 +106,7 @@ class KeyStore:
         if backend == "keyring":
             self._keyring.set(self.SERVICE, _account(kind, name), secret)  # type: ignore[union-attr]
             return backend
-        with self._locked_dir() as dir_fd:
+        with self._locked_dir(create_leaf=True) as dir_fd:
             keys = self._read_file(dir_fd)
             keys[name] = secret
             self._write_file(dir_fd, keys)
@@ -106,7 +117,10 @@ class KeyStore:
         if self.backend_for(kind) == "keyring":
             return self._keyring.get(self.SERVICE, _account(kind, name))  # type: ignore[union-attr]
         assert self._path is not None
-        dir_fd = _open_owned_dir(os.path.dirname(os.path.abspath(self._path)))
+        dir_fd = _open_owned_dir(os.path.dirname(os.path.abspath(self._path)), missing_leaf_ok=True,
+                                 config_home=self._config_home)
+        if dir_fd is None:
+            return None
         try:
             _refuse_existing_unless_owner_only(dir_fd, _LOCK_NAME)
             return self._read_file(dir_fd).get(name)
@@ -119,17 +133,24 @@ class KeyStore:
             self._keyring.delete(self.SERVICE, _account(kind, name))  # type: ignore[union-attr]
             return
         with self._locked_dir() as dir_fd:
+            if dir_fd is None:
+                return
             keys = self._read_file(dir_fd)
             if keys.pop(name, None) is not None:
                 self._write_file(dir_fd, keys)
 
     # -- owner-only file ------------------------------------------------------------------
     @contextmanager
-    def _locked_dir(self) -> Iterator[int]:
+    def _locked_dir(self, *, create_leaf: bool = False) -> Iterator[int | None]:
         """Directory fd for the key file, held with an exclusive lock on ``.keys.lock``."""
 
         assert self._path is not None and fcntl is not None
-        dir_fd = _open_owned_dir(os.path.dirname(os.path.abspath(self._path)))
+        dir_fd = _open_owned_dir(os.path.dirname(os.path.abspath(self._path)),
+                                 create_leaf=create_leaf, missing_leaf_ok=not create_leaf,
+                                 config_home=self._config_home)
+        if dir_fd is None:
+            yield None
+            return
         lock_fd = -1
         try:
             lock_fd = _open_lock(dir_fd)
@@ -245,13 +266,19 @@ def key_file_state(path: str) -> str:
         os.close(fd)
 
 
-def _open_owned_dir(directory: str) -> int:
+def _open_owned_dir(directory: str, *, create_leaf: bool = False,
+                    missing_leaf_ok: bool = False, config_home: str | None = None) -> int | None:
     """Open ``directory`` and return its fd, after the owned-chain rule. Caller closes it.
 
     Ancestors follow Recursion's ``_owned_chain``: each is root's or ours, and not writable by
     anyone else, except a root-owned sticky directory. The directory itself must be a real
     ``0700`` directory owned by the running user. ``O_NOFOLLOW`` on every component means a
     symlink, including one swapped in above the directory, is refused instead of followed.
+
+    ``create_leaf`` creates a missing ``directory``; ``missing_leaf_ok`` returns ``None`` for it.
+    When ``directory``'s parent is exactly ``<config_home>/.config`` and that ``.config`` is
+    missing, the same two flags apply to it too, but only after ``_require_home`` has passed on
+    the pinned fd of the home folder. Nothing above ``.config`` is ever created.
     """
 
     if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
@@ -260,6 +287,9 @@ def _open_owned_dir(directory: str) -> int:
     names = [part for part in directory.split(os.sep) if part not in ("", ".")]
     if any(part == ".." for part in names):
         raise KeyRefused("key_dir_not_owner_only", "bad component")
+    parent = len(names) - 2  # index of ``.config`` in ``names`` when the B14 rule applies
+    may_init_parent = (config_home is not None and parent >= 0 and (create_leaf or missing_leaf_ok)
+                       and os.path.dirname(directory) == os.path.join(os.path.abspath(config_home), ".config"))
     flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0)
     try:
         fd = os.open(os.sep, flags)
@@ -274,7 +304,23 @@ def _open_owned_dir(directory: str) -> int:
             try:
                 nxt = os.open(name, flags | os.O_NOFOLLOW, dir_fd=fd)
             except FileNotFoundError:
-                raise KeyRefused("key_dir_missing", directory) from None
+                if index == parent and may_init_parent:
+                    # ``fd`` is the home folder, reached and checked through pinned fds.
+                    _require_home(fd, directory)
+                    if not create_leaf:
+                        os.close(fd)
+                        return None
+                    nxt = _make_dir(fd, name, flags)
+                elif index != len(names) - 1:
+                    raise KeyRefused("key_dir_missing", directory) from None
+                elif create_leaf:
+                    # All ancestors were checked through pinned directory fds.
+                    nxt = _make_dir(fd, name, flags)
+                elif missing_leaf_ok:
+                    os.close(fd)
+                    return None
+                else:
+                    raise KeyRefused("key_dir_missing", directory) from None
             except OSError as exc:
                 raise KeyRefused("key_dir_not_owner_only", _errno_name(exc)) from None
             os.close(fd)
@@ -287,6 +333,34 @@ def _open_owned_dir(directory: str) -> int:
     except BaseException:
         os.close(fd)
         raise
+
+
+def _make_dir(parent_fd: int, name: str, flags: int) -> int:
+    """Create directory ``name`` (``0700``) in ``parent_fd`` and open it. Caller checks the result.
+
+    Only creates; never chmods or repairs an existing entry. A directory that a competing process
+    created first is opened the same way and must pass the caller's checks, like any existing one.
+    """
+
+    try:
+        os.mkdir(name, 0o700, dir_fd=parent_fd)
+    except FileExistsError:
+        pass
+    except OSError as exc:
+        raise KeyRefused("key_dir_not_owner_only", _errno_name(exc)) from None
+    try:
+        return os.open(name, flags | os.O_NOFOLLOW, dir_fd=parent_fd)
+    except OSError as exc:
+        raise KeyRefused("key_dir_not_owner_only", _errno_name(exc)) from None
+
+
+def _require_home(fd: int, directory: str) -> None:
+    # B14: ``.config`` is created only in a home folder that is the running user's own and that no
+    # one else can write to. A root-owned or shared home, even a sticky one such as /tmp, gets nothing.
+    st = os.fstat(fd)
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.geteuid() or st.st_mode & 0o022:
+        raise KeyRefused("key_dir_missing", f"{directory}; not created: home folder is not the user's own "
+                                            f"or is writable by others ({oct(st.st_mode & 0o777)})")
 
 
 def _require_ancestor(fd: int) -> None:

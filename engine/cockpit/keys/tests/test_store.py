@@ -109,8 +109,8 @@ class NoKeychainTests(unittest.TestCase):
         self.addCleanup(os.unlink, link)
         self.refused("key_dir_not_owner_only", KeyStore(keyring=None, key_file=os.path.join(link, "k.json")).put,
                      "model_provider", "openai", FAKE)
-        self.refused("key_dir_missing", KeyStore(keyring=None, key_file=os.path.join(self.dir, "no", "k.json")).get,
-                     "model_provider", "openai")
+        self.assertIsNone(KeyStore(keyring=None, key_file=os.path.join(self.dir, "no", "k.json")).get(
+            "model_provider", "openai"))
 
     def test_symlinked_key_file_is_refused(self) -> None:
         target = os.path.join(self.dir, "elsewhere.json")
