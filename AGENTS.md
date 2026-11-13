@@ -177,7 +177,7 @@ the question, two or three options, your recommendation, and what you will do
 meanwhile ("paused" or other proceed-list work, never the option you are asking
 about or work that presupposes one). A stuck review thread instead goes in the
 PR's roll-up, found only by its `<!-- stuck-pr-threads:owner/repo#N -->` marker,
-in your own block; product and architecture questions stay on the work issue.
+in your own block; if the PR has no roll-up, ask on the work issue as above. Product and architecture questions stay on the work issue.
 For a decision or direction issue you are assigned or have claimed, the research requirement in
 [Linear-first workflow](#linear-first-workflow) still comes first. A Grok Bot coordinator may
 research and recommend on a decision or direction issue. Attribute the brief explicitly as
