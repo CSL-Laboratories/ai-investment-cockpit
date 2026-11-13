@@ -180,8 +180,7 @@ wrote a comment from the author field. Make it visible in the text.
   5. No accepted contract requires an exact authenticated human receipt for it.
      `docs/replacement/program.json`, R2a, recursion program receipts and other
      accepted contracts keep their own receipt rules unless amended. GitHub
-     review approvals follow "Review roles" and the founder approval rule in
-     AGENTS.md.
+     review approvals follow "Review roles" in AGENTS.md.
 - **Never** post decision language ("approved", "accepted", "restricted",
   "decided") as an agent comment without that marker. Quote and link the human's
   comment instead.

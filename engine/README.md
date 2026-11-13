@@ -52,5 +52,5 @@ Rule CA (CP0-v2 §6.1) counts a test only when it is a named file under
 runs it. For `engine/tests/` that step is `engine tests`. See
 [`tests/README.md`](tests/README.md).
 
-The product contract lives in csl-research. `docs/replacement/SUCCESSOR-PRODUCT.md`
-is the local copy until it becomes a pointer with a pinned digest.
+The product contract is csl-research `contracts/PRODUCT.md`, pinned in
+[`contract/PRODUCT.pin.json`](../contract/PRODUCT.pin.json) (Lucas, Nov 12, 2026).

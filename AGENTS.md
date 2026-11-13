@@ -7,8 +7,8 @@ copilot. The three founders are Lucas (NotSkittlz), Chaandan (CDanTheMan), and
 Samir (samir-shah-ahmed). It is paper-first: no live capital moves until the
 pre-live gates in `docs/security-hardening-backlog.md` are satisfied.
 
-The ratified [PRODUCT.md](PRODUCT.md) owns the autonomous paper-product target and
-acceptance; [docs/PLAN.md](docs/PLAN.md) owns delivery order. The current human-gated
+The governing product contract is `contracts/PRODUCT.md` in CSL-Laboratories/csl-research at commit `d84cdd26`, pinned in [contract/PRODUCT.pin.json](contract/PRODUCT.pin.json) (Lucas, Nov 12, 2026);
+the local [PRODUCT.md](PRODUCT.md) and `docs/replacement/` yield to it where they differ. [docs/PLAN.md](docs/PLAN.md) owns delivery order. The current human-gated
 implementation and the boundaries below remain authoritative until their separately
 scoped, reviewed implementation amendments. Product ratification grants no runtime
 permission or empirical PASS.
@@ -17,7 +17,7 @@ For the replacement program, read
 [SUCCESSOR-PRODUCT.md](docs/replacement/SUCCESSOR-PRODUCT.md),
 [MONTH-PROGRAM.md](docs/replacement/MONTH-PROGRAM.md) and the exact acceptance
 record in [program.json](docs/replacement/program.json). Their accepted bytes and
-scoped gates remain controlling; these operating instructions do not amend them.
+scoped gates still apply where the contract above does not differ; these operating instructions do not amend them.
 
 ## Founder decisions and integration
 
@@ -34,8 +34,8 @@ participate in the final release decision; Lucas has final say in any founder di
 including a 2-1 split.
 
 Founders merge after the required current-head reviews and checks; agents never merge.
-A founder's own PR requires another founder's approval before merge, regardless of
-ruleset enforcement. Non-author approval checks alone do not establish founder identity.
+
+Non-author approval checks alone do not establish founder identity.
 Protected-path amendments require a separately recorded founder-approved
 authoring session; this paragraph grants no blanket editing permission.
 Accepted contracts require their own versioned amendment, exact acceptance and reviewed
@@ -204,7 +204,7 @@ the merge of this section, CSL-354 comment f5bcb490) only when all hold:
 5. no accepted contract requires an exact authenticated human receipt for it
    (`docs/replacement/program.json`, R2a, recursion program receipts and other
    accepted contracts keep their own receipt rules unless amended). GitHub review
-   approvals follow Review roles and the founder approval rule above.
+   approvals follow Review roles.
 
 Never post decision language as an agent comment without that marker; link the
 record instead. A decision exists only if a human posted it from their own account,

@@ -5,8 +5,8 @@
 
 ## Product target and current implementation
 
-The ratified [PRODUCT.md](PRODUCT.md) owns purpose, scope and acceptance for the
-integrated autonomous research-to-paper product. [PLAN](docs/PLAN.md) owns delivery
+The governing product contract is `contracts/PRODUCT.md` in CSL-Laboratories/csl-research at commit `d84cdd26`, pinned in [contract/PRODUCT.pin.json](contract/PRODUCT.pin.json) (Lucas, Nov 12, 2026);
+the local [PRODUCT.md](PRODUCT.md) and `docs/replacement/` yield to it where they differ. [PLAN](docs/PLAN.md) owns delivery
 order and the reviewed migration from the current implementation described below.
 The nine invariants and runtime rules here remain in force until their separately
 scoped, reviewed implementation amendments; ratification alone grants no new authority.
@@ -15,7 +15,7 @@ For the replacement program, read
 [SUCCESSOR-PRODUCT.md](docs/replacement/SUCCESSOR-PRODUCT.md),
 [MONTH-PROGRAM.md](docs/replacement/MONTH-PROGRAM.md) and the exact acceptance
 record in [program.json](docs/replacement/program.json). Accepted bytes and scoped
-gates remain controlling. Until the ISSUE-CONTRACT amendment of 2026-10-25 is accepted
+gates still apply where the contract above does not differ. Until the ISSUE-CONTRACT amendment of 2026-10-25 is accepted
 and promoted, only the Lucas Linear digest receipt recorded in `program.json` is exact
 acceptance; once it is, a checker-pinned founder GitHub PR approval will also count, as
 defined in [AGENTS.md](AGENTS.md#founder-decisions-and-integration). That amendment is
@@ -26,9 +26,9 @@ proposed, not accepted, in `CSL-Laboratories/csl-research` commit
 [csl-research #58](https://github.com/CSL-Laboratories/csl-research/pull/58) (not merged). Follow [AGENTS.md's founder decision and integration rules](AGENTS.md#founder-decisions-and-integration)
 for operational authority; they do not amend accepted contracts, activate R2a or
 unlock live capital. Founders merge after the required current-head reviews and checks;
-agents never merge. A founder's own PR requires another founder's approval before merge,
-regardless of ruleset enforcement. Non-author approval checks alone do not establish
-founder identity. All three founders participate in the final
+agents never merge. Non-author approval checks alone do not establish
+founder identity.
+All three founders participate in the final
 release decision; Lucas has final say in any founder disagreement, including a 2-1 split.
 
 For issue admission, decision holds, claim records, release and handoff, manual ownership and shared research evidence, follow [AGENTS.md's bounded issue execution and shared evidence rules](AGENTS.md#bounded-issue-execution-and-shared-evidence). They grant no new authority, settings or spend and leave review-loop roles unchanged.
@@ -101,7 +101,7 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
   No swarm broker tools, secrets or soak starts. Product authority is unchanged.
 
 ## Session workflow
-1. Read `docs/README.md`, `PRODUCT.md` for product scope/acceptance, then
+1. Read `docs/README.md`, the governing contract above for product scope/acceptance, then
    `docs/PLAN.md` for current delivery order and `docs/REGISTER.md` for claims.
    Linear holds the human owner (assignee), agent claim records and status;
    REGISTER keeps package IDs, claims, scope and completion contracts. See
