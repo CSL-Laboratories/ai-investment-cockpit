@@ -56,8 +56,11 @@ venue secrets. When the refused backend looks meant as a supported keychain, the
 `unsupported_keychain_class:<module.Class>` (it derives from, or carries the module and class name of, a
 supported class but is not that class, as a distribution's own subclass would) or
 `keychain_module_unavailable:<module>:<ExceptionType>` (its class names a supported keychain whose module
-failed to import here; the exception's message is never shown). Another keychain's module failing to
-import, such as another platform's, is not reported when nothing claims it.
+failed to import here; the exception's message is never shown). The library's chain gets the same two:
+`unsupported_keyring_chain:<module.Class>` (it derives from, or carries the module and class name of, the
+library's `ChainerBackend` but is not that class; Cockpit never reads its members) or
+`keychain_module_unavailable:keyring.backends.chainer:<ExceptionType>`. Another module failing to import,
+such as another platform's keychain, is not reported when nothing claims it.
 
 When the library hands back its own chain of several backends (`keyring.backends.chainer`'s class,
 also by identity), the chain is read once and one OS keychain in it is used; every other backend in
@@ -111,6 +114,19 @@ outside letters, digits and `._-<>` shown as `?`. `ok` and `warn` exit 0; `fail`
 directory not owner-only, no file configured, or no owner-only file on this platform) exits 1. It
 never prints a key or its value. A missing key folder or `~/.config` shows as `[dir_missing]`; the
 doctor never creates it.
+
+What the doctor line shows of a backend is the name of code running in this process, never data it
+holds. An ignored backend, and the refused class in `unsupported_keychain_class` or
+`unsupported_keyring_chain`, are named by that class's module and class name; `keychain_module_unavailable`,
+`keychain_unusable`, `keyring_backend_error` and `keyring_library_error` name an exception's class. The
+backend's code chooses those names and can put any text in them, a made-up path or marker included, so
+each is cut to one line of letters, digits and `._-<>` (anything else shown as `?`) and at most 120
+characters. An exception's message and a stored key or value are never shown. This is accepted, rather
+than fixed categories with trusted names only, for two reasons: Lucas's B13 decision asks the doctor to
+"name the ignored one", which only the backend's own class can name; and code able to choose a class name
+already runs inside the process with everything the doctor could reveal (the trust boundary above), so
+showing its name gives it nothing. A fixed category would tell the user that a backend was refused but
+not which installed class to look at.
 
 Not here yet: wiring into a Cockpit settings surface or the frozen `app/` doctor.
 

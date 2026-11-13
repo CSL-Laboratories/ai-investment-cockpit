@@ -364,7 +364,12 @@ class RealChainerTests(unittest.TestCase):
 
         vault, elsewhere = Collection(), Collection()
         originals = {name: _ss.Keyring.__dict__[name] for name in ("get_password", "set_password", "delete_password")}
-        for name, value in (("priority", 5), ("get_preferred_collection", lambda self: vault)):
+        def preferred(self: object) -> Collection:
+            # Only the selected object answers the vault (the third Codex read): any other instance, such as
+            # a fresh one built at use, answers the other collection, so this test alone shows the binding.
+            return vault if self is selected else elsewhere
+
+        for name, value in (("priority", 5), ("get_preferred_collection", preferred)):
             patcher = mock.patch.object(_ss.Keyring, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)

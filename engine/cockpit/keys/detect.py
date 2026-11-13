@@ -15,8 +15,13 @@ is a keychain this host does not have. Its priority must read as a finite number
 looks meant as a supported keychain: ``unsupported_keychain_class:<module.Class>`` (it derives from, or
 carries the module and class name of, a supported keychain class but is not that class), or
 ``keychain_module_unavailable:<module>:<ExceptionType>`` (its class names a supported keychain whose module
-failed to import here; the exception's message is never shown). A module of a keychain no candidate claims,
-such as another platform's, failing to import is not reported.
+failed to import here; the exception's message is never shown). The library's chainer gets the same two:
+``unsupported_keyring_chain:<module.Class>`` (a chain that derives from, or carries the module and class name
+of, the library's ``ChainerBackend``; Cockpit never reads its members) or
+``keychain_module_unavailable:keyring.backends.chainer:<ExceptionType>``. A module no candidate claims, such
+as another platform's keychain, failing to import is not reported. A reason may name the refused class or an
+exception's class: identifiers of code already running in this process, sanitised to one line, never an
+exception's message or a value.
 
 A keyring chain (the library's own ``ChainerBackend``, by identity) is read once and reduced to one OS
 keychain: when it holds several, the one first in Cockpit's fixed order (``_OS_CLASSES``), not in the
@@ -124,31 +129,38 @@ class _Genuine:
     failures: tuple[str, ...]  # per ``_OS_CLASSES`` entry: the import error's type name, or ""
     sentinels: tuple[type | None, ...]
     chainer: type | None
+    chainer_failure: str  # the chainer module's import error type name, or ""
 
     @classmethod
     def load(cls) -> _Genuine:
         found = [_genuine_class(*spec) for spec in _OS_CLASSES]
         return cls(tuple(kind for kind, _ in found), tuple(failure for _, failure in found),
                    tuple(_genuine_class(*spec)[0] for spec in _SENTINEL_CLASSES),
-                   _genuine_class(*_CHAINER_CLASS)[0])
+                   *_genuine_class(*_CHAINER_CLASS))
 
     def diagnose(self, obj: Any) -> str | None:
-        """Why a backend that is not admitted looks meant as a supported keychain, or None if it does not.
+        """Why a backend that is not admitted looks meant as a supported keychain or as the library's chain,
+        or None if it does not.
 
-        For the doctor only; admission never depends on it. Reads the object's type, never the instance.
+        For the doctor only; admission never depends on it. Reads the object's type, never the instance, so
+        a chain is never enumerated here.
         """
         kind = type(obj)
         module = _module_of(obj)
         qualname = getattr(kind, "__qualname__", "")
         qualname = qualname if type(qualname) is str else ""
         bases = _true_mro(kind)[1:]
-        for (spec_module, spec_name), genuine, failure in zip(_OS_CLASSES, self.os_classes, self.failures):
+        candidates = [(spec, genuine, failure, "unsupported_keychain_class")
+                      for spec, genuine, failure in zip(_OS_CLASSES, self.os_classes, self.failures)]
+        candidates.append((_CHAINER_CLASS, self.chainer, self.chainer_failure, "unsupported_keyring_chain"))
+        for (spec_module, spec_name), genuine, failure, unsupported in candidates:
             names_it = module == spec_module and qualname == spec_name
             if genuine is None:
                 if failure and names_it:
                     return f"keychain_module_unavailable:{spec_module}:{_safe(failure)}"
-            elif names_it or any(base is genuine for base in bases):
-                return f"unsupported_keychain_class:{_type_name(obj)}"
+            elif kind is not genuine and (names_it or any(base is genuine for base in bases)):
+                # (the library's own chainer, met only inside another chain, is not diagnosed)
+                return f"{unsupported}:{_type_name(obj)}"
         return None
 
     def rank(self, obj: Any) -> int | None:

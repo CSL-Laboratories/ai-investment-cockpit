@@ -21,8 +21,8 @@ from unittest import mock
 from cockpit.keys import KEY_KINDS, KeyRefused, doctor, doctor_line, store_for_host
 from cockpit.keys import detect as detect_module
 from cockpit.keys.tests.fakes import (
-    FAKE, NAMES, Keychains, forget_class, genuine_class, lookalike_chain, loader, recorder, requires_keyring,
-    untouchable,
+    FAKE, NAMES, Keychains, forget_class, genuine_class, genuine_class_chainer, lookalike_chain, loader, recorder,
+    requires_keyring, untouchable,
 )
 
 PATH = "/nonexistent-cockpit-b13/model-keys.json"  # a keychain host never touches the file
@@ -316,6 +316,64 @@ class MixedChainTests(_Case):
         ss = self.k.os()
         store, status = store_for_host(PATH, loader(self.k.chain([untouchable(*PLAIN)[0], ss])))
         self.assertTrue(status.available)  # the library's own chainer still works
+
+    def test_a_refused_chain_says_why_and_is_never_read(self) -> None:
+        # The third Codex read: a chain Cockpit does not admit says why, as a refused keychain does, without
+        # its members being read and without an exception's message. Each refused chain here holds a genuine
+        # OS keychain, so reading its members would have made it usable.
+        ss = self.k.os()
+        reads: list[str] = []
+
+        class _Members:
+            def __init__(self, label: str) -> None:
+                self.label = label
+
+            def __get__(self, obj: object, owner: object) -> list[object]:
+                reads.append(self.label)
+                return [ss]
+
+        class DistroChain(genuine_class_chainer()):  # type: ignore[misc]
+            backends = _Members("subclass")
+
+        forget_class(self, DistroChain)
+        type.__setattr__(DistroChain, "__qualname__", "DistroChain")
+        forged = type("ChainerBackend", (), {"__module__": "keyring.backends.chainer", "backends": _Members("forged")})()
+        cases = {
+            "a subclass of the library's chainer": (DistroChain(), f"unsupported_keyring_chain:{__name__}.DistroChain"),
+            "the chainer's module and class name": (forged, "unsupported_keyring_chain:keyring.backends.chainer.ChainerBackend"),
+        }
+        for label, (backend, reason) in cases.items():
+            with self.subTest(label):
+                store, status = store_for_host(PATH, loader(backend))
+                self.assertEqual((status.available, status.reason), (False, reason))
+                self.assertIn(f"no OS keychain ({reason})", doctor_line(doctor(status, None)))
+                self.assert_refused(store)
+                # A member of the library's own chain with no OS keychain beside it: the same reason.
+                store, status = store_for_host(PATH, loader(self.k.chain([recorder(), backend])))
+                self.assertEqual((status.available, status.reason), (False, reason))
+        self.assertEqual(reads, [])
+        # The library's own chain while its module will not import at verification: refused, said, not read.
+        chain, kwallet = self.k.chain([recorder(), self.k.os()]), self.k.os("KWallet5")
+        real_import = detect_module.importlib.import_module
+
+        def import_module(name: str) -> object:
+            if name == "keyring.backends.chainer":
+                raise ImportError("/made-up/private-folder " + FAKE)
+            return real_import(name)
+
+        with mock.patch.object(detect_module.importlib, "import_module", import_module):
+            store, status = store_for_host(PATH, loader(chain))
+            self.assertEqual((status.available, status.reason),
+                             (False, "keychain_module_unavailable:keyring.backends.chainer:ImportError"))
+            line = doctor_line(doctor(status, None))
+            self.assertNotIn("made-up", line)
+            self.assertNotIn(FAKE, line)
+            self.assert_refused(store)
+            self.assertEqual(chain.reads, 0)
+            # Not reported when the selected backend is an OS keychain itself.
+            store, status = store_for_host(PATH, loader(kwallet))
+            self.assertEqual((status.available, status.reason), (True, "ok"))
+        self.assertEqual(ss.calls, [])
 
     def test_a_chain_that_changes_after_the_check_cannot_redirect_a_key(self) -> None:
         ss = self.k.os()
