@@ -22,14 +22,15 @@ on:
   pull_request_review_comment:
     types: [created]
 
-# Tune without editing the script. FILE_LINEAR is on for this Linear-enabled repo.
+# Tune without editing the script. FILE_LINEAR is off (CSL-862): no Linear issue is
+# created or updated. Set it back to "true" to file the roll-ups again.
 env:
   STUCK_HOURS: "6"
   MAX_MEDIATIONS_PER_PR_PER_DAY: "3"
   QUOTE_LIMIT: "2000"
   DEVIN_LOGIN: "devin-ai-integration[bot]"
   CLAUDE_LOGINS: "claude[bot],claude"
-  FILE_LINEAR: "true"
+  FILE_LINEAR: "false"
   # Personal-repo path only. Labels are posted with CODEX_TRIGGER_PAT (GITHUB_TOKEN is read-only).
   APPLY_PR_LABEL: "false"
   NEEDS_DECISION_LABEL: "needs-decision"

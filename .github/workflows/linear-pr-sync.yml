@@ -4,10 +4,14 @@
 name: Linear PR sync
 
 on:
-  pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review, closed]
-  push:
-    branches: [main]
+  # CSL-862: Linear writes are off. The automatic triggers are commented out;
+  # revert this commit to restore them. A manual run has no PR number, so the
+  # script prints "no PR_NUMBER" and exits without calling Linear.
+  workflow_dispatch:
+  # pull_request_target:
+  #   types: [opened, synchronize, reopened, ready_for_review, closed]
+  # push:
+  #   branches: [main]
 
 permissions:
   contents: read
