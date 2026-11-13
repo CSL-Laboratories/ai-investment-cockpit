@@ -67,7 +67,8 @@ and probes confirm the credential is still dead; the detail then reads
 answers the cancel attempt at all, the earlier confirm is dropped. A cancel that confirms
 in a ``kill`` whose halt call raised does not count. Reuse on a later kill also
 requires that the earlier cancel and revoke ran with the halt read-back confirmed.
-After a venue is re-authorized and trading resumes, the host builds new venue-kill objects.
+After a venue is re-authorized, the host builds new venue-kill objects, and a new
+``KillSwitch`` over them, before the next kill, whether or not trading has resumed.
 """
 
 from __future__ import annotations
