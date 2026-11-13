@@ -49,8 +49,7 @@ source of its own (CSL-637). The amendment's section 3 is the full gate.
 
 Rule CA (CP0-v2 §6.1) counts a test only when it is a named file under
 `engine/tests/**` or `tools/test_*.py` and an explicit step in `ci.yml` job `linux`
-runs it. No such step exists for `engine/tests/` yet. Until one merges, work admitted
-for this tree is limited to research and contract drafts. See
+runs it. For `engine/tests/` that step is `engine tests`. See
 [`tests/README.md`](tests/README.md).
 
 The product contract lives in csl-research. `docs/replacement/SUCCESSOR-PRODUCT.md`

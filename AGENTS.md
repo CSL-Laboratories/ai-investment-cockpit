@@ -66,7 +66,7 @@ Ownership is manual and human-coordinated. The Linear assignee stays the human o
 **Claim record.** Post one agent-prefixed comment on the issue and edit it in place afterwards:
 
 ```text
-Agent (<tool>/<session id>, for <developer>): claim v1
+Agent (<Service> <Lane>, for <developer>): claim v1
 claim: <random uuid>
 scope: whole issue | sub-issue CSL-M
 branch: <name> @ <head sha>, base <sha>
@@ -189,7 +189,7 @@ if you hold one, with a release record and take only other admitted work that is
 the human-approved order.
 
 **Comment labels.** Agents usually post through a developer's account, so start
-every agent comment with `Agent (<tool/session>, for <developer>):`; it carries no
+every agent comment with `Agent (<Service> <Lane>, for <developer>):`; it carries no
 authority. A **developer-approved comment** counts as that developer's personal
 receipt (Lucas's decision, CSL-353 comment 6e602e3a; in force in this repository from
 the merge of this section, CSL-354 comment f5bcb490) only when all hold:
@@ -320,7 +320,7 @@ provisioned.
    ~80 spurious `WinError 206` failures that are not real defects. Also clear any
    ambient `COCKPIT_*` vars — real operator config in the shell fails at least one
    test that asserts an unconfigured default.
-5. Keep the repository private and commit only when the operator asks.
+5. The repository is public; commit only when the operator asks.
 6. **CI etiquette (CSL-255):** open PRs as drafts; batch pushes (one push per
    iteration when possible); mark ready **once**, after validation and only when
    no owner hold remains. Never merge a PR, rebase, or force-push. Avoid routine
@@ -385,7 +385,7 @@ Existing files stay until the CSL-536 move round that lists them, and no earlier
 - **Linear MCP** — issues, comments, and status at https://mcp.linear.app/mcp (or the Devin Linear integration).
 - **Linear** — source of truth for work. Workspace **CSL laboratories**, team key **CSL**, project **ai-investment-cockpit**.
 - **GitHub** — org **CSL-Laboratories**.
-- **Devin** — the only PR reviewer, review only (on PR open; on-demand via `/devin review`).
+- **Devin** — no longer reviews: its trial expired, and its `Devin Review` required check was removed on Nov 11, 2026.
 - **Claude Code Action** — PR fixer for Devin findings and `@claude` mentions on open, same-repository PRs whose author (and, for `@claude`, the commenter) has write, maintain or admin permission on the repo (other PRs are skipped by the workflow's event gate) (`.github/workflows/claude.yml`).
 - **GitHub-hosted runners** — all CI, free because this repo is public. The test matrix (Python linux/windows, rust-book) uses `ubuntu-24.04` and `windows-2025`; non-test jobs use `ubuntu-latest`; macOS uses `macos-latest`. CSL-408 moved the test matrix off Blacksmith.
 - **Google Workspace** (`csl-laboratories.com`) — meetings and notes.
@@ -433,12 +433,12 @@ Hosted split (PR #102):
 - Ordinary PR runs share a queue with automatic cancellation disabled. The trusted default-branch companion requests cancellation only for verified strict-ancestor CI/Rust runs after checking a real current-head successor; bootstrap and uncertain evidence leave runs queued. Draft synchronize uses a separate group from `ready_for_review`. See [controller policy and limits](docs/ci-cancellation-controller.md).
 - Non-draft synchronize events wait in `settle` for 120 seconds. Paid jobs and required aggregates accept successful settle or an event's intentional skip; failure, cancellation, and unexpected skips block. The wait consumes hosted capacity and does not guarantee savings.
 - CI caches pip downloads, never virtualenvs. Each cell creates a fresh environment, installs direct pins, and runs `pip check`; one fresh no-cache retry handles install/cache failure. Direct pins are not a transitive hash lock.
-- Queue protection is staged: proposed stable checks are `linux-gates`, `queue-gates`, `rust-gates`, and `review-gate`. The latter verifies the current genuine Devin bot commit status on every exact required PR head, with bounded polling and manual same-head recovery. Existing required `linux-gates` and `Devin Review` remain unchanged. See [the rollout and owner decisions](docs/ci-queue-rollout.md); synthetic tests do not establish live queue enforcement.
-- A rate-limited `CODEX_TRIGGER_PAT` does not fail the stuck-thread watch workflow run. The watcher reads with `github.token` and uses the PAT only for writes; a failed write is logged as `pr=<N> thread=<id> mediate=error` (or `pr=<N> label=error` when labelling is on) in a run that still passes. Inside the script, only a failure to list pull requests (which a `github.token` rate limit can cause) or a missing `GITHUB_REPOSITORY` returns non-zero; the job can also fail at checkout or on its 10-minute timeout. So read the log before treating a failed run as a code problem. The required checks (`linux-gates`, Devin Review) decide CI either way (Lucas's decision on CSL-390, comment 242120cc).
+- Queue protection is staged: proposed stable checks are `linux-gates`, `queue-gates`, `rust-gates`, and `review-gate`. The latter verifies the current genuine Devin bot commit status on every exact required PR head, with bounded polling and manual same-head recovery. `linux-gates` is the only required check (`Devin Review` was removed on Nov 11, 2026). See [the rollout and owner decisions](docs/ci-queue-rollout.md); synthetic tests do not establish live queue enforcement.
+- A rate-limited `CODEX_TRIGGER_PAT` does not fail the stuck-thread watch workflow run. The watcher reads with `github.token` and uses the PAT only for writes; a failed write is logged as `pr=<N> thread=<id> mediate=error` (or `pr=<N> label=error` when labelling is on) in a run that still passes. Inside the script, only a failure to list pull requests (which a `github.token` rate limit can cause) or a missing `GITHUB_REPOSITORY` returns non-zero; the job can also fail at checkout or on its 10-minute timeout. So read the log before treating a failed run as a code problem. The required checks (`linux-gates`; `Devin Review` until Nov 11, 2026) decide CI either way (Lucas's decision on CSL-390, comment 242120cc).
 
 ## Review roles
 
-- **Devin** is the GitHub PR code reviewer (findings). It does not auto-fix.
+- **Devin** was the GitHub PR code reviewer (findings) until its trial expired; it no longer reviews, and its required check was removed on Nov 11, 2026.
 - **Claude Code Action** (`.github/workflows/claude.yml`) is the fixer for Devin findings and `@claude` mentions on open, same-repository PRs whose author (and, for `@claude`, the commenter) has write, maintain or admin permission on the repo (other PRs are skipped by the workflow's event gate).
 - **Codex** has two allowed GitHub review paths, neither a Devin substitute:
   1. **CI/fixer gate** (CSL-103/259, `.github/workflows/codex-gate.yml`) - one nonce-bound `@codex review` per exact head/base/merge/tree candidate and fixer generation; the reply echoes that identity and ends with `CODEX-GATE: READY|MEDIATE`. See Code Review Rules.
@@ -448,7 +448,7 @@ Hosted split (PR #102):
 
 ## Review loop
 
-Devin reviews → Claude fixes (`claude.yml`) → the Codex gate (CSL-103) oversees
+Devin reviews (no longer: see [Review roles](#review-roles)) → Claude fixes (`claude.yml`) → the Codex gate (CSL-103) oversees
 candidate full CI / human handoff only. Devin findings
 trigger Claude directly without waiting for Codex. All Claude jobs share one
 per-PR lock with GitHub `queue: max` (one active, up to 100 pending; excess
@@ -530,7 +530,7 @@ Devin automations (**Main CI failure fixer** and **Weekly dead-code sweep**, Wed
 
 ## Security
 
-- Never commit secrets. GitHub secret scanning and push protection are on: a blocked push means remove the secret and rotate it. Never bypass.
+- Never commit secrets. GitHub secret scanning and push protection are off, so GitHub will not block a push that holds one: check before you push, and remove and rotate any secret that lands.
 - Dependabot security updates are on. Its PRs follow the normal review flow.
 
 ## Trading safety

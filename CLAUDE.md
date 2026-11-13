@@ -92,8 +92,8 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 - **Research/dev host is Cursor Cloud Agent Linux VM.** Cursor-native fresh
   sessions are preferred; Codex/OpenCode development routes require exact-host
   qualification and admitted budgets. Devin is retired from this cockpit's
-  research/dev swarm dispatch only; its GitHub PR-review role in `AGENTS.md`
-  remains active. Devin may still post research briefs, which, like all
+  research/dev swarm dispatch; its GitHub PR-review role ended when its trial
+  expired (required check removed Nov 11, 2026). Devin may still post research briefs, which, like all
   research, land in CSL-Laboratories/csl-research. Muse synthesis requires
   a different model family; OpenRouter/Hive are capped fallback synthesis only.
   Historical Cloud process (legacy, frozen): `docs/research/agent-swarm-rebase-2026-09-14.md`.
@@ -214,7 +214,7 @@ decision.
 
 For writer collisions, use the [pause and resumption checklist](docs/ci-runbook.md#5-stop-or-roll-back-automation).
 
-Devin reviews → Claude fixes (`claude.yml`) → stuck threads are picked up by
+Devin reviews (no longer: its trial expired) → Claude fixes (`claude.yml`) → stuck threads are picked up by
 [`.github/workflows/stuck-thread-watch.yml`](.github/workflows/stuck-thread-watch.yml),
 which asks Codex to mediate (`@codex review`) and records one Linear Triage
 `needs-decision` roll-up per unapproved PR (`Stuck PR threads: <repo>#<PR>`),

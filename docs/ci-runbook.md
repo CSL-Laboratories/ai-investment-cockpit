@@ -12,7 +12,7 @@ adds `ci:full` / `enhancement` (AGENTS.md:156-157, 168-172). Escalate on the Lin
 
 ## 1. Reading the required checks
 
-`main` requires **`linux-gates`** and **`Devin Review`** (contract §1).
+`main` requires **`linux-gates`** (ruleset `required-ci`). `Devin Review` was removed from the required checks on Nov 11, 2026; contract §1 predates that.
 
 | You see | It means | Do |
 |---|---|---|
@@ -20,7 +20,7 @@ adds `ci:full` / `enhancement` (AGENTS.md:156-157, 168-172). Escalate on the Lin
 | `linux-gates` red | A test failed, or a dependency was cancelled, skipped unexpectedly or missing: the aggregate fails closed (contract §4) | Open the failing job. If it is `settle` or a cancelled cell, see §3 below. |
 | `linux-gates` red on a draft | Expected: drafts skip the matrix and the aggregate fails closed until `ready_for_review` (AGENTS.md:427) | Mark ready when done. |
 | No `linux-gates` on the head | No `ci.yml` job reached that head: a run cancelled before any job started, by its concurrency group (a push, manual, label or schedule run; contract §3 row 21(a)) or by the controller (row 22(a)), a skip annotation or unresolved conflict (GitHub creates no run), or an approval-required run | §4 below. |
-| `Devin Review` missing or pending | External app; not produced by this repository's workflows (contract §1) | Ask for a review through the Discord bot or Devin; do not push to retrigger it. |
+| `Devin Review` on the head | External app; not produced by this repository's workflows (contract §1). Its trial has expired: it reports "Full review skipped" without reviewing, and it is no longer required | Nothing. |
 | `cancel-ancestors` red in `ci label retrigger` | Usually a fail-closed refusal, not a CI failure. Known variants: `Unverified triggering run provenance` (CSL-388) and `Triggering run identity changed` (CSL-410), mostly during merge bursts | Not a merge blocker. Report a new refusal text on CSL-356. |
 
 ## 2. Re-running

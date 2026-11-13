@@ -41,7 +41,7 @@ are not enabled; see
 | `docs/` | The design corpus — research → architecture → build → security → enhancements. **Start at [`docs/README.md`](docs/README.md).** |
 | `app/` | The code, per the WP0–WP9 scaffold ([`docs/build-scaffold-ultracode.md`](docs/build-scaffold-ultracode.md)). |
 | `app/quant/` | The QT quant engine — real FIFO order book, strategies, replay, costs, PnL. **Read [`docs/quant-engine.md`](docs/quant-engine.md) before changing anything here**; it carries the containment argument. |
-| `.github/workflows/ci.yml` | Optional manually dispatched hosted parity check. The authoritative merge gates run locally under `DEC-09`. |
+| `.github/workflows/ci.yml` | Hosted CI on every PR; its `linux-gates` job is the required check on `main`. The release-blocking platform matrix still runs locally under `DEC-09`. |
 | `docs/setup/accounts-and-keys.md` | How to provision accounts/keys into the host OS credential store through `keyring`. |
 
 ## The load-bearing rules (never weaken silently)
@@ -142,5 +142,5 @@ toggle. See [`AGENTS.md`](AGENTS.md) and
 
 - Provision accounts + keys into the host OS credential store — [`docs/setup/accounts-and-keys.md`](docs/setup/accounts-and-keys.md).
 - Re-verify the moving targets before the full-scale/live stage — the dated snapshot `setup/moving-targets-refresh-2026-07-06.md` moved to csl-research [`contracts/ai-investment-cockpit/history/setup/moving-targets-refresh-2026-07-06.md`](https://github.com/CSL-Laboratories/csl-research/blob/c6587b65ceb9672a0ea5e88ce2f3aa8167721067/contracts/ai-investment-cockpit/history/setup/moving-targets-refresh-2026-07-06.md) at `c6587b65ceb9672a0ea5e88ce2f3aa8167721067` (the merge of csl-research #299, CSL-588).
-- **Keep this repository private.** Secrets live in keyring, never in the repo (Invariant 4).
+- **This repository is public.** Secrets live in keyring, never in the repo (Invariant 4).
 - Not financial advice; personal-use experiment with capped, loss-tolerable downside.

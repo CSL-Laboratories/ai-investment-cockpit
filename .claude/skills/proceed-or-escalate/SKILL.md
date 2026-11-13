@@ -164,7 +164,7 @@ Agents usually post through a developer's account, so readers cannot tell who
 wrote a comment from the author field. Make it visible in the text.
 
 - **Agent comment** (status, evidence, proposals): start with
-  `Agent (<tool/session>, for <developer>):`. It carries no authority.
+  `Agent (<Service> <Lane>, for <developer>):`. It carries no authority.
 - **Developer-approved comment**: counts as that developer's personal receipt
   (Lucas's decision, CSL-353 comment 6e602e3a; in force in this repository from the
   merge of the AGENTS.md section, CSL-354 comment f5bcb490) only when all of these
