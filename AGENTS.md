@@ -45,7 +45,7 @@ proposed, not accepted, in `CSL-Laboratories/csl-research` at commit
 `d885c2de7228ab4e886b93165d30013e4c8bc5fd`, path
 `contracts/ai-investment-cockpit/amendments/ISSUE-CONTRACT-2026-10-25.md`, SHA-256
 `0b756e0777520f7b8a83d518b6b5887e96ed98eb8481d9d3840ddf4418c9b345`, via
-https://github.com/CSL-Laboratories/csl-research/pull/58 (not merged). Once it is accepted and
+https://github.com/CSL-Laboratories/csl-research/pull/58 (merged 2026-10-26). Once it is accepted and
 promoted, a checker-pinned founder GitHub PR approval recorded in
 `docs/replacement/program.json` will also count (approving founder login on the checker
 allowlist `CDanTheMan` / `NotSkittlz` / `samir-shah-ahmed`, exact-case match, approver
@@ -478,7 +478,7 @@ Lucas's decision ([CSL-381 comment 81c9a1f7](https://linear.app/csl-laboratories
 - **After three rounds**, a founder decides whether to merge. Agents do not
   start a fourth round on their own.
 
-This changes no merge authority, founder approval rule, Devin review or
+This changes no merge authority, Devin review or
 required check on the final head. It changes no workflow: the `claude.yml`
 fixer and the Codex gate keep the behavior described above until a separate
 `.github` change.
@@ -530,7 +530,7 @@ Devin automations (**Main CI failure fixer** and **Weekly dead-code sweep**, Wed
 
 ## Security
 
-- Never commit secrets. GitHub secret scanning and push protection are off, so GitHub will not block a push that holds one: check before you push, and remove and rotate any secret that lands.
+- Never commit secrets. This repository's secret scanning and push protection settings are off, so do not rely on them. If a push is blocked or a secret lands, remove the secret and rotate it. Never bypass.
 - Dependabot security updates are on. Its PRs follow the normal review flow.
 
 ## Trading safety

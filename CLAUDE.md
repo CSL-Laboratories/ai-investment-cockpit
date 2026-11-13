@@ -23,7 +23,7 @@ proposed, not accepted, in `CSL-Laboratories/csl-research` commit
 `d885c2de7228ab4e886b93165d30013e4c8bc5fd`, path
 `contracts/ai-investment-cockpit/amendments/ISSUE-CONTRACT-2026-10-25.md`, SHA-256
 `0b756e0777520f7b8a83d518b6b5887e96ed98eb8481d9d3840ddf4418c9b345`, via
-[csl-research #58](https://github.com/CSL-Laboratories/csl-research/pull/58) (not merged). Follow [AGENTS.md's founder decision and integration rules](AGENTS.md#founder-decisions-and-integration)
+[csl-research #58](https://github.com/CSL-Laboratories/csl-research/pull/58) (merged 2026-10-26). Follow [AGENTS.md's founder decision and integration rules](AGENTS.md#founder-decisions-and-integration)
 for operational authority; they do not amend accepted contracts, activate R2a or
 unlock live capital. Founders merge after the required current-head reviews and checks;
 agents never merge. Non-author approval checks alone do not establish
