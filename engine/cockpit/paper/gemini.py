@@ -10,8 +10,8 @@ the kill cancels working orders. After the order halt is set in one committed st
 * one cancel-all operation is attempted, then the open orders are listed. Cancel is
   ``confirmed`` only when the venue lists none open. A timeout, error, unreadable reply
   or any order still listed keeps it ``pending``. So does an empty listing that still
-  carries a ``cursor``, a ``truncated`` other than ``False`` or a ``remaining`` other
-  than ``0`` (unfinished). A failure never skips the revoke;
+  carries a ``cursor``, a ``truncated`` or ``has_next`` other than ``False`` or a
+  ``remaining`` other than ``0`` (unfinished). A failure never skips the revoke;
 * the OAuth grant is revoked by the RFC 7009 token revocation
   ``POST https://exchange.gemini.com/auth/token/revoke`` (``REVOKE_ENDPOINT``; the legacy
   revoke-by-token call is not used). The transport returns a typed ``RevokeReply``
@@ -64,7 +64,10 @@ venue call keeps the cancel leg ``confirmed`` only if that same ``kill``'s fresh
 and probes confirm the credential is still dead; the detail then reads
 ``kept:<this attempt's error>``. If the fresh revoke does not confirm, or the venue
 answers the cancel attempt at all, the earlier confirm is dropped. A cancel that confirms
-in a ``kill`` whose halt call raised does not count.
+in a ``kill`` whose halt call raised does not count. Reuse on a later kill also
+requires that the earlier cancel and revoke ran with the halt read-back confirmed.
+After a venue is re-authorized, the host builds new venue-kill objects, and a new
+``KillSwitch`` over them, before the next kill, whether or not trading has resumed.
 """
 
 from __future__ import annotations
@@ -99,7 +102,7 @@ def _list_finished(listed: dict) -> bool:
     """True only when the list payload does not say more orders may follow."""
     if listed.get("cursor") is not None:
         return False
-    if listed.get("truncated", False) is not False:
+    if listed.get("truncated", False) is not False or listed.get("has_next", False) is not False:
         return False
     remaining = listed.get("remaining", 0)
     return type(remaining) is int and remaining == 0
@@ -208,7 +211,8 @@ class GeminiKill:
             self._revoke()
             revoked_now = self._state["revoke_grant"] == "confirmed"
             if cancelled_now:
-                self._cancel_then_revoke_confirmed = revoked_now
+                # Reuse requires cancellation and revocation behind a verified halt.
+                self._cancel_then_revoke_confirmed = revoked_now and self._state["halt"] == "confirmed"
             elif (self._cancel_then_revoke_confirmed and revoked_now
                   and self._detail.get("cancel_all", "").startswith("error:")):
                 # The dead credential cannot list or cancel. This kill's own revoke and probes
