@@ -13,13 +13,16 @@ from __future__ import annotations
 import contextlib
 import importlib
 import os
+import pathlib
+import sys
+import tempfile
 import types
 import unittest
 from typing import Any
 from unittest import mock
 
 from cockpit.keys import KEY_KINDS, KeyRefused, doctor, doctor_line, store_for_host
-from cockpit.keys.tests.fakes import FAKE, loader
+from cockpit.keys.tests.fakes import FAKE, forget_class, loader
 
 try:
     _kr_backend = importlib.import_module("keyring.backend")
@@ -229,6 +232,103 @@ class RealChainerTests(unittest.TestCase):
                     self.assertEqual((status.backend, status.ignored), ("kwallet DBusKeyring", ()))
                     store.put("broker", "fixture", FAKE)
             self.assertEqual((len(stores[_kwallet.DBusKeyring]), stores[_ss.Keyring]), (1, {}))
+
+    def test_the_library_reads_an_ignored_backends_priority_but_cockpit_sends_it_nothing(self) -> None:
+        # Codex's P2: building the chain, the library itself reads every member's priority (to filter and
+        # to sort). Cockpit's guarantee starts after that: no password operation reaches an ignored backend.
+        reads: list[int] = []
+        touched: list[str] = []
+
+        class Helper:
+            __module__ = "review_standin.pip_credential_helper"
+            __qualname__ = "Helper"
+
+            def __getattribute__(self, attr: str) -> object:
+                if attr == "priority":
+                    reads.append(1)
+                    return 9
+                if attr == "__class__":
+                    return type(self)
+                touched.append(attr)
+                raise AssertionError(f"ignored backend was touched: {attr}")
+
+        ss, data, calls = self.real_os_backend(_ss.Keyring, 5)
+        store, status = store_for_host(PATH, loader(self.real_chain([ss, Helper()])))
+        self.assertTrue(status.available)
+        self.assertEqual(status.ignored, ("review_standin.pip_credential_helper.Helper",))
+        self.assertGreaterEqual(len(reads), 1)  # the library's own discovery ran the backend's code
+        for kind in KEY_KINDS:
+            store.put(kind, "fixture", FAKE)
+            self.assertEqual(store.get(kind, "fixture"), FAKE)
+        self.assertEqual(touched, [])
+        self.assertEqual(len(data), len(KEY_KINDS))
+
+    def test_a_priority_that_raises_while_the_library_builds_the_chain_fails_closed(self) -> None:
+        # The library propagates the error out of ``ChainerBackend.backends``; detection then reports no
+        # keychain (keyring_backend_error), names nothing and stores nothing, though a keychain is present.
+        for fail_at in (1, 2):
+            with self.subTest(fail_at=fail_at):
+                reads: list[int] = []
+
+                class Broken:
+                    __module__ = "review_standin.broken"
+
+                    @property
+                    def priority(self) -> float:
+                        reads.append(1)
+                        if len(reads) >= fail_at:
+                            raise RuntimeError("fixture helper broke")
+                        return 1
+
+                ss, data, calls = self.real_os_backend(_ss.Keyring, 5)
+                store, status = store_for_host(PATH, loader(self.real_chain([ss, Broken()])))
+                self.assertFalse(status.available)
+                self.assertEqual(status.reason, "keyring_backend_error:RuntimeError")
+                self.assertEqual(status.ignored, ())
+                with self.assertRaises(KeyRefused):
+                    store.put("broker", "fixture", FAKE)
+                self.assertEqual((data, calls), ({}, []))
+
+    def test_a_forged_class_through_the_librarys_own_loader_is_refused(self) -> None:
+        # Codex's P1 through keyring's real selection: PYTHON_KEYRING_BACKEND and keyringrc.cfg name a
+        # file-writing class whose metadata claims Secret Service. The library loads it; Cockpit refuses it.
+        written: dict = {}
+
+        class Spoof(_kr_backend.KeyringBackend):
+            priority = 9  # type: ignore[assignment]
+
+            def get_password(self, service: str, user: str) -> str | None:
+                return written.get((service, user))
+
+            def set_password(self, service: str, user: str, secret: str) -> None:
+                written[(service, user)] = secret
+
+            def delete_password(self, service: str, user: str) -> None:
+                written.pop((service, user), None)
+
+        Spoof.__module__, Spoof.__qualname__, Spoof.__name__ = "keyring.backends.SecretService", "Keyring", "Keyring"
+        forget_class(self, Spoof)
+        plugin = types.ModuleType("keys_lane_plugin")
+        plugin.Spoof = Spoof
+        with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
+            cfg = os.path.join(tmp, "keyringrc.cfg")
+            with open(cfg, "w", encoding="utf-8") as fh:
+                fh.write("[backend]\ndefault-keyring=keys_lane_plugin.Spoof\n")
+            stack.enter_context(mock.patch.dict(sys.modules, {"keys_lane_plugin": plugin}))
+            stack.enter_context(mock.patch.object(_core, "_config_path", return_value=pathlib.Path(cfg)))
+            stack.enter_context(mock.patch.object(_kr_backend, "_limit", None))
+            no_env = {k: v for k, v in os.environ.items() if k != "PYTHON_KEYRING_BACKEND"}
+            for route, env in (("PYTHON_KEYRING_BACKEND", dict(no_env, PYTHON_KEYRING_BACKEND="keys_lane_plugin.Spoof")),
+                               ("keyringrc.cfg", no_env)):
+                with self.subTest(route), mock.patch.dict(os.environ, env, clear=True):
+                    chosen = _core._detect_backend()
+                    self.assertIs(type(chosen), Spoof)  # the library did load the forged class
+                    store, status = store_for_host(PATH, loader(chosen))
+                    self.assertFalse(status.available)
+                    self.assertEqual(status.reason, "no_keychain_backend")
+                    with self.assertRaises(KeyRefused):
+                        store.put("broker", "fixture", FAKE)
+                    self.assertEqual(written, {})
 
     def test_a_real_chain_with_no_os_keychain_is_refused(self) -> None:
         plain, plain_touched = _standin("keyrings.alt.file", "PlaintextKeyring", 0.5)

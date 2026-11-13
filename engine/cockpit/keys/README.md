@@ -45,30 +45,47 @@ file in the way is refused and left as it is.
 Keychain detection (`detect.py`): read-only. The optional `keyring` library is loaded lazily
 through an injectable loader. Detection never stores, reads or deletes a key (no canary round trip),
 and a host without the library reads as "no keychain". A backend counts as an OS keychain only when
-its module is exactly one of `keyring.backends.SecretService`, `libsecret`, `kwallet`, `macOS` or
-`Windows` and its priority is a finite number above 0 that reads without error. The library's `fail`
-and `null` backends, `keyrings.alt` and any other file, unknown or look-alike backend are not
-keychains, so a plaintext keyring is never treated as one for broker or venue secrets.
+its type *is* one of the library's own classes, imported from the library: `SecretService.Keyring`,
+`kwallet.DBusKeyring` (KWallet 5), `libsecret.Keyring`, `kwallet.DBusKeyringKWallet4` (KWallet 4),
+`macOS.Keyring` or `Windows.WinVaultKeyring` (exact identity, so not a subclass, not a proxy, and not
+another class that copies a module or class name), and its priority, read from that class, is a finite
+number above 0. A class whose module will not import on this host is a keychain this host does not
+have. The library's `fail` and `null` backends, `keyrings.alt` and any other file, unknown or
+look-alike backend are not keychains, so a plaintext keyring is never treated as one for broker or
+venue secrets.
 
-When the library hands back its chain of several backends (`keyring.backends.chainer`), the chain is
-read once and one OS keychain in it is used; every other backend in the chain is ignored, never
-called (not even for its priority) and named in the doctor line. A chain with no OS keychain is
-refused like any other non-keychain host. `store_for_host()` builds the `KeyStore` from that answer
-and binds it to the chosen OS backend object itself, never to the chain or the module, so a chain or a
-global keyring that changes later cannot redirect a key.
+When the library hands back its own chain of several backends (`keyring.backends.chainer`'s class,
+also by identity), the chain is read once and one OS keychain in it is used; every other backend in
+the chain is ignored and named in the doctor line, and Cockpit sends it no password operation. What
+this does not do: stop the library's own discovery from running a backend's code. To build the chain,
+the library reads every member's priority (in 25.7.0, twice: to filter and to sort), and its
+`get_keyring()` may first initialize installed plugins. A priority that raises there makes detection
+fail closed ("no keychain"). A chain with no OS keychain is refused like any other non-keychain host.
+`store_for_host()` builds the `KeyStore` from that answer and binds it to the chosen backend object and
+its genuine class: every save, read and delete goes through that class's own method, never through the
+chain, the module, or an attribute set on the instance later, so a chain, a global keyring or an
+instance that changes after the check cannot redirect a key.
+
+What this cannot defend against: hostile code already running in the Python process. A replaced import
+of a keyring module, a monkey-patched genuine class, or a malicious plugin that the library initializes
+can do anything this code can; the runtime and its installed packages have to be trusted.
 
 When the chain holds several OS keychains, Cockpit uses the first in its own fixed order: Secret
-Service, KWallet 5 (`kwallet.DBusKeyring`), libsecret, KWallet 4 (`kwallet.DBusKeyringKWallet4`), any
-other KWallet class (macOS and Windows are never chained with these). Lucas, Nov 12, 2026, asked "On KDE,
-should Cockpit use the same keychain in every session (a fixed order)?": "Yes, fixed order". That is
-keyring 25.7.0's order by priority (5, 4.9, 4.8, 3.9) everywhere except a KDE desktop session, where the
-library raises KWallet 5 to 5.1, above Secret Service's 5 (and KWallet 4 to 4.1, still below libsecret).
-With the library's order one KDE host would use KWallet in its desktop session and Secret Service over
-SSH, in a service or in cron, and a key saved in one would read as "no key saved" in the other; with
-the fixed order every session on that host uses Secret Service. A key can still read as "no key saved" when a different set of keychains answers in
-another session (a daemon reachable only on the desktop); nothing else is ever consulted, and the
-doctor line names the keychain in use. `PYTHON_KEYRING_BACKEND` set to one OS backend makes every
-session use that one.
+Service, KWallet 5, libsecret, KWallet 4 (macOS and Windows are never chained with these). Lucas, Nov
+12, 2026, asked "On KDE, should Cockpit use the same keychain in every session (a fixed order)?": "Yes,
+fixed order". That is keyring 25.7.0's order by priority (5, 4.9, 4.8, 3.9) everywhere except where
+`XDG_CURRENT_DESKTOP` contains `KDE` (normally a KDE desktop session), where the library raises KWallet 5
+to 5.1, above Secret Service's 5 (and KWallet 4 to 4.1, still below libsecret). With the library's order
+one KDE host would use KWallet in its desktop session and Secret Service over SSH, in a service or in
+cron; with the fixed order every session on that host uses Secret Service. `PYTHON_KEYRING_BACKEND` set
+to one OS backend makes every session use that one.
+
+A change of keychain reads what the newly selected keychain holds. The order is fixed, but which
+keychains answer can still differ between sessions or library versions (a daemon reachable only on the
+desktop). A run that selects a different keychain from the one a key was saved in reads nothing if
+that keychain never held the key, or an older key left there earlier, even one deleted since in the
+other keychain: a delete reaches only the selected keychain. No unselected store is ever consulted, and
+the doctor line names the keychain in use. Cockpit does not remember which keychain it used before.
 
 Doctor line: `PYTHONPATH=engine python3 -m cockpit.keys doctor [--key-file PATH]` prints one line,
 for example
@@ -93,6 +110,8 @@ Not here yet: wiring into a Cockpit settings surface or the frozen `app/` doctor
 PYTHONPATH=engine python3 -B -m unittest discover -s engine/cockpit/keys/tests -t engine -v
 ```
 
-CI runs `engine/tests` (which holds `engine/tests/keys/test_app_owner_keys.py`) but not this folder;
-run it by hand. `test_b13_real_library.py` uses the installed `keyring` library's own chain and OS
-backend classes, with their password methods pointed at a dict, and is skipped without the library.
+CI runs `engine/tests`; `engine/tests/keys/test_keys_suite_ci.py` imports this folder's test classes so
+that the same step collects and runs them, and fails if a test class is added here without being
+imported there. Tests that need an OS keychain use the installed `keyring` library's own classes, with
+their probe and password methods pointed at a dict (no real keychain or D-Bus is reached), and are
+skipped without the library.

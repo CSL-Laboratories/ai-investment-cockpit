@@ -17,7 +17,7 @@ import unittest
 from cockpit.keys import KeyRefused, detect_keychain, doctor, doctor_line, store_for_host
 from cockpit.keys.__main__ import main
 from cockpit.keys.detect import default_key_file
-from cockpit.keys.tests.fakes import untouchable
+from cockpit.keys.tests.fakes import Keychains, loader, recorder, requires_keyring, untouchable
 
 FAKE = "fake-key-not-real-0123"
 
@@ -63,30 +63,39 @@ class FakeKeyringModule(types.SimpleNamespace):
 
 
 class DetectTests(unittest.TestCase):
+    # OS keychains are admitted by class identity, so the tests that need one use the keyring library's
+    # own classes (``Keychains``) with their probe and password methods replaced for the test.
+    def setUp(self) -> None:
+        self.k = Keychains(self)
+
+    @requires_keyring
     def test_mixed_chainers_use_the_os_backend_without_touching_the_others(self):
         # B13 (accepted by Lucas, Nov 12, 2026): a chain of one OS keychain plus other backends uses
-        # the OS keychain; until then (#323) such a chain was refused. The other backend is never read.
+        # the OS keychain; until then (#323) such a chain was refused. Cockpit sends the other no call.
         for module in ("keyrings.alt.file", "keyring.backends.SecretServiceEvil"):
             for reverse in (False, True):
-                safe_mod = FakeKeyringModule(_backend("keyring.backends.SecretService"))
+                safe = self.k.os("SecretService")
                 unsafe, touched = untouchable(module)
-                children = [safe_mod.backend, unsafe][::(-1 if reverse else 1)]
-                mod = FakeKeyringModule(_backend("keyring.backends.chainer", backends=children))
-                store, status = store_for_host(load=lambda mod=mod: mod)
+                children = [safe, unsafe][::(-1 if reverse else 1)]
+                chain = self.k.chain(children)
+                store, status = store_for_host(load=loader(chain))
                 self.assertTrue(status.available)
                 self.assertEqual(status.ignored, (f"{module}.PlaintextKeyring",))
                 for kind in ("broker", "venue"):
                     self.assertEqual(store.put(kind, "fixture", FAKE), "keyring")
                     self.assertEqual(store.get(kind, "fixture"), FAKE)
-                self.assertEqual([c[0] for c in safe_mod.calls], ["set", "get", "set", "get"])
+                self.assertEqual([c[0] for c in safe.calls], ["set", "get", "set", "get"])
                 self.assertEqual(touched, [])
-                self.assertEqual(mod.calls, [])
+                self.assertEqual(chain.calls, [])
 
+    @requires_keyring
     def test_store_pins_checked_os_backend_not_module_or_chainer(self):
-        safe_mod = FakeKeyringModule(_backend("keyring.backends.SecretService"))
-        unsafe_mod = FakeKeyringModule(_backend("keyrings.alt.file"))
-        chain = _backend("keyring.backends.chainer", backends=[safe_mod.backend])
-        mod = FakeKeyringModule(chain)
+        safe = self.k.os("SecretService")
+        unsafe = recorder("keyrings.alt.file")
+        unsafe_mod = types.SimpleNamespace(get_keyring=lambda: unsafe)
+        chain = self.k.chain([safe])
+        mod = types.SimpleNamespace(backend=chain)
+        mod.get_keyring = lambda: mod.backend
         loads = []
 
         def load():
@@ -95,27 +104,29 @@ class DetectTests(unittest.TestCase):
 
         store, status = store_for_host(load=load)
         self.assertTrue(status.available)
-        chain.backends = [unsafe_mod.backend]
-        mod.backend = unsafe_mod.backend
+        chain.children = [unsafe]
+        mod.backend = unsafe
         store.put("broker", "fixture", FAKE)
         self.assertEqual(store.get("broker", "fixture"), FAKE)
         store.delete("broker", "fixture")
-        self.assertEqual([c[0] for c in safe_mod.calls], ["set", "get", "delete"])
-        self.assertEqual(unsafe_mod.calls, [])
-        self.assertEqual(mod.calls, [])
+        self.assertEqual([c[0] for c in safe.calls], ["set", "get", "delete"])
+        self.assertEqual(unsafe.calls, [])
+        self.assertEqual(chain.calls, [])
         self.assertEqual(len(loads), 1)
 
+    @requires_keyring
     def test_cyclic_or_unreadable_chain_is_unavailable(self):
-        chain = _backend("keyring.backends.chainer", backends=[])
-        chain.backends.append(chain)
-        self.assertFalse(detect_keychain(lambda: FakeKeyringModule(chain)).available)
+        chain = self.k.chain([])
+        chain.children.append(chain)
+        self.assertFalse(detect_keychain(loader(chain)).available)
 
+    @requires_keyring
     def test_real_backend_is_a_keychain_and_detection_touches_no_key(self) -> None:
-        mod = FakeKeyringModule(_backend("keyring.backends.SecretService", "SecretService Keyring"))
-        status = detect_keychain(lambda: mod)
+        backend = self.k.os("SecretService")
+        status = detect_keychain(loader(backend))
         self.assertTrue(status.available)
         self.assertEqual(status.backend, "SecretService Keyring")
-        self.assertEqual(mod.calls, [])
+        self.assertEqual(backend.calls, [])
 
     def test_library_missing_reads_as_no_keychain(self) -> None:
         def load() -> object:
@@ -125,24 +136,25 @@ class DetectTests(unittest.TestCase):
         self.assertFalse(status.available)
         self.assertEqual(status.reason, "keyring_library_missing")
 
+    @requires_keyring
     def test_fail_null_and_unusable_backends_are_not_keychains(self) -> None:
         cases = {
-            "fail": _backend("keyring.backends.fail"),
-            "null": _backend("keyring.backends.null"),
-            "priority0": _backend("keyring.backends.SecretService", priority=0),
-            "raises": _backend("keyring.backends.SecretService", priority=RuntimeError("no dbus")),
-            "empty_chainer": _backend("keyring.backends.chainer", backends=[]),
+            "fail": lambda: self.k.os("fail", priority=0),
+            "null": lambda: self.k.os("null", priority=-1),
+            "priority0": lambda: self.k.os("SecretService", priority=0),
+            "raises": lambda: self.k.os("SecretService", priority=RuntimeError("no dbus")),
+            "empty_chainer": lambda: self.k.chain([]),
         }
-        for label, backend in cases.items():
+        for label, make in cases.items():
             with self.subTest(label):
-                self.assertFalse(detect_keychain(lambda b=backend: FakeKeyringModule(b)).available)
+                self.assertFalse(detect_keychain(loader(make())).available)
 
+    @requires_keyring
     def test_chainer_with_a_real_child_is_a_keychain(self) -> None:
-        chain = _backend("keyring.backends.chainer", backends=[
-            _backend("keyring.backends.fail"), _backend("keyring.backends.kwallet", "KWallet")])
-        status = detect_keychain(lambda: FakeKeyringModule(chain))
+        chain = self.k.chain([self.k.os("fail", priority=0), self.k.os("KWallet5")])
+        status = detect_keychain(loader(chain))
         self.assertTrue(status.available)
-        self.assertEqual(status.backend, "KWallet")
+        self.assertEqual(status.backend, "kwallet DBusKeyring")
 
     def test_get_keyring_error_reads_as_no_keychain(self) -> None:
         mod = FakeKeyringModule(None)
@@ -178,9 +190,10 @@ class StoreForHostTests(unittest.TestCase):
         os.chmod(self.dir, 0o700)
         self.path = os.path.join(self.dir, "model-keys.json")
 
+    @requires_keyring
     def test_keychain_host_routes_every_kind_to_the_keychain(self) -> None:
-        mod = FakeKeyringModule(_backend("keyring.backends.macOS", "Keyring"))
-        store, status = store_for_host(self.path, lambda: mod)
+        mod = loader(Keychains(self).os("macOS"))
+        store, status = store_for_host(self.path, mod)
         self.assertTrue(status.available)
         for kind in ("model_provider", "broker", "venue"):
             self.assertEqual(store.put(kind, "acme", FAKE), "keyring")
@@ -209,8 +222,9 @@ class DoctorTests(unittest.TestCase):
         self.path = os.path.join(self.dir, "model-keys.json")
         self.none = detect_keychain(lambda: FakeKeyringModule(_backend("keyring.backends.null")))
 
+    @requires_keyring
     def test_keychain_line(self) -> None:
-        status = detect_keychain(lambda: FakeKeyringModule(_backend("keyring.backends.Windows", "Windows WinVaultKeyring")))
+        status = detect_keychain(loader(Keychains(self).os("Windows")))
         result = doctor(status, self.path)
         self.assertEqual(result["level"], "ok")
         self.assertEqual(doctor_line(result), "keys: ok - OS keychain (Windows WinVaultKeyring); "

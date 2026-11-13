@@ -7,18 +7,25 @@ This module decides which of those two hosts Cockpit is on and says so in one ``
 Detection is read-only. It never writes, reads or deletes a key in the keychain (no canary round trip),
 and it makes no provider, venue or network call. The keyring library is optional and loaded lazily
 through an injectable loader, so tests use fakes and a host without the library reads as "no keychain".
-A backend counts as a keychain only when it is a real one: the library's ``fail`` and ``null``
-backends, unknown/file backends, and unusable OS backends do not count.
+A backend counts as an OS keychain only when its type *is* one of the keyring library's own classes
+listed in ``_OS_CLASSES`` (exact identity: not a subclass, not a look-alike with the same module or
+class name, not a proxy), imported from the library itself; a class whose module will not import here
+is a keychain this host does not have. Its priority must read as a finite number above 0. The library's
+``fail`` and ``null`` backends and every other backend do not count.
 
-A keyring chain (the library's ``ChainerBackend``) is reduced to one backend whose module is one of
-the five OS keychains below: when it holds several, the one first in Cockpit's fixed order
-(``_OS_ORDER``), not in the library's, so one host picks the same keychain in every session. Every
-other backend in the chain is ignored and never called, not even to read its priority, and the doctor
-line names it. A chain with no OS keychain is refused.
+A keyring chain (the library's own ``ChainerBackend``, by identity) is read once and reduced to one OS
+keychain: when it holds several, the one first in Cockpit's fixed order (``_OS_CLASSES``), not in the
+library's, so one host picks the same keychain in every session. The other backends in the chain are
+ignored and named in the doctor line; Cockpit sends them no password operation. It does not stop the
+library's own discovery from running a backend's code: building the chain, the library reads every
+member's priority, and a priority that raises there makes detection fail closed (no keychain).
 Recommendation B13, which Lucas accepted on Nov 12, 2026 ("I agree with all B10-B14 Recommendations"):
 "use the OS backend, name the ignored one in the doctor line".
-The chain is read once, and storage stays bound to the chosen OS backend object, never to the chain
-or the module, so a chain that changes after the check cannot redirect a key to another backend.
+Storage stays bound to the chosen backend object and its genuine class: every password operation goes
+through that class's own method, never through the chain, the module, or an attribute set on the
+instance later, so neither a chain that changes after the check nor a later swap can redirect a key.
+What this cannot defend against: hostile code already running in this process, such as a replaced
+import of a keyring module or a monkey-patched genuine class.
 The doctor line names where keys are kept and the key-file state; it never prints a key or its value.
 """
 
@@ -35,31 +42,23 @@ from cockpit.keys.store import KeyStore, key_file_state
 
 __all__ = ["KeychainStatus", "OsKeyring", "default_key_file", "detect_keychain", "doctor", "doctor_line", "store_for_host"]
 
-_NOT_A_KEYCHAIN = ("keyring.backends.fail", "keyring.backends.null")
-_OS_KEYCHAINS = frozenset((
-    "keyring.backends.SecretService", "keyring.backends.libsecret",
-    "keyring.backends.kwallet", "keyring.backends.macOS", "keyring.backends.Windows",
-))
-# Which OS keychain a chain of several uses. Lucas, Nov 12, 2026, asked "On KDE, should Cockpit use the
-# same keychain in every session (a fixed order)?": "Yes, fixed order". This is keyring 25.7.0's own order
-# outside a KDE desktop session (Secret Service 5, KWallet 5 4.9, libsecret 4.8, KWallet 4 3.9); the
-# library raises KWallet to 5.1 (and KWallet 4 to 4.1) when XDG_CURRENT_DESKTOP contains KDE, so with its
-# order one host would use KWallet in its desktop session and Secret Service over SSH, in a service or in
-# cron. A fixed order picks the same keychain in every session. Entries are a class ("module.Class") or,
-# as a fallback, a module; macOS and Windows never share a chain with the others. A tie keeps the chain's
-# order.
-_OS_ORDER = (
-    "keyring.backends.SecretService",
-    "keyring.backends.kwallet.DBusKeyring",  # KWallet 5
-    "keyring.backends.libsecret",
-    "keyring.backends.kwallet.DBusKeyringKWallet4",  # KWallet 4
-    "keyring.backends.kwallet",  # any other KWallet class
-    "keyring.backends.macOS",
-    "keyring.backends.Windows",
+# The supported OS keychains: the keyring library's own classes, admitted by identity, in Cockpit's fixed
+# order. Lucas, Nov 12, 2026, asked "On KDE, should Cockpit use the same keychain in every session (a fixed
+# order)?": "Yes, fixed order". This is keyring 25.7.0's own order outside a KDE desktop session (Secret
+# Service 5, KWallet 5 4.9, libsecret 4.8, KWallet 4 3.9); the library raises KWallet to 5.1 (and KWallet 4
+# to 4.1) when XDG_CURRENT_DESKTOP contains KDE, so with its order one host would use KWallet in its desktop
+# session and Secret Service over SSH, in a service or in cron. macOS and Windows never share a chain with
+# the others. A class not listed here is not an OS keychain, whatever its module or name says.
+_OS_CLASSES = (
+    ("keyring.backends.SecretService", "Keyring"),
+    ("keyring.backends.kwallet", "DBusKeyring"),  # KWallet 5
+    ("keyring.backends.libsecret", "Keyring"),
+    ("keyring.backends.kwallet", "DBusKeyringKWallet4"),  # KWallet 4
+    ("keyring.backends.macOS", "Keyring"),
+    ("keyring.backends.Windows", "WinVaultKeyring"),
 )
-_OS_RANK = {key: rank for rank, key in enumerate(_OS_ORDER)}
-assert _OS_KEYCHAINS <= _OS_RANK.keys()
-_CHAINER = "keyring.backends.chainer"
+_SENTINEL_CLASSES = (("keyring.backends.fail", "Keyring"), ("keyring.backends.null", "Keyring"))
+_CHAINER_CLASS = ("keyring.backends.chainer", "ChainerBackend")
 _NAMED_IGNORED = 8  # the doctor line names at most this many ignored backends, then counts the rest
 _SAFE_NAME = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-<>")
 
@@ -89,50 +88,78 @@ def _detect_backend(load: Callable[[], Any]) -> tuple[KeychainStatus, Any]:
     except Exception as exc:  # noqa: BLE001 - failed detection never grants keychain access
         return KeychainStatus(False, "", f"keyring_library_error:{type(exc).__name__}"), None
     try:
+        genuine = _Genuine.load()
         backend = mod.get_keyring()
-        if _module_of(backend) == _CHAINER:
-            return _select_from_chain(backend)
-        return _usable_os_backend(backend, ())
+        if genuine.is_chainer(backend):
+            return _select_from_chain(backend, genuine)
+        return _usable_os_backend(backend, (), genuine)
     except Exception as exc:  # noqa: BLE001 - failed detection never grants keychain access
         return KeychainStatus(False, "", f"keyring_backend_error:{type(exc).__name__}"), None
 
 
+def _genuine_class(module: str, name: str) -> type | None:
+    try:
+        found = getattr(importlib.import_module(module), name)
+    except Exception:  # noqa: BLE001 - a backend module that will not import here is a keychain this host lacks
+        return None
+    return found if isinstance(found, type) else None
+
+
+@dataclass(frozen=True)
+class _Genuine:
+    """The keyring library's own classes, imported from the library. Compared only with ``is``."""
+
+    os_classes: tuple[type | None, ...]  # in ``_OS_CLASSES`` order; None where it will not import here
+    sentinels: tuple[type | None, ...]
+    chainer: type | None
+
+    @classmethod
+    def load(cls) -> _Genuine:
+        return cls(tuple(_genuine_class(*spec) for spec in _OS_CLASSES),
+                   tuple(_genuine_class(*spec) for spec in _SENTINEL_CLASSES),
+                   _genuine_class(*_CHAINER_CLASS))
+
+    def rank(self, obj: Any) -> int | None:
+        """Place of ``type(obj)`` in the fixed order, or None when it is not a genuine OS keychain class."""
+        kind = type(obj)
+        for rank, genuine in enumerate(self.os_classes):
+            if genuine is not None and kind is genuine:
+                return rank
+        return None
+
+    def is_chainer(self, obj: Any) -> bool:
+        return self.chainer is not None and type(obj) is self.chainer
+
+    def is_sentinel(self, obj: Any) -> bool:
+        return any(genuine is not None and type(obj) is genuine for genuine in self.sentinels)
+
+
 def _module_of(obj: Any) -> str:
-    # From the object's real type, never from the instance. Only an exact ``str`` counts, so a str
-    # subclass with its own ``__eq__``/``__hash__`` cannot pass for an allowlisted module name.
+    # For display only (admission is by class identity). Only an exact ``str`` is shown.
     module = getattr(type(obj), "__module__", "")
     return module if type(module) is str else ""
 
 
-def _select_from_chain(chain: Any) -> tuple[KeychainStatus, Any]:
+def _select_from_chain(chain: Any, genuine: _Genuine) -> tuple[KeychainStatus, Any]:
     # Read once: the library recomputes ``ChainerBackend.backends`` on every access.
     children = tuple(chain.backends)
-    modules = [_module_of(child) for child in children]
-    ranked = [(_os_rank(child, module), index) for index, (child, module) in enumerate(zip(children, modules))
-              if module in _OS_KEYCHAINS]
+    ranked = [(rank, index) for index, rank in enumerate(genuine.rank(child) for child in children)
+              if rank is not None]
     if not ranked:
         return KeychainStatus(False, "", "no_keychain_backend"), None
-    chosen = min(ranked)[1]  # first in Cockpit's order; the chain's order only breaks a tie
-    # The rest are never called, not even for their priority; only their type's name is read.
+    chosen = min(ranked)[1]  # first in Cockpit's order; the chain's order only breaks a tie (same class twice)
+    # Cockpit sends the rest no password operation; only their type's name is read, to name them.
     # The library's non-storing sentinels (fail, null) are skipped without a name.
-    ignored = tuple(_type_name(child) for index, (child, module) in enumerate(zip(children, modules))
-                    if index != chosen and module not in _NOT_A_KEYCHAIN)
-    return _usable_os_backend(children[chosen], ignored)
+    ignored = tuple(_type_name(child) for index, child in enumerate(children)
+                    if index != chosen and not genuine.is_sentinel(child))
+    return _usable_os_backend(children[chosen], ignored, genuine)
 
 
-def _os_rank(backend: Any, module: str) -> int:
-    # The class's place in ``_OS_ORDER`` if listed, else its module's. Read from the type, never the instance.
-    qualname = getattr(type(backend), "__qualname__", "")
-    if type(qualname) is str and f"{module}.{qualname}" in _OS_RANK:
-        return _OS_RANK[f"{module}.{qualname}"]
-    return _OS_RANK[module]
-
-
-def _usable_os_backend(backend: Any, ignored: tuple[str, ...]) -> tuple[KeychainStatus, Any]:
-    if _module_of(backend) not in _OS_KEYCHAINS:
+def _usable_os_backend(backend: Any, ignored: tuple[str, ...], genuine: _Genuine) -> tuple[KeychainStatus, Any]:
+    if genuine.rank(backend) is None:
         return KeychainStatus(False, "", "no_keychain_backend"), None
     try:
-        priority = float(backend.priority)
+        priority = float(type(backend).priority)  # the genuine class's own probe, not an instance attribute
     except Exception as exc:  # noqa: BLE001 - failed detection never grants keychain access
         return KeychainStatus(False, "", f"keychain_unusable:{type(exc).__name__}"), None
     if not math.isfinite(priority) or priority <= 0:
@@ -141,7 +168,7 @@ def _usable_os_backend(backend: Any, ignored: tuple[str, ...]) -> tuple[Keychain
 
 
 def _backend_name(backend: Any) -> str:
-    return str(getattr(backend, "name", "") or type(backend).__name__)
+    return str(getattr(type(backend), "name", "") or type(backend).__name__)
 
 
 def _type_name(obj: Any) -> str:
@@ -154,20 +181,26 @@ def _type_name(obj: Any) -> str:
 
 
 class OsKeyring:
-    """Adapter from the keyring library to ``KeyStore``'s injected ``get``/``set``/``delete``."""
+    """Adapter from the keyring library to ``KeyStore``'s injected ``get``/``set``/``delete``.
+
+    Pins the checked backend object and its class at construction. Every call goes through that class's
+    own method, so an attribute set on the instance, or a ``__class__`` reassigned, after the check
+    changes nothing.
+    """
 
     def __init__(self, backend: Any) -> None:
         self._backend = backend
+        self._cls = type(backend)
 
     def get(self, service: str, name: str) -> str | None:
-        return self._backend.get_password(service, name)
+        return self._cls.get_password(self._backend, service, name)
 
     def set(self, service: str, name: str, secret: str) -> None:
-        self._backend.set_password(service, name, secret)
+        self._cls.set_password(self._backend, service, name, secret)
 
     def delete(self, service: str, name: str) -> None:
         try:
-            self._backend.delete_password(service, name)
+            self._cls.delete_password(self._backend, service, name)
         except Exception as exc:
             if type(exc).__name__ != "PasswordDeleteError":
                 raise
