@@ -113,6 +113,30 @@ class FreshAccountTests(unittest.TestCase):
                 finally:
                     os.umask(old)
 
+    def test_both_new_folders_are_owner_only_at_the_moment_they_are_made(self) -> None:
+        # Codex's read of #326: making either folder wider (0755 or 0777) and tightening it afterwards
+        # passed every other test, which only look at the final mode. Here each folder's mode is read
+        # right after mkdir returns, before the store can touch it, at umask 000; chmod and chown on a
+        # folder would fail the test outright.
+        real_mkdir = os.mkdir
+        born: list[tuple[str, int, int]] = []
+
+        def observing_mkdir(name: str, mode: int = 0o777, *, dir_fd: int | None = None) -> None:
+            real_mkdir(name, mode, dir_fd=dir_fd)
+            born.append((name, mode, stat.S_IMODE(os.stat(name, dir_fd=dir_fd, follow_symlinks=False).st_mode)))
+
+        self.umask(0o000)
+        with mock.patch("cockpit.keys.store.os.mkdir", side_effect=observing_mkdir), \
+                mock.patch("cockpit.keys.store.os.chmod", side_effect=AssertionError("a folder was chmodded")), \
+                mock.patch("cockpit.keys.store.os.chown", side_effect=AssertionError("a folder was chowned")):
+            store = self.store()
+            self.assertIsNone(store.get("model_provider", "openai"))
+            store.delete("model_provider", "openai")
+            self.assertEqual(born, [])  # neither read nor delete makes a folder
+            self.assertEqual(store.put("model_provider", "openai", FAKE), "owner_only_file")
+        self.assertEqual(born, [(".config", 0o700, 0o700), ("csl-cockpit", 0o700, 0o700)])
+        self.assert_saved_owner_only(store)
+
     def test_a_home_at_0755_or_0750_is_the_users_own(self) -> None:
         for mode in (0o755, 0o750, 0o711, 0o700):
             with self.subTest(mode=oct(mode)):
