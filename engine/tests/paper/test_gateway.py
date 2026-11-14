@@ -20,7 +20,8 @@ from unittest import mock
 
 from cockpit.paper.core_client import CoreClient
 from cockpit.paper.gateway import Caps, Intent, OrderGateway, PaperBook, Refused, create_book
-from tests.paper.fakecore import AUTHORITY, FakeCore
+from cockpit.paper.plugin import build
+from tests.paper.fakecore import ALLOWLIST, AUTHORITY, FakeCore, sized
 
 PAPER_DIR = Path(__file__).resolve().parents[2] / "cockpit" / "paper"
 INTENT = Intent(intent_id="i-1", account="paper-acct", instrument="AAPL", side="buy", quantity=10,
@@ -31,7 +32,7 @@ def _book_path(test: unittest.TestCase) -> str:
     d = tempfile.mkdtemp(prefix="cockpit-paper-")
     test.addCleanup(shutil.rmtree, d, True)
     path = os.path.join(d, "book.db")
-    create_book(path)
+    create_book(path, cash_minor={"paper-acct": 10**15})
     return path
 
 
@@ -39,10 +40,10 @@ def _submitter(path: str, prefix: str, count: int, out) -> None:
     core = FakeCore(budget_minor=10**12)
     book = PaperBook(path)
     gw = OrderGateway(plugin_id="csl.cockpit.paper", book=book, core=CoreClient(core),
-                      caps=Caps(10**9, 10**6))
+                      caps=Caps(10**9, 10**6), allowlist=ALLOWLIST, run_check=core.check)
     done = 0
     for i in range(count):
-        intent = replace(INTENT, intent_id="%s-%d" % (prefix, i))
+        intent = sized(gw, replace(INTENT, intent_id="%s-%d" % (prefix, i)))
         try:
             approval = gw.request_approval(intent)["approval_id"]
             core.operator_approves(approval)
@@ -61,10 +62,12 @@ class GatewayTests(unittest.TestCase):
         self.addCleanup(self.book.close)
         self.core = FakeCore(budget_minor=10**9)
         self.gw = OrderGateway(plugin_id="csl.cockpit.paper", book=self.book, core=CoreClient(self.core),
-                               caps=Caps(max_notional_minor=500_000, max_quantity=100))
+                               caps=Caps(max_notional_minor=500_000, max_quantity=100),
+                               allowlist=ALLOWLIST, run_check=self.core.check)
+        sized(self.gw, INTENT)  # the shared fixture stands for a buy this gateway sized
 
     def _approved(self, intent: Intent) -> str:
-        approval = self.gw.request_approval(intent)["approval_id"]
+        approval = self.gw.request_approval(sized(self.gw, intent))["approval_id"]
         self.core.operator_approves(approval)
         return approval
 
@@ -84,7 +87,7 @@ class GatewayTests(unittest.TestCase):
         approval = self._approved(INTENT)
         self._refused("core:profile_signature_invalid", self.gw.submit, INTENT, approval, {"x": 1})
         self._refused("core:approval_replayed", self.gw.submit, INTENT, approval, AUTHORITY)
-        changed = replace(INTENT, quantity=11)
+        changed = sized(self.gw, replace(INTENT, quantity=11))
         self._refused("core:approval_digest_mismatch", self.gw.submit, changed, self._approved(INTENT), AUTHORITY)
         self.assertEqual(self.book.orders(), [])
 
@@ -127,11 +130,31 @@ class GatewayTests(unittest.TestCase):
             with self.subTest(cap=cap):
                 self.assertRaises(Refused, Caps, *cap)
 
-    def test_paper_only_and_no_kalshi_orders(self) -> None:
-        for change in (dict(venue="kalshi"), dict(venue="kalshi-demo"), dict(venue="coinbase"), dict(mode="live"),
-                       dict(mode="demo")):
-            with self.subTest(change=change):
-                self._refused("paper_only", self.gw.request_approval, replace(INTENT, **change))
+    def test_in_process_plugin_refuses_non_paper_orders_before_core(self) -> None:
+        gateway = build(self.core, self.path, Caps(500_000, 100), run_check=self.core.check,
+                        allowlist=ALLOWLIST)
+        self.addCleanup(gateway._book.close)
+        for change in (dict(venue="kalshi"), dict(venue="kalshi-demo"), dict(venue="coinbase"),
+                       dict(venue=""), dict(venue=None), dict(mode="live"), dict(mode="demo")):
+            intent = replace(INTENT, **change)
+            for stage in ("request", "submit"):
+                with self.subTest(change=change, stage=stage):
+                    with self.assertRaises(Refused) as ctx:
+                        if stage == "request":
+                            gateway.request_approval(intent)
+                        else:
+                            gateway.submit(intent, "not-an-approval", AUTHORITY)
+                    self.assertEqual(ctx.exception.code, "paper_only")
+                    row = self.book.audit()[-1]
+                    self.assertEqual((row["seq"], row["stage"], row["code"]),
+                                     (ctx.exception.audit_seq, "risk", "paper_only"))
+                    self.assertEqual((row["intent_id"], row["run_id"], row["connection"]),
+                                     (intent.intent_id, intent.run_id, intent.connection))
+        self.assertEqual(self.core.calls, [])
+        self.assertEqual(self.book.orders(), [])
+        self.assertEqual(self.book.available_cash_minor(INTENT.account), 10**15)
+        out = gateway.submit(sized(gateway, INTENT), self._approved(INTENT), AUTHORITY)
+        self.assertEqual(out["status"], "paper_working")
 
     def test_halt_blocks_new_risk_and_allows_cancels(self) -> None:
         self.gw.submit(INTENT, self._approved(INTENT), AUTHORITY)
@@ -171,8 +194,9 @@ class GatewayTests(unittest.TestCase):
         def book_same_intent_during_core_call(raw: bytes) -> bytes:
             other = PaperBook(self.path)  # another gateway on the same book, as another process would
             gw = OrderGateway(plugin_id="csl.cockpit.paper", book=other, core=CoreClient(other_core),
-                              caps=Caps(max_notional_minor=500_000, max_quantity=100))
-            other_approval = gw.request_approval(INTENT)["approval_id"]
+                              caps=Caps(max_notional_minor=500_000, max_quantity=100),
+                              allowlist=ALLOWLIST, run_check=other_core.check)
+            other_approval = gw.request_approval(sized(gw, INTENT))["approval_id"]
             other_core.operator_approves(other_approval)
             gw.submit(INTENT, other_approval, AUTHORITY)
             other.close()
@@ -285,6 +309,25 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(self.core.approvals[approval]["state"], "approved")
         self.assertEqual(self.book.orders(), [("i-1", 1, "working")])
 
+    def test_pre_charge_duplicate_audit_stages(self) -> None:
+        """An intent id already in the book is refused before the core at submit (stage ``book``)
+        and at request (stage ``request``), both plain ``intent_duplicate``. Stage ``book`` alone
+        does not say the core charged; only a ``leftover_charge`` code does."""
+        approval = self._approved(INTENT)  # drawn before the booking; none can be drawn after it
+        self.gw.submit(INTENT, self._approved(INTENT), AUTHORITY)
+        spent, calls = self.core.spent, list(self.core.calls)
+        for stage, fn, args in (("book", self.gw.submit, (INTENT, approval, AUTHORITY)),
+                                ("request", self.gw.request_approval, (INTENT,))):
+            with self.subTest(stage=stage):
+                with self.assertRaises(Refused) as ctx:
+                    fn(*args)
+                self.assertEqual((ctx.exception.code, ctx.exception.cause, str(ctx.exception)),
+                                 ("intent_duplicate", None, "intent_duplicate"))
+                self.assertEqual([(r["event"], r["stage"], r["code"], r["intent_id"])
+                                  for r in self.book.audit() if r["seq"] == ctx.exception.audit_seq],
+                                 [("refused", stage, "intent_duplicate", "i-1")])
+        self.assertEqual((self.core.spent, self.core.calls), (spent, calls))  # neither reached the core
+
     def test_only_the_gateway_books_orders(self) -> None:
         """Static check: no other file in engine/ (plugin and loader callers included) writes the
         order book or calls a venue."""
@@ -306,7 +349,10 @@ class GatewayTests(unittest.TestCase):
     def test_paper_book_has_no_public_booking_path(self) -> None:
         """Holding a PaperBook (or the gateway's) books nothing."""
         public = {name for name in vars(PaperBook) if not name.startswith("_")}
-        self.assertEqual(public, {"halt", "halted", "cancel_all", "working", "orders", "halt_seq", "close"})
+        # B15/B31 (#320) add read-only cash/holding reads, the funds check and the refusal audit
+        # write; none of them writes the orders table.
+        self.assertEqual(public, {"halt", "halted", "cancel_all", "working", "orders", "halt_seq", "close",
+                                  "audit", "available_cash_minor", "held_shares", "check_funds", "record_refusal"})
         self.assertFalse(hasattr(self.book, "book"))
         for token in (None, object(), "gateway", True):
             with self.subTest(token=token):

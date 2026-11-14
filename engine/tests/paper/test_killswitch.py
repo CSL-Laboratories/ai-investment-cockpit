@@ -10,11 +10,11 @@ from dataclasses import replace
 
 from cockpit.paper.coinbase import CoinbaseKill
 from cockpit.paper.core_client import CoreClient
-from cockpit.paper.gateway import Caps, OrderGateway, PaperBook, create_book
+from cockpit.paper.gateway import Caps, OrderGateway, PaperBook, Refused, create_book
 from cockpit.paper.gemini import GeminiKill
 from cockpit.paper.kalshi import KalshiKill
 from cockpit.paper.killswitch import KillSwitch
-from tests.paper.fakecore import AUTHORITY, FakeCore
+from tests.paper.fakecore import ALLOWLIST, AUTHORITY, FakeCore, sized
 from tests.paper.test_coinbase import MockCoinbase
 from tests.paper.test_gateway import INTENT
 from tests.paper.test_gemini import MockGemini
@@ -28,16 +28,16 @@ class KillSwitchTests(unittest.TestCase):
         d = tempfile.mkdtemp(prefix="cockpit-kill-")
         self.addCleanup(shutil.rmtree, d, True)
         path = os.path.join(d, "book.db")
-        create_book(path)
+        create_book(path, cash_minor={"paper-acct": 10**15})
         self.book = PaperBook(path)
         self.addCleanup(self.book.close)
 
     def _working_orders(self, count: int) -> None:
         core = FakeCore(budget_minor=10**9)
         gw = OrderGateway(plugin_id="csl.cockpit.paper", book=self.book, core=CoreClient(core),
-                          caps=Caps(10**9, 10**6))
+                          caps=Caps(10**9, 10**6), allowlist=ALLOWLIST, run_check=core.check)
         for i in range(count):
-            intent = replace(INTENT, intent_id=f"w-{i}")
+            intent = sized(gw, replace(INTENT, intent_id=f"w-{i}"))
             approval = gw.request_approval(intent)["approval_id"]
             core.operator_approves(approval)
             gw.submit(intent, approval, AUTHORITY)
@@ -172,6 +172,32 @@ class KillSwitchTests(unittest.TestCase):
         self.assertEqual(self.book.working(), 0)
         self.assertEqual([status for *_, status in self.book.orders()], ["cancelled"] * 3)
 
+    def test_kill_on_the_b31_book_releases_reserved_cash(self) -> None:
+        """Ported onto #320's gateway: the kill's paper cancel goes through the B31 book, so the
+        cash each working buy reserved is released, the kill books nothing, and an order after
+        the kill is refused at the halt, before the core, with an audited refusal (B15)."""
+        before = self.book.available_cash_minor("paper-acct")
+        self._working_orders(3)
+        notional = INTENT.quantity * INTENT.limit_price_minor
+        self.assertEqual(self.book.available_cash_minor("paper-acct"), before - 3 * notional)
+        log = []
+        halt, venues = self._venues(log)
+        out = self._switch(halt, venues).kill()
+        self.assertEqual(out["status"], "confirmed")
+        self.assertEqual(self.book.available_cash_minor("paper-acct"), before)
+        self.assertEqual(self.book.working(), 0)
+        core = FakeCore(budget_minor=10**9)
+        gw = OrderGateway(plugin_id="csl.cockpit.paper", book=self.book, core=CoreClient(core),
+                          caps=Caps(10**9, 10**6), allowlist=ALLOWLIST, run_check=core.check)
+        late = replace(INTENT, intent_id="after-kill")
+        with self.assertRaises(Refused) as caught:
+            gw.request_approval(late)
+        self.assertEqual(caught.exception.code, "order_halted")
+        self.assertEqual(core.calls, [])  # refused at the risk pass, before any approval is drawn
+        self.assertEqual([o[0] for o in self.book.orders() if o[2] == "working"], [])
+        self.assertEqual([r["code"] for r in self.book.audit() if r["intent_id"] == "after-kill"], ["order_halted"])
+        self.assertEqual(self.book.available_cash_minor("paper-acct"), before)
+
     def test_paper_cancel_unconfirmed_keeps_the_kill_pending(self) -> None:
         self._working_orders(2)
         book = self.book
@@ -226,7 +252,7 @@ class KillSwitchTests(unittest.TestCase):
         other_dir = tempfile.mkdtemp(prefix="cockpit-kill-other-")
         self.addCleanup(shutil.rmtree, other_dir, True)
         other_path = os.path.join(other_dir, "other.db")
-        create_book(other_path)
+        create_book(other_path, cash_minor={"paper-acct": 10**15})
         other = PaperBook(other_path)
         self.addCleanup(other.close)
         out = KillSwitch(other.halt, [], paper_book=self.book).kill()

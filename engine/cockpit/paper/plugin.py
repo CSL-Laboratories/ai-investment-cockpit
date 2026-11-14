@@ -16,6 +16,14 @@ credential-owning host hands in; the default is none, so the switch reaches the 
 book only and a completed kill reports ``paper_only``, never ``confirmed``: there is no
 credential to revoke. ``venue_timeout_s`` bounds how long one ``kill`` waits for the
 venues. Nothing here builds a venue kill, a transport or a credential.
+
+``run_check`` and ``allowlist`` are required. ``run_check`` is the host's bound
+``check(run_id, connection, plugin_id)`` of the core's ``ConnectionBreaker``; the gateway
+asks it again before taking the book's lock and re-verifies it, bounded, inside the booking
+transaction, so a run fault or connection trip that lands after ``effect.authorize`` still
+refuses the order and a hung check never blocks a halt or kill on the book. ``allowlist`` is the static,
+operator-approved order universe, a ``frozenset`` of instruments. Neither has a default:
+the gateway cannot be composed here without them.
 """
 
 from dataclasses import dataclass
@@ -38,15 +46,21 @@ class PaperPlugin:
 
 
 def compose(core_transport: Callable[[bytes], bytes], book_path: str, caps: Caps, *,
+            run_check: Callable[[str, str, str], dict], allowlist: frozenset,
             venue_kills: Sequence[VenueKill] = (),
             venue_timeout_s: float = DEFAULT_VENUE_TIMEOUT_S) -> PaperPlugin:
     if type(caps) is not Caps:
         raise TypeError("caps must be cockpit.paper.gateway.Caps")
+    if not callable(run_check):
+        raise TypeError("run_check must be the core breaker's check(run_id, connection, plugin_id)")
+    if type(allowlist) is not frozenset:
+        raise TypeError("allowlist must be a frozenset of instruments")
     if type(venue_kills) not in (tuple, list):
         raise TypeError("venue_kills must be a tuple or list of venue kills")
     book = PaperBook(book_path)
-    gateway = OrderGateway(plugin_id=PLUGIN_ID, book=book, core=CoreClient(core_transport), caps=caps)
     try:
+        gateway = OrderGateway(plugin_id=PLUGIN_ID, book=book, core=CoreClient(core_transport), caps=caps,
+                               allowlist=allowlist, run_check=run_check)
         kill_switch = KillSwitch(gateway.halt, tuple(venue_kills), paper_book=book,
                                  venue_timeout_s=venue_timeout_s)
     except BaseException:
@@ -57,7 +71,8 @@ def compose(core_transport: Callable[[bytes], bytes], book_path: str, caps: Caps
 
 
 def build(core_transport: Callable[[bytes], bytes], book_path: str, caps: Caps, *,
+          run_check: Callable[[str, str, str], dict], allowlist: frozenset,
           venue_kills: Sequence[VenueKill] = (),
           venue_timeout_s: float = DEFAULT_VENUE_TIMEOUT_S) -> OrderGateway:
-    return compose(core_transport, book_path, caps, venue_kills=venue_kills,
-                   venue_timeout_s=venue_timeout_s).gateway
+    return compose(core_transport, book_path, caps, run_check=run_check, allowlist=allowlist,
+                   venue_kills=venue_kills, venue_timeout_s=venue_timeout_s).gateway

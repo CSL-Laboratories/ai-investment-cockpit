@@ -505,7 +505,7 @@ class CoinbaseKillTests(unittest.TestCase):
         d = tempfile.mkdtemp(prefix="cockpit-cb-")
         self.addCleanup(shutil.rmtree, d, True)
         path = os.path.join(d, "book.db")
-        create_book(path)
+        create_book(path, cash_minor={"paper-acct": 10**15})
         book = PaperBook(path)
         self.addCleanup(book.close)
         out = CoinbaseKill(book.halt, MockCoinbase(orders=["o1"]), halted=book.halted).kill()

@@ -20,29 +20,38 @@ no venue composed (the paper-only default) a completed kill reports ``paper_only
 The paper book keeps orders and their status only; it has no cash or reservation ledger.
 "Released" is therefore asserted as: no order is left working.
 
-Skipped only when the core is absent, with the same rule and reason as
-``test_e2e_recursion_core.py``, whose world builder this reuses.
+``KillDrillTests`` is skipped only when the core is absent, with the same rule and reason
+as ``test_e2e_recursion_core.py``, whose world builder it reuses.
+
+``ComposedKillSwitchTests`` needs no core: it calls the plugin entry's ``compose`` on the
+``csl-core/v0`` test double and checks that the order path it returns carries the kill
+(PRODUCT.md 4.2 at csl-research d84cdd26, the kill switch).
 """
 
 from __future__ import annotations
 
+import os
+import shutil
+import tempfile
 import unittest
 from dataclasses import replace
 from unittest import mock
 
+from cockpit.paper import plugin
 from cockpit.paper.coinbase import CoinbaseKill
 from cockpit.paper.core_client import CoreClient, CoreRefused
-from cockpit.paper.gateway import OrderGateway, Refused
+from cockpit.paper.gateway import Caps, Intent, OrderGateway, PaperBook, Refused, create_book
 from cockpit.paper.gemini import GeminiKill
 from cockpit.paper.killswitch import KillSwitch
 from cockpit.paper.revoke import RevokeReply
 from tests.paper import test_e2e_recursion_core as e2e
+from tests.paper.fakecore import ALLOWLIST, AUTHORITY, FakeCore
 from tests.paper.test_coinbase import MockCoinbase
 from tests.paper.test_gemini import MockGemini
 
 OAUTH_VENUES = ("coinbase", "gemini")
 BOOKED = ("drill-1", "drill-2", "drill-3")
-INTENT = replace(e2e.INTENT, quantity=1)  # 10_000 each, inside the profile's 120_000 total
+QUANTITY = 1  # 10_000 each, inside the profile's 120_000 total
 
 
 class _RaisingKill:
@@ -74,12 +83,12 @@ class KillDrillTests(unittest.TestCase):
         self.assertIs(type(w.kill_switch), KillSwitch)
         self.assertIs(type(w.gateway), OrderGateway)
         for intent_id in BOOKED:
-            intent = replace(INTENT, intent_id=intent_id)
+            intent = e2e.sized_buy(w, intent_id, quantity=QUANTITY)
             approval = w.gateway.request_approval(intent)
             self.assertTrue(w.decide(approval)["ok"])
             self.assertEqual(w.gateway.submit(intent, approval["approval_id"], w.profile)["status"],
                              "paper_working")
-        self.held = replace(INTENT, intent_id="drill-held")
+        self.held = e2e.sized_buy(w, "drill-held", quantity=QUANTITY)
         self.held_effect = w.gateway.risk_pass(self.held)
         self.held_approval = w.gateway.request_approval(self.held)
         self.assertTrue(w.decide(self.held_approval)["ok"])
@@ -152,7 +161,7 @@ class KillDrillTests(unittest.TestCase):
         self._refused("order_halted",
                       lambda: w.gateway.submit(self.held, self.held_approval["approval_id"], w.profile))
         # New risk draws no approval.
-        self._refused("order_halted", lambda: w.gateway.request_approval(replace(INTENT, intent_id="drill-new")))
+        self._refused("order_halted", lambda: w.gateway.request_approval(replace(self.held, intent_id="drill-new")))
         self.assertEqual((w.plugin_ops, len(w.drawn)), (ops, drawn))
         self._paper_cancelled(w, venues)
         # Cancels stay allowed while halted.
@@ -242,7 +251,7 @@ class KillDrillTests(unittest.TestCase):
         self.assertEqual((self.coinbase.log, self.gemini.log), ([], []))
         self._refused("order_halted",
                       lambda: w.gateway.submit(self.held, self.held_approval["approval_id"], w.profile))
-        self._refused("order_halted", lambda: w.gateway.request_approval(replace(INTENT, intent_id="drill-new")))
+        self._refused("order_halted", lambda: w.gateway.request_approval(replace(self.held, intent_id="drill-new")))
         self.assertEqual((w.plugin_ops, len(w.drawn)), (ops, drawn))
         self.assertEqual(w.gateway.cancel_all(), 0)
 
@@ -328,6 +337,72 @@ class KillDrillTests(unittest.TestCase):
             self.assertEqual((venue["status"], venue["halt"], venue["detail"]["halt"]),
                              ("pending", "pending", "not_halted"))
             self.assertEqual(self._revoke_evidence(name, venue), (True, "unauthorized", "unauthorized"))
+
+
+class ComposedKillSwitchTests(unittest.TestCase):
+    """The plugin entry point composes the kill switch on the gateway's own book (fake core)."""
+
+    def setUp(self) -> None:
+        d = tempfile.mkdtemp(prefix="cockpit-composed-kill-")
+        self.addCleanup(shutil.rmtree, d, True)
+        self.path = os.path.join(d, "book.db")
+        create_book(self.path, cash_minor={"paper-acct": 10**9})
+        self.core = FakeCore(budget_minor=10**9)
+        self.book = PaperBook(self.path)  # a second connection, read only here
+        self.addCleanup(self.book.close)
+
+    def _compose(self, **kwargs: object) -> plugin.PaperPlugin:
+        composed = plugin.compose(self.core, self.path, Caps(max_notional_minor=500_000, max_quantity=100),
+                                  run_check=self.core.check, allowlist=ALLOWLIST, **kwargs)
+        self.addCleanup(composed.gateway._book.close)
+        return composed
+
+    def _approved(self, gateway: OrderGateway, intent_id: str) -> tuple[Intent, str]:
+        intent = gateway.size_buy(intent_id=intent_id, account="paper-acct", instrument="AAPL",
+                                  limit_price_minor=10_000, conviction_bps=2_000, run_id="run-1",
+                                  connection="conn-a")
+        approval = gateway.request_approval(intent)["approval_id"]
+        self.core.operator_approves(approval)
+        return intent, approval
+
+    def test_compose_returns_the_gateway_and_a_kill_switch_on_its_book(self) -> None:
+        composed = self._compose()
+        self.assertIs(type(composed), plugin.PaperPlugin)
+        self.assertIs(type(composed.gateway), OrderGateway)
+        self.assertIs(type(composed.kill_switch), KillSwitch)
+        gateway = composed.gateway
+        booked, approval = self._approved(gateway, "k-1")
+        self.assertEqual(gateway.submit(booked, approval, AUTHORITY)["status"], "paper_working")
+        held, held_approval = self._approved(gateway, "k-2")
+        self.assertEqual((self.book.working(), self.book.halted()), (1, False))
+        calls, spent = list(self.core.calls), self.core.spent
+
+        out = composed.kill_switch.kill()
+        self.assertEqual((out["status"], out["halt"]), ("paper_only", "confirmed"))
+        self.assertEqual([(v["venue"], v["status"], v["cancelled"]) for v in out["venues"]],
+                         [("paper", "confirmed", 1)])
+        # The halt and the cancel landed on the book the gateway books into.
+        self.assertIs(self.book.halted(), True)
+        self.assertEqual(self.book.orders(), [("k-1", 1, "cancelled")])
+        self.assertEqual(self.book.available_cash_minor("paper-acct"), 10**9)
+        # The gateway that compose returned refuses new risk, the held approval included.
+        for attempt in (lambda: gateway.submit(held, held_approval, AUTHORITY),
+                        lambda: gateway.request_approval(held)):
+            with self.assertRaises(Refused) as ctx:
+                attempt()
+            self.assertEqual((ctx.exception.code, ctx.exception.cause), ("order_halted", None))
+        self.assertEqual((self.core.calls, self.core.spent, self.book.working()), (calls, spent, 0))
+        self.assertEqual(self.core.approvals[held_approval]["state"], "approved")  # not used up
+
+    def test_composed_switch_reaches_the_venue_kills_and_build_is_the_gateway(self) -> None:
+        venue = _RaisingKill()
+        out = self._compose(venue_kills=(venue,)).kill_switch.kill()
+        self.assertEqual((venue.calls, out["status"], out["halt"]), (1, "pending", "confirmed"))
+        self.assertIs(self.book.halted(), True)
+        built = plugin.build(self.core, self.path, Caps(max_notional_minor=500_000, max_quantity=100),
+                             run_check=self.core.check, allowlist=ALLOWLIST)
+        self.addCleanup(built._book.close)
+        self.assertIs(type(built), OrderGateway)
 
 
 if __name__ == "__main__":
