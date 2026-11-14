@@ -24,6 +24,14 @@ A file, lock or directory that is not owner-only is refused on read and write an
 silently. The keyring is injected; nothing here imports a keyring library or calls a provider,
 venue or network. Frozen `app/` keeps its own keyring code and is untouched.
 
+Not a regular file (B29; Lucas, Nov 13, 2026: "Fix it in #330 (Recommended)"). Anything at the key file
+or lock path that is not a regular file (a pipe, a socket, a device or a folder) is refused
+(`key_file_not_owner_only`, the detail naming what it is) without being opened: the store decides from
+`lstat` first, opens with `O_NOFOLLOW|O_NONBLOCK` so an entry swapped in after that check cannot make it
+wait, and checks that the open file is the same regular file. The keychain record (below) is opened the
+same way (`keychain_record_not_owner_only`). Folders on the way are opened with `O_DIRECTORY`, which
+refuses anything else without opening it, and the doctor only looks (`lstat`).
+
 Key names and the file (B23; Lucas, Nov 13, 2026: "Fix before landing (Recommended)"). A key name is 1
 to 64 characters of `a-z`, `0-9`, `.`, `_` and `-`, starting with a letter or a digit, matched against the
 whole name, so a name ending in a line break is refused (`key_name_malformed`), as an argument and as a

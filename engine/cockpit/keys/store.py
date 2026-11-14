@@ -17,7 +17,8 @@ allowed for user-entered model-provider keys only; broker and venue keys stay ke
 * a ``broker`` or ``venue`` key goes only in the OS keyring; with no keyring it is refused, never
   written to a file;
 * an existing key file, lock or directory that is not owner-only is refused on read and on write,
-  and is never repaired silently;
+  and is never repaired silently; a key file, lock or keychain record that is not a regular file (a
+  pipe, socket, device or folder) is refused without being opened (B29, ``_open_existing_regular``);
 * the first save creates the missing key folder (the leaf) ``0700`` after every ancestor passed the
   check. When the store is given ``config_home`` (``store_for_host`` does so only for the default
   file ``~/.config/csl-cockpit/model-keys.json``) and ``<config_home>/.config`` is missing, the first
@@ -299,13 +300,9 @@ class KeyStore:
 
     def _read_file(self, dir_fd: int) -> dict[str, str]:
         _require_final_dir(dir_fd)
-        flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
-        try:
-            fd = os.open(_entry_name(self._path), flags, dir_fd=dir_fd)
-        except FileNotFoundError:
+        fd = _open_existing_regular(dir_fd, _entry_name(self._path), os.O_RDONLY, "key_file_not_owner_only")
+        if fd is None:
             return {}
-        except OSError as exc:
-            raise KeyRefused("key_file_not_owner_only", _errno_name(exc)) from None
         with os.fdopen(fd, "rb") as fh:
             st = os.fstat(fh.fileno())
             if not stat.S_ISREG(st.st_mode) or st.st_uid != os.geteuid() or st.st_mode & 0o077:
@@ -385,16 +382,11 @@ def _read_record(dir_fd: int, names: tuple[str, ...]) -> tuple[str, str | None] 
     and optionally ``previous``, each name one of ``names`` and the two different, is a record.
     """
 
-    flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
-    try:
-        fd = os.open(_RECORD_NAME, flags, dir_fd=dir_fd)
-    except FileNotFoundError:
+    fd = _open_existing_regular(dir_fd, _RECORD_NAME, os.O_RDONLY, "keychain_record_not_owner_only",
+                                unreadable="keychain_record_unreadable")
+    if fd is None:
         return None
-    except OSError as exc:
-        if exc.errno == errno.ELOOP:
-            raise KeyRefused("keychain_record_not_owner_only", "ELOOP") from None
-        raise KeyRefused("keychain_record_unreadable", _errno_name(exc)) from None
-    try:  # checked on the raw fd, before any read: a folder or a FIFO there is refused, not opened as a file
+    try:  # the owner and the mode, on the raw fd, before any read
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode) or st.st_uid != os.geteuid() or st.st_mode & 0o077:
             raise KeyRefused("keychain_record_not_owner_only", oct(st.st_mode & 0o777))
@@ -634,7 +626,10 @@ def _open_lock(dir_fd: int) -> int:
             fd = os.open(_LOCK_NAME, flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=dir_fd)
             created = True
         except FileExistsError:
-            fd = os.open(_LOCK_NAME, flags, dir_fd=dir_fd)
+            existing = _open_existing_regular(dir_fd, _LOCK_NAME, os.O_RDWR, "key_file_not_owner_only")
+            if existing is None:  # removed between the two opens
+                raise KeyRefused("key_file_not_owner_only", "ENOENT") from None
+            fd = existing
     except OSError as exc:
         raise KeyRefused("key_file_not_owner_only", _errno_name(exc)) from None
     try:
@@ -652,6 +647,57 @@ def _open_lock(dir_fd: int) -> int:
             _unlink_quiet(dir_fd, _LOCK_NAME)
         raise KeyRefused("key_file_not_owner_only", oct(st.st_mode & 0o777))
     return fd
+
+
+_KIND_NAMES = ((stat.S_ISFIFO, "a pipe"), (stat.S_ISDIR, "a folder"), (stat.S_ISSOCK, "a socket"),
+               (stat.S_ISCHR, "a device"), (stat.S_ISBLK, "a device"))
+
+
+def _open_existing_regular(dir_fd: int, name: str, flags: int, cause: str, unreadable: str | None = None) -> int | None:
+    """Open ``name`` in ``dir_fd``, an entry this store did not just create, only if it is a regular file;
+    None when there is none. Caller closes the fd and still checks the owner and the mode.
+
+    B29 (Lucas, Nov 13, 2026: "Fix it in #330 (Recommended)"): decided from ``lstat`` before any open, so a
+    pipe, socket, device or folder there is refused without being opened (an open can wait on a pipe, or
+    act on a device). The open adds ``O_NOFOLLOW|O_NONBLOCK``, so an entry swapped in after the check cannot
+    make it wait, and ``fstat`` of the open file must show the same regular file the check saw. A link is
+    refused as ``ELOOP``, as the no-follow open always answered; other errors give ``unreadable``.
+    """
+
+    unreadable = unreadable or cause
+    try:
+        before = os.lstat(name, dir_fd=dir_fd)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise KeyRefused(unreadable, _errno_name(exc)) from None
+    if stat.S_ISLNK(before.st_mode):
+        raise KeyRefused(cause, "ELOOP")
+    if not stat.S_ISREG(before.st_mode):
+        raise KeyRefused(cause, _not_regular(before.st_mode))
+    try:
+        fd = os.open(name, flags | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0),
+                     dir_fd=dir_fd)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise KeyRefused(cause, "ELOOP") from None
+        raise KeyRefused(unreadable, _errno_name(exc)) from None
+    try:
+        st = os.fstat(fd)
+    except OSError as exc:
+        os.close(fd)
+        raise KeyRefused(unreadable, _errno_name(exc)) from None
+    if not stat.S_ISREG(st.st_mode) or (st.st_dev, st.st_ino) != (before.st_dev, before.st_ino):
+        os.close(fd)
+        raise KeyRefused(cause, _not_regular(st.st_mode))
+    return fd
+
+
+def _not_regular(mode: int) -> str:
+    kind = next((name for test, name in _KIND_NAMES if test(mode)), "not the file that was checked")
+    return f"{oct(mode & 0o777)}, {kind}"
 
 
 def _refuse_existing_unless_owner_only(dir_fd: int, name: str, cause: str = "key_file_not_owner_only") -> None:
