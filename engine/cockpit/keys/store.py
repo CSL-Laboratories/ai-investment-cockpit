@@ -208,9 +208,19 @@ class KeyStore:
             previous = None
             if recorded is not None:
                 previous = recorded[0] if recorded[0] != self._keychain else recorded[1]
-            had_marker = self._keyring.get(self.SERVICE, _MARKER_ACCOUNT) is not None  # type: ignore[union-attr]
-            self._enrol(dir_fd, previous, had_marker)
+            self._enrol(dir_fd, previous)
         return previous or ""
+
+    def check_keychain_record(self) -> str:
+        """The record check a broker or venue read makes, made on its own for ``doctor --check-keychain``
+        (B37): ``"ok"``, ``"unsupported"`` where no record is kept, or the read's ``KeyRefused``. When the record
+        is absent it reads Cockpit's marker in the keychain, so it can show the keychain's unlock prompt or wait
+        for it; it reads no key and writes nothing."""
+
+        if not self._recorded("broker"):
+            return "unsupported"
+        self._check_record()
+        return "ok"
 
     # -- keychain record (B24) --------------------------------------------------------------
     # What a call already in flight gets (the first outside read of #330): each broker or venue operation
@@ -238,7 +248,8 @@ class KeyStore:
         # Under the lock, before a broker or venue key is saved. A record naming another keychain is refused
         # before this keychain is asked anything. The first save enrols (marker, then record); a later save
         # must find the same keychain recorded. A matching record without its marker (a candidate build of
-        # #330 wrote the record first) stays valid, and this save adds the missing marker.
+        # #330, a marker removed by hand, or a marker write that never took effect) stays valid, and this save
+        # adds the missing marker.
         recorded = self._record_or_refuse(dir_fd)
         if recorded is not None and recorded[0] != self._keychain:
             raise self._differs(recorded[0])
@@ -246,27 +257,20 @@ class KeyStore:
         if recorded is None:
             if marked:
                 raise self._missing()
-            self._enrol(dir_fd, None, False)
+            self._enrol(dir_fd, None)
         elif not marked:
             self._keyring.set(self.SERVICE, _MARKER_ACCOUNT, self._keychain)  # type: ignore[union-attr]
 
-    def _enrol(self, dir_fd: int, previous: str | None, had_marker: bool) -> None:
-        # The marker first, then the record, so a finished enrolment always has both (the first outside read
-        # of #330). If the record cannot be written, a marker this call added is taken back, so a failed first
-        # save leaves nothing behind and can simply be retried. A process killed between the two writes leaves
-        # the marker without a record: the next broker or venue operation is refused (keychain_record_missing)
-        # and accept-keychain records it. The two writes are in two stores, so this is ordering, not a
-        # transaction.
+    def _enrol(self, dir_fd: int, previous: str | None) -> None:
+        # The marker first, then the record, so a finished enrolment always has both (first outside read of
+        # #330). The marker is never taken back (second outside read): an error from the record write can
+        # come after the record was already published (the folder flush), and the marker's account is shared
+        # by every key folder using this keychain, so no call can tell that a marker is only its own. If the
+        # record was not published, the marker stays alone: the next broker or venue operation is refused
+        # (keychain_record_missing) until accept-keychain records it. If it was, both are there. The two
+        # writes are in two stores, so this is ordering, not a transaction.
         self._keyring.set(self.SERVICE, _MARKER_ACCOUNT, self._keychain)  # type: ignore[union-attr]
-        try:
-            _write_record(dir_fd, self._keychain, previous)  # type: ignore[arg-type]
-        except BaseException:
-            if not had_marker:
-                try:
-                    self._keyring.delete(self.SERVICE, _MARKER_ACCOUNT)  # type: ignore[union-attr]
-                except Exception:  # noqa: BLE001 - the record write's own error is the one to report
-                    pass
-            raise
+        _write_record(dir_fd, self._keychain, previous)  # type: ignore[arg-type]
 
     def _check_record(self) -> None:
         # Before a broker or venue key is read or deleted. Creates nothing.
@@ -343,8 +347,10 @@ class KeyStore:
                 raise KeyRefused("key_file_not_owner_only", oct(st.st_mode & 0o777))
             raw = fh.read()
         try:
-            data = json.loads(raw.decode("utf-8"))
-        except Exception:  # noqa: BLE001 - any parser failure (bad UTF-8 or JSON, nesting too deep) is malformed
+            # A field given twice is refused, as in the record: otherwise the last one would win, and
+            # {"version": 2, "version": 1} would read as version 1 (DeepSeek's read of #330, F7).
+            data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_fields)
+        except (ValueError, RecursionError):  # key file content: bad UTF-8 or JSON, a field twice, too deep
             raise KeyRefused("key_file_malformed") from None
         if not isinstance(data, Mapping) or not _is_version(data.get("version")) or not isinstance(data.get("keys"), Mapping):
             raise KeyRefused("key_file_malformed")
@@ -441,7 +447,10 @@ def _read_record(dir_fd: int, names: tuple[str, ...]) -> tuple[str, str | None] 
         raise KeyRefused("keychain_record_malformed", "too large")
     try:
         data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_fields)
-    except Exception:  # noqa: BLE001 - any parser failure (bad UTF-8 or JSON, a field twice, nesting too deep)
+    # Content errors only (bad UTF-8 or JSON, a field twice, nesting too deep: ValueError and RecursionError).
+    # Anything else (MemoryError, an internal error) stops the operation and is never called malformed, since
+    # accept_keychain replaces a malformed record and would drop a valid one's history (second outside read).
+    except (ValueError, RecursionError):  # record content
         raise KeyRefused("keychain_record_malformed", "not JSON") from None
     if type(data) is not dict or not set(data) <= _RECORD_FIELDS:
         raise KeyRefused("keychain_record_malformed", "unexpected fields")
@@ -510,6 +519,10 @@ def keychain_record_state(path: str, names: tuple[str, ...]) -> dict[str, str]:
 def key_file_state(path: str) -> str:
     """Doctor view of the owner-only file. Read-only: creates nothing, returns no key value."""
 
+    try:
+        _entry_name(path)
+    except KeyRefused:
+        return "key_file_not_configured"  # named like the record or the lock: every operation refuses it
     parent = os.path.dirname(os.path.abspath(path))
     try:
         fd = _open_owned_dir(parent)
@@ -694,8 +707,11 @@ def _open_existing_regular(dir_fd: int, name: str, flags: int, cause: str, unrea
     B29 (Lucas, Nov 13, 2026: "Fix it in #330 (Recommended)"): decided from ``lstat`` before any open, so a
     pipe, socket, device or folder there is refused without being opened (an open can wait on a pipe, or
     act on a device). The open adds ``O_NOFOLLOW|O_NONBLOCK``, so an entry swapped in after the check cannot
-    make it wait, and ``fstat`` of the open file must show the same regular file the check saw. A link is
-    refused as ``ELOOP``, as the no-follow open always answered; other errors give ``unreadable``.
+    make it wait, and ``fstat`` of the open file must show the same regular file the check saw (device and
+    inode). A file removed and made again in between can get the same inode number, so that comparison
+    catches a swap while the checked file still exists, not every swap; anything it lets through is still an
+    owner-only regular file, which only this user can put in this owner-only folder. A link is refused as
+    ``ELOOP``, as the no-follow open always answered; other errors give ``unreadable``.
     """
 
     unreadable = unreadable or cause

@@ -28,7 +28,7 @@ from cockpit.keys import __main__ as cli
 from cockpit.keys.detect import _KEYCHAIN_NAMES, KeychainStatus
 from cockpit.keys.store import RECORD_KINDS
 from cockpit.keys.tests.fakes import (
-    FAKE, MARKER, RECORDS, Keychains, key_file, loader, recorder, requires_keyring, with_marker,
+    FAKE, MARKER, RECORDS, Keychains, key_file, loader, no_record_note, recorder, requires_keyring, with_marker,
 )
 
 A, B = "SecretService Keyring", "kwallet DBusKeyring"
@@ -427,9 +427,9 @@ class RecordDoctorTests(_Case):
         result = doctor(KeychainStatus(True, keychain, "ok"), self.path)
         return result["level"], doctor_line(result)
 
-    def test_no_record_and_a_matching_record_leave_the_line_as_it_was(self) -> None:
+    def test_no_record_adds_a_note_and_a_matching_record_leaves_the_line_as_it_was(self) -> None:
         plain = f"keys: ok - OS keychain ({A}); model-provider, broker and venue keys in the keychain"
-        self.assertEqual(self.line(), ("ok", plain))
+        self.assertEqual(self.line(), ("ok", plain + no_record_note(A)))  # B37: the plain doctor says so
         self.assertFalse(os.path.lexists(self.leaf))  # the doctor creates nothing
         self.saved(A)
         self.assertEqual(self.line(), ("ok", plain))

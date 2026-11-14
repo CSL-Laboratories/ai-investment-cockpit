@@ -18,7 +18,8 @@ from cockpit.keys import KeyRefused, detect_keychain, doctor, doctor_line, store
 from cockpit.keys.__main__ import main
 from cockpit.keys.detect import default_key_file
 from cockpit.keys.tests.fakes import (
-    KEYRING, MARKER_CHECK, MARKER_OPS, Keychains, key_file, loader, recorder, requires_keyring, untouchable,
+    KEYRING, MARKER_CHECK, MARKER_OPS, Keychains, key_file, loader, no_record_note, recorder, requires_keyring,
+    untouchable,
 )
 
 FAKE = "fake-key-not-real-0123"
@@ -235,7 +236,8 @@ class DoctorTests(unittest.TestCase):
         result = doctor(status, self.path)
         self.assertEqual(result["level"], "ok")
         self.assertEqual(doctor_line(result), "keys: ok - OS keychain (Windows WinVaultKeyring); "
-                                              "model-provider, broker and venue keys in the keychain")
+                                              "model-provider, broker and venue keys in the keychain"
+                                              + no_record_note("Windows WinVaultKeyring"))  # B37
 
     def test_no_keychain_line_names_file_state_and_refusals(self) -> None:
         result = doctor(self.none, self.path)

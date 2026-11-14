@@ -208,6 +208,48 @@ class NotARegularFileTests(unittest.TestCase):
         self.assertEqual(swapped, ["pipe"])
         self.assertEqual(result, ("refused", "key_file_not_owner_only"))
 
+    def test_another_regular_file_swapped_in_after_the_check_is_refused(self) -> None:
+        # DeepSeek's read of #330, F5: the opened file must be the file the check saw (same device and inode).
+        # The checked file is renamed aside, so it keeps its inode and the new one cannot reuse it; a file
+        # removed and made again in between can get the same inode number, which no such check can see.
+        os.mkdir(self.leaf, 0o700)
+        for name, cause, make in (
+                ("model-keys.json", "key_file_not_owner_only",
+                 lambda: KeyStore(keyring=None, key_file=self.path).put("model_provider", "openai", FAKE)),
+                (".keychain.json", "keychain_record_not_owner_only",
+                 lambda: KeyStore(keyring=_Ring(), key_file=self.path, keychain=_KEYCHAIN_NAMES[0],
+                                  keychain_names=_KEYCHAIN_NAMES).put("broker", "acct", FAKE))):
+            if name == ".keychain.json" and not RECORDS:
+                continue
+            with self.subTest(name=name):
+                make()
+                with open(os.path.join(self.leaf, name), "rb") as fh:
+                    body = fh.read()  # the same bytes go into the file swapped in
+                swapped: list[str] = []
+
+                def swap_then_open(path, flags, mode=0o777, *, dir_fd=None, name=name):  # type: ignore[no-untyped-def]
+                    if os.fspath(path) == name and not flags & os.O_CREAT and not swapped:
+                        os.rename(name, name + ".checked", src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+                        fd = _REAL_OPEN(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=dir_fd)
+                        os.write(fd, body)
+                        os.close(fd)
+                        swapped.append(name)
+                    return _REAL_OPEN(path, flags, mode, dir_fd=dir_fd)
+
+                if name == "model-keys.json":
+                    store = KeyStore(keyring=None, key_file=self.path)
+                    call: tuple = (store.get, "model_provider", "openai")
+                else:
+                    store = KeyStore(keyring=_Ring(), key_file=self.path, keychain=_KEYCHAIN_NAMES[0],
+                                     keychain_names=_KEYCHAIN_NAMES)
+                    call = (store.get, "broker", "acct")
+                with mock.patch.object(os, "open", swap_then_open):
+                    with self.assertRaises(KeyRefused) as ctx:
+                        call[0](*call[1:])
+                self.assertEqual(swapped, [name])
+                self.assertEqual(ctx.exception.cause, cause)
+                self.assertIn("not the file that was checked", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

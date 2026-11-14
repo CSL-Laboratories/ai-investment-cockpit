@@ -202,6 +202,17 @@ UNRECORDED_KINDS = tuple(kind for kind in ("model_provider", "broker", "venue")
                          if not RECORDS or kind not in _store.RECORD_KINDS)
 
 
+def no_record_note(keychain: str) -> str:
+    """The clause B37 adds to the plain doctor line on a keychain host with no record (where records are kept).
+
+    Lucas, Nov 13, 2026: "Note + opt-in check (Recommended)". Empty where no record is kept (Windows)."""
+    if not RECORDS:
+        return ""
+    return ("; no keychain record yet (if broker or venue keys are refused as keychain_record_missing, run "
+            f"python -m cockpit.keys accept-keychain '{keychain}'; "
+            "python -m cockpit.keys doctor --check-keychain looks in the keychain)")
+
+
 def with_marker(data: dict, keychain: str) -> dict:
     """``data`` as the selected keychain holds it once a broker or venue key was saved there (B24)."""
     return {**data, MARKER: keychain} if RECORDS else dict(data)

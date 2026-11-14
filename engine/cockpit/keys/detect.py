@@ -255,6 +255,7 @@ def _display_name(rank: int) -> str:
 
 # Every name a keychain record may hold (B24): one per allowlist entry, so equal names mean the same class.
 _KEYCHAIN_NAMES = tuple(_display_name(rank) for rank in range(len(_OS_CLASSES)))
+_RESERVED_NAME = "the key file is named like Cockpit's own .keychain.json or .keys.lock; choose another key file name"
 
 
 def _type_name(obj: Any) -> str:
@@ -364,6 +365,10 @@ def doctor(status: KeychainStatus, key_file: str | os.PathLike[str] | None) -> d
         if key_file is not None and os.name != "nt":
             # A model-key file left from a host without a keychain is still checked.
             state = _file_state(os.fspath(key_file))
+            if state == "key_file_not_configured":  # named like the record or the lock
+                out.update(level="fail", broker="refused:key_file_not_configured", venue="refused:key_file_not_configured",
+                           keychain_record=_RESERVED_NAME)
+                return out
             if state.startswith(("dir_not_owner_only", "file_not_owner_only")):
                 out.update(level="fail", key_file=state, stale_key_file=os.fspath(key_file))
             _record_into(out, status.backend, keychain_record_state(os.fspath(key_file), _KEYCHAIN_NAMES))
@@ -378,6 +383,9 @@ def doctor(status: KeychainStatus, key_file: str | os.PathLike[str] | None) -> d
         return out
     path = os.fspath(key_file)
     state = _file_state(path)
+    if state == "key_file_not_configured":  # named like the record or the lock
+        out.update(level="fail", model_provider="refused:key_file_not_configured")
+        return out
     bad = state.startswith(("dir_not_owner_only", "file_not_owner_only"))
     out.update(level="fail" if bad else "warn", model_provider=f"owner_only_file:{path}", key_file=state)
     return out
@@ -389,6 +397,9 @@ def _record_into(out: dict[str, str], current: str, rec: dict[str, str]) -> None
     if state == "ok" and rec["keychain"] != current:
         state = "keychain_differs"
     if state == "none":
+        # B37 (Lucas, Nov 13, 2026: "Note + opt-in check (Recommended)"): say there is no record, without
+        # contacting the keychain; `doctor --check-keychain` looks for the marker when asked.
+        out["keychain_record_note"] = "none"
         return
     if state == "ok":
         if "previous" in rec:
@@ -414,6 +425,15 @@ def doctor_line(result: dict[str, str]) -> str:
                     "model-provider, broker and venue keys in the keychain")
         if "keychain_switched_from" in result:
             line += f"; switched from {result['keychain_switched_from']} with accept-keychain"
+        note = result.get("keychain_record_note")
+        if note == "none":
+            line += (f"; no keychain record yet (if broker or venue keys are refused as keychain_record_missing, run "
+                     f"python -m cockpit.keys accept-keychain '{result['keychain']}'; "
+                     "python -m cockpit.keys doctor --check-keychain looks in the keychain)")
+        elif note == "checked":
+            line += "; no keychain record yet, and no Cockpit marker in the keychain: the next broker or venue save records it"
+        if "keychain_check" in result:
+            line += f"; keychain check {result['keychain_check']}"
         if "ignored_backends" in result:
             line += f"; other keyring backends ignored: {result['ignored_backends']}"
         if "stale_key_file" in result:

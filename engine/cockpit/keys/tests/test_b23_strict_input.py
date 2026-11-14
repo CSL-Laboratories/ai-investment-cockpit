@@ -125,6 +125,24 @@ class KeyFileTests(unittest.TestCase):
                 _refused(self, "key_file_malformed", self.store.put, "model_provider", "other", FAKE)
                 self.assertEqual(self.read(), body)
 
+    def test_a_field_given_twice_makes_the_file_malformed(self) -> None:
+        # DeepSeek's read of #330, F7: with plain json.loads the last of two equal fields won, so
+        # {"version": 2, "version": 1} read as version 1 and a key name given twice returned its second value.
+        bodies = {
+            "version twice": '{"version": 2, "version": 1, "kind": "model_provider", "keys": {"openai": "%s"}}' % FAKE,
+            "kind twice": '{"version": 1, "kind": "x", "kind": "model_provider", "keys": {"openai": "%s"}}' % FAKE,
+            "keys twice": '{"version": 1, "kind": "model_provider", "keys": {}, "keys": {"openai": "%s"}}' % FAKE,
+            "a key name twice": '{"version": 1, "kind": "model_provider", "keys": {"openai": "a", "openai": "%s"}}' % FAKE,
+        }
+        for label, text in bodies.items():
+            with self.subTest(label):
+                fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    fh.write(text)
+                _refused(self, "key_file_malformed", self.store.get, "model_provider", "openai")
+                _refused(self, "key_file_malformed", self.store.put, "model_provider", "other", FAKE)
+                self.assertEqual(self.read(), text.encode("utf-8"))  # never rewritten
+
 
 if __name__ == "__main__":
     unittest.main()

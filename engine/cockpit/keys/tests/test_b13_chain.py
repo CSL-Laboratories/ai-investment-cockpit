@@ -22,7 +22,7 @@ from cockpit.keys import KEY_KINDS, KeyRefused, doctor, doctor_line, store_for_h
 from cockpit.keys import detect as detect_module
 from cockpit.keys.tests.fakes import (
     FAKE, NAMES, Keychains, forget_class, genuine_class, genuine_class_chainer, key_file, lookalike_chain, loader,
-    MARKER_CALLS, MARKER_ITEMS, UNRECORDED_KINDS, recorder, requires_keyring, untouchable, with_marker,
+    MARKER_CALLS, MARKER_ITEMS, UNRECORDED_KINDS, no_record_note, recorder, requires_keyring, untouchable, with_marker,
 )
 
 PLAIN = ("keyrings.alt.file", "PlaintextKeyring")
@@ -690,8 +690,9 @@ class DoctorLineTests(_Case):
             rc = cli.main(["doctor", "--key-file", key_file(self)])
         self.assertEqual(rc, 0)
         self.assertEqual(buf.getvalue().strip().splitlines(), [
-            "keys: ok - OS keychain (SecretService Keyring); model-provider, broker and venue keys in the keychain; "
-            "other keyring backends ignored: keyrings.alt.file.PlaintextKeyring"])
+            "keys: ok - OS keychain (SecretService Keyring); model-provider, broker and venue keys in the keychain"
+            + no_record_note("SecretService Keyring") +  # B37: this host has no keychain record yet
+            "; other keyring backends ignored: keyrings.alt.file.PlaintextKeyring"])
 
 
 if __name__ == "__main__":
