@@ -122,8 +122,8 @@ any option.
 
 A stuck review thread is different: it goes in the PR's `Stuck PR threads:` roll-up,
 which you find only by its `<!-- stuck-pr-threads:owner/repo#N -->` marker (never by
-title), writing inside your own block. Product and architecture questions stay on
-the work issue.
+title), writing inside your own block. If the PR has no roll-up, ask on the work issue
+as above. Product and architecture questions stay on the work issue.
 
 If you are the assignee or the claimant of a decision or direction issue, the research
 requirement in AGENTS.md "Linear-first workflow" still comes first. A Grok Bot

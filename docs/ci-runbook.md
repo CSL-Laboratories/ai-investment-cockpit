@@ -111,8 +111,8 @@ These controls grant no repository-wide pause-variable authority. Setting
 
 Writers outside this guard: `codex-gate.yml` (adds the gate-owned `ci:full` on READY) and
 `stuck-thread-watch.yml`. The watcher is advisory: it posts one `@codex review` comment on a stuck
-Devin thread with `CODEX_TRIGGER_PAT` and keeps one Linear `needs-decision` roll-up per PR
-(`Stuck PR threads: <repo>#<PR>`). It never resolves threads, pushes or merges
+Devin thread with `CODEX_TRIGGER_PAT`. Since #328 (CSL-862) it keeps no Linear roll-up
+(`FILE_LINEAR` is `"false"`). It never resolves threads, pushes or merges
 (`.github/scripts/stuck_thread_watch.py` docstring; AGENTS.md:445), so a stuck thread stays open
 until a human resolves it or records the decision. They are covered by
 their own tests (`tools/test_codex_gate.py`, `app/tests/test_stuck_thread_watch.py`) and by contract §7, not by

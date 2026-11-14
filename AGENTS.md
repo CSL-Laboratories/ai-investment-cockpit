@@ -177,7 +177,7 @@ the question, two or three options, your recommendation, and what you will do
 meanwhile ("paused" or other proceed-list work, never the option you are asking
 about or work that presupposes one). A stuck review thread instead goes in the
 PR's roll-up, found only by its `<!-- stuck-pr-threads:owner/repo#N -->` marker,
-in your own block; product and architecture questions stay on the work issue.
+in your own block; if the PR has no roll-up, ask on the work issue as above. Product and architecture questions stay on the work issue.
 For a decision or direction issue you are assigned or have claimed, the research requirement in
 [Linear-first workflow](#linear-first-workflow) still comes first. A Grok Bot coordinator may
 research and recommend on a decision or direction issue. Attribute the brief explicitly as
@@ -414,7 +414,7 @@ Agents must stay Linear-aware and proactive. Linear is the source of truth for e
 - In the PR body, write `Related to CSL-N` by default; use a closing keyword (`Fixes CSL-N`) only when this PR completes the issue's acceptance criteria. Name the REGISTER package ID, or `none` for process work. Linear automation moving an issue to **Done**, a merge, or an AI PASS is not acceptance evidence.
 - **Formal review requests.** Every review ask needs both (a) an @mention on the Linear issue (`samirshahahmed`, `chaandansaini101`) and (b) a formal GitHub review request: `gh pr edit <n> --add-reviewer samir-shah-ahmed,CDanTheMan` (whichever apply). This is mandatory for agents too.
 - Comment progress on the issue. Move it to **In Progress** once your claim record is confirmed, then **In Review** when the PR is up. A hosted agent without Linear access reports its blocker on the PR to the PR author through its existing channel; the author relays it to the current Linear owner. The hosted agent does not invent API access, and this guide changes no workflow prompts.
-- Grok Bots must read the Linear PR-sync comment (`<!-- pr-sync:<repo>#<n> -->`, written by [`.github/workflows/linear-pr-sync.yml`](.github/workflows/linear-pr-sync.yml)) on the issue before touching shared files. Three people work this repo at once; that comment is the live PR link, mergeable/conflict state, head SHA, and top files.
+- Grok Bots must read the PR's live state on GitHub before touching shared files: its link, mergeable/conflict state, head SHA and changed files (`gh pr view <n> --json url,mergeable,headRefOid,files`). Three people work this repo at once. The Linear PR-sync comment (`<!-- pr-sync:<repo>#<n> -->`) is no longer kept current: since #328 (CSL-862), [`.github/workflows/linear-pr-sync.yml`](.github/workflows/linear-pr-sync.yml) runs only on manual dispatch and writes nothing, so an existing comment may be stale and a new PR gets none.
 - When work reveals follow-ups, bugs, or next steps, create new **Triage** issues with one Type label, the repo label `ai-investment-cockpit`, the project, and a link back to the parent issue or PR — not drive-by changes.
 - **Assignees:** the three founders are Lucas (NotSkittlz), Chaandan (CDanTheMan), and Samir (samir-shah-ahmed). All are admins, and ownership changes over time, so never hardcode owners. Check the current assignee or project lead in Linear. Assign new issues to the owner of the parent issue, or leave them in Triage unassigned when unclear.
 - The author addresses CI comments on their own PR, then resolves the threads. Devin findings and `@claude` mentions are handled by the Claude Code Action (`.github/workflows/claude.yml`) on open, same-repository PRs by repo writers; on other PRs the author addresses them. Do not run review-fix loops on other agents' PRs.
@@ -442,7 +442,7 @@ Hosted split (PR #102):
 - **Claude Code Action** (`.github/workflows/claude.yml`) is the fixer for Devin findings and `@claude` mentions on open, same-repository PRs whose author (and, for `@claude`, the commenter) has write, maintain or admin permission on the repo (other PRs are skipped by the workflow's event gate).
 - **Codex** has two allowed GitHub review paths, neither a Devin substitute:
   1. **CI/fixer gate** (CSL-103/259, `.github/workflows/codex-gate.yml`) - one nonce-bound `@codex review` per exact head/base/merge/tree candidate and fixer generation; the reply echoes that identity and ends with `CODEX-GATE: READY|MEDIATE`. See Code Review Rules.
-  2. **Stuck-thread watch** (CSL-86 / PR #124, `.github/workflows/stuck-thread-watch.yml`) — one advisory `@codex review` on unresolved Devin threads Claude could not settle, and **one** Linear `needs-decision` Triage roll-up per PR titled `Stuck PR threads: <repo>#<PR>`. Shared keys with the Codex CI/fixer gate: `<!-- stuck-pr-threads:owner/repo#N -->` and `<!-- codex-gate-mediate:owner/repo:N -->`; each writer owns only its fenced block. It adopts an existing roll-up only by that `stuck-pr-threads` HTML marker, never by title, and writes Linear only when at least one thread is actionable after the per-PR cap and `CODEX_TRIGGER_PAT` checks (or to create a missing roll-up after an earlier Linear outage). It skips already-approved PRs and updates that roll-up instead of filing a new issue per thread. That reply must **not** include a `CODEX-GATE:` line, and must not push, merge, resolve the thread, or open a fix PR.
+  2. **Stuck-thread watch** (CSL-86 / PR #124, `.github/workflows/stuck-thread-watch.yml`) — one advisory `@codex review` on unresolved Devin threads Claude could not settle, posted on the PR; it skips already-approved PRs. Since #328 (CSL-862) it writes nothing to Linear (`FILE_LINEAR: "false"`): it no longer files or updates the Linear `needs-decision` Triage roll-up titled `Stuck PR threads: <repo>#<PR>`, so a roll-up it filed earlier may be stale. The Codex CI/fixer gate still files or updates that roll-up on MEDIATE (see Code Review Rules). Shared keys: `<!-- stuck-pr-threads:owner/repo#N -->` and `<!-- codex-gate-mediate:owner/repo:N -->`; each writer owns only its fenced block. The reply to the watcher's `@codex review` must **not** include a `CODEX-GATE:` line, and must not push, merge, resolve the thread, or open a fix PR.
 - **GitHub-hosted runners** host the test matrix. That is the GitHub test-CI path, not a revival of this cockpit's retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired from this cockpit's research/dev swarm dispatch" still apply to cockpit research/dev swarm jobs. Devin may still post research briefs, which, like all research, land in csl-research.
 - Cursor, Codex (as a coding agent), Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs, except the stuck-thread watcher. A founder may have their own bot post reviews under their account when they direct it. The author agent may fix CI failures on its own PR.
 
@@ -455,13 +455,13 @@ per-PR lock with GitHub `queue: max` (one active, up to 100 pending; excess
 requests can still be dropped). The automated Devin fixer stops at eight consecutive Claude
 commits. Stuck threads are also picked up by
 [`.github/workflows/stuck-thread-watch.yml`](.github/workflows/stuck-thread-watch.yml)
-(CSL-86 / PR #124), which asks Codex to mediate (`@codex review`, no
-`CODEX-GATE:` line) and records one Linear Triage `needs-decision` roll-up per
-unapproved PR (`Stuck PR threads: <repo>#<PR>`), updated in place. Adopt an
-existing roll-up only by the `stuck-pr-threads` HTML marker, never by title.
-Write Linear only when at least one thread is actionable after the per-PR cap
-and `CODEX_TRIGGER_PAT` checks, or to create a missing roll-up after an earlier
-Linear outage. Humans decide.
+(CSL-86 / PR #124), which asks Codex to mediate on the PR (`@codex review`,
+no `CODEX-GATE:` line). Since #328 (CSL-862) the watcher writes nothing to
+Linear (`FILE_LINEAR: "false"`), so it no longer records or updates the
+`needs-decision` roll-up per unapproved PR (`Stuck PR threads: <repo>#<PR>`),
+and a roll-up it filed earlier may be stale. The Codex gate still files or
+updates that roll-up on MEDIATE (see [Code Review Rules](#code-review-rules)).
+Humans decide.
 The watcher never resolves threads, pushes, or merges.
 
 ### Review convergence (CSL-381)
