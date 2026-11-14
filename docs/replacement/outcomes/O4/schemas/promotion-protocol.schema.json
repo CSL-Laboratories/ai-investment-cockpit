@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "o4.promotion-protocol.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "stages",
+    "promotion_authorized",
+    "strategy_activation_authorized",
+    "live",
+    "blocked_because"
+  ],
+  "properties": {
+    "schema_version": {"const": "o4.promotion-protocol.v1"},
+    "promotion_authorized": {"const": false},
+    "strategy_activation_authorized": {"const": false},
+    "stages": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "prefixItems": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "order",
+            "authorized",
+            "requires_prior_stage",
+            "entry_gates",
+            "exit_gates",
+            "failure_policy"
+          ],
+          "properties": {
+            "id": {"const": "replay"},
+            "order": {"const": 1},
+            "authorized": {"type": "boolean"},
+            "requires_prior_stage": {"type": "null"},
+            "entry_gates": {"$ref": "#/$defs/entry_gates"},
+            "exit_gates": {"$ref": "#/$defs/exit_gates"},
+            "failure_policy": {"const": "blocked_and_recorded_no_promotion"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "order",
+            "authorized",
+            "requires_prior_stage",
+            "entry_gates",
+            "exit_gates",
+            "failure_policy"
+          ],
+          "properties": {
+            "id": {"const": "simulation"},
+            "order": {"const": 2},
+            "authorized": {"type": "boolean"},
+            "requires_prior_stage": {"const": "replay"},
+            "entry_gates": {"$ref": "#/$defs/entry_gates"},
+            "exit_gates": {"$ref": "#/$defs/exit_gates"},
+            "failure_policy": {"const": "blocked_and_recorded_no_promotion"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "order",
+            "authorized",
+            "requires_prior_stage",
+            "entry_gates",
+            "exit_gates",
+            "failure_policy"
+          ],
+          "properties": {
+            "id": {"const": "demo"},
+            "order": {"const": 3},
+            "authorized": {"type": "boolean"},
+            "requires_prior_stage": {"const": "simulation"},
+            "entry_gates": {"$ref": "#/$defs/entry_gates"},
+            "exit_gates": {"$ref": "#/$defs/exit_gates"},
+            "failure_policy": {"const": "blocked_and_recorded_no_promotion"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "order",
+            "authorized",
+            "requires_prior_stage",
+            "entry_gates",
+            "exit_gates",
+            "failure_policy"
+          ],
+          "properties": {
+            "id": {"const": "shadow"},
+            "order": {"const": 4},
+            "authorized": {"type": "boolean"},
+            "requires_prior_stage": {"const": "demo"},
+            "entry_gates": {"$ref": "#/$defs/entry_gates"},
+            "exit_gates": {"$ref": "#/$defs/exit_gates"},
+            "failure_policy": {"const": "blocked_and_recorded_no_promotion"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "order",
+            "authorized",
+            "requires_prior_stage",
+            "entry_gates",
+            "exit_gates",
+            "failure_policy"
+          ],
+          "properties": {
+            "id": {"const": "paper"},
+            "order": {"const": 5},
+            "authorized": {"type": "boolean"},
+            "requires_prior_stage": {"const": "shadow"},
+            "entry_gates": {"$ref": "#/$defs/entry_gates"},
+            "exit_gates": {"$ref": "#/$defs/exit_gates"},
+            "failure_policy": {"const": "blocked_and_recorded_no_promotion"}
+          }
+        }
+      ]
+    },
+    "live": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authorized", "in_this_contract", "limited_live_authorized", "broader_live_authorized"],
+      "properties": {
+        "authorized": {"const": false},
+        "in_this_contract": {"const": false},
+        "limited_live_authorized": {"const": false},
+        "broader_live_authorized": {"const": false}
+      }
+    },
+    "blocked_because": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "prefixItems": [
+        {"const": "thresholds_owner_unset"},
+        {"const": "qualify_count_zero"},
+        {"const": "independent_verification_not_run"}
+      ]
+    }
+  },
+  "$defs": {
+    "entry_gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["criteria", "required_evidence"],
+      "properties": {
+        "criteria": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "required_evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "exit_gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["criteria"],
+      "properties": {
+        "criteria": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}
