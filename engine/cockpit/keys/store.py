@@ -27,11 +27,11 @@ allowed for user-entered model-provider keys only; broker and venue keys stay ke
   ``O_NOFOLLOW``, so nothing on the path may be a symlink. Nothing else is ever created, and an
   entry that exists, or that a competing process creates first, must pass the same checks as any
   existing one. Before that first save, ``get`` returns ``None`` and ``delete`` does nothing;
-* a save that takes the folder's ``.keys.lock`` (a broker or venue save on a keychain host, a model-provider
-  save on a host with no keychain) and ``accept_keychain`` first remove, while they hold it, the temp files a
-  killed write left in that folder, best effort and nothing else (B38, ``_sweep_leftovers``). A
-  model-provider save on a keychain host, a read and a delete sweep nothing. A key file may not have a temp
-  file's name (``key_file_not_configured``).
+* every save and ``accept_keychain`` first remove, while they hold the folder's ``.keys.lock``, the temp files
+  a killed write left in that folder, best effort and nothing else (B38, ``_sweep_leftovers``). A
+  model-provider save on a keychain host does it only as cleanup, when the folder and lock are already there
+  and the lock is free (``_sweep_if_the_folder_is_there``). Reads and deletes sweep nothing. A key file may
+  not have a temp file's name (``key_file_not_configured``).
 
 Keychain record (B24). Lucas, Nov 13, 2026, asked what Cockpit should do when a later run selects a
 different OS keychain than the one it saved a broker or venue key in: "Remember and refuse
@@ -157,6 +157,8 @@ class KeyStore:
                     self._settle_record(dir_fd)
                     self._keyring.set(self.SERVICE, _account(kind, name), secret)  # type: ignore[union-attr]
                 return backend
+            if kind in FILE_KINDS:
+                self._sweep_if_the_folder_is_there()  # B38, cleanup only (Codex's fourth read, R4-2)
             self._keyring.set(self.SERVICE, _account(kind, name), secret)  # type: ignore[union-attr]
             return backend
         with self._locked_dir(create_leaf=True) as dir_fd:
@@ -332,6 +334,42 @@ class KeyStore:
                                                      f"marker; "
                                                      f"{record_way_out('keychain_record_missing', self._keychain or '', None)}")
 
+    def _sweep_if_the_folder_is_there(self) -> None:
+        """B38 for a model-provider save on a keychain host (Lucas: "the next save or acceptance removes leftover
+        temp files"; Codex's fourth read, R4-2). That save keeps its key in the keychain and uses no file, so this
+        is cleanup only and can neither refuse, fail nor delay it: it sweeps only when a key file is configured,
+        its name is not reserved, this host keeps owner-only files, the key folder and its ``.keys.lock`` already
+        exist and pass the owner-only checks, and the lock is free at once (``LOCK_NB``: the save never waits
+        behind another process). It creates nothing (no folder, no lock file: a leftover can only come from a
+        writer that held that lock, so with no lock file there is nothing to sweep), reads and writes no record,
+        and a ``KeyRefused`` or ``OSError`` on the way means "not swept"; an interrupt still propagates."""
+
+        if self._path is None or not _owner_only_supported():
+            return
+        try:
+            _entry_name(self._path)  # a reserved name (a temp file's included) is never swept here
+            dir_fd = _open_owned_dir(os.path.dirname(os.path.abspath(self._path)), missing_leaf_ok=True)
+        except (KeyRefused, OSError):
+            return  # no usable key folder: not swept
+        if dir_fd is None:
+            return  # no key folder: nothing to sweep, and none is made
+        lock_fd: int | None = None
+        try:
+            lock_fd = _open_existing_regular(dir_fd, _LOCK_NAME, os.O_RDWR, "key_file_not_owner_only")
+            if lock_fd is None:
+                return  # no lock file: nothing to sweep, and none is made
+            st = os.fstat(lock_fd)
+            if st.st_uid != os.geteuid() or st.st_mode & 0o077:
+                return
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[union-attr]
+            _sweep_leftovers(dir_fd)
+        except (KeyRefused, OSError):
+            return  # the lock is held by another process, or an entry is not owner-only: not swept
+        finally:
+            if lock_fd is not None:
+                os.close(lock_fd)  # also lets go of the lock
+            os.close(dir_fd)
+
     # -- owner-only file ------------------------------------------------------------------
     @contextmanager
     def _locked_dir(self, *, create_leaf: bool = False) -> Iterator[int | None]:
@@ -438,13 +476,13 @@ def _sweep_leftovers(dir_fd: int) -> None:
     process killed between the two (a save, a model-key delete or an acceptance) leaves it, owner-only, holding
     the file as it was being written (on a host with no keychain, model keys, a deleted one included).
 
-    Called only by the operations that take the folder's ``.keys.lock`` to write: a broker or venue save on a
-    keychain host, a model-provider save on a host with no keychain, and ``accept_keychain``, while the lock
-    is held and before the operation writes its own temp file. It runs even when that operation is then
-    refused. A model-provider save on a keychain host takes no lock and does not call it (narrower than
-    "the next save"; see the README), nor do reads and deletes. Every cooperating writer holds the lock while
-    its temp file exists, so a file found here is a leftover, never another write in progress; code that
-    ignores the lock is outside that promise.
+    Called by every save and by ``accept_keychain`` while the folder's ``.keys.lock`` is held and before the
+    operation writes its own temp file: a broker or venue save on a keychain host, a model-provider save on a
+    host with no keychain, and ``accept_keychain`` take the lock as they always did; a model-provider save on a
+    keychain host takes it only for this, without waiting and only when folder and lock already exist
+    (``KeyStore._sweep_if_the_folder_is_there``). It runs even when that operation is then refused. Reads and
+    deletes do not call it. Every cooperating writer holds the lock while its temp file exists, so a file found
+    here is a leftover, never another write in progress; code that ignores the lock is outside that promise.
 
     Which files: chosen by name, not by proven origin. Only an entry whose name is exactly that pattern and
     that ``lstat`` shows as a regular file of the running user's, with no group or other permission bit, is

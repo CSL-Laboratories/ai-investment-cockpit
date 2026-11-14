@@ -53,7 +53,7 @@ from cockpit.keys.tests.test_b24_keychain_record import (  # noqa: F401
 from cockpit.keys.tests.test_b29_not_a_regular_file import NotARegularFileTests  # noqa: F401
 from cockpit.keys.tests.test_b37_library_boundary import LibraryBoundaryTests  # noqa: F401
 from cockpit.keys.tests.test_b38_leftover_temp_files import (  # noqa: F401
-    LeftoverTests, ReservedTempNameTests, SweepScopeTests,
+    LeftoverTests, ModelSaveOnAKeychainHostTests, ReservedTempNameTests, SweepScopeTests,
 )
 from cockpit.keys.tests.test_detect import DetectTests, DoctorTests, StoreForHostTests  # noqa: F401
 from cockpit.keys.tests.test_r6_finding_7 import FreshHostTests  # noqa: F401

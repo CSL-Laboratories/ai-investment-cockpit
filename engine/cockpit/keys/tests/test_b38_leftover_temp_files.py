@@ -165,13 +165,14 @@ class LeftoverTests(_Case):
                 ("model-key save", lambda: KeyStore(keyring=None, key_file=self.path).put("model_provider", "x", FAKE)),
                 ("first broker save", lambda: self.store(ring).put("broker", "acct", FAKE)),
                 ("later venue save", lambda: self.store(ring).put("venue", "acct", FAKE)),
+                ("model save on a keychain host", lambda: self.store(ring).put("model_provider", "m", FAKE)),
                 ("acceptance", lambda: self.store(ring).accept_keychain(A)),
             ):
                 with self.subTest(operation=label):
                     planted = plant()
                     operation()
                     self.assertNotIn(planted, os.listdir(self.leaf))
-        self.assertEqual(held, [True] * 5)
+        self.assertEqual(held, [True] * 6)
         self.assertEqual(self.leftovers(), [])
         planted = plant()  # reads and deletes do not sweep (a model-key delete holds the lock, and still does not)
         self.assertEqual(self.store(ring).get("broker", "acct"), FAKE)
@@ -320,9 +321,13 @@ class ReservedTempNameTests(_Case):
             self.refused("key_file_not_configured", refusing[1].get, kind, "acct")
             self.refused("key_file_not_configured", refusing[1].delete, kind, "acct")
         self.refused("key_file_not_configured", refusing[1].accept_keychain, A)
+        self.assertEqual(ring.calls, [])
+        # A model-provider key on the keychain host uses no file, so it is saved; its cleanup sweep skips a
+        # reserved key file name, so the file is not taken for a leftover (Codex R4-2 with R4-1).
+        self.assertEqual(refusing[1].put("model_provider", "acct", FAKE), "keyring")
         with open(path, "rb") as fh:
             self.assertEqual(fh.read(), before)
-        self.assertEqual((sorted(os.listdir(self.leaf)), ring.calls), (listing, []))
+        self.assertEqual((sorted(os.listdir(self.leaf)), ring.calls), (listing, [("set", "model_provider:acct")]))
         for status in (KeychainStatus(True, A, "ok"), KeychainStatus(False, "", "no_keychain_backend")):
             with self.subTest(keychain=status.available):
                 result = doctor(status, path)
@@ -333,7 +338,9 @@ class ReservedTempNameTests(_Case):
         from cockpit.keys import __main__ as cli
         from cockpit.keys.tests.test_b24_keychain_record import _Out
 
-        path = os.path.join(self.root, self.TEMP_NAMED)
+        os.mkdir(self.leaf, 0o700)
+        path = os.path.join(self.leaf, self.TEMP_NAMED)
+        before = _key_file_body(path, {"one": FAKE})  # a file already sitting under that name
         for status in (KeychainStatus(True, A, "ok"), KeychainStatus(False, "", "no_keychain_backend")):
             with self.subTest(keychain=status.available):
                 out = _Out(False)
@@ -341,6 +348,8 @@ class ReservedTempNameTests(_Case):
                         contextlib.redirect_stdout(out):
                     self.assertEqual(cli.main(["doctor", "--key-file", path]), 1)
                 self.assertIn("key_file_not_configured", out.getvalue())
+                with open(path, "rb") as fh:
+                    self.assertEqual(fh.read(), before)
 
     def test_two_key_files_in_one_folder_never_sweep_each_other(self) -> None:
         # Codex R4-1: a second key-file configuration sharing the folder. Each save sweeps only leftovers.
@@ -364,17 +373,6 @@ class SweepScopeTests(_Case):
         fd = os.open(os.path.join(self.leaf, name), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         os.close(fd)
         return name
-
-    def test_a_model_save_on_a_keychain_host_does_not_sweep_and_the_next_venue_save_does(self) -> None:
-        # DeepSeek's third read F-2, Codex's fourth read R4-2: the scope is the operations that take the folder's
-        # lock, which is narrower than "the next save" (put to the Liaison for Lucas; no lock added here).
-        left = self.plant()
-        ring = Ring()
-        store = self.store(ring)
-        self.assertEqual(store.put("model_provider", "acct", FAKE), "keyring")
-        self.assertIn(left, os.listdir(self.leaf))
-        store.put("venue", "acct", FAKE)
-        self.assertNotIn(left, os.listdir(self.leaf))
 
     def test_an_unlistable_folder_is_not_swept_and_the_save_goes_on(self) -> None:
         # DeepSeek's third read F-3: best effort; a listing that fails leaves the leftover and the save completes.
@@ -408,3 +406,93 @@ class SweepScopeTests(_Case):
                 self.assertIn(left, os.listdir(self.leaf))
                 self.assertEqual(store.get("model_provider", failing), FAKE)
                 os.unlink(os.path.join(self.leaf, left))
+
+
+class ModelSaveOnAKeychainHostTests(_Case):
+    """B38 for a model-provider save on a keychain host (Lucas: "the next save or acceptance removes leftover temp
+    files"; Codex's fourth read R4-2, DeepSeek's third read F-2). That save uses no file, so its sweep is cleanup
+    only: it never creates the folder or the lock, never waits for the lock, never refuses or fails the save, and
+    reads or writes no record."""
+
+    LEFT = ".keys-4242-0123456789abcdef"
+
+    def folder(self, mode: int = 0o700, lock: bool = True) -> None:
+        os.mkdir(self.leaf, mode)
+        os.chmod(self.leaf, mode)
+        if lock:
+            os.close(os.open(os.path.join(self.leaf, ".keys.lock"), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+        os.close(os.open(os.path.join(self.leaf, self.LEFT), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+
+    def test_it_sweeps_before_the_keychain_write_and_writes_no_record(self) -> None:
+        self.folder()
+        seen: list[bool] = []
+        leaf = self.leaf
+
+        class Watching(Ring):
+            def set(inner, service: str, name: str, secret: str) -> None:  # noqa: N805
+                seen.append(os.path.lexists(os.path.join(leaf, ModelSaveOnAKeychainHostTests.LEFT)))
+                super().set(service, name, secret)
+
+        ring = Watching()
+        self.assertEqual(self.store(ring).put("model_provider", "acct", FAKE), "keyring")
+        self.assertEqual(seen, [False])  # swept before the key went into the keychain
+        self.assertEqual(sorted(os.listdir(self.leaf)), [".keys.lock"])  # no record written for a model key
+        self.assertEqual(ring.calls, [("set", "model_provider:acct")])  # and no marker asked for
+
+    def test_with_no_key_folder_nothing_is_created(self) -> None:
+        ring = Ring()
+        self.assertEqual(self.store(ring).put("model_provider", "acct", FAKE), "keyring")
+        self.assertFalse(os.path.lexists(self.leaf))
+
+    def test_with_no_lock_file_nothing_is_created_or_swept(self) -> None:
+        self.folder(lock=False)
+        self.assertEqual(self.store(Ring()).put("model_provider", "acct", FAKE), "keyring")
+        self.assertEqual(os.listdir(self.leaf), [self.LEFT])
+
+    def test_an_unsafe_folder_is_not_swept_and_the_save_succeeds(self) -> None:
+        self.folder(mode=0o755)
+        ring = Ring()
+        self.assertEqual(self.store(ring).put("model_provider", "acct", FAKE), "keyring")
+        self.assertIn(self.LEFT, os.listdir(self.leaf))
+        self.assertEqual(stat.S_IMODE(os.lstat(self.leaf).st_mode), 0o755)  # never repaired
+        self.assertEqual(ring.data, {("csl-cockpit", "model_provider:acct"): FAKE})
+
+    def test_a_loose_lock_file_is_not_swept_under_and_the_save_succeeds(self) -> None:
+        self.folder()
+        os.chmod(os.path.join(self.leaf, ".keys.lock"), 0o644)
+        self.assertEqual(self.store(Ring()).put("model_provider", "acct", FAKE), "keyring")
+        self.assertIn(self.LEFT, os.listdir(self.leaf))
+
+    def test_a_lock_held_by_another_writer_does_not_make_the_save_wait(self) -> None:
+        self.folder()
+        holder = os.open(os.path.join(self.leaf, ".keys.lock"), os.O_RDWR)
+        done: list[str] = []
+        worker = threading.Thread(daemon=True, target=lambda: done.append(self.store(Ring()).put("model_provider", "acct", FAKE)))
+        try:
+            store_mod.fcntl.flock(holder, store_mod.fcntl.LOCK_EX)  # type: ignore[union-attr]
+            worker.start()
+            worker.join(10)
+            waited = worker.is_alive()
+        finally:
+            os.close(holder)  # lets go of the lock, so a save that did wait can finish
+            worker.join(30)
+        self.assertFalse(waited, "the model save waited for the folder's lock")
+        self.assertEqual(done, ["keyring"])
+        self.assertIn(self.LEFT, os.listdir(self.leaf))  # not swept this time
+
+    def test_a_host_without_owner_only_files_is_left_untouched(self) -> None:
+        self.folder()
+        with mock.patch.object(store_mod, "_owner_only_supported", lambda: False):
+            self.assertEqual(self.store(Ring()).put("model_provider", "acct", FAKE), "keyring")
+        self.assertEqual(sorted(os.listdir(self.leaf)), sorted([".keys.lock", self.LEFT]))
+
+    def test_an_error_on_the_way_means_not_swept_and_the_save_succeeds(self) -> None:
+        self.folder()
+        for failure in (OSError(errno.EIO, "EIO"), store_mod.KeyRefused("key_dir_not_owner_only", "0o755")):
+            with self.subTest(failure=type(failure).__name__), \
+                    mock.patch.object(store_mod, "_open_owned_dir", side_effect=failure):
+                self.assertEqual(self.store(Ring()).put("model_provider", "acct", FAKE), "keyring")
+            self.assertIn(self.LEFT, os.listdir(self.leaf))
+        with mock.patch.object(store_mod, "_open_owned_dir", side_effect=KeyboardInterrupt()), \
+                self.assertRaises(KeyboardInterrupt):  # an interrupt is not swallowed
+            self.store(Ring()).put("model_provider", "acct", FAKE)

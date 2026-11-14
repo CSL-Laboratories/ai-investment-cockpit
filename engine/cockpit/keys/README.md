@@ -39,15 +39,18 @@ Leftover temp files (B38; Lucas, Nov 13, 2026: "Sweep them (Recommended)"). A wr
 keychain record makes a temp file named `.keys-<pid>-<16 hex digits>` in the key folder and renames it over
 the file. A process killed between those two steps (in a save, a model-key delete or an acceptance) leaves
 the temp file behind: owner-only, and holding the file as it was being written, so on a host with no
-keychain it can hold model keys, including one deleted later. These operations remove such leftovers while
-they hold the folder's `.keys.lock`, before they write their own temp file, even when they are then refused:
-a broker or venue save on a keychain host, a model-provider save on a host with no keychain, and
-`accept-keychain`. A model-provider save on a keychain host takes no lock and sweeps nothing, and neither do
-reads and deletes, so a leftover stays until one of those three runs in that folder. That is narrower than
-"the next save" in Lucas's answer: on a host that now has a keychain and saves only model-provider keys, a
-leftover from an earlier session without one stays. Every writer that takes the lock holds it while its temp
-file exists, so what is found then is a leftover, never another write in progress (code that ignores the
-lock is outside this). The choice is by name, not by proven origin: an entry whose name is exactly that
+keychain it can hold model keys, including one deleted later. Every save and `accept-keychain` remove such
+leftovers while they hold the folder's `.keys.lock`, before they write their own temp file, even when they
+are then refused. A broker or venue save on a keychain host, a model-provider save on a host with no
+keychain and `accept-keychain` take that lock as they always did. A model-provider save on a keychain host
+keeps its key in the keychain and uses no file, so for it the sweep is cleanup only: it runs only when a key
+file is configured with a name that is not reserved, the key folder and `.keys.lock` already exist and pass
+the owner-only checks, and the lock is free at that moment. It creates nothing (no folder, no lock file),
+never waits for the lock (another process holding it means "not swept this time"), and a refusal or an error
+on the way means "not swept", never a refused or failed save. Reads and deletes sweep nothing, so a leftover
+stays until the next save or acceptance in that folder. Every writer that takes the lock holds it while its
+temp file exists, so what is found then is a leftover, never another write in progress (code that ignores
+the lock is outside this). The choice is by name, not by proven origin: an entry whose name is exactly that
 pattern and that `lstat` shows as a regular file of the running user's, with no group or other permission
 bit, is removed. A link, a folder, a pipe, a file of another owner or with a looser mode, and a name that only
 looks like it are skipped when `lstat` sees them, as every other entry in the folder is; an entry replaced
@@ -171,8 +174,8 @@ keys:
     record write that failed before its rename, or a process stopped between the two writes): the marker
     stays alone, the next broker or venue operation is refused (`keychain_record_missing`, which names the
     possible causes), and `accept-keychain` records it; the key folder and `.keys.lock` it made stay, and a
-    process killed inside the record write can leave a temp file, which the acceptance or the next broker or
-    venue save removes (B38, above). An error from the marker write does not say whether it took effect: the next operation
+    process killed inside the record write can leave a temp file, which the acceptance or the next save
+    removes (B38, above). An error from the marker write does not say whether it took effect: the next operation
     does (refused `keychain_record_missing` if it did);
   - a first save whose record was published before the error: record and marker are both there, and a
     plain retry works;
