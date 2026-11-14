@@ -2,8 +2,9 @@
 durable halt flag as the source of truth, /dev/shm only as a fast copy".
 
 Whether a book is halted is read only from its committed ``state`` row, on every check. The
-file in ``/dev/shm`` (``_HALT_FLAG_DIR``; here a temporary directory) only orders writers
-behind a halt in progress and is never read as halt state. So:
+fast copy (the halt flag file: no longer in ``/dev/shm`` but in the folder ``_halt_flag_dir``
+gives; here a temporary directory) only orders writers behind a halt in progress and is never
+read as halt state. So:
 
 * deleting that copy, or its whole directory, leaves the book halted, for this connection,
   a new connection and another process;
@@ -61,9 +62,9 @@ class HaltDurableTests(unittest.TestCase):
         d = tempfile.mkdtemp(prefix="cockpit-halt-durable-")
         self.addCleanup(shutil.rmtree, d, True)
         self.dir = d
-        self.fast = os.path.join(d, "shm")  # stands in for /dev/shm
+        self.fast = os.path.join(d, "shm")  # stands in for the folder the fast copy is kept in
         os.mkdir(self.fast)
-        patcher = mock.patch.object(gateway_module, "_HALT_FLAG_DIR", self.fast)
+        patcher = mock.patch.object(gateway_module, "_halt_flag_dir", lambda: self.fast)
         patcher.start()
         self.addCleanup(patcher.stop)
         self.path = os.path.join(d, "book.db")
@@ -131,7 +132,7 @@ class HaltDurableTests(unittest.TestCase):
         code = (
             "import json, sys\n"
             "from cockpit.paper import gateway as g\n"
-            "g._HALT_FLAG_DIR = sys.argv[2]\n"
+            "g._halt_flag_dir = lambda: sys.argv[2]\n"
             "book = g.PaperBook(sys.argv[1])\n"
             "gw = g.OrderGateway(plugin_id='p', book=book, core=None, caps=g.Caps(10**9, 10**6),\n"
             "                    allowlist=frozenset({'AAPL'}))\n"

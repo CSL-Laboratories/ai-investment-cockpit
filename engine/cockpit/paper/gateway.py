@@ -123,8 +123,11 @@ full busy timeout at the booking and, if it outlasts it, is a ``leftover_charge`
 Halt state (Lucas, Nov 11: "Keep the durable halt flag as the source of truth, /dev/shm
 only as a fast copy"). Whether the book is halted is only ever read from the book's own
 committed ``state`` row (``halted``), on every check: the risk pass, the booking
-transaction's re-read and ``halted()``. Nothing in ``/dev/shm`` is read as halt state, so a
-copy there that is missing, deleted, stale or corrupt can never lift a halt. The durable
+transaction's re-read and ``halted()``. The fast copy is the halt flag file of "Halt
+priority" below (kept in a folder only the book's user can write, or else beside the book,
+and no longer in ``/dev/shm`` unless one of those is there).
+Neither it nor the count of halts in progress is ever read as halt state, so a copy that is
+missing, deleted, stale or corrupt can never lift a halt. The durable
 read fails closed: a ``halted`` row that is missing, not exactly the integer 0 or 1, or
 that cannot be read at all (an I/O error, say) is refused ``halt_unreadable``. No order
 is approved or booked on it (after the charge it is ``leftover_charge`` with that cause),
@@ -132,14 +135,232 @@ and a kill cannot confirm its halt on it. ``halt()`` always writes ``halted = 1`
 the row already reads exactly 1, so it also repairs a missing or corrupt row to halted.
 There is no un-halt.
 
-Halt priority. ``PaperBook.halt`` creates a flag file for the book (in ``/dev/shm`` where it
-exists, else ``<book>-halt``), then takes the write
-lock in a short retry loop instead of SQLite's backing-off busy handler, and removes the flag
-after its commit. Every other writer waits while the flag exists (at most ``HALT_YIELD_S``;
-a flag older than that, dated in the future, or that is not a regular file was left by a
-halt that died, or not made by a halt, and is removed), so a stream of refusal or booking commits on other connections or processes
-cannot starve a halt. The flag only orders writers; it is never read as halt state, and
-its contents are never read. Reads never wait.
+Halt priority (Lucas, Nov 12, to the decision sheet's recommendations B1, "From the call,
+inside one process", and B2, the fast flag moved out of ``/dev/shm`` into an owner-only
+folder and opened "so that it cannot block": "Yes, as recommended"). A halt has priority over
+the book's other writers from the moment it is called, inside one process. Across processes
+it has priority as far as a flag file reaches, which is best effort. A writer here is a
+transaction (``_tx``) or ``submit``'s probe (``_probe_writable``).
+
+Inside one process: a count. The process counts the halts in progress on each book file
+(``_HALTS``). The count is shared by every ``PaperBook`` handle the process has open on that
+file (its key is the book's real path) and has its own small lock, never a book's lock.
+``PaperBook.halt`` on an open handle counts itself in as its first act and counts itself out
+when it ends, however it ends (for an interrupt that lands while it is counting itself out,
+see the limits). On a closed handle it is refused ``book_closed`` before that and touches
+neither the count nor the flag. While the count is above zero, every writer on
+that book in this process waits before it takes its handle's lock and looks again once it
+holds it: one that was already waiting on the lock when the halt was called lets go of it and
+waits again. That holds whatever the flag file's age and whether or not the file exists. A
+halt therefore waits for the one transaction or probe in progress on its own connection, not
+once for each one queued behind it on that connection's lock; once the halt has committed, a
+queued booking finds the book halted and is ``leftover_charge`` with cause ``order_halted``.
+The one in progress is not interrupted. It holds the lock while it waits for the write lock,
+if another connection has it (up to ``_BUSY_TIMEOUT_MS`` for a transaction,
+``BOOK_LOCK_PROBE_S`` for a probe or a ``book_locked`` audit row), and then for its statements
+(at most ``RUN_RECHECK_TIMEOUT_S`` for a booking whose re-verify hangs).
+
+Across processes: a flag file. Having counted itself in, ``halt`` makes the book's flag file,
+then takes the write lock in a short retry loop instead of SQLite's backing-off busy handler.
+While it retries it dates the flag again about once a second (``_HALT_FLAG_REFRESH_S``) and
+makes it again at once whenever it finds it gone. A writer whose process counts no halt on
+the book looks at the flag instead, before it takes its handle's lock and again once it holds
+it, and waits while the flag is live: a regular file dated within the last ``HALT_YIELD_S``
+(or less than the clock's grain, ``_HALT_FLAG_GRAIN_S``, ahead). Any other entry there was
+left by a halt that died, or was not made by a halt. The writer looks at it once more and
+removes it only if it is still the entry it judged (same device and inode) and still not
+live; the time the writer has already waited still counts towards its cap. When a halt ends,
+the flag is removed unless another halt is still in progress on the book in the same process.
+A halt that begins while another is ending makes its flag only after that removal (one lock
+per book orders the two), so it keeps its new flag. Within the limits below, a stream of
+refusal or booking commits on other connections or processes therefore does not starve a halt.
+
+The cap. A writer waits on halts for at most ``HALT_YIELD_TOTAL_S`` in one transaction or
+probe, counted from its first look at a halt in progress (the count above zero, or a live
+flag).
+
+Where the flag is kept. In one of two places: under the user's runtime folder, or beside the
+book. On POSIX, when ``XDG_RUNTIME_DIR`` is set to
+an absolute path whose ``lstat`` shows a real directory that this process's user owns and
+that neither its group nor others can write, the flag is
+``<XDG_RUNTIME_DIR>/csl-cockpit/csl-paper-halt-<first 32 hex digits of the SHA-256 of the
+book's real path>``. ``csl-cockpit`` is made with mode 0700 if it is missing and must pass
+the same check. The check is about who can write the folder, not who can read it: one that
+others can list (mode 0755) passes. Otherwise, and always on Windows, the flag is ``<the
+book's real path>-halt``, beside the book. A handle works its flag's path out once, when it is opened
+(that is also when a missing ``csl-cockpit`` is made). No folder is picked for being shared:
+``/dev/shm``, where the flag was once kept at a path anyone could put something at, is never
+picked, and as a runtime folder it fails the check wherever anyone can write it. The check
+does not look at where a folder is, though. The flag is under ``/dev/shm`` wherever a runtime
+folder that passes the check is (a folder of the user's own in there is used like any other)
+and wherever the book itself is kept.
+
+Making or dating the flag (``_raise_halt_flag``) never waits on what is at its path, and on
+POSIX never makes or opens anything through a symbolic link there (for Windows, and for a
+hard link, see the limits). The path is looked at first (``lstat``). A live flag is dated in
+place: on POSIX through an open that creates nothing, with ``O_NONBLOCK`` and ``O_NOFOLLOW``,
+and only once ``fstat`` shows that what was opened is a regular file; on Windows, which has
+neither flag, by path. Anything else at the path (a stale flag, a symbolic link, a FIFO) is
+never opened and never dated: it is removed (a link itself, not its target) and a new flag is
+made with ``O_CREAT | O_EXCL``. A new flag is therefore a new file, never one that a writer has
+already judged stale. It is made through a file object that owns its descriptor. That object
+is held only by the evaluation stack of the call that makes the flag and is closed from C in
+the same statement, so that an interrupt between the making and the closing leaves no
+descriptor open unless something else holds that object (see the limits; on Windows an open
+descriptor keeps the flag from being removed). A directory at the path is the exception: it
+cannot be removed that way, by a halt or by a writer, so it stays and no flag is made while it is
+there. The first making of the flag is inside the ``try`` whose ``finally`` counts the halt
+out and removes the flag, so an interrupt at that point still reaches both. When the flag
+cannot be made or dated, the halt goes on without it.
+
+Limits that remain:
+
+* A writer that already holds its connection's lock and is waiting inside ``BEGIN IMMEDIATE``
+  for another connection's transaction is past both looks and still runs first, so a halt
+  called on that connection can wait one transaction for each connection writing to the book.
+  The halt's own ``_BUSY_TIMEOUT_MS`` bounds only its retries for the write lock: kept off
+  its connection's lock for longer than that, it still goes on and commits, late.
+* The cap runs from a writer's first look at a halt in progress, whether the writer then
+  spends the time waiting on halts or queued on its handle's lock. Once it has passed, the
+  writer gives way to nothing more in that transaction or probe, not even to a halt that
+  begins later, and a halt that begins behind several such writers on its connection's lock
+  waits for each of them. A halt still in progress after ``HALT_YIELD_TOTAL_S`` (kept off its
+  connection's lock or the write lock for that long) no longer holds back the writers that
+  have waited the cap out, and every transaction or probe that starts behind it waits the
+  whole cap first.
+* A halt dates its flag again only in its retry loop, not while it waits for its own
+  connection's lock. If that wait outlasts ``HALT_YIELD_S``, writers in other processes take
+  the flag for a dead halt's, remove it and stop waiting (writers in the halt's own process
+  still wait: the count). The halt makes it again at its first failed try for the write
+  lock; when its first try succeeds it commits without one.
+* Each process counts only its own halts, and they all share the one flag file. A halt that
+  ends in one process removes the file even while a halt is still in progress on the book in
+  another process. Writers outside that other process then stop waiting until its halt makes
+  the flag again: at once if it is retrying for the write lock, not while it waits for its
+  own connection's lock.
+* A writer's last look at a flag it judged stale and its removal of it are two system calls.
+  A halt that makes its flag between the two loses it. Writers in that halt's own process
+  still wait (the count); writers in other processes do not, until the halt makes the flag
+  again (as above).
+* Processes that work out different flag paths do not see each other's flags, so between them
+  a halt has no priority: one started without ``XDG_RUNTIME_DIR`` (or with one that fails the
+  check) and one started with a usable one; two with different ``XDG_RUNTIME_DIR`` values (two
+  users, say); two that reach the book file under different real paths (a hard link), which
+  inside one process also means two counts.
+* Where the flag cannot be made, the halt goes on without it: it keeps its priority over the
+  writers in its own process (the count) and has none over writers in other processes. A
+  directory at the flag's path is one such case, and it lasts until someone removes the
+  directory: neither a halt nor a writer does.
+* Beside the book, the flag is only as private as the book's folder. Whoever can write that
+  folder can remove the flag or put something else at its path, which costs a halt its
+  priority over writers in other processes. Nothing put there is waited on by the halt, and
+  none of it touches the halt's priority inside its own process. A hard link put there to a
+  regular file is a regular file like any other: if its date makes it look live, a halt dates
+  it in place, which sets the times of the file it names.
+* An interrupt (``KeyboardInterrupt``, say) can end a halt at any point, and can leave the
+  halt's flag behind: when it lands while the halt is counting itself out, and when it keeps
+  the counting out from running at all. (On CPython 3.11 to 3.14 an interrupt raised by a
+  trace function at the line of a ``try:`` does the second: that line has an instruction that
+  no handler of the function covers, so no ``finally`` and no ``with`` of the halt sees the
+  interrupt.) Writers in every process then wait on that flag until it is ``HALT_YIELD_S``
+  old, and the first of them to find it stale removes it; a halt that follows on the book
+  removes it when it ends.
+* A halt is out of the count once its call is over, however the call ended and whatever is
+  kept afterwards: the interrupt, its traceback, the frames of the call or a copy of their
+  local variables (an interactive session, a logging record, a debugger; ``KillSwitch.kill``
+  keeps the interrupt it caught from its halt, traceback and frames with it, until it has
+  tried every venue). No handler has to run for that. The object the call is counted by
+  (``_Halt``) is held by the call's evaluation stack and by no variable, and the interpreter
+  releases that stack when the call returns and when it unwinds. This rests on the
+  interpreter, not on the language. It was measured on CPython 3.11 to 3.14 (3.13 and 3.14
+  also without the GIL), with one interrupt raised by a trace function before each
+  instruction in turn of every function of this module that the call runs, the call made
+  directly and by ``KillSwitch.kill``. The halt stays counted for as long as something else
+  holds that object. Two things were found that can: code that called the halt's token
+  while the call ran and kept the result, and a ``sys.monitoring`` tool that keeps the first
+  argument of the calls it watches in ``halt``. And on an interpreter that does not free an
+  object with its last reference, the halt stays counted until its collector has run. For
+  that long every transaction and probe on that book in that process waits its whole cap.
+  None of this touches halt state: the committed row decides.
+* A new flag's descriptor closes when the file object that owns it is closed or goes. That
+  object is held by the evaluation stack of the call that makes the flag and by no variable,
+  and it is closed from C in the statement that makes it. So the interpreter reports no call
+  on it and hands it to nothing. (A function set with ``sys.setprofile`` and a
+  ``sys.monitoring`` callback are handed the callable of every call they watch, the second
+  also the call's first argument. What such a tool was handed stays in its frame, and so in
+  the traceback of an interrupt it raises, for as long as that interrupt is kept.) An
+  interrupt before the close unwinds the frame, the stack is released and the object goes.
+  Like the count, this rests on the interpreter. It was measured on CPython 3.11 to 3.14
+  (3.13 and 3.14 also without the GIL), on Windows and on Linux, the halt called directly
+  and by ``KillSwitch.kill`` and the interrupt kept each time: with one interrupt raised by
+  a trace function before each instruction in turn, and with one raised by a
+  ``sys.setprofile`` function or (from 3.12) a ``sys.monitoring`` callback at each call and
+  return in turn that it is told of, no halt that followed left its flag behind. The
+  descriptor stays open for as long as something else holds that object. Nothing is handed
+  it; code that goes looking for it and keeps it could hold it (a scan of the objects the
+  collector tracks, say; none was run). And on an interpreter that does not free an object
+  with its last reference, it stays open until the collector has run. On POSIX an open
+  descriptor does not keep the flag from being removed. On Windows it does: for that long,
+  every halt on the book leaves its flag behind when it ends, and writers in every process
+  wait on each until it is ``HALT_YIELD_S`` old.
+* Dating a live flag on POSIX opens it (``_date_halt_flag``), and that descriptor is a
+  number that no object owns. An interrupt that lands after the open and skips the close
+  (between the open and the ``try``, at an instruction that the ``try`` does not cover, or in
+  the ``finally`` before the close has run) leaves it open for the life of the process, one
+  descriptor each time, whether or not the interrupt is kept. On Linux one interrupt raised
+  by a trace function did that, one raised by a profile function did, and so did interrupts
+  raised by the interpreter's own signal handler while a halt was called in a loop. It
+  leaves no flag behind (POSIX removes a file that is open) and touches neither the count
+  nor halt state. Windows dates by path and opens nothing. A halt dates a flag only when it
+  finds a live one at its path: its own while it retries for the write lock, another halt's,
+  or one that an interrupted halt left.
+* An interrupt can also leave a lock held or a transaction open, where it skips what would
+  have released it. Raised by a trace function at an instruction of the halt that no handler
+  covers, or between the body of a ``with`` block and the call that leaves it, one interrupt
+  left the book's own lock held (every later call on that handle then waits, and a kill that
+  had called the halt did not return); or left the book's flag lock or the lock of the count
+  held (the halt itself then waited on it in its own counting out, as every later halt on
+  that book does on the first, and every later halt, transaction and probe on every book in
+  the process on the second); or left the book's connection inside the transaction it had
+  begun. Where that was after the halt's write, the write was in the transaction, not
+  committed, and the book's own lock was left held as well: no other connection read the
+  book as halted, and the call had ended with the interrupt. Nothing releases a lock left
+  held. And an interrupt that lands after the commit, before the halt has left the ``try``
+  around it, runs the rollback with nothing open: SQLite's error for that comes out of
+  ``halt`` in the interrupt's place, with the interrupt as its context. The halt is
+  committed, and a kill that had called it reads the book as halted and does not raise the
+  interrupt again. The book's own lock, the transaction and that error are the same without
+  the count and the flag. Under real signals (SIGINT, on Linux) the interrupts raised in
+  the halt's own code were raised on entering a function, after a call and inside one
+  arithmetic operation, never at the line of a ``try:``, and none left a lock held on 3.11,
+  3.12 and 3.13; on every version one can leave the transaction open, and one can be
+  replaced by that error. For 3.14 see the next limit. Nothing here guards against any of
+  this.
+* On CPython 3.14, with or without the GIL, an interrupt raised by a signal handler
+  (``KeyboardInterrupt`` from Ctrl-C, say) can land just after a ``with`` statement has taken a
+  lock and before the statement is bound to give it back, and the lock then stays held. This
+  is CPython issue gh-148874 (https://github.com/python/cpython/issues/148874), fixed in 3.15
+  and, as of 3.14.10, in no 3.14 release. It was seen under real signals on 3.14.8 for each
+  of the three locks a halt takes, and on none of 3.11, 3.12 and 3.13. Left held, the book's
+  own lock stops every later call on that handle, a halt included; a book's flag lock stops
+  every later halt on that book in the process; and the lock of the count stops every later
+  halt, transaction and probe on every book in the process. Each waits for good. Nothing
+  here guards against it: the engine needs a host that never lets a signal handler raise an
+  exception into a thread that is running it.
+* Windows offers no way to refuse a link at open. There the flag's path is looked at first,
+  and what is there is dated only when the look showed a regular file and a flag is made only
+  when it showed nothing (or what it showed was removed). A link put at the path between
+  that look and the call that follows it can be followed: dating it sets its target's access
+  and modification times to now, and making a flag through a dangling link can make its
+  target.
+* A forked child starts with an empty count: it sees a halt that was in progress in its
+  parent only through the flag.
+* One ``submit`` is up to three waits on halts (its probe, its booking and the audit row of a
+  refusal), each with its own ``HALT_YIELD_TOTAL_S``.
+
+The count and the flag only order writers. Neither is ever read as halt state, and the flag's
+contents are never read. Reads never wait on either; like every call on a connection they
+wait for its lock.
 
 ``PaperBook`` has no public booking method. Its private ``_book`` refuses unless handed a
 one-shot ``_Grant`` that ``OrderGateway.submit`` mints after the risk pass and the core's
@@ -177,7 +398,9 @@ sourced yet (F12).
 
 from __future__ import annotations
 
+import functools
 import hashlib
+import io
 import os
 import queue
 import re
@@ -313,15 +536,36 @@ _STATE_KEYS = ("halted", "seq", "halt_seq")  # every row of ``state``; each star
 # How long ``submit`` waits for the book's write lock before the core charge (see the module doc).
 BOOK_LOCK_PROBE_S = 1.0
 _BUSY_TIMEOUT_MS = 30_000
-# Halt priority: ``halt`` creates the book's halt flag before it takes the write lock; every other writer
-# waits while that flag exists, at most ``HALT_YIELD_S``. A flag older than that is stale.
+# Halt priority: ``halt`` counts itself in (``_HALTS``) and makes the book's halt flag before it takes the
+# write lock. Every other writer waits while a halt is in progress on the book in its own process (the
+# count) or while that flag is live. A flag is live for ``HALT_YIELD_S`` after its halt last dated it; an
+# older one is stale. A writer that was already waiting on the book's lock when the halt began lets go of
+# the lock once it gets it and waits again, so a halt does not wait for writers queued ahead of it on
+# that lock.
 HALT_YIELD_S = 5.0
-# The flag lives in shared memory where there is one (no filesystem journal, so creating and
-# removing it adds nothing to the book's next fsync), else next to the book. Every process that
-# opens the same book file derives the same flag path from the book's real path.
-_HALT_FLAG_DIR = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else None
+# How often a halt dates its flag again while it retries for the write lock, so that the flag's age is
+# the time since its halt last touched it and a halt that is still trying is not taken for a dead one.
+_HALT_FLAG_REFRESH_S = 1.0
+# The longest one writer waits on halt flags in a single transaction or probe, however long one halt
+# takes and however many follow one another. A flag left by a halt that died must not use up the wait
+# a retried halt is owed, and flags that keep coming must not hold a writer for ever.
+HALT_YIELD_TOTAL_S = 10.0
+# The flag's date and ``time.time()`` are not one clock reading. On Windows a flag made in the
+# current clock tick reads one float step (about 0.2 us) in the future roughly one look in seven,
+# and a file system may stamp with a finer clock than ``time.time()`` (a tick is up to 15.6 ms
+# there). A flag dated less than this far ahead is therefore a halt in progress, not a planted date.
+_HALT_FLAG_GRAIN_S = 0.1
+# ``/dev/shm``, which anyone can write, is never picked for the flag. It lives in a folder only the
+# book's user can write, ``_HALT_FLAG_SUBDIR`` under ``$XDG_RUNTIME_DIR``, where that is usable
+# (``_halt_flag_dir``), else next to the book; it is under ``/dev/shm`` only where one of those is.
+# Processes that open the same book file with the same usable ``XDG_RUNTIME_DIR``, or all without one,
+# derive the same flag path from the book's real path.
+_HALT_FLAG_SUBDIR = "csl-cockpit"
 _HALT_SPIN_S = 0.0002
-_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)  # POSIX only; Windows has no symlink-following open flag
+# POSIX only. Windows has neither flag: there the flag's path is looked at (``lstat``) before it is dated
+# by path, and a new flag is only ever made with ``O_EXCL`` (``_raise_halt_flag``).
+_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_NONBLOCK = getattr(os, "O_NONBLOCK", 0)  # no open of the flag's path may wait (on a FIFO, say)
 # The longest the booking waits on the run check's re-verify while it holds the book's lock
 # and write lock (see "Run check at the booking point" in the module doc).
 RUN_RECHECK_TIMEOUT_S = 1.0
@@ -486,8 +730,128 @@ class _BoundedCaller:
             del job, fn, args, done, box, ticket, outcome
 
 
+class _Halt:
+    """One call of ``PaperBook.halt``, as an object. The call makes it before it counts itself
+    in and holds it for as long as it runs on its evaluation stack, as the argument of one call
+    expression, and in no variable of any frame. The count is never handed it and never keeps
+    it: it knows the call by a weak reference to it, the halt's token (``_Halts``)."""
+
+    __slots__ = ("__weakref__",)
+
+
+class _Halts:
+    """The halts in progress in this process, counted per book file (see "Halt priority" in the
+    module doc). Shared by every ``PaperBook`` handle open on the same file: the key is the book's
+    real path, the one its flag is named from. Guarded by its own small lock, never a book's lock,
+    so a halt takes its place in the count however long its handle's lock is held. That lock is
+    never held across a system call: a writer reading the count waits on no file system.
+
+    Each halt is one entry, under its token: a weak reference, made by the running ``halt``
+    call, to an object that only that call holds (``_Halt``). ``begin``, ``end`` and ``forget``
+    are handed the token, never the object. The entry is kept under the token itself, not under
+    a number taken from it (an address, say, which a later object can be given). A weak
+    reference whose object is gone is equal to nothing but itself, and one whose object is alive
+    only to a reference to that same object. So an entry is found by the token it was put in
+    under and, while its object is alive, by another weak reference to that same object
+    (``halt`` makes none), and never through the object of another halt, not even a later one
+    that was made where one that is gone used to be; and an ``end`` or ``forget`` whose
+    ``begin`` never happened takes no entry out and removes no flag, whatever else is in the
+    count. (``halt`` hands its token in while its object is alive, and ``begin`` hashes it
+    then. A token that was never hashed while its object was alive cannot be looked up once
+    the object has gone: with anything in the count, ``end`` and ``forget`` raise ``TypeError``
+    for it, and still take no entry out.)
+
+    ``begin`` puts the entry in, in one step: an interrupt lands before it or after it. Taking
+    it out is not one step, because ``end`` takes the book's flag lock first, so an interrupt can
+    land inside ``end`` before the halt is out of the count; and an interrupt can keep ``end``
+    from being called at all. Two things keep the count right all the same. ``halt`` calls
+    ``forget`` in a ``finally`` around ``end``, which takes the entry out whatever happened in
+    ``end``. And an entry whose token's object is gone belongs to no running ``halt``: it is
+    not counted, and it is dropped at the next look. The object is gone once the call is over,
+    however the call ended and with no handler run for it: ``halt`` holds it on its evaluation
+    stack, as the argument of the call expression that runs its body, and in no variable, and
+    the interpreter releases that stack when the call returns and when it unwinds. Nothing
+    else is ever handed the object (a look at the count holds it only for the moment it takes
+    to see that it is alive). So an entry that neither ``end`` nor ``forget`` took out stops
+    being counted as the call ends, whether or not the interrupt, its traceback, the call's
+    frames or a copy of their local variables is kept afterwards. That rests on the
+    interpreter and was measured, not proved: see the limits in the module doc, which also say
+    what can still hold the object. A forked child starts with an empty count (the parent's
+    halts are not running there).
+
+    The entries are read and changed only with the count's lock held, on a build with a GIL and
+    on one without. The tokens have no callback, so nothing of the count's runs when an object
+    is freed, at whatever moment and on whatever thread that happens: an entry whose object is
+    gone just waits for the next look.
+
+    Each book also has a flag lock (``flag_lock``). A halt that ends holds it from finding
+    itself the last one in progress until it has removed the flag, and a halt that begins makes
+    its flag under it. So the one that begins, already counted in, makes its flag only after the
+    one that is ending has removed the old one, and never loses the new one to it."""
+
+    def __init__(self) -> None:
+        self._reset()
+        _FORK_RESET.add(self)
+
+    def _reset(self) -> None:
+        self._lock = threading.Lock()
+        # a halt's token (a weak reference to its ``_Halt``) -> its book's real path
+        self._halts: dict[weakref.ref[_Halt], str] = {}
+        self._flag_locks: dict[str, threading.Lock] = {}  # a book's real path -> its flag lock
+
+    def begin(self, book: str, halt: weakref.ref[_Halt]) -> None:
+        with self._lock:
+            self._halts[halt] = book
+
+    def _in_progress(self, book: str) -> int:
+        """How many halts are in progress on ``book``. Call only with ``self._lock`` held. An
+        entry whose token's object is gone belongs to no running ``halt``: it is dropped, not
+        counted."""
+        if not self._halts:
+            return 0  # the usual case
+        halts = 0
+        for token, owner in list(self._halts.items()):
+            if token() is None:
+                del self._halts[token]
+            elif owner == book:
+                halts += 1
+        return halts
+
+    def count(self, book: str) -> int:
+        with self._lock:
+            return self._in_progress(book)
+
+    def flag_lock(self, book: str) -> threading.Lock:
+        with self._lock:
+            return self._flag_locks.setdefault(book, threading.Lock())
+
+    def end(self, book: str, halt: weakref.ref[_Halt], flag: str) -> None:
+        """Take the halt with the token ``halt`` out of the count. If no other halt is then in
+        progress on that book, remove its flag, under the book's flag lock (see the class doc)."""
+        with self.flag_lock(book):
+            with self._lock:
+                if self._halts.pop(halt, None) is None:
+                    return  # it never took its place, so it made no flag either
+                if self._in_progress(book):
+                    return  # another halt on this book is still in progress: the flag stays
+            try:
+                os.unlink(flag)
+            except OSError:
+                pass
+
+    def forget(self, halt: weakref.ref[_Halt]) -> None:
+        """Take the halt with the token ``halt`` out of the count and do nothing else: one step,
+        no flag lock, no file system. ``halt`` calls it after ``end``, in a ``finally``, for the
+        case where an interrupt landed inside ``end`` before the entry was out. The flag is then
+        left as it is, and writers treat it like any flag whose halt has gone
+        (``_yield_to_halt``)."""
+        with self._lock:
+            self._halts.pop(halt, None)
+
+
 _FORK_RESET: "weakref.WeakSet" = weakref.WeakSet()
 _RUN_CHECKS = _BoundedCaller()
+_HALTS = _Halts()
 if hasattr(os, "register_at_fork"):
     os.register_at_fork(after_in_child=lambda: [item._reset() for item in list(_FORK_RESET)])
 
@@ -611,11 +975,86 @@ def create_book(path: str, *, cash_minor: dict, holdings: dict | None = None) ->
         db.close()
 
 
+def _private_dir(path: str) -> bool:
+    """Whether ``path`` is a real directory (by ``lstat``: a link to one is not) that this
+    process's user owns and that neither its group nor anyone else can write. POSIX only."""
+    try:
+        st = os.lstat(path)
+    except (OSError, ValueError):
+        return False
+    return stat.S_ISDIR(st.st_mode) and st.st_uid == os.geteuid() and not st.st_mode & 0o022
+
+
+def _halt_flag_dir() -> str | None:
+    """The folder halt flags are kept in, which only the book's user can write, or ``None`` for
+    "beside the book".
+
+    On POSIX, when ``XDG_RUNTIME_DIR`` is set to an absolute path that is a private directory
+    (``_private_dir``), the folder is ``_HALT_FLAG_SUBDIR`` inside it: made with mode 0700 if it
+    is missing, and used only if it passes the same check. In every other case, and always on
+    Windows, there is no such folder. A folder that comes back has passed the check, so nobody
+    else can write it: ``/dev/shm`` itself does not pass where anyone can write it. Where the
+    folder is, is not looked at: one of the user's own under ``/dev/shm`` is used like any
+    other."""
+    if os.name != "posix":
+        return None
+    base = os.environ.get("XDG_RUNTIME_DIR")
+    if not base or not os.path.isabs(base) or not _private_dir(base):
+        return None
+    folder = os.path.join(base, _HALT_FLAG_SUBDIR)
+    try:
+        os.mkdir(folder, 0o700)
+    except FileExistsError:
+        pass
+    except OSError:
+        return None
+    return folder if _private_dir(folder) else None
+
+
 def _halt_flag_path(path: str) -> str:
+    """Where the halt flag of the book at ``path`` is kept: named from the book's real path, in
+    the folder only the book's user can write (``_halt_flag_dir``) or else beside the book."""
     real = os.path.realpath(path)
-    if _HALT_FLAG_DIR is None:
+    folder = _halt_flag_dir()
+    if folder is None:
         return real + "-halt"
-    return os.path.join(_HALT_FLAG_DIR, "csl-paper-halt-" + hashlib.sha256(real.encode()).hexdigest()[:32])
+    return os.path.join(folder, "csl-paper-halt-" + hashlib.sha256(real.encode()).hexdigest()[:32])
+
+
+def _halt_flag_live(st: os.stat_result) -> bool:
+    """Whether a halt flag's ``lstat`` shows a halt in progress: a regular file (``halt`` makes
+    one, never through a link) dated from ``_HALT_FLAG_GRAIN_S`` ahead of now back to
+    ``HALT_YIELD_S`` ago. A halt dates its flag again while it retries for the write lock, so
+    an older flag has not been touched by its halt for that long. Older, dated further ahead,
+    or anything else was left by a halt that died or was not made by a halt (or by a halt still
+    waiting for its own connection's lock: see "Halt priority" in the module doc)."""
+    return stat.S_ISREG(st.st_mode) and -_HALT_FLAG_GRAIN_S <= time.time() - st.st_mtime <= HALT_YIELD_S
+
+
+def _date_halt_flag(flag: str) -> bool:
+    """Date a live halt flag now, in place. Call only right after an ``lstat`` of ``flag`` showed
+    a regular file. Returns whether it was dated. Never waits and never raises ``OSError``.
+
+    Where ``os.utime`` takes a file descriptor (POSIX): the path is opened without creating
+    anything, with ``O_NONBLOCK`` (a FIFO put there since the look cannot hold the open) and
+    ``O_NOFOLLOW`` (nor can a link be followed), and its time is touched only once ``fstat``
+    shows that what was opened is a regular file. Elsewhere (Windows, which has none of the
+    three) it is dated by path: a link put there since the look would be followed (see "Halt
+    priority" in the module doc)."""
+    try:
+        if os.utime not in os.supports_fd:
+            os.utime(flag)
+            return True
+        fd = os.open(flag, os.O_WRONLY | _NOFOLLOW | _NONBLOCK)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                return False
+            os.utime(fd)
+            return True
+        finally:
+            os.close(fd)
+    except OSError:
+        return False
 
 
 class PaperBook:
@@ -641,7 +1080,10 @@ class PaperBook:
         self._db = db
         self._lock = threading.Lock()
         self._closed = False
-        self._halt_flag = _halt_flag_path(path)
+        # The book file's real path: what this handle's halts are counted under (``_HALTS``), with
+        # every other handle this process has on the same file, and what the flag is named from.
+        self._halt_key = os.path.realpath(path)
+        self._halt_flag = _halt_flag_path(self._halt_key)
 
     def _open_db(self) -> sqlite3.Connection:
         """The connection, or ``book_closed``. Call only with ``self._lock`` held."""
@@ -649,52 +1091,108 @@ class PaperBook:
             raise Refused("book_closed")
         return self._db
 
-    def _yield_to_halt(self) -> None:
-        """Wait while a halt is taking the write lock (its flag exists), at most ``HALT_YIELD_S``.
+    def _yield_to_halt(self, cap: float | None = None) -> float | None:
+        """Wait while a halt is in progress on this book, at most until ``cap``.
 
-        Called before ``self._lock`` is taken, so a halt on this same book is never blocked by
-        a waiter. A flag older than ``HALT_YIELD_S`` was left by a halt that died; it is removed."""
-        deadline = None
+        A halt is in progress while this process counts one on the book file (``_HALTS``: from
+        the moment ``halt`` is called on any handle open on it, whatever the flag file's age and
+        whether or not it exists) or, failing that, while the book's flag file is live (a halt
+        in another process). Called before ``self._lock`` is taken, so a halt on this same book
+        is never blocked by a waiter. A flag that is not live (``_halt_flag_live``) was left by
+        a halt that died, or was not made by a halt; it is removed (``_drop_stale_flag``),
+        except a directory, which cannot be removed that way and is left.
+
+        ``cap`` is the monotonic time at which this writer stops waiting on halts in the
+        transaction or probe it is in: ``None`` until it first meets a halt in progress, and
+        from then on ``HALT_YIELD_TOTAL_S`` after that look. What comes back is ``cap`` brought
+        up to date (still ``None`` for a writer that has met no halt in progress). The caller
+        hands it to the look under the lock (``_give_way``) and to any later wait, so however
+        long one halt takes and however many follow one another, all of the writer's waits end
+        at the one cap."""
         while True:
+            if not _HALTS.count(self._halt_key):
+                try:
+                    st = os.lstat(self._halt_flag)
+                except OSError:
+                    return cap  # no halt in progress: the usual case, one stat
+                # Stale, dated in the future (past the clock's grain), or not a regular file:
+                # never a live halt (``_halt_flag_live``). Removed, and the writer goes on with
+                # the wait it has already spent still counted.
+                if not _halt_flag_live(st):
+                    self._drop_stale_flag(st)
+                    return cap
+            now = time.monotonic()
+            if cap is None:
+                cap = now + HALT_YIELD_TOTAL_S
+            if now >= cap:
+                return cap
+            time.sleep(_HALT_SPIN_S * 5)
+
+    def _drop_stale_flag(self, judged: os.stat_result) -> None:
+        """Remove the flag a writer has just judged not live, after one more look at it.
+
+        A halt may have made or dated the flag since ``judged`` was read. So the path is looked
+        at again immediately before the removal, and the entry is removed only if it is still
+        the one that was judged (same device and inode) and still not live. The look and the
+        removal are two system calls: a flag made between them is still removed (see "Halt
+        priority" in the module doc)."""
+        try:
+            st = os.lstat(self._halt_flag)
+            if (st.st_dev, st.st_ino) == (judged.st_dev, judged.st_ino) and not _halt_flag_live(st):
+                os.unlink(self._halt_flag)
+        except OSError:
+            pass
+
+    def _give_way(self, cap: float | None) -> float | None:
+        """With ``self._lock`` just taken and nothing done yet: must this writer let a halt go first?
+
+        A writer that was already waiting on ``self._lock`` when a halt began is past
+        ``_yield_to_halt``. Without this it would take the lock ahead of the halt, and every
+        writer queued that way would hold it for its whole transaction or probe (a booking whose
+        re-verify hangs for ``RUN_RECHECK_TIMEOUT_S``, a probe waiting on another connection's
+        transaction for ``BOOK_LOCK_PROBE_S``), so the halt would wait once per queued writer.
+        Returns the cap to wait under (as ``_yield_to_halt``) when a halt is in progress (this
+        process counts one on the book file, or the flag is live) and the writer's cap has not
+        passed; the caller lets go of the lock and waits again. Returns ``None`` when there is
+        no halt in progress (the usual case, one stat) or the cap has passed. The flag is judged
+        as in ``_yield_to_halt`` and never removed here."""
+        if not _HALTS.count(self._halt_key):
             try:
                 st = os.lstat(self._halt_flag)
             except OSError:
-                return  # no halt in progress: the usual case, one stat
-            age = time.time() - st.st_mtime
-            # Stale, dated in the future, or not a regular file (``halt`` makes one, never following
-            # a link): never a live halt. Removed, and the writer goes on.
-            if not stat.S_ISREG(st.st_mode) or not 0 <= age <= HALT_YIELD_S:
-                try:
-                    os.unlink(self._halt_flag)
-                except OSError:
-                    pass
-                return
-            now = time.monotonic()
-            if deadline is None:
-                deadline = now + HALT_YIELD_S
-            elif now >= deadline:
-                return
-            time.sleep(_HALT_SPIN_S * 5)
+                return None
+            if not _halt_flag_live(st):
+                return None  # not a live halt: nobody waits on it (``_yield_to_halt`` removes it)
+        now = time.monotonic()
+        if cap is None:
+            cap = now + HALT_YIELD_TOTAL_S
+        return cap if now < cap else None
 
     def _tx(self, fn, busy_ms: int | None = None):
-        self._yield_to_halt()
-        with self._lock:
-            db = self._open_db()
-            if busy_ms is None:
-                db.execute("BEGIN IMMEDIATE")
-            else:
-                db.execute("PRAGMA busy_timeout=%d" % busy_ms)
-                try:
+        cap = None
+        while True:
+            cap = self._yield_to_halt(cap)
+            with self._lock:
+                again = self._give_way(cap)
+                if again is not None:
+                    cap = again
+                    continue  # lets go of the lock: the halt that began meanwhile goes first
+                db = self._open_db()
+                if busy_ms is None:
                     db.execute("BEGIN IMMEDIATE")
-                finally:
-                    db.execute("PRAGMA busy_timeout=%d" % _BUSY_TIMEOUT_MS)
-            try:
-                out = fn(db)
-                db.execute("COMMIT")
-                return out
-            except BaseException:
-                db.execute("ROLLBACK")
-                raise
+                else:
+                    db.execute("PRAGMA busy_timeout=%d" % busy_ms)
+                    try:
+                        db.execute("BEGIN IMMEDIATE")
+                    finally:
+                        db.execute("PRAGMA busy_timeout=%d" % _BUSY_TIMEOUT_MS)
+                try:
+                    out = fn(db)
+                    db.execute("COMMIT")
+                    return out
+                except BaseException:
+                    db.execute("ROLLBACK")
+                    raise
 
     @staticmethod
     def _next_seq(db) -> int:
@@ -709,23 +1207,112 @@ class PaperBook:
             raise Refused("book_invalid")
         return row[0]
 
+    def _raise_halt_flag(self) -> None:
+        """Make the book's halt flag file, or date it now if a live one is there. Never waits on
+        what is at the flag's path, on POSIX never makes or opens anything through a symbolic
+        link there, and never raises: with no flag the halt still takes the lock and commits,
+        with priority over the writers in its own process (the count) and none over those in
+        other processes.
+
+        The path is looked at first (``lstat``). A live flag (this halt's own, or another halt's)
+        is dated in place (``_date_halt_flag``). Anything else there (a stale flag, a symbolic
+        link, a FIFO), or a flag that could not be dated after all (it went, or changed, since
+        the look), is never dated: it is removed, as a writer removes it (a link itself goes,
+        not its target), and a new flag is made with ``O_CREAT | O_EXCL``, which on POSIX opens
+        no existing entry and makes nothing through a link. A new flag is therefore a new file,
+        never one that a writer has already judged stale. It is made through a file object,
+        which closes its descriptor when it goes and which nothing but this call's evaluation
+        stack holds: an interrupt between the making and the closing leaves no descriptor
+        open unless something else has got hold of that object (see the limits in the module
+        doc; on Windows an open descriptor keeps the flag from being removed, by this halt and
+        by every later one). A directory there cannot be removed
+        that way: it stays, and no flag is made. Windows cannot refuse a link at open: there a
+        link put at the path between the look and the dating or the making can be followed (see
+        "Halt priority" in the module doc)."""
+        flag = self._halt_flag
+        try:
+            try:
+                st = os.lstat(flag)
+            except FileNotFoundError:
+                st = None
+            if st is not None:
+                if _halt_flag_live(st) and _date_halt_flag(flag):
+                    return
+                try:
+                    os.unlink(flag)
+                except FileNotFoundError:
+                    pass
+            # Made through a file object, which closes its descriptor when it goes. (An open one
+            # would, on Windows, keep every later halt from removing the flag.) ``"x"`` is
+            # ``O_CREAT | O_EXCL``; the opener gives the file its mode of 0600, and ``open`` calls
+            # it itself, so that no Python code runs between the system call and the object that
+            # owns the descriptor. That object is held by a tuple on this frame's evaluation
+            # stack and by no variable, and ``map`` closes it from C. The interpreter therefore
+            # reports no call on the object: a tool that watches calls (``sys.setprofile``,
+            # ``sys.monitoring``) is handed the callable of each call, and here those are
+            # ``functools.partial``, ``open`` and ``map``, never a method of the file. Written
+            # ``open(...).close()``, the tool
+            # was handed the bound ``close``, and one that raised an interrupt there kept the
+            # file open for as long as the interrupt was kept. An interrupt before the close
+            # unwinds this frame: the stack is released and the object goes, its descriptor
+            # with it.
+            for _ in map(io.FileIO.close, (
+                    open(flag, "xb", buffering=0, opener=functools.partial(os.open, mode=0o600)),)):
+                pass
+        except Exception:  # noqa: BLE001 - no flag: the halt still takes the lock and commits (see the docstring)
+            pass
+
     def halt(self) -> int:
         """Set the halt flag in one committed step. Returns the halt's sequence number.
 
-        Halt has priority over every other writer, across processes: it first creates the
-        book's halt flag file, which every other writer waits on before it takes the write
-        lock (``_yield_to_halt``), then takes the lock itself in a short retry loop instead of
-        SQLite's backing-off busy handler, so a stream of refusal or booking commits on other
-        connections cannot starve it. The flag is removed after the commit."""
+        On a closed book it is refused ``book_closed`` before anything is touched, the count and
+        the flag included.
+
+        Halt has priority over every other writer on the book from the moment it is called, in
+        its own process: on an open book its first act is to count itself in (``_HALTS``).
+        While the count is above zero every writer in this process, on any handle open on the
+        same book file, waits before it takes its handle's lock (``_yield_to_halt``), and a
+        transaction (``_tx``) or probe (``_probe_writable``) that was already waiting on the
+        book's lock gives the lock back when it gets it (``_give_way``), each for at most
+        ``HALT_YIELD_TOTAL_S`` in all.
+
+        Across processes it has priority as far as the book's halt flag file reaches (best
+        effort): it makes that file next, and writers in other processes wait while it is live.
+        The halt then takes the lock itself in a short retry loop instead of SQLite's
+        backing-off busy handler, so a stream of refusal or booking commits on other
+        connections cannot starve it. While it retries it dates the flag again every
+        ``_HALT_FLAG_REFRESH_S``, and makes it again at once whenever it finds it gone, so that
+        writers in other processes do not take a halt that is still trying for one that died.
+
+        When the halt ends (committed, refused or timed out), it counts itself out, and the
+        flag is removed only if no other halt is then in progress on the book in this process.
+        Both happen after the commit, never before it: other writers stop waiting the moment
+        the count and the flag let them. An interrupt can cut the counting out short, or keep
+        it from running. This halt is out of the count all the same once the call is over,
+        because the count goes by an object that only this call's evaluation stack holds
+        (``_Halts``); its flag can then be left behind, to go stale like a dead halt's. See the
+        limits in the module doc.
+
+        It gives up (the SQLite error is raised) when it has retried for the write lock for
+        ``_BUSY_TIMEOUT_MS``, counted from when it takes the book's lock. That is not a bound
+        on the whole call: the wait for the book's lock comes first and is not counted."""
+        if self._closed:
+            raise Refused("book_closed")  # nothing touched: this handle's halt can never commit
+        # This call, as an object (``_Halt``), is held by the argument of the one expression below
+        # (a tuple inside a ``map`` object on this frame's evaluation stack) and by no variable of
+        # any frame. ``_halt_counted`` is handed its token only. When that call returns or unwinds,
+        # the interpreter releases the stack and the object goes, with no handler to run (``_Halts``).
+        return next(map(self._halt_counted, map(weakref.ref, (_Halt(),))))
+
+    def _halt_counted(self, mine: weakref.ref[_Halt]) -> int:
+        """The body of ``halt``, counted in under ``mine``, this halt's token. Only ``halt`` calls
+        it, and only in the way it does: the object the token refers to has to stay alive for as
+        long as this runs, held by nothing that outlasts the call."""
         try:
-            fd = os.open(self._halt_flag, os.O_WRONLY | os.O_CREAT | _NOFOLLOW, 0o600)
-            try:
-                os.utime(fd if os.utime in os.supports_fd else self._halt_flag)
-            finally:
-                os.close(fd)
-        except Exception:  # noqa: BLE001 - no flag: the halt still takes the lock and commits, only without priority
-            pass
-        try:
+            _HALTS.begin(self._halt_key, mine)
+            with _HALTS.flag_lock(self._halt_key):  # after a halt that is ending has removed the old flag
+                self._raise_halt_flag()
+            raised = time.monotonic()
             with self._lock:
                 db = self._open_db()
                 deadline = time.monotonic() + _BUSY_TIMEOUT_MS / 1000
@@ -736,8 +1323,12 @@ class PaperBook:
                             db.execute("BEGIN IMMEDIATE")
                             break
                         except sqlite3.OperationalError:
-                            if time.monotonic() >= deadline:
+                            now = time.monotonic()
+                            if now >= deadline:
                                 raise
+                            if now - raised >= _HALT_FLAG_REFRESH_S or not os.path.lexists(self._halt_flag):
+                                self._raise_halt_flag()
+                                raised = now
                             time.sleep(_HALT_SPIN_S)
                 finally:
                     db.execute("PRAGMA busy_timeout=%d" % _BUSY_TIMEOUT_MS)
@@ -768,10 +1359,11 @@ class PaperBook:
                     db.execute("ROLLBACK")
                     raise
         finally:
+            # Counted out, and the flag removed unless another halt is in progress on this book.
             try:
-                os.unlink(self._halt_flag)
-            except OSError:
-                pass
+                _HALTS.end(self._halt_key, mine, self._halt_flag)
+            finally:
+                _HALTS.forget(mine)  # still counted in only if an interrupt landed inside ``end``
 
     @staticmethod
     def _halted_in(db) -> bool:
@@ -787,18 +1379,30 @@ class PaperBook:
 
     def _probe_writable(self) -> None:
         """Refuse ``book_locked`` unless this connection can take the book's write lock within
-        ``BOOK_LOCK_PROBE_S``. Takes it and lets it go (no write, no fsync)."""
-        self._yield_to_halt()
-        with self._lock:
-            db = self._open_db()
-            db.execute("PRAGMA busy_timeout=%d" % int(BOOK_LOCK_PROBE_S * 1000))
-            try:
-                db.execute("BEGIN IMMEDIATE")
-            except sqlite3.OperationalError:
-                raise Refused("book_locked") from None
-            finally:
-                db.execute("PRAGMA busy_timeout=%d" % _BUSY_TIMEOUT_MS)
-            db.execute("ROLLBACK")
+        ``BOOK_LOCK_PROBE_S``. Takes it and lets it go (no write, no fsync).
+
+        Gives way to a halt as a transaction does (``_tx``): a probe that was already waiting on
+        ``self._lock`` when a halt began lets go of it. Otherwise, while another connection holds
+        the write lock, a halt would wait ``BOOK_LOCK_PROBE_S`` for each submit queued ahead of
+        it."""
+        cap = None
+        while True:
+            cap = self._yield_to_halt(cap)
+            with self._lock:
+                again = self._give_way(cap)
+                if again is not None:
+                    cap = again
+                    continue  # lets go of the lock: the halt that began meanwhile goes first
+                db = self._open_db()
+                db.execute("PRAGMA busy_timeout=%d" % int(BOOK_LOCK_PROBE_S * 1000))
+                try:
+                    db.execute("BEGIN IMMEDIATE")
+                except sqlite3.OperationalError:
+                    raise Refused("book_locked") from None
+                finally:
+                    db.execute("PRAGMA busy_timeout=%d" % _BUSY_TIMEOUT_MS)
+                db.execute("ROLLBACK")
+                return
 
     def halted(self) -> bool:
         """The durable halt flag. Raises ``Refused("halt_unreadable")`` when it cannot be read as
