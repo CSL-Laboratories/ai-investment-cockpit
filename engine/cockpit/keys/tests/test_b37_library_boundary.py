@@ -13,7 +13,8 @@ really do, chose "State what is true (Recommended)"; these tests hold that state
   read, which can show the unlock prompt, moves old-format KWallet entries, and creates Secret Service's
   default collection when there is none.
 
-Detection is run through ``loader`` here, so the library's own discovery (``keyring.get_keyring()``, which also
+Every case also checks that Cockpit wrote nothing in the key folder (Codex's fourth read, R4-3). Detection is
+run through ``loader`` here, so the library's own discovery (``keyring.get_keyring()``, which also
 reads every installed backend's priority) is not. Written against keyring 25.7.0 and SecretStorage 3.5.0; a
 test is skipped where its module is missing. Fake transport and made-up values: nothing reaches a real
 keychain, D-Bus or key.
@@ -249,6 +250,7 @@ class LibraryBoundaryTests(_Doctor):
         # The probe only: a D-Bus connection, asked whether the service is there, then closed. No collection
         # is opened or searched, so no item is read.
         self.assertEqual(calls, [("dbus_init",), ("check_service_availability",), ("close",)])
+        self.assertEqual(os.listdir(self.root), [])  # and Cockpit wrote nothing in the key folder
 
     @requires_kwallet
     def test_the_plain_doctor_on_kwallet_asks_d_bus_and_opens_no_wallet(self) -> None:
@@ -256,6 +258,7 @@ class LibraryBoundaryTests(_Doctor):
         with kwallet_wire({"broker:acct@csl-cockpit": LEGACY}) as calls:
             self.assertEqual(self.plain_doctor(KW.DBusKeyring()), (0, plain(name) + no_record_note(name)))
         self.assertEqual(calls, [("SessionBus",), ("name_has_owner", "org.kde.kwalletd5"), ("list_activatable_names",)])
+        self.assertEqual(os.listdir(self.root), [])
 
     @requires_libsecret
     def test_the_plain_doctor_on_libsecret_opens_a_session_and_searches_nothing(self) -> None:
@@ -263,6 +266,7 @@ class LibraryBoundaryTests(_Doctor):
         with libsecret_wire() as calls:
             self.assertEqual(self.plain_doctor(LS.Keyring()), (0, plain(name) + no_record_note(name)))
         self.assertEqual(calls, [("Service.get_sync", "OPEN_SESSION")])  # a session with the service; no search
+        self.assertEqual(os.listdir(self.root), [])
 
     @requires_records
     @requires_secretstorage
@@ -289,6 +293,7 @@ class LibraryBoundaryTests(_Doctor):
         self.assertTrue(line.endswith("; keychain check did not finish (KeyringLocked)"), line)
         self.assertIn(("unlock",), calls)  # where the real collection shows its unlock prompt
         self.assertNotIn("search_items", [call[0] for call in calls])  # dismissed: nothing was searched
+        self.assertEqual(os.listdir(self.root), [])
 
     @requires_records
     @requires_kwallet
@@ -310,6 +315,7 @@ class LibraryBoundaryTests(_Doctor):
         ])
         self.assertNotIn(LEGACY, line)
         self.assertNotIn(FAKE, line)
+        self.assertEqual(os.listdir(self.root), [])
 
     @requires_records
     @requires_libsecret
@@ -322,6 +328,7 @@ class LibraryBoundaryTests(_Doctor):
         self.assertEqual(calls, [("Service.get_sync", "OPEN_SESSION"),
                                  ("password_search_sync", {**MARKER_QUERY, "application": "Python keyring library"},
                                   "UNLOCK")])  # the search may unlock, which can prompt
+        self.assertEqual(os.listdir(self.root), [])
 
     @requires_records
     @requires_secretstorage
@@ -333,6 +340,7 @@ class LibraryBoundaryTests(_Doctor):
         with secret_service_wire() as calls:
             self.assertEqual(self.checked_doctor(SS.Keyring()), (0, plain(name)))
         self.assertEqual(calls, [("dbus_init",), ("check_service_availability",), ("close",)])  # the probe only
+        self.assertEqual(os.listdir(self.root), [".keychain.json"])
 
 
 if __name__ == "__main__":

@@ -39,6 +39,7 @@ from cockpit.keys.tests.fakes import FAKE, MARKER, Keychains, loader, no_record_
 from cockpit.keys.tests.test_b24_keychain_record import RECORD, A, B, Ring, _Case, _Out
 
 C = _KEYCHAIN_NAMES[2]  # a third keychain name, for a record's "previous"
+TEMP_NAMED = ".keys-1234-0123456789abcdef"  # a key file name that is also Cockpit's temp file pattern (B38)
 
 
 class FileRing(Ring):
@@ -239,7 +240,7 @@ class EnrolmentTests(_Case):
 
     def test_a_key_file_named_like_the_record_or_the_lock_is_refused_on_a_keychain_host(self) -> None:
         os.mkdir(self.leaf, 0o700)
-        for name in (RECORD, ".keys.lock"):
+        for name in (RECORD, ".keys.lock", TEMP_NAMED):  # and a temp file's name (Codex R4-1, DeepSeek F-1)
             with self.subTest(name=name):
                 ring = Ring()
                 store = KeyStore(keyring=ring, key_file=os.path.join(self.leaf, name), keychain=A,
@@ -254,13 +255,14 @@ class EnrolmentTests(_Case):
     def test_the_doctor_fails_a_reserved_key_file_name_without_a_traceback(self) -> None:
         # DeepSeek's read of #330, F4: the doctor raised KeyRefused (a traceback from the command) for these.
         os.mkdir(self.leaf, 0o700)
-        for name in (RECORD, ".keys.lock"):
+        for name in (RECORD, ".keys.lock", TEMP_NAMED):
             with self.subTest(name=name):
                 path = os.path.join(self.leaf, name)
                 result = doctor(KeychainStatus(True, A, "ok"), path)
                 self.assertEqual((result["level"], result["broker"]), ("fail", "refused:key_file_not_configured"))
                 self.assertIn("broker and venue keys refused (key_file_not_configured): the key file is named like "
-                              "Cockpit's own .keychain.json or .keys.lock", doctor_line(result))
+                              "Cockpit's own .keychain.json, .keys.lock or a temp file (.keys-<digits>-<16 hex "
+                              "digits>)", doctor_line(result))
                 result = doctor(KeychainStatus(False, "", "no_keychain_backend"), path)
                 self.assertEqual((result["level"], result["model_provider"]), ("fail", "refused:key_file_not_configured"))
                 out = _Out(False)
@@ -533,9 +535,9 @@ class DoctorErrorTests(_Case):
 
 @requires_keyring
 class PlainDoctorTests(_Case):
-    def test_the_plain_doctor_calls_no_password_method_in_any_record_state(self) -> None:
+    def test_the_plain_doctor_calls_no_password_method_with_no_record_a_marker_or_a_matching_record(self) -> None:
         # The library's own Secret Service class, its probe a constant and its password methods recording every
-        # call: the plain doctor calls no password method, whatever the record's state. This holds only that;
+        # call: the plain doctor calls no password method in these three record states. This holds only that;
         # what the class's own probe and read do under the doctor is in test_b37_library_boundary.py.
         ss = Keychains(self).os()
         out = _Out(False)

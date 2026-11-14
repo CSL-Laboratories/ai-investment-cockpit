@@ -27,9 +27,11 @@ allowed for user-entered model-provider keys only; broker and venue keys stay ke
   ``O_NOFOLLOW``, so nothing on the path may be a symlink. Nothing else is ever created, and an
   entry that exists, or that a competing process creates first, must pass the same checks as any
   existing one. Before that first save, ``get`` returns ``None`` and ``delete`` does nothing;
-* a save (``put``) or ``accept_keychain`` first removes, while it holds ``.keys.lock``, the temp files a
-  killed save or acceptance left in that folder, and nothing else (B38, ``_sweep_leftovers``). A read
-  takes no lock and sweeps nothing; a delete sweeps nothing either.
+* a save that takes the folder's ``.keys.lock`` (a broker or venue save on a keychain host, a model-provider
+  save on a host with no keychain) and ``accept_keychain`` first remove, while they hold it, the temp files a
+  killed write left in that folder, best effort and nothing else (B38, ``_sweep_leftovers``). A
+  model-provider save on a keychain host, a read and a delete sweep nothing. A key file may not have a temp
+  file's name (``key_file_not_configured``).
 
 Keychain record (B24). Lucas, Nov 13, 2026, asked what Cockpit should do when a later run selects a
 different OS keychain than the one it saved a broker or venue key in: "Remember and refuse
@@ -92,6 +94,7 @@ _RECORD_FIELDS = frozenset(("version", "keychain", "previous"))
 _MARKER_ACCOUNT = "cockpit-keychain-record"  # has no ":", so it is never a key's account ("kind:name")
 # B38: the name of _replace_owner_only's temp file (".keys-<pid>-<secrets.token_hex(8)>"), and only that.
 _TEMP_NAME = re.compile(r"\.keys-[0-9]+-[0-9a-f]{16}")
+_RESERVED_DETAIL = "named like Cockpit's own .keys.lock, .keychain.json or a temp file (.keys-<digits>-<16 hex digits>)"
 
 
 class KeyRefused(Exception):
@@ -136,8 +139,9 @@ class KeyStore:
             raise KeyRefused("keychain_required", f"{kind} keys stay in the OS keychain")
         if os.name == "nt" or fcntl is None or not hasattr(os, "O_NOFOLLOW"):
             raise KeyRefused("owner_only_file_unsupported", "no owner-only file on this platform")
-        if self._path is None:
-            raise KeyRefused("key_file_not_configured")
+        # No path, or a name Cockpit reserves (the lock, the record, its temp files): refused here, before
+        # anything is opened, created or swept (Codex's fourth read R4-1, DeepSeek's third read F-1).
+        _entry_name(self._path)
         return "owner_only_file"
 
     def put(self, kind: str, name: str, secret: str) -> str:
@@ -223,7 +227,7 @@ class KeyStore:
     def check_keychain_record(self) -> str:
         """The record check a broker or venue read makes, made on its own for ``doctor --check-keychain``
         (B37): ``"ok"``, ``"unsupported"`` where this store keeps no record (then nothing is read), or the
-        read's ``KeyRefused``. When the record is absent it asks the keychain for Cockpit's marker only, through
+        read's ``KeyRefused``; any other error the read raises propagates. When the record is absent it asks the keychain for Cockpit's marker only, through
         the keychain library's ordinary read, the same as any broker key read: that can show the keychain's
         unlock prompt or wait for it, and in keyring 25.7.0 KWallet's call that opens the wallet first moves
         old-format entries out of its old "Python" folder, and Secret Service creates the default collection if
@@ -277,15 +281,17 @@ class KeyStore:
         # The marker first, then the record, so a finished enrolment always has both (first outside read of
         # #330). The marker is never taken back (second outside read): an error from the record write can
         # come after the record was already published (the folder flush), and the marker's account is shared
-        # by every key folder using this keychain, so no call can tell that a marker is only its own. If the
-        # record was not published, the marker stays alone: the next broker or venue operation is refused
-        # (keychain_record_missing) until accept-keychain records it. If it was, both are there. The two
-        # writes are in two stores, so this is ordering, not a transaction.
+        # by every key folder using this keychain, so no call can tell that a marker is only its own. For a
+        # first enrolment whose record was not published, the marker stays alone: the next broker or venue
+        # operation is refused (keychain_record_missing) until accept-keychain records it; an acceptance that
+        # stops there leaves the old record as it was (see the README). If the record was published, both are
+        # there. The two writes are in two stores, so this is ordering, not a transaction.
         self._keyring.set(self.SERVICE, _MARKER_ACCOUNT, self._keychain)  # type: ignore[union-attr]
         _write_record(dir_fd, self._keychain, previous)  # type: ignore[arg-type]
 
     def _check_record(self) -> None:
-        # Before a broker or venue key is read or deleted. Creates nothing.
+        # Before a broker or venue key is read or deleted. Creates no file of Cockpit's; the marker read is
+        # the keychain library's ordinary read (see check_keychain_record for what that can do).
         try:
             dir_fd = _open_owned_dir(os.path.dirname(os.path.abspath(self._path)),  # type: ignore[arg-type]
                                      missing_leaf_ok=True, config_home=self._config_home)
@@ -425,24 +431,34 @@ def _replace_owner_only(dir_fd: int, name: str, body: bytes, cause: str) -> None
 
 
 def _sweep_leftovers(dir_fd: int) -> None:
-    """Remove the temp files a killed save or acceptance left in this folder (B38; Lucas, Nov 13, 2026: "Sweep
+    """Remove the temp files a killed write left in this folder, best effort (B38; Lucas, Nov 13, 2026: "Sweep
     them (Recommended)").
 
     ``_replace_owner_only`` writes ``.keys-<pid>-<16 hex>`` and renames it over the key file or the record; a
-    process killed between the two leaves it, owner-only, holding the file as it was being written (on a host
-    with no keychain, model keys, a deleted one included). Called by a save or an acceptance only while it
-    holds the folder's ``.keys.lock`` and before it writes its own temp file. Every writer holds that lock
-    while its temp file exists, so one found here is a leftover, never another operation's file in progress.
-    Removed: only a regular file of the running user's, with no group or other permission bit, whose name is
-    exactly that pattern, decided from ``lstat`` (``unlink`` removes the entry and never follows a link).
-    Anything else is left as it is, as every other entry in the folder is: a link, a folder, a file of another
-    owner or with a looser mode, a name that only looks like it. A folder that cannot be listed is not swept.
+    process killed between the two (a save, a model-key delete or an acceptance) leaves it, owner-only, holding
+    the file as it was being written (on a host with no keychain, model keys, a deleted one included).
+
+    Called only by the operations that take the folder's ``.keys.lock`` to write: a broker or venue save on a
+    keychain host, a model-provider save on a host with no keychain, and ``accept_keychain``, while the lock
+    is held and before the operation writes its own temp file. It runs even when that operation is then
+    refused. A model-provider save on a keychain host takes no lock and does not call it (narrower than
+    "the next save"; see the README), nor do reads and deletes. Every cooperating writer holds the lock while
+    its temp file exists, so a file found here is a leftover, never another write in progress; code that
+    ignores the lock is outside that promise.
+
+    Which files: chosen by name, not by proven origin. Only an entry whose name is exactly that pattern and
+    that ``lstat`` shows as a regular file of the running user's, with no group or other permission bit, is
+    unlinked (relative to the folder's fd; ``unlink`` never follows a link). A link, a folder, a pipe, a file of
+    another owner or with a looser mode, and a name that only looks like it are skipped when ``lstat`` sees
+    them; an entry replaced after that look is not looked at again (only this user or root can do that in the
+    owner-only folder). A key file can never have such a name: ``_entry_name`` refuses it before anything is
+    swept. An ``OSError`` while listing, looking or unlinking is ignored, so a leftover can stay.
     """
 
     try:
         names = os.listdir(dir_fd)
     except OSError:
-        return  # cleanup only: the save or acceptance does not depend on it
+        return  # best effort: the operation does not depend on it (DeepSeek's third read F-3 tests this)
     for name in names:
         if not _TEMP_NAME.fullmatch(name):
             continue
@@ -816,8 +832,13 @@ def _entry_name(path: str | None) -> str:
     if path is None:
         raise KeyRefused("key_file_not_configured")
     name = os.path.basename(os.path.abspath(path))
-    if name in ("", ".", "..", _LOCK_NAME, _RECORD_NAME):  # the key file never shares a name with these
+    if name in ("", ".", ".."):
         raise KeyRefused("key_file_not_configured")
+    # The key file never shares a name with the lock or the record, nor with Cockpit's temp files: a key file
+    # with a temp file's name would be swept as a leftover and its keys lost (B38; Codex's fourth read R4-1,
+    # DeepSeek's third read F-1). Every operation checks this before it opens, creates or sweeps anything.
+    if name in (_LOCK_NAME, _RECORD_NAME) or _TEMP_NAME.fullmatch(name):
+        raise KeyRefused("key_file_not_configured", _RESERVED_DETAIL)
     return name
 
 

@@ -47,9 +47,10 @@ The doctor line names where keys are kept and the key-file state; ``doctor()`` r
 and no keychain item, and calls no password method. On a keychain host it also reads the keychain record
 beside the key file (B24, see ``store``), from that file only, so it does not read Cockpit's marker in the
 keychain. Detection, which the doctor command runs first, is what finds out which keychain is selected: as
-it always has, it reads the admitted class's ``priority``, which asks the keychain service whether it is
-there (in keyring 25.7.0, Secret Service and KWallet ask D-Bus, and libsecret opens a session with the
-service). B37 as Lucas confirmed it on Nov 13, 2026: "State what is true (Recommended)".
+it always has, it reads the admitted class's ``priority``, which can ask the keychain service whether it is
+there (in keyring 25.7.0, on Linux: Secret Service and KWallet ask D-Bus, and libsecret opens a session with
+the service; macOS and Windows check the platform and the library's dependencies). B37 as Lucas confirmed it
+on Nov 13, 2026: "State what is true (Recommended)".
 """
 
 from __future__ import annotations
@@ -259,7 +260,8 @@ def _display_name(rank: int) -> str:
 
 # Every name a keychain record may hold (B24): one per allowlist entry, so equal names mean the same class.
 _KEYCHAIN_NAMES = tuple(_display_name(rank) for rank in range(len(_OS_CLASSES)))
-_RESERVED_NAME = "the key file is named like Cockpit's own .keychain.json or .keys.lock; choose another key file name"
+_RESERVED_NAME = ("the key file is named like Cockpit's own .keychain.json, .keys.lock or a temp file "
+                  "(.keys-<digits>-<16 hex digits>); choose another key file name")
 
 
 def _type_name(obj: Any) -> str:

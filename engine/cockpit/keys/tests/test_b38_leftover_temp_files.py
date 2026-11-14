@@ -4,9 +4,13 @@ DeepSeek's second read of #330 (F-D), rechecked by the Liaison: a process killed
 ``.keys-<pid>-<16 hex>`` and renaming it over the key file or the keychain record leaves that file in the
 owner-only key folder, and nothing removed it; on a host with no keychain it holds the model keys as they were
 being written, so a key deleted later is still in it. Lucas, Nov 13, 2026, asked "Should Cockpit clean these
-up?": "Sweep them (Recommended)". So a save or an acceptance, while it holds ``.keys.lock`` and before it writes,
-removes regular, owner-only files of the running user whose name is exactly that pattern, and nothing else. A
-read takes no lock and sweeps nothing; a delete sweeps nothing either.
+up?": "Sweep them (Recommended)". So the operations that take ``.keys.lock`` to write (a broker or venue save on a
+keychain host, a model-provider save on a host with no keychain, an acceptance), while they hold it and before
+they write, remove regular, owner-only files of the running user whose name is exactly that pattern, and nothing
+else, best effort. A model-provider save on a keychain host, a read and a delete sweep nothing. After DeepSeek's
+third read and Codex's fourth read: a key file may not have a temp file's name (F-1, R4-1), the scope above is
+pinned (F-2, R4-2), failures to list, look or remove are tested (F-3, R4-3), and the process tests reap what
+they start (R4-4).
 
 Spawned child processes that exit at the rename, temp folders, a dict or a JSON file for a keychain, made-up
 keys only.
@@ -14,6 +18,7 @@ keys only.
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import json
 import multiprocessing
@@ -76,15 +81,26 @@ class LeftoverTests(_Case):
                         found.append(name)
         return sorted(found)
 
+    def reap(self, child) -> None:  # type: ignore[no-untyped-def]
+        """A child that is still running is terminated, then killed, and reaped; the test fails if it stays alive
+        (Codex's fourth read, R4-4). A child that never started is left as it is."""
+        if child.pid is None:
+            return
+        if child.is_alive():  # a regression that hangs it must not leave it running
+            child.terminate()
+            child.join(10)
+        if child.is_alive():
+            child.kill()
+            child.join(10)
+        self.assertFalse(child.is_alive(), "a child process outlived the test")
+
     def spawn(self, target, *args) -> int:  # type: ignore[no-untyped-def]
         child = multiprocessing.get_context("spawn").Process(target=target, args=args)
-        child.start()
         try:
+            child.start()
             child.join(60)
         finally:
-            if child.is_alive():  # a regression that hangs it must not leave it running
-                child.terminate()
-                child.join(10)
+            self.reap(child)
         return child.exitcode  # type: ignore[return-value]
 
     def test_a_save_killed_at_the_key_file_rename_leaves_a_temp_file_that_the_next_save_removes(self) -> None:
@@ -220,13 +236,13 @@ class LeftoverTests(_Case):
         context = multiprocessing.get_context("spawn")
         ready, go = context.Event(), context.Event()
         child = context.Process(target=_paused_at_the_rename, args=(self.path, ready, go))
-        child.start()
+        worker: list[threading.Thread] = []
         try:
+            child.start()
             self.assertTrue(ready.wait(60))  # the child holds the lock, its temp file written, at the rename
             (in_flight,) = self.leftovers()
             reached = threading.Event()
             real_flock = store_mod.fcntl.flock  # type: ignore[union-attr]
-            worker: list[threading.Thread] = []
 
             def flock(fd: int, operation: int) -> None:
                 if worker and threading.current_thread() is worker[0] and operation & store_mod.fcntl.LOCK_EX:  # type: ignore[union-attr]
@@ -247,11 +263,148 @@ class LeftoverTests(_Case):
             self.assertEqual(child.exitcode, 0)
             self.assertFalse(worker[0].is_alive())
         finally:
+            # Codex's fourth read, R4-4: on any failure above, release the child, end it (kill if need be) and
+            # reap it, then wait for the worker, and fail if either is still alive.
             go.set()
-            if child.is_alive():
-                child.terminate()
-                child.join(10)
+            self.reap(child)
+            for thread in worker:
+                thread.join(30)
+                self.assertFalse(thread.is_alive(), "the second save's thread outlived the test")
         store = KeyStore(keyring=None, key_file=self.path)
         self.assertEqual((store.get("model_provider", "first"), store.get("model_provider", "second")),
                          (FAKE + "-first", FAKE + "-second"))
         self.assertEqual(self.leftovers(), [])
+
+
+def _key_file_body(path: str, keys: dict[str, str]) -> bytes:
+    """What the store writes for ``keys`` (made by the store itself under another name, then renamed)."""
+    folder = os.path.dirname(path)
+    other = os.path.join(folder, "made-by-the-store.json")
+    store = KeyStore(keyring=None, key_file=other)
+    for name, value in keys.items():
+        store.put("model_provider", name, value)
+    os.rename(other, path)
+    with open(path, "rb") as fh:
+        return fh.read()
+
+
+class ReservedTempNameTests(_Case):
+    """DeepSeek's third read F-1, Codex's fourth read R4-1: a key file named like a temp file was swept as a
+    leftover before it was read, so its other keys were lost; and another key file's save in the folder deleted
+    it. Now such a name is refused (key_file_not_configured) before anything is opened, created or swept."""
+
+    TEMP_NAMED = ".keys-1234-0123456789abcdef"
+
+    def test_a_key_file_named_like_a_temp_file_is_refused_before_anything_is_created(self) -> None:
+        path = os.path.join(self.leaf, self.TEMP_NAMED)
+        store = KeyStore(keyring=None, key_file=path)
+        for call in ((store.put, "model_provider", "one", FAKE), (store.put, "model_provider", "two", FAKE + "-2"),
+                     (store.get, "model_provider", "one"), (store.delete, "model_provider", "one")):
+            exc = self.refused("key_file_not_configured", *call)
+            self.assertIn("a temp file (.keys-<digits>-<16 hex digits>)", exc.detail)
+        self.assertFalse(os.path.lexists(self.leaf))  # not even the key folder or the lock
+
+    def test_an_existing_key_file_named_like_a_temp_file_keeps_its_bytes(self) -> None:
+        os.mkdir(self.leaf, 0o700)
+        path = os.path.join(self.leaf, self.TEMP_NAMED)
+        before = _key_file_body(path, {"one": FAKE, "two": FAKE + "-2"})
+        listing = sorted(os.listdir(self.leaf))
+        ring = Ring()
+        refusing = [KeyStore(keyring=None, key_file=path),
+                    KeyStore(keyring=ring, key_file=path, keychain=A, keychain_names=_KEYCHAIN_NAMES)]
+        self.refused("key_file_not_configured", refusing[0].put, "model_provider", "three", FAKE)
+        self.refused("key_file_not_configured", refusing[0].get, "model_provider", "one")
+        self.refused("key_file_not_configured", refusing[0].delete, "model_provider", "one")
+        for kind in ("broker", "venue"):
+            self.refused("key_file_not_configured", refusing[1].put, kind, "acct", FAKE)
+            self.refused("key_file_not_configured", refusing[1].get, kind, "acct")
+            self.refused("key_file_not_configured", refusing[1].delete, kind, "acct")
+        self.refused("key_file_not_configured", refusing[1].accept_keychain, A)
+        with open(path, "rb") as fh:
+            self.assertEqual(fh.read(), before)
+        self.assertEqual((sorted(os.listdir(self.leaf)), ring.calls), (listing, []))
+        for status in (KeychainStatus(True, A, "ok"), KeychainStatus(False, "", "no_keychain_backend")):
+            with self.subTest(keychain=status.available):
+                result = doctor(status, path)
+                self.assertEqual(result["level"], "fail")
+                self.assertIn("key_file_not_configured", doctor_line(result))
+
+    def test_the_command_fails_a_key_file_named_like_a_temp_file(self) -> None:
+        from cockpit.keys import __main__ as cli
+        from cockpit.keys.tests.test_b24_keychain_record import _Out
+
+        path = os.path.join(self.root, self.TEMP_NAMED)
+        for status in (KeychainStatus(True, A, "ok"), KeychainStatus(False, "", "no_keychain_backend")):
+            with self.subTest(keychain=status.available):
+                out = _Out(False)
+                with mock.patch.object(cli, "detect_keychain", lambda: status), \
+                        contextlib.redirect_stdout(out):
+                    self.assertEqual(cli.main(["doctor", "--key-file", path]), 1)
+                self.assertIn("key_file_not_configured", out.getvalue())
+
+    def test_two_key_files_in_one_folder_never_sweep_each_other(self) -> None:
+        # Codex R4-1: a second key-file configuration sharing the folder. Each save sweeps only leftovers.
+        first = KeyStore(keyring=None, key_file=os.path.join(self.leaf, "first.json"))
+        second = KeyStore(keyring=None, key_file=os.path.join(self.leaf, "second.json"))
+        first.put("model_provider", "a", FAKE + "-a")
+        second.put("model_provider", "b", FAKE + "-b")
+        fd = os.open(os.path.join(self.leaf, ".keys-77-00000000000000aa"), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.close(fd)
+        first.put("model_provider", "c", FAKE + "-c")
+        second.put("model_provider", "d", FAKE + "-d")
+        self.assertEqual(sorted(os.listdir(self.leaf)), [".keys.lock", "first.json", "second.json"])
+        self.assertEqual([first.get("model_provider", k) for k in ("a", "c")], [FAKE + "-a", FAKE + "-c"])
+        self.assertEqual([second.get("model_provider", k) for k in ("b", "d")], [FAKE + "-b", FAKE + "-d"])
+
+
+class SweepScopeTests(_Case):
+    def plant(self) -> str:
+        os.makedirs(self.leaf, 0o700, exist_ok=True)
+        name = ".keys-4242-0123456789abcdef"
+        fd = os.open(os.path.join(self.leaf, name), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.close(fd)
+        return name
+
+    def test_a_model_save_on_a_keychain_host_does_not_sweep_and_the_next_venue_save_does(self) -> None:
+        # DeepSeek's third read F-2, Codex's fourth read R4-2: the scope is the operations that take the folder's
+        # lock, which is narrower than "the next save" (put to the Liaison for Lucas; no lock added here).
+        left = self.plant()
+        ring = Ring()
+        store = self.store(ring)
+        self.assertEqual(store.put("model_provider", "acct", FAKE), "keyring")
+        self.assertIn(left, os.listdir(self.leaf))
+        store.put("venue", "acct", FAKE)
+        self.assertNotIn(left, os.listdir(self.leaf))
+
+    def test_an_unlistable_folder_is_not_swept_and_the_save_goes_on(self) -> None:
+        # DeepSeek's third read F-3: best effort; a listing that fails leaves the leftover and the save completes.
+        left = self.plant()
+        store = KeyStore(keyring=None, key_file=self.path)
+        with mock.patch("cockpit.keys.store.os.listdir", side_effect=PermissionError(errno.EACCES, "EACCES")):
+            self.assertEqual(store.put("model_provider", "acct", FAKE), "owner_only_file")
+        self.assertIn(left, os.listdir(self.leaf))
+        self.assertEqual(store.get("model_provider", "acct"), FAKE)
+
+    def test_an_entry_that_cannot_be_looked_at_or_removed_stays_and_the_save_goes_on(self) -> None:
+        # Codex's fourth read R4-3: an lstat or unlink error is ignored for that entry.
+        store = KeyStore(keyring=None, key_file=self.path)
+        real_lstat, real_unlink = os.lstat, os.unlink
+        for failing in ("lstat", "unlink"):
+            with self.subTest(failing=failing):
+                left = self.plant()
+
+                def lstat(name, *args, **kwargs):  # type: ignore[no-untyped-def]
+                    if failing == "lstat" and name == left:
+                        raise PermissionError(errno.EACCES, "EACCES")
+                    return real_lstat(name, *args, **kwargs)
+
+                def unlink(name, *args, **kwargs):  # type: ignore[no-untyped-def]
+                    if failing == "unlink" and name == left:
+                        raise PermissionError(errno.EACCES, "EACCES")
+                    return real_unlink(name, *args, **kwargs)
+
+                with mock.patch("cockpit.keys.store.os.lstat", lstat), mock.patch("cockpit.keys.store.os.unlink", unlink):
+                    self.assertEqual(store.put("model_provider", failing, FAKE), "owner_only_file")
+                self.assertIn(left, os.listdir(self.leaf))
+                self.assertEqual(store.get("model_provider", failing), FAKE)
+                os.unlink(os.path.join(self.leaf, left))

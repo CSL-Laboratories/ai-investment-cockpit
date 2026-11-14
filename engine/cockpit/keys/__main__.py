@@ -4,15 +4,15 @@ candidate).
 Exit 0 for ok or warn, 1 for fail. Cockpit asks for no key and writes or prints none (what the keychain
 library itself does under the opt-in read is said below). The plain doctor reads no keychain item and calls
 no password method: it looks at the key file's folder and the keychain record file, so on a keychain host
-with no record it says so and names the way out. Finding out which keychain is selected asks
-the keychain service whether it is there, as detection always has (see ``detect``). ``--check-keychain``
-(B37, opt-in) also asks the keychain for Cockpit's marker when the record is absent. That goes through the
+where records are kept (not Windows) and none exists it says so and names the way out. Finding out which keychain is selected can ask the keychain
+service whether it is there, as detection always has (on Linux; see ``detect``). ``--check-keychain`` (B37,
+opt-in) also asks the keychain for Cockpit's marker when the record is absent. That goes through the
 keychain library's ordinary read, the same as any broker key read: it can show the keychain's unlock prompt
 or wait for it, and in keyring 25.7.0, on KWallet, the call that opens the wallet first moves old-format
-entries out of its old "Python" folder, and on Secret Service it creates the default collection if there is
-none. If that read fails with an ordinary error, the line shows only the error's type (an ok line becomes
-warn); a refusal (``KeyRefused``) is shown as a refusal with its own text and exits 1. Lucas, Nov 13, 2026,
-told this: "State what is true (Recommended)".
+entries out of its old "Python" folder, and on Secret Service (with no preferred collection set) it creates
+the default collection if there is none. If that read fails with an ordinary error, the line shows only the
+error's type (an ok line becomes warn); a refusal (``KeyRefused``) is shown as a refusal with its own text and
+exits 1. Lucas, Nov 13, 2026, told this: "State what is true (Recommended)".
 
 ``python -m cockpit.keys accept-keychain NAME [--key-file PATH]``: after a real change of OS keychain,
 record the keychain this run selected as the one broker and venue keys are kept in (B24). ``NAME`` must be
@@ -35,14 +35,19 @@ from cockpit.keys.store import KeyRefused
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m cockpit.keys")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    d = sub.add_parser("doctor", help="say where Cockpit keeps keys on this host")
+    d = sub.add_parser("doctor", help="say where Cockpit keeps keys on this host",
+                       description="Say where Cockpit keeps keys on this host, in one line. The doctor reads no "
+                                   "keychain item and calls no password method; finding out which keychain is "
+                                   "selected can ask the keychain service whether it is there (on Linux, Secret "
+                                   "Service and KWallet ask D-Bus and libsecret opens a session; macOS and Windows "
+                                   "check the platform and the library's dependencies).")
     d.add_argument("--key-file", default=None)
     d.add_argument("--check-keychain", action="store_true",
                    help="when the keychain record is missing, also ask the keychain for Cockpit's marker; this is "
                         "the keychain library's ordinary read, as for any broker key: it can show the keychain's "
                         "unlock prompt or wait for it, on KWallet it can move old-format entries out of the "
                         "wallet's old Python folder, and on Secret Service it can create the default collection "
-                        "if there is none")
+                        "if there is none; only an ordinary error's type is shown")
     a = sub.add_parser("accept-keychain", help="after a real change of keychain, keep broker and venue keys "
                                                 "in the keychain this run selected")
     a.add_argument("name", help="Cockpit's name for the keychain this run selected, as the doctor shows it")
@@ -54,8 +59,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.check_keychain:
         result = _doctor_with_keychain_check(key_file)
     else:
-        # doctor() gets no keychain object, so it reads no keychain item; detect_keychain() asks the keychain
-        # service whether it is there (the admitted class's priority), as detection always has.
+        # doctor() gets no keychain object, so it reads no keychain item; detect_keychain() can ask the keychain
+        # service whether it is there (the admitted class's priority, on Linux), as detection always has.
         result = doctor(detect_keychain(), key_file)
     print(doctor_line(result))
     return 1 if result["level"] == "fail" else 0

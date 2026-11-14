@@ -318,7 +318,7 @@ class RecordTests(_Case):
         self.assertEqual(sorted(os.listdir(self.leaf)), [".keychain.json", ".keys.lock"])
 
     def test_a_key_file_named_like_the_record_or_the_lock_is_refused(self) -> None:
-        for name in (".keychain.json", ".keys.lock"):
+        for name in (".keychain.json", ".keys.lock", ".keys-1234-0123456789abcdef"):  # and a temp file's name (B38)
             with self.subTest(name=name):
                 store = KeyStore(keyring=None, key_file=os.path.join(self.root, name))
                 self.refused("key_file_not_configured", store.put, "model_provider", "acct", FAKE)
