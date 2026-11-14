@@ -31,6 +31,7 @@ from core import engine_path, secrets  # noqa: E402
 from core.owner_keys import KeyRefused, OwnerKeys  # noqa: E402
 
 from cockpit.keys import detect  # noqa: E402
+from cockpit.keys.tests.fakes import MARKER, RECORDS  # noqa: E402
 
 FAKE = "sk-item5-fake"
 POSIX = os.name == "posix" and hasattr(os, "O_NOFOLLOW")
@@ -225,8 +226,9 @@ class KeychainHostTests(unittest.TestCase):
                 self.assertEqual(keys.put(kind, "acct", FAKE), "keyring")
                 self.assertEqual(keys.get(kind, "acct").reveal(), FAKE)
             self.assertFalse(os.path.exists(os.path.join(tmp, "k.json")))
-            self.assertEqual(sorted(backend.data), [("csl-cockpit", f"{k}:acct") for k in
-                                                    ("broker", "model_provider", "venue")])
+            self.assertEqual(sorted(backend.data), sorted([("csl-cockpit", f"{k}:acct") for k in
+                                                           ("broker", "model_provider", "venue")]
+                                                          + ([MARKER] if RECORDS else [])))  # B24
 
     def test_fail_null_and_nan_backends_are_not_keychains(self) -> None:
         for module, priority in (("keyring.backends.fail", 5), ("keyring.backends.null", 5),

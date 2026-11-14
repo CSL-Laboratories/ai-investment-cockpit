@@ -43,7 +43,13 @@ and its state, so code that changes the selected object after the check can redi
 What this cannot defend against: hostile code already running in this process, such as a replaced import
 of a keyring module, a monkey-patched genuine class, or a changed helper, state or class of the selected
 object.
-The doctor line names where keys are kept and the key-file state; it reads no stored key or value.
+The doctor line names where keys are kept and the key-file state; ``doctor()`` reads no stored key or value
+and no keychain item, and calls no password method. On a keychain host it also reads the keychain record
+beside the key file (B24, see ``store``), from that file only, so it does not read Cockpit's marker in the
+keychain. Detection, which the doctor command runs first, is what finds out which keychain is selected: as
+it always has, it reads the admitted class's ``priority``, which asks the keychain service whether it is
+there (in keyring 25.7.0, Secret Service and KWallet ask D-Bus, and libsecret opens a session with the
+service). B37 as Lucas confirmed it on Nov 13, 2026: "State what is true (Recommended)".
 """
 
 from __future__ import annotations
@@ -55,7 +61,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from cockpit.keys.store import KeyRefused, KeyStore, key_file_state
+from cockpit.keys.store import KeyRefused, KeyStore, key_file_state, keychain_record_state, record_way_out
 
 __all__ = ["KeychainStatus", "OsKeyring", "default_key_file", "detect_keychain", "doctor", "doctor_line", "store_for_host"]
 
@@ -251,6 +257,11 @@ def _display_name(rank: int) -> str:
     return f"{module.rpartition('.')[2]} {name}"
 
 
+# Every name a keychain record may hold (B24): one per allowlist entry, so equal names mean the same class.
+_KEYCHAIN_NAMES = tuple(_display_name(rank) for rank in range(len(_OS_CLASSES)))
+_RESERVED_NAME = "the key file is named like Cockpit's own .keychain.json or .keys.lock; choose another key file name"
+
+
 def _type_name(obj: Any) -> str:
     """``module.Class`` of a backend, made safe for a one-line doctor message."""
     kind = type(obj)
@@ -334,7 +345,9 @@ def store_for_host(key_file: str | os.PathLike[str] | None = None,
     ring = OsKeyring(backend) if status.available else None
     env = dict(os.environ)
     path = os.fspath(key_file) if key_file is not None else default_key_file(env)
-    return KeyStore(keyring=ring, key_file=path, config_home=_config_home_for(path, env)), status
+    # B24: the store records and checks which keychain broker and venue keys are in, by Cockpit's name for it.
+    return KeyStore(keyring=ring, key_file=path, config_home=_config_home_for(path, env),
+                    keychain=status.backend if status.available else None, keychain_names=_KEYCHAIN_NAMES), status
 
 
 def _file_state(path: str) -> str:
@@ -356,8 +369,21 @@ def doctor(status: KeychainStatus, key_file: str | os.PathLike[str] | None) -> d
         if key_file is not None and os.name != "nt":
             # A model-key file left from a host without a keychain is still checked.
             state = _file_state(os.fspath(key_file))
+            if state == "key_file_not_configured":  # named like the record or the lock
+                out.update(level="fail", broker="refused:key_file_not_configured", venue="refused:key_file_not_configured",
+                           keychain_record=_RESERVED_NAME)
+                return out
             if state.startswith(("dir_not_owner_only", "file_not_owner_only")):
                 out.update(level="fail", key_file=state, stale_key_file=os.fspath(key_file))
+            try:
+                rec = keychain_record_state(os.fspath(key_file), _KEYCHAIN_NAMES)
+            except Exception as exc:  # noqa: BLE001 - DeepSeek's second read of #330, F-A: a fail line, not a traceback
+                # A broker or venue operation stops on the same error (only content errors are "malformed").
+                # The type only, never the message.
+                out.update(level="fail", broker="unchecked", venue="unchecked",
+                           keychain_record_error=_exception_name(exc))
+                return out
+            _record_into(out, status.backend, rec)
         return out
     out = {"check": "keys", "keychain": "none", "reason": status.reason,
            "broker": "refused:keychain_required", "venue": "refused:keychain_required"}
@@ -369,15 +395,62 @@ def doctor(status: KeychainStatus, key_file: str | os.PathLike[str] | None) -> d
         return out
     path = os.fspath(key_file)
     state = _file_state(path)
+    if state == "key_file_not_configured":  # named like the record or the lock
+        out.update(level="fail", model_provider="refused:key_file_not_configured")
+        return out
     bad = state.startswith(("dir_not_owner_only", "file_not_owner_only"))
     out.update(level="fail" if bad else "warn", model_provider=f"owner_only_file:{path}", key_file=state)
     return out
 
 
+def _record_into(out: dict[str, str], current: str, rec: dict[str, str]) -> None:
+    # B24: the keychain record beside the key file, read from that file only; no keychain item is read here.
+    state = rec["state"]
+    if state == "ok" and rec["keychain"] != current:
+        state = "keychain_differs"
+    if state == "none":
+        # B37 (Lucas, Nov 13, 2026: "Note + opt-in check (Recommended)", then "State what is true
+        # (Recommended)"): say there is no record, reading no keychain item; `doctor --check-keychain` asks
+        # the keychain for the marker when asked.
+        out["keychain_record_note"] = "none"
+        return
+    if state == "ok":
+        if "previous" in rec:
+            out["keychain_switched_from"] = rec["previous"]
+        return
+    if state == "keychain_differs":
+        why = f"saved in {rec['keychain']}, this run selected {current}; {record_way_out(state, current, rec['keychain'])}"
+    elif state.startswith("keychain_record_"):
+        why = f"{rec.get('detail', '')}; {record_way_out(state, current, None)}"
+    else:  # a folder on the way to the record is not owner-only
+        why = f"{rec.get('detail', '')}; Cockpit never repairs the key folder"
+    out.update(level="fail", broker=f"refused:{state}", venue=f"refused:{state}", keychain_record=why)
+
+
 def doctor_line(result: dict[str, str]) -> str:
     if result.get("keychain", "none") != "none":
-        line = (f"keys: {result['level']} - OS keychain ({result['keychain']}); "
-                "model-provider, broker and venue keys in the keychain")
+        if "keychain_record_error" in result:  # F-A: reading the record stopped on an unexpected error
+            line = (f"keys: {result['level']} - OS keychain ({result['keychain']}); model-provider keys in the "
+                    "keychain; broker and venue keys not checked: reading the keychain record did not finish "
+                    f"({result['keychain_record_error']})")
+        elif result.get("broker", "keyring").startswith("refused:"):  # B24: the keychain record refuses them
+            line = (f"keys: {result['level']} - OS keychain ({result['keychain']}); model-provider keys in the "
+                    f"keychain; broker and venue keys refused ({result['broker'].split(':', 1)[1]}): "
+                    f"{result['keychain_record']}")
+        else:
+            line = (f"keys: {result['level']} - OS keychain ({result['keychain']}); "
+                    "model-provider, broker and venue keys in the keychain")
+        if "keychain_switched_from" in result:
+            line += f"; switched from {result['keychain_switched_from']} with accept-keychain"
+        note = result.get("keychain_record_note")
+        if note == "none":
+            line += (f"; no keychain record yet (if broker or venue keys are refused as keychain_record_missing, run "
+                     f"python -m cockpit.keys accept-keychain '{result['keychain']}'; "
+                     "python -m cockpit.keys doctor --check-keychain looks in the keychain)")
+        elif note == "checked":
+            line += "; no keychain record yet, and no Cockpit marker in the keychain: the next broker or venue save records it"
+        if "keychain_check" in result:
+            line += f"; keychain check {result['keychain_check']}"
         if "ignored_backends" in result:
             line += f"; other keyring backends ignored: {result['ignored_backends']}"
         if "stale_key_file" in result:

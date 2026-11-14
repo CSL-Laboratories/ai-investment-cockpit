@@ -24,6 +24,38 @@ A file, lock or directory that is not owner-only is refused on read and write an
 silently. The keyring is injected; nothing here imports a keyring library or calls a provider,
 venue or network. Frozen `app/` keeps its own keyring code and is untouched.
 
+Not a regular file (B29; Lucas, Nov 13, 2026: "Fix it in #330 (Recommended)"). Anything at the key file
+or lock path that is not a regular file (a pipe, a socket, a device or a folder) is refused
+(`key_file_not_owner_only`, the detail naming what it is) without being opened: the store decides from
+`lstat` first, opens with `O_NOFOLLOW|O_NONBLOCK` so an entry swapped in after that check cannot make it
+wait, and checks that the open file is the same regular file (device and inode; a file removed and made
+again in between can get the same inode number, so a swap is caught while the checked file still exists).
+The keychain record (below) is opened the same way (`keychain_record_not_owner_only`). Folders on the way
+are opened with `O_DIRECTORY`, which refuses anything else without opening it, and the doctor only looks
+(`lstat`). Where records are kept (not on Windows, whose doctor does not look at the key file), a key file
+named like the record or the lock makes the doctor `fail` with `key_file_not_configured`.
+
+Leftover temp files (B38; Lucas, Nov 13, 2026: "Sweep them (Recommended)"). A save writes a temp file named
+`.keys-<pid>-<16 hex digits>` in the key folder and renames it over the key file or the keychain record. A
+process killed between those two steps leaves the temp file behind: owner-only, and holding the file as it
+was being written, so on a host with no keychain it can hold model keys, including one deleted later. The
+next save (`put`) or `accept-keychain` in that folder removes such leftovers while it holds `.keys.lock`,
+before it writes its own temp file. Every writer holds that lock while its temp file exists, so what is
+found then is a leftover, never another save's file in progress. Only a regular file of the running user's,
+with no group or other permission bit, whose name is exactly that pattern is removed, decided from `lstat`.
+A link, a folder, a file of another owner or with a looser mode, and a name that only looks like it are left
+alone, as every other entry in the folder is. Reads (which take no lock) and deletes sweep nothing, so a
+leftover stays until the next save or acceptance in that folder.
+
+Key names and the file (B23; Lucas, Nov 13, 2026: "Fix before landing (Recommended)"). A key name is 1
+to 64 characters of `a-z`, `0-9`, `.`, `_` and `-`, starting with a letter or a digit, matched against the
+whole name, so a name ending in a line break is refused. A malformed name supplied as an argument is
+refused with `key_name_malformed`; a malformed name stored in the key file makes the file
+`key_file_malformed`. The file must say `"version": 1` as an integer: `true` or `1.0` makes it
+malformed (`key_file_malformed`), though both compare equal to 1 in Python. A field given twice (two
+`version`s, or one key name twice) makes the file malformed too, as it does the keychain record, instead of
+the last one winning; any other error while reading the file stops the operation.
+
 First save (owner-only file). Candidate default file: `$XDG_CONFIG_HOME/csl-cockpit/model-keys.json`
 (`~/.config/csl-cockpit/model-keys.json` when unset). Before the first save, `get` returns `None` and
 `delete` does nothing; neither creates anything. The first save creates what is missing, `0700`,
@@ -49,7 +81,8 @@ its type *is* one of the library's own classes, imported from the library: `Secr
 `kwallet.DBusKeyring` (KWallet 5), `libsecret.Keyring`, `kwallet.DBusKeyringKWallet4` (KWallet 4),
 `macOS.Keyring` or `Windows.WinVaultKeyring` (exact identity, so not a subclass, not a proxy, and not
 another class that copies a module or class name), and its priority, read from that class, is a finite
-number above 0. A class whose module will not import on this host is a keychain this host does not
+number above 0. Reading it runs the class's own availability probe, which asks the keychain service
+whether it is there (no key is read). A class whose module will not import on this host is a keychain this host does not
 have. The library's `fail` and `null` backends, `keyrings.alt` and any other file, unknown or
 look-alike backend are not keychains, so a plaintext keyring is never treated as one for broker or
 venue secrets. When the refused backend looks meant as a supported keychain, the doctor says why:
@@ -95,27 +128,134 @@ cron; with the fixed order every session on that host uses Secret Service, as lo
 the same set of available keychain classes and the same explicit backend setting. `PYTHON_KEYRING_BACKEND`
 (or `keyringrc.cfg`) set to one OS backend makes every session that has it use that one.
 
-A change of keychain reads what the newly selected keychain holds. The order is fixed, but which
-keychains answer can still differ between sessions or library versions (a daemon reachable only on the
-desktop). A run that selects a different keychain from the one a key was saved in reads nothing if
-that keychain never held the key, or an older key left there earlier, even one deleted since in the
-other keychain: a delete reaches only the selected keychain. No unselected store is ever consulted, and
-the doctor line names the keychain in use. Cockpit does not remember which keychain it used before.
+A change of keychain (B24). The order is fixed, but which keychains answer can still differ between
+sessions or library versions (a daemon reachable only on the desktop). Lucas, Nov 13, 2026, asked what
+Cockpit should do when a later run selects a different keychain from the one it saved a broker or venue
+key in: "Remember and refuse (Recommended)". So Cockpit remembers which keychain holds broker and venue
+keys:
 
-Doctor line: `PYTHONPATH=engine python3 -m cockpit.keys doctor [--key-file PATH]` prints one line,
+- **The record.** The first broker or venue save on a keychain host writes `.keychain.json` beside the key
+  file (by default `~/.config/csl-cockpit/.keychain.json`), under the key file's own rules: the same
+  owned chain of folders, `0600` in `0700`, owned by the running user, no link followed, replaced
+  atomically under `.keys.lock`, never repaired. It holds only Cockpit's own name for the keychain, the one
+  the doctor shows: `{"version": 1, "keychain": "SecretService Keyring"}`, plus `"previous"` after an
+  accepted switch. Never a key. Cockpit also writes one non-secret marker into that keychain (service
+  `csl-cockpit`, account `cockpit-keychain-record`, the keychain's name as its value), so that while the
+  marker is there a record deleted later is not taken for "never recorded". The marker is one per keychain
+  and the record one per key folder, so a second key folder (another `--key-file`) on the same keychain is
+  refused (`keychain_record_missing`) until `accept-keychain` is run for it. Where records are kept, a key file
+  named `.keychain.json` or `.keys.lock` is refused (`key_file_not_configured`) for broker and venue
+  operations and `accept-keychain` on a keychain host too, and the doctor fails it; model-provider keys in a
+  keychain do not use the key file.
+- **Order and interruptions.** The marker is written first and the record second, for the first save and
+  for `accept-keychain`, and the marker is never taken back: an error from the record write can come after
+  the record was already published (the folder flush after the rename), and the marker is shared by every
+  key folder on that keychain. The two writes are in two different stores, so this is an order, not a
+  transaction, and an error does not tell which state was reached:
+  - a first save whose marker write fails before it takes effect: neither is written (the key folder and
+    `.keys.lock` may already have been made), and a plain retry works;
+  - a **first save** whose record was not published (a marker write that took effect and still raised, a
+    record write that failed before its rename, or a process stopped between the two writes): the marker
+    stays alone, the next broker or venue operation is refused (`keychain_record_missing`, which names the
+    possible causes), and `accept-keychain` records it; the key folder and `.keys.lock` it made stay, and a
+    process killed inside the record write can leave a temp file, which the next save or acceptance removes
+    (B38, above). An error from the marker write does not say whether it took effect: the next operation
+    does (refused `keychain_record_missing` if it did);
+  - a first save whose record was published before the error: record and marker are both there, and a
+    plain retry works;
+  - an **acceptance that replaces a valid record naming another keychain** and fails before publishing: that
+    record is still there, so the selected keychain is still refused (`keychain_differs`) until
+    `accept-keychain` is run again; after publishing, the record already names the new keychain with
+    `"previous"` set to the old one, and running it again keeps that history. An acceptance that starts
+    from a matching, a malformed or no record and fails before publishing leaves that state as it was (a
+    matching record still works, a malformed one is still refused as malformed, and with none the next
+    operation is refused as `keychain_record_missing` if the marker write took effect); the record it
+    publishes has no `"previous"` unless a matching record already had one.
+  A matching record without a marker (left by a candidate build of this change, by a marker removed by
+  hand, or by a marker write that never took effect) stays valid, and the next broker or venue save adds
+  the marker if the keychain answers.
+- **Calls in flight.** Each broker or venue operation checks the record when it starts and then uses the
+  keychain it checked. Saves and `accept-keychain` hold `.keys.lock` from that check to their last write, so
+  a save never runs across an acceptance; a read or a delete already past its check when an acceptance
+  changes the record finishes against the keychain it checked. Every operation that starts after
+  `accept-keychain` returns sees the new record.
+- **Same keychain.** Two runs have the same keychain when the admitted class is the same entry of the
+  fixed list (identity, as in admission); the record compares Cockpit's name for that entry.
+- **Refused, never re-recorded.** Broker and venue `get`, `put` and `delete` are refused when the record
+  names another keychain (`keychain_differs`), when the keychain holds the marker but this key folder has no
+  record (`keychain_record_missing`: it was removed, a first save here was cut off, or this folder never had
+  one and another key folder on that keychain left the marker; the refusal names all three), when the record is malformed (`keychain_record_malformed`: not JSON, another
+  field, a `version` that is not the integer 1, a name not in the fixed list, over 4 KiB), a link, a folder,
+  a FIFO, another user's or not owner-only (`keychain_record_not_owner_only`), or cannot be read
+  (`keychain_record_unreadable`), and when a folder on the way is not owner-only (`key_dir_not_owner_only`).
+  On a record refusal Cockpit asks the keychain for no broker or venue key, and writes or deletes none; when
+  the record is absent, it may first ask for its non-secret marker, through the keychain library's ordinary
+  read (which can do what the doctor's opt-in check below describes, as any key read can). A content error of the record (bad UTF-8 or JSON, a field
+  given twice, nesting too deep) is `keychain_record_malformed`; any other error while reading it (out of
+  memory, an internal error) stops the operation and is never called malformed, so `accept-keychain` never
+  replaces a valid record because of one. If the record cannot be written, the save is refused and no key
+  is stored, though the record itself may have been published (see above).
+- **The way out**, named in the record refusals (`keychain_differs`, `keychain_record_missing`, and a
+  malformed, loose, linked or unreadable record; a loose folder says only that Cockpit never repairs it):
+  make the recorded keychain available
+  again, or record the change with `python -m cockpit.keys accept-keychain "<name>"`, where the name is
+  exactly the keychain this run selected (add the same `--key-file` when the key file is not the default
+  one: the record is per key folder). It runs only at an interactive terminal, keeps the old keychain
+  as `"previous"`, and from then on the doctor line says the keychain was switched. It replaces a record
+  that is malformed; a link or a loose record is refused, and you remove it yourself. Code running as the
+  same user can still rewrite the record, as it can read the keychain itself: the step makes a switch
+  deliberate and visible, not impossible. If it stops on an unexpected error (the keychain or the disk
+  fails), it says it did not finish and shows only that error's type; a refusal prints its own text, which
+  can name the configured folder.
+- **The doctor** (B37; Lucas, Nov 13, 2026: "Note + opt-in check (Recommended)", and, told what the two
+  paths below really do, "State what is true (Recommended)"). The plain `python -m cockpit.keys doctor`
+  reads no keychain item and calls no password method: it reads the key folder and the record file. Finding
+  out which keychain is selected asks the keychain service whether it is there, as detection always has
+  (the admitted class's priority: in keyring 25.7.0 Secret Service and KWallet ask D-Bus, and libsecret
+  opens a session with the service). It names the way out for a record that names another keychain or is
+  broken. With no record on a keychain host it adds one clause, "no keychain record yet (if broker or venue
+  keys are refused as keychain_record_missing, run python -m cockpit.keys accept-keychain '<name>';
+  python -m cockpit.keys doctor --check-keychain looks in the keychain)", and does not change the level for
+  it, since it cannot tell a host that has saved no broker or venue key from one whose record is gone (an
+  old model-key file that is not owner-only still makes it `fail`). If reading the record stops on an
+  unexpected error (out of memory, an internal error), the line is `fail`, says the broker and venue keys
+  were not checked and shows only the error's type. `doctor --check-keychain` (opt-in) asks the keychain
+  for Cockpit's marker when the record is absent: marker there, `fail` with `keychain_record_missing` and
+  the way out; no marker, the line says so. That goes through the keychain library's ordinary read, the
+  same as any broker key read: it can show the keychain's unlock prompt or wait for it (Secret Service
+  waits on a locked collection's prompt; KWallet asks for the wallet's password), and in keyring 25.7.0, on
+  KWallet, the call that opens the wallet first moves old-format entries out of the wallet's old `Python`
+  folder, and on Secret Service it creates the default collection if there is none. If the read fails with
+  an ordinary error, the line says the check did not finish and shows only the error's type, never its
+  message, and an `ok` line becomes `warn`; a refusal (`KeyRefused`, for example `keychain_changed`) is
+  shown as a refusal, with its own text, and exits 1.
+- **Nothing to compare.** With no record and no marker (keys saved before this rule, or none yet), reads
+  and deletes work as before and create nothing; the next broker or venue save records the keychain
+  selected then. If that run selected a different keychain from the one older keys are in, Cockpit cannot
+  know.
+- **Not covered.** Model-provider keys are neither recorded nor refused: on a keychain host a run that
+  selects another keychain reads what that keychain holds (nothing, or an older key), and in the
+  owner-only file nothing changes. Windows keeps no record, since this module has no owner-only file there
+  and only the Windows vault can be selected there. macOS works as Linux does. A `KeyStore` built directly
+  with a keyring but without `keychain=` keeps no record, because only detection knows which keychain was
+  admitted; `store_for_host`, the one way the product builds a store (the app's `OwnerKeys.for_host` uses
+  it), always passes it.
+
+Doctor line: `PYTHONPATH=engine python3 -m cockpit.keys doctor [--key-file PATH] [--check-keychain]` prints one line,
 for example
 
 ```
 keys: ok - OS keychain (SecretService Keyring); model-provider, broker and venue keys in the keychain
 keys: ok - OS keychain (Windows WinVaultKeyring); model-provider, broker and venue keys in the keychain; other keyring backends ignored: some_helper.module.CredentialHelper
+keys: fail - OS keychain (kwallet DBusKeyring); model-provider keys in the keychain; broker and venue keys refused (keychain_differs): saved in SecretService Keyring, this run selected kwallet DBusKeyring; to keep broker and venue keys in kwallet DBusKeyring, run at a terminal: python -m cockpit.keys accept-keychain 'kwallet DBusKeyring'; or make SecretService Keyring available again
 keys: warn - no OS keychain (no_keychain_backend); model-provider keys in owner-only file /home/u/.config/csl-cockpit/model-keys.json [no_file_yet]; broker and venue keys refused (keychain_required)
 ```
 
 Ignored backends are named as `module.Class` (at most eight, then a count), with any character
 outside letters, digits and `._-<>` shown as `?`. `ok` and `warn` exit 0; `fail` (key file or
 directory not owner-only, no file configured, or no owner-only file on this platform) exits 1. It
-reads no stored key or value. A missing key folder or `~/.config` shows as `[dir_missing]`; the doctor
-never creates it.
+reads no stored key or value (the opt-in `--check-keychain` asks for Cockpit's non-secret marker, above). A
+missing key folder or `~/.config` shows as `[dir_missing]`; the doctor never creates it.
 
 What the doctor line shows of a backend, and the one rule for it. The selected keychain is shown by
 Cockpit's own name for its class (`SecretService Keyring`, `kwallet DBusKeyring`, `libsecret Keyring`,
@@ -162,4 +302,9 @@ one `try`. A `try` body and its `finally` count on top of whichever of those run
 up, since several can run. Rebinding a name by assignment or import is not checked.
 The suite is stdlib `unittest`; a pytest-style test function here would not be covered. Tests that need an OS
 keychain use the installed `keyring` library's own classes, with their probe and password methods pointed
-at a dict (no real keychain or D-Bus is reached), and are skipped without the library.
+at a dict (no real keychain or D-Bus is reached), and are skipped without the library. The doctor's
+boundary tests (`test_b37_library_boundary.py`) instead keep a class's own probe and password methods and
+replace only the transport under them (secretstorage's D-Bus calls, KWallet's `dbus`, libsecret's `Secret`),
+so they see what the library itself does on those paths. Each test host gets
+its own temp key folder (`fakes.key_file`), since a broker or venue save now writes the keychain record
+beside the key file (B24); no test uses the tester's own default key file.
