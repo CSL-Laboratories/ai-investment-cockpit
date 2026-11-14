@@ -1,0 +1,61 @@
+{
+  "commit": "ffffffffffffffffffffffffffffffffffffffff",
+  "evidence_class": "synthetic_control",
+  "results": [
+    {
+      "id": "invariant_1_single_order_path",
+      "outcome": "pass",
+      "test_locator": "app/tests/test_invariants.py"
+    },
+    {
+      "id": "invariant_2_decision_pinned_in_auto_modes",
+      "outcome": "pass",
+      "test_locator": "app/orchestrator/mode_ladder.py"
+    },
+    {
+      "id": "invariant_3_schema_validate_model_output",
+      "outcome": "pass",
+      "test_locator": "app/workflows/schema_loader.py"
+    },
+    {
+      "id": "invariant_4_secrets_os_credential_store",
+      "outcome": "pass",
+      "test_locator": "app/core/secrets.py"
+    },
+    {
+      "id": "invariant_5_risk_pure",
+      "outcome": "pass",
+      "test_locator": "app/risk/engine.py"
+    },
+    {
+      "id": "invariant_6_human_gate_hash_chain_audit",
+      "outcome": "pass",
+      "test_locator": "app/storage/audit.py"
+    },
+    {
+      "id": "invariant_7_fail_closed",
+      "outcome": "pass",
+      "test_locator": "app/orchestrator/breakers.py"
+    },
+    {
+      "id": "invariant_8_raw_inputs_separate_from_summaries",
+      "outcome": "pass",
+      "test_locator": "app/filings/raw_store.py"
+    },
+    {
+      "id": "invariant_9_post_pdt",
+      "outcome": "pass",
+      "test_locator": "app/risk/engine.py"
+    },
+    {
+      "id": "fail_closed",
+      "outcome": "pass",
+      "test_locator": "app/orchestrator/breakers.py"
+    },
+    {
+      "id": "hash_chain_audit",
+      "outcome": "pass",
+      "test_locator": "app/storage/audit.py"
+    }
+  ]
+}

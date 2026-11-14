@@ -18,6 +18,8 @@
       "Bash(python3 -X utf8 -B tools/test_candidate_gate.py)",
       "Bash(python -X utf8 -B tools/test_candidate_workflows.py)",
       "Bash(python3 -X utf8 -B tools/test_candidate_workflows.py)",
+      "Bash(python -X utf8 -B tools/test_check_o8_phase_a_schema_guard.py)",
+      "Bash(python3 -X utf8 -B tools/test_check_o8_phase_a_schema_guard.py)",
       "Bash(python -X utf8 -B tools/test_check_product_pin.py)",
       "Bash(python3 -X utf8 -B tools/test_check_product_pin.py)",
       "Bash(python -X utf8 -B tools/test_ci_cancel_controller.py)",

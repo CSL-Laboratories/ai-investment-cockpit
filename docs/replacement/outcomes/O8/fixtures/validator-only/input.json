@@ -1,0 +1,9 @@
+{
+  "purpose": "synthetic validator control only",
+  "records": [
+    {
+      "sequence": 1,
+      "value": 42
+    }
+  ]
+}
