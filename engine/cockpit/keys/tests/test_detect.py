@@ -18,7 +18,7 @@ from cockpit.keys import KeyRefused, detect_keychain, doctor, doctor_line, store
 from cockpit.keys.__main__ import main
 from cockpit.keys.detect import default_key_file
 from cockpit.keys.tests.fakes import (
-    KEYRING, MARKER_OPS, Keychains, key_file, loader, recorder, requires_keyring, untouchable,
+    KEYRING, MARKER_CHECK, MARKER_OPS, Keychains, key_file, loader, recorder, requires_keyring, untouchable,
 )
 
 FAKE = "fake-key-not-real-0123"
@@ -86,7 +86,7 @@ class DetectTests(unittest.TestCase):
                 for kind in ("broker", "venue"):
                     self.assertEqual(store.put(kind, "fixture", FAKE), "keyring")
                     self.assertEqual(store.get(kind, "fixture"), FAKE)
-                self.assertEqual([c[0] for c in safe.calls], MARKER_OPS + ["set", "get", "set", "get"])
+                self.assertEqual([c[0] for c in safe.calls], MARKER_OPS + ["set", "get"] + MARKER_CHECK + ["set", "get"])
                 self.assertEqual(touched, [])
                 self.assertEqual(chain.calls, [])
 

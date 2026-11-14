@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from cockpit.keys.detect import default_key_file, detect_keychain, doctor, doctor_line, store_for_host
+from cockpit.keys.detect import _exception_name, default_key_file, detect_keychain, doctor, doctor_line, store_for_host
 from cockpit.keys.store import KeyRefused
 
 
@@ -47,6 +47,12 @@ def _accept(name: str, key_file: str) -> int:
         previous = store.accept_keychain(name)
     except KeyRefused as exc:
         print(f"keys: refused - {exc}")
+        return 1
+    except Exception as exc:  # noqa: BLE001 - an unfinished acceptance is reported, never as a traceback
+        # The record is replaced atomically and only after the marker is written, and a marker this run
+        # added is taken back if the record fails; only the exception's type is shown, never its message.
+        print(f"keys: failed - accept-keychain did not finish ({_exception_name(exc)}); nothing is confirmed: "
+              f"run it again, then check python -m cockpit.keys doctor")
         return 1
     note = f" (switched from {previous})" if previous else ""
     print(f"keys: ok - broker and venue keys are kept in {status.backend}{note}")

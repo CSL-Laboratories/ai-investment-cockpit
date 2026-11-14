@@ -140,7 +140,9 @@ class RecordTests(_Case):
         self.assertEqual(store.get("broker", "acct"), FAKE)
         store.put("venue", "acct", FAKE)
         store.delete("broker", "acct")
-        self.assertEqual(ring.calls, [("get", "broker:acct"), ("set", "venue:acct"), ("delete", "broker:acct")])
+        # a save reads the marker (present, so nothing is written); a read or a delete does not
+        self.assertEqual(ring.calls, [("get", "broker:acct"), ("get", MARKER[1]), ("set", "venue:acct"),
+                                      ("delete", "broker:acct")])
         self.assertEqual(json.loads(self.read_record()), {"version": 1, "keychain": A})
 
     def test_a_later_run_with_another_keychain_is_refused_every_broker_and_venue_operation(self) -> None:

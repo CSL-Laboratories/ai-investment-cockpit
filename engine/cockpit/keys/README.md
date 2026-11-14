@@ -34,8 +34,9 @@ refuses anything else without opening it, and the doctor only looks (`lstat`).
 
 Key names and the file (B23; Lucas, Nov 13, 2026: "Fix before landing (Recommended)"). A key name is 1
 to 64 characters of `a-z`, `0-9`, `.`, `_` and `-`, starting with a letter or a digit, matched against the
-whole name, so a name ending in a line break is refused (`key_name_malformed`), as an argument and as a
-name stored in the file. The file must say `"version": 1` as an integer: `true` or `1.0` makes it
+whole name, so a name ending in a line break is refused. A malformed name supplied as an argument is
+refused with `key_name_malformed`; a malformed name stored in the key file makes the file
+`key_file_malformed`. The file must say `"version": 1` as an integer: `true` or `1.0` makes it
 malformed (`key_file_malformed`), though both compare equal to 1 in Python.
 
 First save (owner-only file). Candidate default file: `$XDG_CONFIG_HOME/csl-cockpit/model-keys.json`
@@ -120,9 +121,23 @@ keys:
   owned chain of folders, `0600` in `0700`, owned by the running user, no link followed, replaced
   atomically under `.keys.lock`, never repaired. It holds only Cockpit's own name for the keychain, the one
   the doctor shows: `{"version": 1, "keychain": "SecretService Keyring"}`, plus `"previous"` after an
-  accepted switch. Never a key. With it Cockpit writes one non-secret marker into that keychain (service
+  accepted switch. Never a key. Cockpit also writes one non-secret marker into that keychain (service
   `csl-cockpit`, account `cockpit-keychain-record`, the keychain's name as its value), so a record deleted
-  later is not taken for "never recorded".
+  later is not taken for "never recorded". A key file named `.keychain.json` or `.keys.lock` is refused
+  (`key_file_not_configured`), on a keychain host too.
+- **Order and interruptions.** The marker is written first and the record second, for the first save and
+  for `accept-keychain`. If the record cannot be written, a marker that call added is taken back, so a
+  failed first save leaves nothing behind and can simply be retried. A process killed between the two
+  writes leaves the marker without a record: the next broker or venue operation is refused
+  (`keychain_record_missing`, which says a first save may have been cut off), and `accept-keychain` records
+  it. The two writes are in two different stores, so this is an order, not a transaction. A matching record
+  without a marker (only a candidate build of this change could leave one) stays valid, and the next broker
+  or venue save adds the marker.
+- **Calls in flight.** Each broker or venue operation checks the record when it starts and then uses the
+  keychain it checked. Saves and `accept-keychain` hold `.keys.lock` from that check to their last write, so
+  a save never runs across an acceptance; a read or a delete already past its check when an acceptance
+  changes the record finishes against the keychain it checked. Every operation that starts after
+  `accept-keychain` returns sees the new record.
 - **Same keychain.** Two runs have the same keychain when the admitted class is the same entry of the
   fixed list (identity, as in admission); the record compares Cockpit's name for that entry.
 - **Refused, never re-recorded.** Broker and venue `get`, `put` and `delete` are refused when the record
@@ -131,15 +146,20 @@ keys:
   field, a `version` that is not the integer 1, a name not in the fixed list, over 4 KiB), a link, a folder,
   a FIFO, another user's or not owner-only (`keychain_record_not_owner_only`), or cannot be read
   (`keychain_record_unreadable`), and when a folder on the way is not owner-only (`key_dir_not_owner_only`).
-  The keychain this run selected is sent nothing. If the record cannot be written, the save is refused and
-  no key is stored.
-- **The way out**, named in each refusal and in the doctor line: make the recorded keychain available
+  On a record refusal no broker or venue key is read, written or deleted; when the record is absent,
+  Cockpit may first read its non-secret marker. A parser failure of any kind (bad UTF-8 or JSON, nesting
+  too deep) is `keychain_record_malformed`. If the record cannot be written, the save is refused and no
+  key is stored.
+- **The way out**, named in each refusal: make the recorded keychain available
   again, or record the change with `python -m cockpit.keys accept-keychain "<name>"`, where the name is
   exactly the keychain this run selected. It runs only at an interactive terminal, keeps the old keychain
   as `"previous"`, and from then on the doctor line says the keychain was switched. It replaces a record
   that is malformed; a link or a loose record is refused, and you remove it yourself. Code running as the
   same user can still rewrite the record, as it can read the keychain itself: the step makes a switch
-  deliberate and visible, not impossible.
+  deliberate and visible, not impossible. If it does not finish (the keychain or the disk fails), it says
+  so and shows only the error's type. The doctor names the way out too, except for a missing record: it
+  reads the record file only and cannot see the marker in the keychain, so that case is reported by the
+  refused operation itself.
 - **Nothing to compare.** With no record and no marker (keys saved before this rule, or none yet), reads
   and deletes work as before and create nothing; the next broker or venue save records the keychain
   selected then. If that run selected a different keychain from the one older keys are in, Cockpit cannot

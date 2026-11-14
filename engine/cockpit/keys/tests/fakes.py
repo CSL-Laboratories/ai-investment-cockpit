@@ -190,11 +190,13 @@ def lookalike_chain(children: list[Any], module: str = "keyring.backends.chainer
 
 # B24: the keychain record is kept where this module has an owner-only file (not on Windows). There the
 # first broker or venue save on a keychain host reads Cockpit's marker in the selected keychain (absent)
-# and writes it, so that keychain holds one item more than the keys.
+# and writes it, so that keychain holds one item more than the keys; each later broker or venue save reads
+# it again (and would add it if a matching record had none).
 RECORDS = _store._owner_only_supported()
 MARKER = ("csl-cockpit", "cockpit-keychain-record")
-MARKER_OPS = ["get", "set"] if RECORDS else []
-MARKER_CALLS = len(MARKER_OPS)
+MARKER_OPS = ["get", "set"] if RECORDS else []  # the first broker or venue save
+MARKER_CHECK = ["get"] if RECORDS else []  # each later broker or venue save
+MARKER_CALLS = len(MARKER_OPS) + len(MARKER_CHECK)  # a broker save and then a venue save, as the tests do
 MARKER_ITEMS = 1 if RECORDS else 0
 UNRECORDED_KINDS = tuple(kind for kind in ("model_provider", "broker", "venue")
                          if not RECORDS or kind not in _store.RECORD_KINDS)
