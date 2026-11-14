@@ -27,11 +27,12 @@ allowed for user-entered model-provider keys only; broker and venue keys stay ke
   ``O_NOFOLLOW``, so nothing on the path may be a symlink. Nothing else is ever created, and an
   entry that exists, or that a competing process creates first, must pass the same checks as any
   existing one. Before that first save, ``get`` returns ``None`` and ``delete`` does nothing;
-* every save and ``accept_keychain`` first remove, while they hold the folder's ``.keys.lock``, the temp files
-  a killed write left in that folder, best effort and nothing else (B38, ``_sweep_leftovers``). A
-  model-provider save on a keychain host does it only as cleanup, when the folder and lock are already there
-  and the lock is free (``_sweep_if_the_folder_is_there``). Reads and deletes sweep nothing. A key file may
-  not have a temp file's name (``key_file_not_configured``).
+* a save that reaches the key folder, and ``accept_keychain``, first remove, while they hold the folder's
+  ``.keys.lock``, the temp files a killed write left in that folder, best effort and nothing else (B38,
+  ``_sweep_leftovers``). A model-provider save on a keychain host does it only as cleanup, when the folder and
+  lock are already there and the lock is free (``_sweep_if_the_folder_is_there``). Reads and deletes sweep
+  nothing. A key file may not have a temp file's name: the operations that use the key file or the record
+  refuse it (``key_file_not_configured``).
 
 Keychain record (B24). Lucas, Nov 13, 2026, asked what Cockpit should do when a later run selects a
 different OS keychain than the one it saved a broker or venue key in: "Remember and refuse
@@ -337,27 +338,33 @@ class KeyStore:
     def _sweep_if_the_folder_is_there(self) -> None:
         """B38 for a model-provider save on a keychain host (Lucas: "the next save or acceptance removes leftover
         temp files"; Codex's fourth read, R4-2). That save keeps its key in the keychain and uses no file, so this
-        is cleanup only and can neither refuse, fail nor delay it: it sweeps only when a key file is configured,
-        its name is not reserved, this host keeps owner-only files, the key folder and its ``.keys.lock`` already
-        exist and pass the owner-only checks, and the lock is free at once (``LOCK_NB``: the save never waits
-        behind another process). It creates nothing (no folder, no lock file: a leftover can only come from a
-        writer that held that lock, so with no lock file there is nothing to sweep), reads and writes no record,
-        and a ``KeyRefused`` or ``OSError`` on the way means "not swept"; an interrupt still propagates."""
+        is cleanup only, attempted before the keychain write. It sweeps only when a key file is configured, its
+        name is not reserved, this host keeps owner-only files, the key folder and its ``.keys.lock`` already exist
+        and pass the owner-only checks, and the lock is free at once (``LOCK_NB``). It creates nothing (no folder,
+        no lock file; with no lock file it skips the sweep), and reads and writes no record.
+
+        What it promises the save (Codex's fifth reads R5-1 and R5-2, DeepSeek's fourth read F-6): it never waits
+        to take the lock; a ``KeyRefused`` or an ``OSError`` anywhere on the way, closing the folder and the lock
+        included, means "not swept" and the key is still saved, and so does a ``ValueError`` from a path the
+        folder cannot be opened under (a NUL in it, say), since the save does not use that path. Each descriptor
+        is closed once, on its own, whatever happened to the other. Any other error (out of memory, say) and an
+        interrupt propagate. The folder work it does is synchronous, so a large folder or a slow filesystem can
+        delay the save: there is no wait for the lock, but no time bound either."""
 
         if self._path is None or not _owner_only_supported():
             return
         try:
             _entry_name(self._path)  # a reserved name (a temp file's included) is never swept here
             dir_fd = _open_owned_dir(os.path.dirname(os.path.abspath(self._path)), missing_leaf_ok=True)
-        except (KeyRefused, OSError):
-            return  # no usable key folder: not swept
+        except (KeyRefused, OSError, ValueError):
+            return  # no usable key folder (or a path it cannot be opened under): not swept
         if dir_fd is None:
             return  # no key folder: nothing to sweep, and none is made
         lock_fd: int | None = None
         try:
             lock_fd = _open_existing_regular(dir_fd, _LOCK_NAME, os.O_RDWR, "key_file_not_owner_only")
             if lock_fd is None:
-                return  # no lock file: nothing to sweep, and none is made
+                return  # no lock file: the sweep is skipped, and none is made
             st = os.fstat(lock_fd)
             if st.st_uid != os.geteuid() or st.st_mode & 0o077:
                 return
@@ -366,9 +373,17 @@ class KeyStore:
         except (KeyRefused, OSError):
             return  # the lock is held by another process, or an entry is not owner-only: not swept
         finally:
+            # Each close on its own: a close that fails is not the save's business, and it is never retried (the
+            # descriptor may already be released). Closing the lock also lets go of it.
             if lock_fd is not None:
-                os.close(lock_fd)  # also lets go of the lock
-            os.close(dir_fd)
+                try:
+                    os.close(lock_fd)
+                except OSError:
+                    pass
+            try:
+                os.close(dir_fd)
+            except OSError:
+                pass
 
     # -- owner-only file ------------------------------------------------------------------
     @contextmanager
@@ -476,8 +491,8 @@ def _sweep_leftovers(dir_fd: int) -> None:
     process killed between the two (a save, a model-key delete or an acceptance) leaves it, owner-only, holding
     the file as it was being written (on a host with no keychain, model keys, a deleted one included).
 
-    Called by every save and by ``accept_keychain`` while the folder's ``.keys.lock`` is held and before the
-    operation writes its own temp file: a broker or venue save on a keychain host, a model-provider save on a
+    Called by a save that reaches the key folder and by ``accept_keychain``, while the folder's ``.keys.lock``
+    is held and before the operation writes its own temp file: a broker or venue save on a keychain host, a model-provider save on a
     host with no keychain, and ``accept_keychain`` take the lock as they always did; a model-provider save on a
     keychain host takes it only for this, without waiting and only when folder and lock already exist
     (``KeyStore._sweep_if_the_folder_is_there``). It runs even when that operation is then refused. Reads and
@@ -874,7 +889,9 @@ def _entry_name(path: str | None) -> str:
         raise KeyRefused("key_file_not_configured")
     # The key file never shares a name with the lock or the record, nor with Cockpit's temp files: a key file
     # with a temp file's name would be swept as a leftover and its keys lost (B38; Codex's fourth read R4-1,
-    # DeepSeek's third read F-1). Every operation checks this before it opens, creates or sweeps anything.
+    # DeepSeek's third read F-1). Every operation that uses the key file or the keychain record checks this
+    # before it opens, creates or sweeps anything; a model-provider key on a keychain host uses neither, so it
+    # is saved, read and deleted as before, and its cleanup sweep skips such a name (DeepSeek's fourth read F-7).
     if name in (_LOCK_NAME, _RECORD_NAME) or _TEMP_NAME.fullmatch(name):
         raise KeyRefused("key_file_not_configured", _RESERVED_DETAIL)
     return name

@@ -39,27 +39,33 @@ Leftover temp files (B38; Lucas, Nov 13, 2026: "Sweep them (Recommended)"). A wr
 keychain record makes a temp file named `.keys-<pid>-<16 hex digits>` in the key folder and renames it over
 the file. A process killed between those two steps (in a save, a model-key delete or an acceptance) leaves
 the temp file behind: owner-only, and holding the file as it was being written, so on a host with no
-keychain it can hold model keys, including one deleted later. Every save and `accept-keychain` remove such
-leftovers while they hold the folder's `.keys.lock`, before they write their own temp file, even when they
-are then refused. A broker or venue save on a keychain host, a model-provider save on a host with no
-keychain and `accept-keychain` take that lock as they always did. A model-provider save on a keychain host
-keeps its key in the keychain and uses no file, so for it the sweep is cleanup only: it runs only when a key
-file is configured with a name that is not reserved, the key folder and `.keys.lock` already exist and pass
-the owner-only checks, and the lock is free at that moment. It creates nothing (no folder, no lock file),
-never waits for the lock (another process holding it means "not swept this time"), and a refusal or an error
-on the way means "not swept", never a refused or failed save. Reads and deletes sweep nothing, so a leftover
-stays until the next save or acceptance in that folder. Every writer that takes the lock holds it while its
-temp file exists, so what is found then is a leftover, never another write in progress (code that ignores
-the lock is outside this). The choice is by name, not by proven origin: an entry whose name is exactly that
-pattern and that `lstat` shows as a regular file of the running user's, with no group or other permission
-bit, is removed. A link, a folder, a pipe, a file of another owner or with a looser mode, and a name that only
-looks like it are skipped when `lstat` sees them, as every other entry in the folder is; an entry replaced
-after that look is not looked at again (only this user or root can do that in the owner-only folder). The
-sweep is best effort: an error while listing the folder, looking at an entry or removing it is ignored, the
-operation goes on, and that leftover stays. A key file may not be named like a temp file: every operation
-refuses such a name (`key_file_not_configured`) before it opens or sweeps anything, so a configured key file
-is never taken for a leftover. A file that someone named that way by hand is still treated as one by another
-key file's save in the same folder; no released build of Cockpit accepted such a key file name.
+keychain it can hold model keys, including one deleted later. A save that reaches the key folder, and
+`accept-keychain`, remove such leftovers while they hold the folder's `.keys.lock`, before they write their
+own temp file, even when they are then refused. A broker or venue save on a keychain host, a model-provider
+save on a host with no keychain and `accept-keychain` take that lock as they always did. A model-provider
+save on a keychain host keeps its key in the keychain and uses no file, so for it the sweep is cleanup only,
+done before the keychain write: it runs only when a key file is configured with a name that is not reserved,
+the key folder and `.keys.lock` already exist and pass the owner-only checks, and the lock is free at that
+moment. It creates nothing (no folder, no lock file; with no lock file it skips the sweep) and never waits to
+take the lock (another process holding it means "not swept this time"). A `KeyRefused` or an `OSError` on the
+way, closing the folder and the lock included, means "not swept" and the key is still saved, and so does a
+`ValueError` from a key file path the folder cannot be opened under; any other error (out of memory, say) and
+an interrupt still stop the save. The folder work is synchronous, so a large folder or a slow filesystem can
+delay the save. Reads and deletes sweep nothing, so a leftover stays until a save or an acceptance that can
+sweep that folder does. Every writer that takes the lock holds it while its temp file exists, so what is
+found then is a leftover, never another write in progress (code that ignores the lock is outside this). The
+choice is by name, not by proven origin: an entry whose name is exactly that pattern and that `lstat` shows as
+a regular file of the running user's, with no group or other permission bit, is removed. A link, a folder, a
+pipe, a file of another owner or with a looser mode, and a name that only looks like it are skipped when
+`lstat` sees them, as every other entry in the folder is; an entry replaced after that look is not looked at
+again (only this user or root can do that in the owner-only folder). The sweep is best effort: an `OSError`
+while listing the folder, looking at an entry or removing it is ignored, the operation goes on, and that
+leftover stays. A key file may not be named like a temp file: it is refused (`key_file_not_configured`) for
+model-provider keys in the file, and, where records are kept, for broker and venue operations and
+`accept-keychain`, before anything is opened or swept, so a configured key file is never taken for a leftover;
+a model-provider key on a keychain host does not use the key file, so it is saved as before and its cleanup
+skips such a name. A file that someone named that way by hand is still treated as one by another key file's
+save in the same folder; no released build of Cockpit accepted such a key file name.
 
 Key names and the file (B23; Lucas, Nov 13, 2026: "Fix before landing (Recommended)"). A key name is 1
 to 64 characters of `a-z`, `0-9`, `.`, `_` and `-`, starting with a letter or a digit, matched against the

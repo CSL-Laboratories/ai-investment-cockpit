@@ -334,13 +334,21 @@ class LibraryBoundaryTests(_Doctor):
     @requires_secretstorage
     def test_the_check_reads_nothing_when_the_record_answers(self) -> None:
         name = "SecretService Keyring"
-        fd = os.open(os.path.join(self.root, ".keychain.json"), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        record = os.path.join(self.root, ".keychain.json")
+        fd = os.open(record, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write('{"version": 1, "keychain": "SecretService Keyring"}')
+        os.utime(record, ns=(10**18, 10**18))  # an old time, so a rewrite shows even when the inode is reused
+        before = os.lstat(record)
         with secret_service_wire() as calls:
             self.assertEqual(self.checked_doctor(SS.Keyring()), (0, plain(name)))
         self.assertEqual(calls, [("dbus_init",), ("check_service_availability",), ("close",)])  # the probe only
         self.assertEqual(os.listdir(self.root), [".keychain.json"])
+        # And the record itself is not rewritten (Codex's fifth reads: the listing alone missed a write to it).
+        after = os.lstat(record)
+        with open(record, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), '{"version": 1, "keychain": "SecretService Keyring"}')
+        self.assertEqual((after.st_ino, after.st_size, after.st_mtime_ns), (before.st_ino, before.st_size, before.st_mtime_ns))
 
 
 if __name__ == "__main__":
