@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "outcome": "O3",
+  "linear_issue": "CSL-215",
+  "maturity_claimed": "researched",
+  "not_claimed": [
+    "human_decided",
+    "contract_frozen",
+    "prototyped",
+    "implemented",
+    "provider_free_verified",
+    "demo_or_paper_qualified",
+    "shadow_qualified",
+    "limited_live_qualified",
+    "release_qualified"
+  ],
+  "hash_pinned": true,
+  "hash_pin_is_not_contract_freeze": true,
+  "candidate_command": "python docs/replacement/outcomes/O3/validate_candidate.py",
+  "oracle": {
+    "path": "oracle/designed-failures.json",
+    "sha256": "6e84f3fbd2e39232323510d3d5563b041852ca4cce24c3e40c4926ce9d6f5b42"
+  },
+  "fixtures": [
+    {
+      "id": "equity_partial_then_dividend",
+      "path": "fixtures/equity_partial_then_dividend.json",
+      "role": "positive",
+      "sha256": "584a4f0ab39144b2b9e7eb28a82f756610310170a4ce071897a19b087f46d45b",
+      "expected_failure_codes": []
+    },
+    {
+      "id": "event_yes_settlement",
+      "path": "fixtures/event_yes_settlement.json",
+      "role": "positive",
+      "sha256": "176b94d5606804dc79763a1f4069ea8654aeb756b27e40bbb855cc7560cde0a5",
+      "expected_failure_codes": []
+    },
+    {
+      "id": "event_restart_idempotent",
+      "path": "fixtures/event_restart_idempotent.json",
+      "role": "positive",
+      "sha256": "fca9e8a04fb5c04c0aa4bfc8b8053cea1d4804ea0765bb86427c058cca6956e1",
+      "expected_failure_codes": []
+    },
+    {
+      "id": "event_void_reconciled",
+      "path": "fixtures/event_void_reconciled.json",
+      "role": "positive",
+      "sha256": "df4c4bf5af4afa1108371067dd8cf81a9786e2cc69785e0006a0e6467fc65818",
+      "expected_failure_codes": []
+    },
+    {
+      "id": "neg_double_counted_collateral_after_restart",
+      "path": "fixtures/neg_double_counted_collateral_after_restart.json",
+      "role": "negative",
+      "sha256": "3bada38042cf24bc2fe2cf61f8da392957b0895add724c85e60f7a53c11e5b8f",
+      "expected_failure_codes": [
+        "collateral_double_count"
+      ]
+    },
+    {
+      "id": "neg_voided_market_unreconciled",
+      "path": "fixtures/neg_voided_market_unreconciled.json",
+      "role": "negative",
+      "sha256": "73ff3de6e0a17c726214d0d36357af21d5b02beb51dacaf636c03c7f77a3ebf8",
+      "expected_failure_codes": [
+        "void_unreconciled"
+      ]
+    },
+    {
+      "id": "neg_partial_fill_divergence",
+      "path": "fixtures/neg_partial_fill_divergence.json",
+      "role": "negative",
+      "sha256": "5a73d222cc1fa4c9361fe00ce2d909da283b1b3a728eed3db9f4360dfae3aa83",
+      "expected_failure_codes": [
+        "partial_fill_divergence"
+      ]
+    },
+    {
+      "id": "neg_duplicate_fill_divergence",
+      "path": "fixtures/neg_duplicate_fill_divergence.json",
+      "role": "negative",
+      "sha256": "642840ecba14fa4d09f769c3ebd3dd69f6eaa556130cf3c751166fd32ba03ef2",
+      "expected_failure_codes": [
+        "duplicate_fill_divergence"
+      ]
+    },
+    {
+      "id": "neg_late_fill_divergence",
+      "path": "fixtures/neg_late_fill_divergence.json",
+      "role": "negative",
+      "sha256": "a8529e33bdfe431140f1744de2c8f4af329123f3b38fb780a6ff0edc8b2a47a1",
+      "expected_failure_codes": [
+        "late_fill_divergence"
+      ]
+    },
+    {
+      "id": "event_resting_order_reservation",
+      "path": "fixtures/event_resting_order_reservation.json",
+      "role": "positive",
+      "sha256": "9cb22f8f018333816af15561348189d7d14b1c13562302499d4e94ae78c611c0",
+      "expected_failure_codes": []
+    },
+    {
+      "id": "neg_offsetting_fill_prices",
+      "path": "fixtures/neg_offsetting_fill_prices.json",
+      "role": "negative",
+      "sha256": "c34e42c12cd7e1b75de0afbf545225e048aed91e94c4b3b7b150a6bbae3feef9",
+      "expected_failure_codes": [
+        "balance_mismatch"
+      ]
+    },
+    {
+      "id": "event_no_settlement",
+      "path": "fixtures/event_no_settlement.json",
+      "sha256": "6b915839b039efdac38ff6f2a078f90f64b16abdac03306fb373ccb6634f9017",
+      "role": "positive",
+      "expected_failure_codes": []
+    }
+  ]
+}

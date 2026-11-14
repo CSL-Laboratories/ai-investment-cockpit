@@ -1,0 +1,43 @@
+{
+  "title": "O3 candidate retained evidence record",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "instrument_id", "source_id"],
+      "properties": {
+        "kind": {"const": "market_void"},
+        "instrument_id": {"type": "string", "minLength": 1},
+        "source_id": {"type": "string", "minLength": 1}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "instrument_id",
+        "source_id",
+        "market_result",
+        "long_qty",
+        "short_qty",
+        "payout_minor",
+        "misc_fee_minor",
+        "fee_already_deducted_from_payout",
+        "pre_rounding_minor"
+      ],
+      "properties": {
+        "kind": {"const": "market_settlement"},
+        "instrument_id": {"type": "string", "minLength": 1},
+        "source_id": {"type": "string", "minLength": 1},
+        "market_result": {"enum": ["yes", "no", "scalar"]},
+        "long_qty": {"type": "integer", "minimum": 0},
+        "short_qty": {"type": "integer", "minimum": 0},
+        "payout_minor": {"type": "integer", "minimum": 0},
+        "misc_fee_minor": {"type": "integer", "minimum": 0},
+        "fee_already_deducted_from_payout": {"type": "boolean"},
+        "pre_rounding_minor": {"type": "integer", "minimum": 0}
+      }
+    }
+  ]
+}
