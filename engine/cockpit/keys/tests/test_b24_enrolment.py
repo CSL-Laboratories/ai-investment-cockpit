@@ -9,8 +9,12 @@ If the record was not published, the marker stays alone and the next broker or v
 needed. R2: only content errors of a record or key file (bad UTF-8 or JSON, a field twice, too deep) are
 "malformed"; anything else stops the operation, so accept-keychain never replaces a valid record after one.
 Also: calls already in flight when an acceptance changes the record, reserved key file names on a keychain
-host, and B37 (Lucas, Nov 13, 2026: "Note + opt-in check (Recommended)"): the plain doctor notes a missing
-record without contacting the keychain; `doctor --check-keychain` looks for the marker when asked.
+host, and B37 (Lucas, Nov 13, 2026: "Note + opt-in check (Recommended)", then "State what is true
+(Recommended)"): the plain doctor notes a missing record and reads no keychain item; `doctor --check-keychain`
+asks the keychain for the marker when asked (what the library itself does on those paths is held in
+test_b37_library_boundary.py). After Codex's third read and DeepSeek's second read: a first save's recovery
+stores the key (C3), the doctor's line when reading the record stops on an unexpected error (F-A), the check
+where no record is kept (F-B), and the two causes of a missing record (F-C).
 Temp folders, a dict for a keychain, made-up keys only.
 """
 
@@ -140,6 +144,8 @@ class EnrolmentTests(_Case):
         self.assertEqual(self.store(ring).accept_keychain(A), "")
         self.store(ring).put("venue", "acct", FAKE)
         self.assertEqual(json.loads(self.read_record()), {"version": 1, "keychain": A})
+        # Codex's third read, C3: the recovery stored the key and kept the marker.
+        self.assertEqual(ring.data, {MARKER: A, ("csl-cockpit", "venue:acct"): FAKE})
 
     def test_a_first_save_whose_error_came_after_publication_keeps_both_and_needs_nothing(self) -> None:
         ring = Ring()
@@ -166,7 +172,7 @@ class EnrolmentTests(_Case):
         self.assertEqual(ring.data, {MARKER: A})  # the marker, no key
         self.assertFalse(os.path.lexists(self.record))
         for exc in self.every_recorded_operation_refused(self.store(ring), "keychain_record_missing"):
-            self.assertIn("a first save was cut off between its two writes", str(exc))
+            self.assertIn("a first save here was cut off between its two writes", str(exc))
             self.assertIn(f"accept-keychain '{A}'", str(exc))
         self.assertEqual(self.store(ring).accept_keychain(A), "")
         self.store(ring).put("broker", "acct", FAKE)
@@ -263,6 +269,25 @@ class EnrolmentTests(_Case):
                     self.assertEqual(cli.main(["doctor", "--key-file", path]), 1)
                 self.assertIn("(key_file_not_configured)", out.getvalue())
                 self.assertEqual(os.listdir(self.leaf), [])
+
+    def test_a_second_key_folder_on_a_marked_keychain_is_told_both_causes(self) -> None:
+        # DeepSeek's second read of #330, F-C: the marker's account is shared by every key folder on a keychain,
+        # so a folder that never had a record is refused too, and the refusal must not only blame a cut-off save.
+        ring = self.saved(A)  # the first folder: record and marker
+        second = os.path.join(self.root, "other", "model-keys.json")
+        os.mkdir(os.path.dirname(second), 0o700)
+
+        def store2() -> KeyStore:
+            return KeyStore(keyring=ring, key_file=second, keychain=A, keychain_names=_KEYCHAIN_NAMES)
+
+        for exc in self.every_recorded_operation_refused(store2(), "keychain_record_missing"):
+            self.assertIn("this folder never had one and another key folder on this keychain left the marker", str(exc))
+            self.assertIn("a first save here was cut off between its two writes", str(exc))
+            self.assertIn(f"accept-keychain '{A}'", str(exc))
+        self.assertEqual(store2().accept_keychain(A), "")
+        store2().put("venue", "acct", FAKE)
+        self.assertEqual(store2().get("venue", "acct"), FAKE)
+        self.assertEqual(self.store(ring).get("broker", "acct"), FAKE)  # the first folder still works
 
 
 class InFlightTests(_Case):
@@ -425,7 +450,7 @@ class DoctorCheckTests(_Case):
         self.assertEqual(rc, 1)
         self.assertTrue(line.startswith(f"keys: fail - OS keychain ({A}); model-provider keys in the keychain; broker "
                                         f"and venue keys refused (keychain_record_missing): {A} holds Cockpit's record "
-                                        "marker but .keychain.json is gone"), line)
+                                        "marker but this key folder has no .keychain.json"), line)
         self.assertIn(f"python -m cockpit.keys accept-keychain '{A}'", line)
         self.assertEqual(ring.calls, [("get", MARKER[1])])  # one read: the marker
 
@@ -438,7 +463,7 @@ class DoctorCheckTests(_Case):
                                "save records it")
         self.assertEqual(ring.calls, [("get", MARKER[1])])
 
-    def test_check_keychain_reads_nothing_when_the_record_answers(self) -> None:
+    def test_check_keychain_asks_the_keychain_nothing_when_the_record_answers(self) -> None:
         ring = self.saved(A)
         ring.calls.clear()
         rc, line = self.check(ring)
@@ -454,12 +479,64 @@ class DoctorCheckTests(_Case):
         self.assertIn("keychain check did not finish (RuntimeError)", line)
         self.assertNotIn(FAKE, line)  # the error's message is never shown
 
+    def test_the_check_reads_nothing_where_no_record_is_kept(self) -> None:
+        # DeepSeek's second read, F-B: check_keychain_record answers "unsupported", and asks the keychain
+        # nothing, for a store that keeps no record: one built without its keychain's name, or a host where
+        # this module has no owner-only file.
+        ring = Ring({MARKER: A})
+        bare = KeyStore(keyring=ring, key_file=self.path)
+        self.assertEqual(bare.check_keychain_record(), "unsupported")
+        with mock.patch.object(store_mod, "_owner_only_supported", lambda: False):
+            self.assertEqual(self.store(ring).check_keychain_record(), "unsupported")
+        self.assertEqual((ring.calls, os.path.lexists(self.leaf)), ([], False))
+        out = _Out(False)  # the command then says nothing was checked: the line keeps the plain note
+        with mock.patch.object(cli, "store_for_host", lambda path: (bare, KeychainStatus(True, A, "ok"))), \
+                contextlib.redirect_stdout(out):
+            self.assertEqual(cli.main(["doctor", "--key-file", self.path, "--check-keychain"]), 0)
+        self.assertEqual(out.getvalue().strip(), f"keys: ok - OS keychain ({A}); model-provider, broker and venue keys "
+                                                 f"in the keychain{no_record_note(A)}")
+        self.assertEqual(ring.calls, [])
+
+
+class DoctorErrorTests(_Case):
+    # DeepSeek's second read of #330, F-A: an unexpected error while the doctor reads the record (only content
+    # errors are "malformed") gave a traceback. Now a fail line with the error's type only, in both doctors.
+    def run_doctor(self, *extra: str) -> tuple[int, str]:
+        ring = Ring({MARKER: A})
+        store = self.store(ring)
+        out = _Out(False)
+        with mock.patch.object(cli, "detect_keychain", lambda: KeychainStatus(True, A, "ok")), \
+                mock.patch.object(cli, "store_for_host", lambda path: (store, KeychainStatus(True, A, "ok"))), \
+                mock.patch("cockpit.keys.store.json.loads", side_effect=MemoryError("made-up message " + FAKE)), \
+                contextlib.redirect_stdout(out):
+            rc = cli.main(["doctor", "--key-file", self.path, *extra])
+        self.assertEqual(ring.calls, [])  # no marker read: the record did not answer "none"
+        return rc, out.getvalue().strip()
+
+    def test_both_doctors_print_a_fail_line_with_the_type_only(self) -> None:
+        body = json.dumps({"version": 1, "keychain": A, "previous": C}).encode()
+        self.write_record(body)
+        for extra in ((), ("--check-keychain",)):
+            with self.subTest(command=" ".join(("doctor",) + extra)):
+                rc, line = self.run_doctor(*extra)
+                self.assertEqual((rc, line), (1, f"keys: fail - OS keychain ({A}); model-provider keys in the keychain; "
+                                                 "broker and venue keys not checked: reading the keychain record did not "
+                                                 "finish (MemoryError)"))
+                self.assertEqual(self.read_record(), body)  # nothing rewritten
+
+    def test_an_interrupt_still_stops_the_doctor(self) -> None:
+        self.write_record(json.dumps({"version": 1, "keychain": A}).encode())
+        with mock.patch("cockpit.keys.store.json.loads", side_effect=KeyboardInterrupt()), \
+                self.assertRaises(KeyboardInterrupt):
+            doctor(KeychainStatus(True, A, "ok"), self.path)
+
 
 @requires_keyring
 class PlainDoctorTests(_Case):
-    def test_the_plain_doctor_never_contacts_the_keychain(self) -> None:
-        # The library's own Secret Service class, its password methods recording every call: detection runs
-        # as in the product, and the plain doctor sends the keychain no call, whatever the record's state.
+    def test_the_plain_doctor_calls_no_password_method_in_any_record_state(self) -> None:
+        # The library's own Secret Service class, its probe a constant and its password methods recording every
+        # call: the plain doctor calls no password method, whatever the record's state. This holds only that;
+        # what the class's own probe and read do under the doctor is in test_b37_library_boundary.py.
         ss = Keychains(self).os()
         out = _Out(False)
 

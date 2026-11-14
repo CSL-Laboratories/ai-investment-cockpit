@@ -43,9 +43,13 @@ and its state, so code that changes the selected object after the check can redi
 What this cannot defend against: hostile code already running in this process, such as a replaced import
 of a keyring module, a monkey-patched genuine class, or a changed helper, state or class of the selected
 object.
-The doctor line names where keys are kept and the key-file state; it reads no stored key or value. On a
-keychain host it also reads the keychain record beside the key file (B24, see ``store``), from that file
-only: it never opens the keychain, so it does not read Cockpit's marker there.
+The doctor line names where keys are kept and the key-file state; ``doctor()`` reads no stored key or value
+and no keychain item, and calls no password method. On a keychain host it also reads the keychain record
+beside the key file (B24, see ``store``), from that file only, so it does not read Cockpit's marker in the
+keychain. Detection, which the doctor command runs first, is what finds out which keychain is selected: as
+it always has, it reads the admitted class's ``priority``, which asks the keychain service whether it is
+there (in keyring 25.7.0, Secret Service and KWallet ask D-Bus, and libsecret opens a session with the
+service). B37 as Lucas confirmed it on Nov 13, 2026: "State what is true (Recommended)".
 """
 
 from __future__ import annotations
@@ -371,7 +375,15 @@ def doctor(status: KeychainStatus, key_file: str | os.PathLike[str] | None) -> d
                 return out
             if state.startswith(("dir_not_owner_only", "file_not_owner_only")):
                 out.update(level="fail", key_file=state, stale_key_file=os.fspath(key_file))
-            _record_into(out, status.backend, keychain_record_state(os.fspath(key_file), _KEYCHAIN_NAMES))
+            try:
+                rec = keychain_record_state(os.fspath(key_file), _KEYCHAIN_NAMES)
+            except Exception as exc:  # noqa: BLE001 - DeepSeek's second read of #330, F-A: a fail line, not a traceback
+                # A broker or venue operation stops on the same error (only content errors are "malformed").
+                # The type only, never the message.
+                out.update(level="fail", broker="unchecked", venue="unchecked",
+                           keychain_record_error=_exception_name(exc))
+                return out
+            _record_into(out, status.backend, rec)
         return out
     out = {"check": "keys", "keychain": "none", "reason": status.reason,
            "broker": "refused:keychain_required", "venue": "refused:keychain_required"}
@@ -392,13 +404,14 @@ def doctor(status: KeychainStatus, key_file: str | os.PathLike[str] | None) -> d
 
 
 def _record_into(out: dict[str, str], current: str, rec: dict[str, str]) -> None:
-    # B24: the keychain record beside the key file, read only; the doctor never opens the keychain.
+    # B24: the keychain record beside the key file, read from that file only; no keychain item is read here.
     state = rec["state"]
     if state == "ok" and rec["keychain"] != current:
         state = "keychain_differs"
     if state == "none":
-        # B37 (Lucas, Nov 13, 2026: "Note + opt-in check (Recommended)"): say there is no record, without
-        # contacting the keychain; `doctor --check-keychain` looks for the marker when asked.
+        # B37 (Lucas, Nov 13, 2026: "Note + opt-in check (Recommended)", then "State what is true
+        # (Recommended)"): say there is no record, reading no keychain item; `doctor --check-keychain` asks
+        # the keychain for the marker when asked.
         out["keychain_record_note"] = "none"
         return
     if state == "ok":
@@ -416,7 +429,11 @@ def _record_into(out: dict[str, str], current: str, rec: dict[str, str]) -> None
 
 def doctor_line(result: dict[str, str]) -> str:
     if result.get("keychain", "none") != "none":
-        if result.get("broker", "keyring").startswith("refused:"):  # B24: the keychain record refuses them
+        if "keychain_record_error" in result:  # F-A: reading the record stopped on an unexpected error
+            line = (f"keys: {result['level']} - OS keychain ({result['keychain']}); model-provider keys in the "
+                    "keychain; broker and venue keys not checked: reading the keychain record did not finish "
+                    f"({result['keychain_record_error']})")
+        elif result.get("broker", "keyring").startswith("refused:"):  # B24: the keychain record refuses them
             line = (f"keys: {result['level']} - OS keychain ({result['keychain']}); model-provider keys in the "
                     f"keychain; broker and venue keys refused ({result['broker'].split(':', 1)[1]}): "
                     f"{result['keychain_record']}")

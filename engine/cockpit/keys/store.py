@@ -26,7 +26,10 @@ allowed for user-entered model-provider keys only; broker and venue keys stay ke
   the running user and not group- or world-writable; every component is still opened with
   ``O_NOFOLLOW``, so nothing on the path may be a symlink. Nothing else is ever created, and an
   entry that exists, or that a competing process creates first, must pass the same checks as any
-  existing one. Before that first save, ``get`` returns ``None`` and ``delete`` does nothing.
+  existing one. Before that first save, ``get`` returns ``None`` and ``delete`` does nothing;
+* a save (``put``) or ``accept_keychain`` first removes, while it holds ``.keys.lock``, the temp files a
+  killed save or acceptance left in that folder, and nothing else (B38, ``_sweep_leftovers``). A read
+  takes no lock and sweeps nothing; a delete sweeps nothing either.
 
 Keychain record (B24). Lucas, Nov 13, 2026, asked what Cockpit should do when a later run selects a
 different OS keychain than the one it saved a broker or venue key in: "Remember and refuse
@@ -38,7 +41,7 @@ never a key. Before it, Cockpit writes one non-secret marker into that keychain 
 ``cockpit-keychain-record``), so a record deleted later is not taken for "never recorded" (see ``_enrol``
 for the order and what an interruption leaves). Broker and
 venue ``get``, ``put`` and ``delete`` are then refused, and nothing is re-recorded, when the record names
-another keychain (``keychain_differs``), when the keychain holds the marker but the record is gone
+another keychain (``keychain_differs``), when the keychain holds the marker but this key folder has no record
 (``keychain_record_missing``), or when the record is malformed, unreadable, a link or not owner-only. The
 way out is named in each refusal: make the recorded keychain available again, or record the change with
 ``accept_keychain`` (``python -m cockpit.keys accept-keychain "<name>"`` at a terminal). With no record and
@@ -87,6 +90,8 @@ _RECORD_VERSION = 1
 _RECORD_LIMIT = 4096  # bytes; a record is a few dozen
 _RECORD_FIELDS = frozenset(("version", "keychain", "previous"))
 _MARKER_ACCOUNT = "cockpit-keychain-record"  # has no ":", so it is never a key's account ("kind:name")
+# B38: the name of _replace_owner_only's temp file (".keys-<pid>-<secrets.token_hex(8)>"), and only that.
+_TEMP_NAME = re.compile(r"\.keys-[0-9]+-[0-9a-f]{16}")
 
 
 class KeyRefused(Exception):
@@ -144,12 +149,15 @@ class KeyStore:
             if self._recorded(kind):
                 with self._locked_dir(create_leaf=True) as dir_fd:
                     assert dir_fd is not None
+                    _sweep_leftovers(dir_fd)
                     self._settle_record(dir_fd)
                     self._keyring.set(self.SERVICE, _account(kind, name), secret)  # type: ignore[union-attr]
                 return backend
             self._keyring.set(self.SERVICE, _account(kind, name), secret)  # type: ignore[union-attr]
             return backend
         with self._locked_dir(create_leaf=True) as dir_fd:
+            assert dir_fd is not None
+            _sweep_leftovers(dir_fd)
             keys = self._read_file(dir_fd)
             keys[name] = secret
             self._write_file(dir_fd, keys)
@@ -199,6 +207,7 @@ class KeyStore:
         self._record_path_checked()
         with self._locked_dir(create_leaf=True) as dir_fd:
             assert dir_fd is not None
+            _sweep_leftovers(dir_fd)
             try:
                 recorded = _read_record(dir_fd, self._keychain_names)
             except KeyRefused as exc:
@@ -213,9 +222,12 @@ class KeyStore:
 
     def check_keychain_record(self) -> str:
         """The record check a broker or venue read makes, made on its own for ``doctor --check-keychain``
-        (B37): ``"ok"``, ``"unsupported"`` where no record is kept, or the read's ``KeyRefused``. When the record
-        is absent it reads Cockpit's marker in the keychain, so it can show the keychain's unlock prompt or wait
-        for it; it reads no key and writes nothing."""
+        (B37): ``"ok"``, ``"unsupported"`` where this store keeps no record (then nothing is read), or the
+        read's ``KeyRefused``. When the record is absent it asks the keychain for Cockpit's marker only, through
+        the keychain library's ordinary read, the same as any broker key read: that can show the keychain's
+        unlock prompt or wait for it, and in keyring 25.7.0 KWallet's call that opens the wallet first moves
+        old-format entries out of its old "Python" folder, and Secret Service creates the default collection if
+        there is none (Codex's third read of #330). Cockpit itself asks for no key and writes nothing."""
 
         if not self._recorded("broker"):
             return "unsupported"
@@ -305,9 +317,13 @@ class KeyStore:
                                               f"{record_way_out('keychain_differs', self._keychain or '', recorded)}")
 
     def _missing(self) -> KeyRefused:
-        return KeyRefused("keychain_record_missing", f"{self._keychain} holds Cockpit's record marker but "
-                                                     f"{_RECORD_NAME} is gone (removed, or a first save was cut off "
-                                                     f"between its two writes); "
+        # The marker's account is shared by every key folder on this keychain, so the store cannot tell which
+        # of these it is (DeepSeek's second read of #330, F-C): both are said.
+        return KeyRefused("keychain_record_missing", f"{self._keychain} holds Cockpit's record marker but this key "
+                                                     f"folder has no {_RECORD_NAME}: it was removed, or a first save "
+                                                     f"here was cut off between its two writes, or this folder never "
+                                                     f"had one and another key folder on this keychain left the "
+                                                     f"marker; "
                                                      f"{record_way_out('keychain_record_missing', self._keychain or '', None)}")
 
     # -- owner-only file ------------------------------------------------------------------
@@ -378,7 +394,7 @@ def _replace_owner_only(dir_fd: int, name: str, body: bytes, cause: str) -> None
 
     _require_final_dir(dir_fd)
     _refuse_existing_unless_owner_only(dir_fd, name, cause)
-    tmp = f".keys-{os.getpid()}-{secrets.token_hex(8)}"
+    tmp = f".keys-{os.getpid()}-{secrets.token_hex(8)}"  # _TEMP_NAME: a kill before the rename leaves it (B38)
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
     fd = os.open(tmp, flags, 0o600, dir_fd=dir_fd)
     try:
@@ -406,6 +422,36 @@ def _replace_owner_only(dir_fd: int, name: str, body: bytes, cause: str) -> None
     except OSError as exc:
         if exc.errno not in (errno.EINVAL, getattr(errno, "ENOTSUP", errno.EINVAL)):
             raise  # a filesystem that cannot fsync a directory is the only exception
+
+
+def _sweep_leftovers(dir_fd: int) -> None:
+    """Remove the temp files a killed save or acceptance left in this folder (B38; Lucas, Nov 13, 2026: "Sweep
+    them (Recommended)").
+
+    ``_replace_owner_only`` writes ``.keys-<pid>-<16 hex>`` and renames it over the key file or the record; a
+    process killed between the two leaves it, owner-only, holding the file as it was being written (on a host
+    with no keychain, model keys, a deleted one included). Called by a save or an acceptance only while it
+    holds the folder's ``.keys.lock`` and before it writes its own temp file. Every writer holds that lock
+    while its temp file exists, so one found here is a leftover, never another operation's file in progress.
+    Removed: only a regular file of the running user's, with no group or other permission bit, whose name is
+    exactly that pattern, decided from ``lstat`` (``unlink`` removes the entry and never follows a link).
+    Anything else is left as it is, as every other entry in the folder is: a link, a folder, a file of another
+    owner or with a looser mode, a name that only looks like it. A folder that cannot be listed is not swept.
+    """
+
+    try:
+        names = os.listdir(dir_fd)
+    except OSError:
+        return  # cleanup only: the save or acceptance does not depend on it
+    for name in names:
+        if not _TEMP_NAME.fullmatch(name):
+            continue
+        try:
+            st = os.lstat(name, dir_fd=dir_fd)
+        except OSError:
+            continue
+        if stat.S_ISREG(st.st_mode) and st.st_uid == os.geteuid() and not st.st_mode & 0o077:
+            _unlink_quiet(dir_fd, name)
 
 
 def _owner_only_supported() -> bool:
