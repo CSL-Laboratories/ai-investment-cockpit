@@ -1,8 +1,9 @@
 # engine/
 
 This is the new Cockpit engine tree. X1 names it `CX-NEW`: recreated code goes in
-`engine/**` and its tests in `engine/tests/**`. It is empty on purpose. No engine code
-lands here until the rules below can be checked.
+`engine/**` and its tests in `engine/tests/**`. Its first code is the key store,
+[`cockpit/keys/`](cockpit/keys/README.md) (CSL-59). CI's `engine tests` step collects its
+tests through `engine/tests/keys/`.
 
 The rules come from CP0-v2 in csl-research,
 `contracts/ai-investment-cockpit/amendments/SUCCESSOR-PRODUCT-2026-10-26.md`, as amended
@@ -33,7 +34,10 @@ receipt on CSL-633, comment `7ece7d3b`). If this file and those differ, those wi
 4. **Order-path files stay on the escalate list** in whichever tree they live: risk,
    brokers, audit, PnL, halt, kill switch, gate, mode and the loopback routes
    (CP0-v2 §4 item 6, `AGENTS.md` "Proceed or escalate").
-5. **Keys live in the OS keyring.** CSL adds no pay-per-token keys (CP0-v2 §4 item 5).
+5. **Keys live in the OS keyring.** On a host without one, only user-entered model-provider
+   keys may be kept, in an owner-only file; broker and venue keys are refused there
+   (PRODUCT.md A44; Lucas, Nov 8, 2026: "Owner-only file", "Yes, model keys only").
+   CSL adds no pay-per-token keys (CP0-v2 §4 item 5).
 6. **Research does not live here.** Specs, decisions, evidence and runbooks go to
    csl-research (X4). Only files that code or agents read offline stay in this repo.
 

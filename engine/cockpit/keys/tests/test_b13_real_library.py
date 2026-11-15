@@ -22,7 +22,7 @@ from typing import Any
 from unittest import mock
 
 from cockpit.keys import KEY_KINDS, KeyRefused, doctor, doctor_line, store_for_host
-from cockpit.keys.tests.fakes import FAKE, forget_class, loader
+from cockpit.keys.tests.fakes import FAKE, MARKER_CALLS, MARKER_ITEMS, forget_class, key_file, loader, with_marker
 
 try:
     _kr_backend = importlib.import_module("keyring.backend")
@@ -39,7 +39,6 @@ try:
 except ImportError:
     _secretstorage = None
 
-PATH = "/nonexistent-cockpit-b13/model-keys.json"
 
 
 def _standin(module: str, qualname: str, priority: float) -> tuple[Any, list[str]]:
@@ -101,7 +100,7 @@ class RealChainerTests(unittest.TestCase):
         helper, helper_touched = _standin("review_standin.pip_credential_helper", "CredentialHelper", 9)
         chain = self.real_chain([plain, ss, helper])
         self.assertEqual([type(b).__name__ for b in chain.backends], ["CredentialHelper", "Keyring", "PlaintextKeyring"])
-        store, status = store_for_host(PATH, loader(chain))
+        store, status = store_for_host(key_file(self), loader(chain))
         self.assertTrue(status.available)
         self.assertEqual(status.backend, "SecretService Keyring")
         self.assertEqual(status.ignored, ("review_standin.pip_credential_helper.CredentialHelper",
@@ -109,8 +108,9 @@ class RealChainerTests(unittest.TestCase):
         for kind in KEY_KINDS:
             self.assertEqual(store.put(kind, "fixture", FAKE), "keyring")
             self.assertEqual(store.get(kind, "fixture"), FAKE)
-        self.assertEqual(sorted(user for _, user in data), ["broker:fixture", "model_provider:fixture", "venue:fixture"])
-        self.assertEqual(len(calls), 6)
+        self.assertEqual(data, with_marker({("csl-cockpit", f"{kind}:fixture"): FAKE for kind in KEY_KINDS},
+                                           "SecretService Keyring"))
+        self.assertEqual(len(calls), 6 + MARKER_CALLS)
         self.assertEqual((plain_touched, helper_touched), ([], []))
         self.assertIn("other keyring backends ignored: review_standin.pip_credential_helper.CredentialHelper, "
                       "keyrings.alt.file.PlaintextKeyring", doctor_line(doctor(status, None)))
@@ -118,7 +118,7 @@ class RealChainerTests(unittest.TestCase):
     def test_windows_chain_with_a_credential_helper_uses_the_windows_vault(self) -> None:
         vault, data, _ = self.real_os_backend(_windows.WinVaultKeyring, 5)
         helper, touched = _standin("review_standin.pip_credential_helper", "CredentialHelper", 9)
-        store, status = store_for_host(PATH, loader(self.real_chain([vault, helper])))
+        store, status = store_for_host(key_file(self), loader(self.real_chain([vault, helper])))
         self.assertTrue(status.available)
         self.assertEqual(status.backend, "Windows WinVaultKeyring")
         result = doctor(status, None)
@@ -126,17 +126,18 @@ class RealChainerTests(unittest.TestCase):
         for kind in KEY_KINDS:  # on Windows too: no owner-only file is needed for model keys
             self.assertEqual(store.backend_for(kind), "keyring")
             store.put(kind, "fixture", FAKE)
-        self.assertEqual(len(data), 3)
+        self.assertEqual(len(data), 3 + MARKER_ITEMS)  # and the record marker where a record is kept (not on Windows)
         self.assertEqual(touched, [])
 
     def test_two_real_os_keychains_use_secret_service_before_libsecret(self) -> None:
         lib, lib_data, lib_calls = self.real_os_backend(_libsecret.Keyring, 4.8)
         ss, ss_data, _ = self.real_os_backend(_ss.Keyring, 5)
-        store, status = store_for_host(PATH, loader(self.real_chain([lib, ss])))
+        store, status = store_for_host(key_file(self), loader(self.real_chain([lib, ss])))
         self.assertEqual(status.backend, "SecretService Keyring")
         self.assertEqual(status.ignored, ("keyring.backends.libsecret.Keyring",))
         store.put("broker", "fixture", FAKE)
-        self.assertEqual((list(ss_data.values()), lib_data, lib_calls), ([FAKE], {}, []))
+        self.assertEqual((ss_data, lib_data, lib_calls),
+                         (with_marker({("csl-cockpit", "broker:fixture"): FAKE}, "SecretService Keyring"), {}, []))
 
     @unittest.skipIf(_secretstorage is None, "secretstorage (Linux-only keyring dependency) not installed")
     def linux_host(self, stack: contextlib.ExitStack, *, ss: bool, kw5: bool, kw4: bool,
@@ -199,12 +200,13 @@ class RealChainerTests(unittest.TestCase):
             with self.subTest(label), contextlib.ExitStack() as stack:
                 classes, stores = self.linux_host(stack, ss=ss_up, kw5=kw5_up, kw4=kw4_up, lib=lib_up)
                 rings = [cls() for cls in classes]
+                path = key_file(self)  # one host, two sessions
                 picks = []
                 for env, clear in (({"XDG_CURRENT_DESKTOP": "KDE"}, False), (no_desktop, True)):
                     with mock.patch.dict("os.environ", env, clear=clear):
                         chain = self.real_chain(rings)
                         library_order = [type(b).__name__ for b in chain.backends]
-                        store, status = store_for_host(PATH, loader(chain))
+                        store, status = store_for_host(path, loader(chain))
                         picks.append((status.backend, sorted(status.ignored)))
                         if not picks[1:]:
                             store.put("broker", "fixture", FAKE)
@@ -214,7 +216,7 @@ class RealChainerTests(unittest.TestCase):
                         self.assertEqual(library_order[0], "DBusKeyring" if not clear else "Keyring")
                 self.assertEqual([backend for backend, _ in picks], [expected, expected])
                 self.assertEqual(picks[0][1], picks[1][1])
-                self.assertEqual(sum(len(data) for data in stores.values()), 1)
+                self.assertEqual(sum(len(data) for data in stores.values()), 1 + MARKER_ITEMS)
 
     @unittest.skipIf(_secretstorage is None, "secretstorage (Linux-only keyring dependency) not installed")
     def test_python_keyring_backend_still_pins_one_keychain(self) -> None:
@@ -223,15 +225,16 @@ class RealChainerTests(unittest.TestCase):
         no_desktop = {k: v for k, v in os.environ.items() if k not in ("XDG_CURRENT_DESKTOP", "PYTHON_KEYRING_BACKEND")}
         with contextlib.ExitStack() as stack:
             _, stores = self.linux_host(stack, ss=True, kw5=True, kw4=False, lib=False)
+            path = key_file(self)  # one host, two sessions
             for env, clear in (({"XDG_CURRENT_DESKTOP": "KDE"}, False), (no_desktop, True)):
                 env = dict(env, PYTHON_KEYRING_BACKEND="keyring.backends.kwallet.DBusKeyring")
                 with mock.patch.dict("os.environ", env, clear=clear):
                     chosen = _core._detect_backend()
                     self.assertIs(type(chosen), _kwallet.DBusKeyring)
-                    store, status = store_for_host(PATH, loader(chosen))
+                    store, status = store_for_host(path, loader(chosen))
                     self.assertEqual((status.backend, status.ignored), ("kwallet DBusKeyring", ()))
                     store.put("broker", "fixture", FAKE)
-            self.assertEqual((len(stores[_kwallet.DBusKeyring]), stores[_ss.Keyring]), (1, {}))
+            self.assertEqual((len(stores[_kwallet.DBusKeyring]), stores[_ss.Keyring]), (1 + MARKER_ITEMS, {}))
 
     def test_the_library_reads_an_ignored_backends_priority_but_cockpit_sends_it_nothing(self) -> None:
         # Codex's P2: building the chain, the library itself reads every member's priority (to filter and
@@ -253,7 +256,7 @@ class RealChainerTests(unittest.TestCase):
                 raise AssertionError(f"ignored backend was touched: {attr}")
 
         ss, data, calls = self.real_os_backend(_ss.Keyring, 5)
-        store, status = store_for_host(PATH, loader(self.real_chain([ss, Helper()])))
+        store, status = store_for_host(key_file(self), loader(self.real_chain([ss, Helper()])))
         self.assertTrue(status.available)
         self.assertEqual(status.ignored, ("review_standin.pip_credential_helper.Helper",))
         self.assertGreaterEqual(len(reads), 1)  # the library's own discovery ran the backend's code
@@ -261,7 +264,7 @@ class RealChainerTests(unittest.TestCase):
             store.put(kind, "fixture", FAKE)
             self.assertEqual(store.get(kind, "fixture"), FAKE)
         self.assertEqual(touched, [])
-        self.assertEqual(len(data), len(KEY_KINDS))
+        self.assertEqual(len(data), len(KEY_KINDS) + MARKER_ITEMS)
 
     def test_a_priority_that_raises_while_the_library_builds_the_chain_fails_closed(self) -> None:
         # The library propagates the error out of ``ChainerBackend.backends``; detection then reports no
@@ -281,7 +284,7 @@ class RealChainerTests(unittest.TestCase):
                         return 1
 
                 ss, data, calls = self.real_os_backend(_ss.Keyring, 5)
-                store, status = store_for_host(PATH, loader(self.real_chain([ss, Broken()])))
+                store, status = store_for_host(key_file(self), loader(self.real_chain([ss, Broken()])))
                 self.assertFalse(status.available)
                 self.assertEqual(status.reason, "keyring_backend_error:RuntimeError")
                 self.assertEqual(status.ignored, ())
@@ -323,7 +326,7 @@ class RealChainerTests(unittest.TestCase):
                 with self.subTest(route), mock.patch.dict(os.environ, env, clear=True):
                     chosen = _core._detect_backend()
                     self.assertIs(type(chosen), Spoof)  # the library did load the forged class
-                    store, status = store_for_host(PATH, loader(chosen))
+                    store, status = store_for_host(key_file(self), loader(chosen))
                     self.assertFalse(status.available)
                     # Refused, and said: it carries Secret Service's module and class name but is not its class.
                     self.assertEqual(status.reason, "unsupported_keychain_class:keyring.backends.SecretService.Keyring")
@@ -376,7 +379,7 @@ class RealChainerTests(unittest.TestCase):
         selected = _ss.Keyring()
         chain = self.real_chain([selected])
         load = loader(chain)
-        store, status = store_for_host(PATH, load)
+        store, status = store_for_host(key_file(self), load)
         self.assertEqual(status.backend, "SecretService Keyring")
         # A replaced global keyring or chain, and shadowed top-level methods, after the check: nothing changes.
         other = _ss.Keyring()
@@ -390,7 +393,7 @@ class RealChainerTests(unittest.TestCase):
         for kind in KEY_KINDS:
             store.put(kind, "fixture", FAKE)
             self.assertEqual(store.get(kind, "fixture"), FAKE)
-        self.assertEqual(len(vault.items), len(KEY_KINDS))
+        self.assertEqual(len(vault.items), len(KEY_KINDS) + MARKER_ITEMS)
         store.delete("broker", "fixture")
         self.assertIsNone(store.get("broker", "fixture"))
         self.assertEqual(elsewhere.items, {})
@@ -414,7 +417,7 @@ class RealChainerTests(unittest.TestCase):
     def test_a_real_chain_with_no_os_keychain_is_refused(self) -> None:
         plain, plain_touched = _standin("keyrings.alt.file", "PlaintextKeyring", 0.5)
         helper, helper_touched = _standin("review_standin.pip_credential_helper", "CredentialHelper", 9)
-        store, status = store_for_host(PATH, loader(self.real_chain([plain, helper])))
+        store, status = store_for_host(key_file(self), loader(self.real_chain([plain, helper])))
         self.assertFalse(status.available)
         for kind in ("broker", "venue"):
             with self.assertRaises(KeyRefused) as ctx:
@@ -422,7 +425,7 @@ class RealChainerTests(unittest.TestCase):
             self.assertEqual(ctx.exception.cause, "keychain_required")
         self.assertEqual((plain_touched, helper_touched), ([], []))
         ss, data, _ = self.real_os_backend(_ss.Keyring, 5)
-        store, status = store_for_host(PATH, loader(self.real_chain([plain, helper, ss])))
+        store, status = store_for_host(key_file(self), loader(self.real_chain([plain, helper, ss])))
         self.assertTrue(status.available)
 
 
