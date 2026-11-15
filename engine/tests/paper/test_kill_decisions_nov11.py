@@ -127,6 +127,62 @@ class KillDecisionTests(unittest.TestCase):
         self.assertEqual((out["status"], ks["status"]), ("pending", "pending"))
         self.assertNotEqual(ks["cancel_all"], "confirmed")
 
+    def test_decision4_unconfirmed_halt_never_latches_kept_cancel(self) -> None:
+        (coinbase, gemini, kalshi), _ = self._venues()
+        unhalted_kills = [
+            CoinbaseKill(lambda: None, coinbase, halted=self.book.halted),
+            GeminiKill(lambda: None, gemini, halted=self.book.halted),
+            KalshiKill(lambda: None, kalshi, halted=self.book.halted),
+        ]
+        # Kill #1: halt never lands on the book, while each venue cancels and revokes.
+        first = KillSwitch(lambda: None, unhalted_kills, paper_book=self.book, venue_timeout_s=5.0).kill()
+        self.assertEqual(first["status"], "pending")
+        for venue in first["venues"][1:]:
+            self.assertEqual(venue["halt"], "pending")
+            self.assertEqual(venue.get("cancel_orders", venue.get("cancel_all")), "confirmed")
+            self.assertEqual(venue.get("revoke_grant", venue.get("revoke_key")), "confirmed")
+        # Orders placed before revoke while unhalted cannot be listed now that credentials are dead.
+        coinbase.open.append("cb-after-cancel")
+        gemini.open.append("gm-after-cancel")
+        coinbase.list_error = PermissionError("revoked")
+        gemini.cancel_error = PermissionError("revoked")
+        kalshi.cancel = kalshi.orders = PermissionError("revoked")
+        for vk in unhalted_kills:
+            vk._halt = self.book.halt
+        second = self._switch(unhalted_kills).kill()
+        self.assertEqual(second["status"], "pending")
+        for venue in second["venues"][1:]:
+            self.assertEqual(venue["status"], "pending")
+
+    def test_retry_does_not_reuse_cancel_after_missing_or_failed_halt_readback(self):
+        def unreadable():
+            raise RuntimeError("fixture read failure")
+
+        for readback in (None, lambda: False, unreadable):
+            for adapter, transport in ((CoinbaseKill, MockCoinbase()),
+                                       (GeminiKill, MockGemini()),
+                                       (KalshiKill, FakeTransport())):
+                with self.subTest(adapter=adapter.__name__, readback=readback):
+                    kill = adapter(lambda: None, transport, halted=readback)
+                    first = kill.kill()
+                    self.assertEqual(first["status"], "pending")
+                    self.assertEqual(first["halt"], "pending")
+                    cancel = "cancel_orders" if adapter is CoinbaseKill else "cancel_all"
+                    revoke = "revoke_key" if adapter is KalshiKill else "revoke_grant"
+                    self.assertEqual(first[cancel], "confirmed")
+                    self.assertEqual(first[revoke], "confirmed")
+                    if adapter is KalshiKill:
+                        transport.cancel = transport.orders = PermissionError("revoked")
+                    elif adapter is CoinbaseKill:
+                        transport.list_error = PermissionError("revoked")
+                    else:
+                        transport.cancel_error = PermissionError("revoked")
+                    kill._halted = lambda: True
+                    second = kill.kill()
+                    self.assertEqual(second["status"], "pending")
+                    self.assertEqual(second[cancel], "pending_credential_revoked")
+                    self.assertFalse(second["detail"][cancel].startswith("kept:"))
+
 
 if __name__ == "__main__":
     unittest.main()

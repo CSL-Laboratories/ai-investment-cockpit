@@ -512,6 +512,150 @@ class CoinbaseKillTests(unittest.TestCase):
         self.assertEqual(out["status"], "confirmed")
         self.assertTrue(book.halted())
 
+    def test_unfinished_listing_with_null_cursor_keeps_cancel_pending(self) -> None:
+        for extra in ({"has_next": True}, {"has_next": "yes"}, {"truncated": True}, {"remaining": 2}):
+            with self.subTest(extra=extra):
+                venue = MockCoinbase()
+                venue.list_open_orders = lambda cursor, extra=extra: {"order_ids": [], "cursor": None, **extra}
+                out = self._kill(venue).kill()
+                self.assertEqual((out["status"], out["cancel_orders"]), ("pending", "pending"))
+                self.assertIn("unfinished_list", out["detail"]["cancel_orders"])
+
+    def test_listing_metadata_must_be_typed_and_consistent_on_every_page(self):
+        for cursor, extra in (
+            (None, {"remaining": False}), (None, {"remaining": "0"}),
+            (None, {"remaining": -1}), (None, {"truncated": 0}),
+            ("next", {"has_next": False}), ("next", {"remaining": 0}),
+            ("next", {"truncated": False}),
+        ):
+            with self.subTest(cursor=cursor, extra=extra):
+                venue = MockCoinbase()
+                pages = iter([{"order_ids": [], "cursor": cursor, **extra},
+                              {"order_ids": [], "cursor": None}])
+                venue.list_open_orders = lambda _, pages=pages: next(pages)
+                out = self._kill(venue).kill()
+                self.assertEqual(out["detail"]["cancel_orders"], "unfinished_list")
+                self.assertEqual(out["status"], "pending")
+
+    def test_incomplete_confirmation_relist_stays_pending(self):
+        venue = MockCoinbase()
+        pages = iter([{"order_ids": [], "cursor": None},
+                      {"order_ids": [], "cursor": None, "has_next": True}])
+        venue.list_open_orders = lambda _, pages=pages: next(pages)
+        out = self._kill(venue).kill()
+        self.assertEqual(out["detail"]["cancel_orders"], "relist:unfinished_list")
+        self.assertEqual(out["status"], "pending")
+
+    def test_unfinished_first_listing_still_cancels_the_orders_it_listed(self):
+        # Review of #322: the leg stays pending, but a listed order is never left for the revoke.
+        for extra in ({"has_next": True}, {"truncated": True}, {"remaining": 3}, {"has_next": "yes"}):
+            with self.subTest(extra=extra):
+                venue = MockCoinbase(orders=["o1", "o2"])
+
+                def listing(cursor, venue=venue, extra=extra):
+                    venue._auth()
+                    return {"order_ids": list(venue.open), "cursor": None, **extra}
+
+                venue.list_open_orders = listing
+                out = self._kill(venue).kill()
+                self.assertEqual((out["status"], out["cancel_orders"]), ("pending", "pending"))
+                self.assertEqual(out["detail"]["cancel_orders"], "unfinished_list")
+                self.assertEqual(out["cancelled"], ["o1", "o2"])
+                self.assertEqual(venue.open, [])
+                self.assertEqual(out["revoke_grant"], "confirmed")
+                self.assertEqual(venue.log, ["halt", "cancel:o1", "cancel:o2", "revoke",
+                                             "probe_api", "probe_refresh"])
+
+    def test_bad_later_page_still_cancels_what_was_listed(self):
+        venue = MockCoinbase(orders=["o1", "o2", "o3"])
+        pages = iter([{"order_ids": ["o1", "o2"], "cursor": "2", "has_next": True},
+                      {"order_ids": ["o3"], "cursor": None, "has_next": True}])
+        venue.list_open_orders = lambda cursor: next(pages)
+        out = self._kill(venue).kill()
+        self.assertEqual((out["cancel_orders"], out["detail"]["cancel_orders"]), ("pending", "unfinished_list"))
+        self.assertEqual(out["cancelled"], ["o1", "o2", "o3"])
+        self.assertEqual((out["status"], out["revoke_grant"]), ("pending", "confirmed"))
+        self.assertEqual(venue.open, [])
+
+    def test_page_cap_still_cancels_each_listed_order_once(self):
+        class Endless(MockCoinbase):
+            def list_open_orders(self, cursor):
+                return {"order_ids": ["o1"], "cursor": "more"}
+        endless = Endless(orders=["o1"])
+        out = self._kill(endless).kill()
+        self.assertEqual((out["cancel_orders"], out["detail"]["cancel_orders"]), ("pending", "list_page_cap"))
+        self.assertEqual(endless.log.count("cancel:o1"), 1)  # listed 100 times, cancelled once
+        self.assertEqual(endless.open, [])
+        self.assertEqual((out["status"], out["revoke_grant"]), ("pending", "confirmed"))
+
+    def test_unreadable_listing_cancels_each_readable_id_once_before_revoke(self):
+        for bad_page, detail, expected in (
+            (TimeoutError("private transport detail"), "partial_list_error:TimeoutError", ["o1", "o2"]),
+            ({"order_ids": "garbled"}, "unreadable_list", ["o1", "o2"]),
+            ({"order_ids": ["o2", "o3", "o3", None, 0, ""], "cursor": None},
+             "unreadable_list", ["o1", "o2", "o3"]),
+            ({"order_ids": ["o2", "o3", "o3"], "cursor": ""}, "unreadable_list", ["o1", "o2", "o3"]),
+        ):
+            with self.subTest(bad_page=bad_page):
+                venue = MockCoinbase(orders=["o1", "o2", "o3"])
+                def listing(cursor):
+                    venue.log.append("list")
+                    venue._auth()
+                    if cursor is None:
+                        return {"order_ids": ["o1", "o2", "o1"], "cursor": "next"}
+                    if isinstance(bad_page, Exception):
+                        raise bad_page
+                    return bad_page
+                venue.list_open_orders = listing
+                out = self._kill(venue).kill()
+                self.assertEqual((out["status"], out["cancel_orders"]), ("pending", "pending"))
+                self.assertEqual(out["detail"]["cancel_orders"], detail)
+                self.assertEqual(out["cancelled"], expected)
+                self.assertEqual(venue.open, [i for i in ["o1", "o2", "o3"] if i not in expected])
+                self.assertEqual(venue.log, ["halt", "list", "list", *["cancel:" + i for i in expected],
+                                             "revoke", "probe_api", "probe_refresh"])
+                self.assertEqual(out["revoke_grant"], "confirmed")
+
+    def test_unfinished_listing_cancel_failure_never_skips_another_order(self):
+        venue = MockCoinbase(orders=["o1", "o2", "o3"])
+        venue.fail_cancel["o1"] = TimeoutError()
+        venue.fail_cancel["o2"] = {"order_id": "o2", "success": False}
+        venue.list_open_orders = lambda _: {"order_ids": ["o1", "o2", "o1", "o3"],
+                                            "cursor": None, "has_next": True}
+        kill = self._kill(venue)
+        out = kill.kill()
+        self.assertEqual((out["status"], out["cancel_orders"]), ("pending", "pending"))
+        self.assertEqual(out["cancelled"], ["o3"])
+        self.assertEqual(venue.open, ["o1", "o2"])
+        self.assertEqual(venue.log, ["halt", "cancel:o1", "cancel:o2", "cancel:o3", "revoke",
+                                     "probe_api", "probe_refresh"])
+        venue.list_open_orders = lambda _: venue._auth()
+        retry = kill.kill()
+        self.assertEqual((retry["status"], retry["cancel_orders"]), ("pending", "pending_credential_revoked"))
+        self.assertFalse(retry["detail"]["cancel_orders"].startswith("kept:"))
+
+    def test_later_page_error_cannot_keep_an_earlier_cancel_confirmation(self):
+        for first_ids in ([], ["o1"]):
+            with self.subTest(first_ids=first_ids):
+                venue = MockCoinbase()
+                kill = self._kill(venue)
+                self.assertEqual(kill.kill()["status"], "confirmed")
+                # A reply on the first call invalidates kept evidence, even if it is empty.
+                def listing(cursor):
+                    if cursor is None:
+                        return {"order_ids": first_ids, "cursor": "next"}
+                    raise TimeoutError()
+                venue.list_open_orders = listing
+                out = kill.kill()
+                self.assertEqual((out["status"], out["cancel_orders"]), ("pending", "pending_credential_revoked"))
+                self.assertEqual(out["detail"]["cancel_orders"], "partial_list_error:TimeoutError")
+
+    def test_consistent_completion_metadata_can_confirm(self):
+        venue = MockCoinbase()
+        venue.list_open_orders = lambda _: {"order_ids": [], "cursor": None,
+                                            "has_next": False, "truncated": False, "remaining": 0}
+        self.assertEqual(self._kill(venue).kill()["status"], "confirmed")
+
 
 if __name__ == "__main__":
     unittest.main()

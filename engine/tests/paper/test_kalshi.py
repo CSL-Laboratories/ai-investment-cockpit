@@ -260,7 +260,9 @@ class KillTests(unittest.TestCase):
         """An empty page that says more may follow confirms nothing."""
         for extra in ({"cursor": "page-2"}, {"cursor": ""}, {"cursor": 0}, {"truncated": True},
                       {"truncated": None}, {"truncated": 1}, {"remaining": 2}, {"remaining": "0"},
-                      {"remaining": None}, {"remaining": False}):
+                      {"remaining": None}, {"remaining": False},
+                      {"has_next": True}, {"has_next": 1}, {"has_next": 0}, {"has_next": 0.0},
+                      {"has_next": "false"}, {"has_next": None}):
             with self.subTest(extra=extra):
                 kill, log = self._kill(orders={"order_ids": [], **extra})
                 out = kill.kill()
@@ -271,7 +273,8 @@ class KillTests(unittest.TestCase):
     def test_finished_empty_list_confirms(self) -> None:
         for payload in ({"order_ids": []}, {"order_ids": [], "cursor": None},
                         {"order_ids": [], "truncated": False}, {"order_ids": [], "remaining": 0},
-                        {"order_ids": [], "cursor": None, "truncated": False, "remaining": 0}):
+                        {"order_ids": [], "cursor": None, "truncated": False, "remaining": 0},
+                        {"order_ids": [], "has_next": False}):
             with self.subTest(payload=payload):
                 out = self._kill(orders=payload)[0].kill()
                 self.assertEqual((out["status"], out["cancel_all"]), ("confirmed", "confirmed"))
