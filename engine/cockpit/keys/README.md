@@ -48,9 +48,11 @@ done before the keychain write: it runs only when a key file is configured with 
 the key folder and `.keys.lock` already exist and pass the owner-only checks, and the lock is free at that
 moment. It creates nothing (no folder, no lock file; with no lock file it skips the sweep) and never waits to
 take the lock (another process holding it means "not swept this time"). A `KeyRefused` or an `OSError` on the
-way, closing the folder and the lock included, means "not swept" and the key is still saved, and so does a
-`ValueError` from a key file path the folder cannot be opened under; any other error (out of memory, say) and
-an interrupt still stop the save. The folder work is synchronous, so a large folder or a slow filesystem can
+way, closing the folder and the lock included, and a `ValueError` from a key file path the folder cannot be
+opened under do not prevent the keychain write; the cleanup may already have removed files when one comes (a
+close comes after the sweep). The close of each descriptor it opened is attempted once, whatever the other
+close raised. Any other error (out of memory, say) and an interrupt still stop the save, after those closes are
+attempted. The folder work is synchronous, so a large folder or a slow filesystem can
 delay the save. Reads and deletes sweep nothing, so a leftover stays until a save or an acceptance that can
 sweep that folder does. Every writer that takes the lock holds it while its temp file exists, so what is
 found then is a leftover, never another write in progress (code that ignores the lock is outside this). The

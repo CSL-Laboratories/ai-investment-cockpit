@@ -343,13 +343,15 @@ class KeyStore:
         and pass the owner-only checks, and the lock is free at once (``LOCK_NB``). It creates nothing (no folder,
         no lock file; with no lock file it skips the sweep), and reads and writes no record.
 
-        What it promises the save (Codex's fifth reads R5-1 and R5-2, DeepSeek's fourth read F-6): it never waits
-        to take the lock; a ``KeyRefused`` or an ``OSError`` anywhere on the way, closing the folder and the lock
-        included, means "not swept" and the key is still saved, and so does a ``ValueError`` from a path the
-        folder cannot be opened under (a NUL in it, say), since the save does not use that path. Each descriptor
-        is closed once, on its own, whatever happened to the other. Any other error (out of memory, say) and an
-        interrupt propagate. The folder work it does is synchronous, so a large folder or a slow filesystem can
-        delay the save: there is no wait for the lock, but no time bound either."""
+        What it promises the save (Codex's fifth and sixth reads R5-1, R5-2 and R6-1, DeepSeek's fourth and fifth
+        reads F-6 and F-1): it never waits to take the lock. A ``KeyRefused`` or an ``OSError`` anywhere on the
+        way, closing the folder and the lock included, and a ``ValueError`` from a path the folder cannot be
+        opened under (a NUL in it, say, since the save does not use that path) do not prevent the keychain write;
+        the cleanup may already have removed files when one comes (a close comes after the sweep). Each acquired
+        descriptor's close is attempted once, whatever the other close raised. Any other error (out of memory,
+        say) and an interrupt propagate, after those closes are attempted. The folder work it does is synchronous,
+        so a large folder or a slow filesystem can delay the save: there is no wait for the lock, but no time
+        bound either."""
 
         if self._path is None or not _owner_only_supported():
             return
@@ -357,7 +359,7 @@ class KeyStore:
             _entry_name(self._path)  # a reserved name (a temp file's included) is never swept here
             dir_fd = _open_owned_dir(os.path.dirname(os.path.abspath(self._path)), missing_leaf_ok=True)
         except (KeyRefused, OSError, ValueError):
-            return  # no usable key folder (or a path it cannot be opened under): not swept
+            return  # no usable key folder (or a path it cannot be opened under): nothing is swept
         if dir_fd is None:
             return  # no key folder: nothing to sweep, and none is made
         lock_fd: int | None = None
@@ -371,19 +373,24 @@ class KeyStore:
             fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[union-attr]
             _sweep_leftovers(dir_fd)
         except (KeyRefused, OSError):
-            return  # the lock is held by another process, or an entry is not owner-only: not swept
+            return  # the lock is held by another process, or the lock file is unusable: the sweep is skipped
         finally:
-            # Each close on its own: a close that fails is not the save's business, and it is never retried (the
-            # descriptor may already be released). Closing the lock also lets go of it.
-            if lock_fd is not None:
+            # Each close on its own, the folder's in a finally of its own, so it is attempted even when the lock's
+            # close raises something other than an OSError, which then goes on up (Codex's sixth reads R6-1). An
+            # OSError from a close is not the save's business, and a close is never retried (the descriptor may
+            # already be released). Closing the lock also lets go of it, when that close did release the descriptor
+            # (DeepSeek's fifth read F-3: on Linux a close always does, even one that reports an error).
+            try:
+                if lock_fd is not None:
+                    try:
+                        os.close(lock_fd)
+                    except OSError:
+                        pass
+            finally:
                 try:
-                    os.close(lock_fd)
+                    os.close(dir_fd)
                 except OSError:
                     pass
-            try:
-                os.close(dir_fd)
-            except OSError:
-                pass
 
     # -- owner-only file ------------------------------------------------------------------
     @contextmanager

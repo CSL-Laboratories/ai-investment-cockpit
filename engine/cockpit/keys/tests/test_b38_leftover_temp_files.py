@@ -10,8 +10,11 @@ that pattern, and nothing else, best effort. A model-provider save on a keychain
 (ModelSaveOnAKeychainHostTests); reads and deletes sweep nothing. After DeepSeek's third read and Codex's fourth
 read: a key file may not have a temp file's name (F-1, R4-1), the model-provider save on a keychain host sweeps
 too (F-2, R4-2, as the Liaison corrected it), failures to list, look or remove are tested (F-3, R4-3), and the
-process tests reap what they start (R4-4). After Codex's fifth reads and DeepSeek's fourth read: a close that
-fails in that cleanup, or a path it cannot open, no longer fails the save (R5-1, F-6).
+process tests reap what they start (R4-4). After Codex's fifth reads and DeepSeek's fourth read: an OSError from
+a close in that cleanup, or a ValueError from a path it cannot open the folder under, no longer prevents the
+keychain write (R5-1, F-6); other errors and interrupts still stop the save. After Codex's sixth reads and
+DeepSeek's fifth read: the folder's close is attempted even when the lock's close raises such an error (R6-1,
+F-1), and those errors are tested from each close (F-2).
 
 Spawned child processes that exit at the rename, temp folders, a dict or a JSON file for a keychain, made-up
 keys only.
@@ -433,10 +436,11 @@ class SweepScopeTests(_Case):
 class ModelSaveOnAKeychainHostTests(_Case):
     """B38 for a model-provider save on a keychain host (Lucas: "the next save or acceptance removes leftover temp
     files"; Codex's fourth read R4-2, DeepSeek's third read F-2). That save uses no file, so its sweep is cleanup
-    only: it never creates the folder or the lock, never waits to take the lock, and reads or writes no record; a
+    only: it never creates the folder or the lock, never waits to take the lock, and reads or writes no record. A
     KeyRefused or an OSError on the way (closing included), or a ValueError from a path it cannot open under,
-    means "not swept" and the key is still saved; other errors and interrupts propagate (Codex's fifth reads
-    R5-1, DeepSeek's fourth read F-6)."""
+    does not prevent the keychain write, though the cleanup may already have removed files; each acquired
+    descriptor's close is attempted once; other errors and interrupts propagate (Codex's fifth and sixth reads
+    R5-1 and R6-1, DeepSeek's fourth and fifth reads F-6, F-1 and F-2)."""
 
     LEFT = ".keys-4242-0123456789abcdef"
 
@@ -557,9 +561,86 @@ class ModelSaveOnAKeychainHostTests(_Case):
                 self.assertEqual(closes[-2:], [opened["lock"], opened["folder"]])  # both attempted, in order, once
                 self.assertNotIn(self.LEFT, os.listdir(self.leaf))  # the sweep itself had run
 
+    def _save_with_closes_raising(self, failures: dict[str, BaseException]) -> tuple[object, Ring, list[str]]:
+        """One model-provider save on a keychain host, in a fresh folder with a leftover and ``.keys.lock``, whose
+        two final closes each really close their descriptor and then raise what ``failures`` names for it
+        ("lock", "folder"). Returns what the save returned or raised, the keychain, and the closes attempted once
+        both descriptors were open, by name in order. A descriptor the cleanup did not close is closed here."""
+        shutil.rmtree(self.leaf, True)
+        self.folder()
+        opened: dict[str, int] = {}
+        attempted: list[str] = []
+        real_open_dir, real_open_lock, real_close = (store_mod._open_owned_dir, store_mod._open_existing_regular,
+                                                     os.close)
+
+        def open_dir(*args, **kwargs):  # type: ignore[no-untyped-def]
+            opened["folder"] = real_open_dir(*args, **kwargs)
+            return opened["folder"]
+
+        def open_lock(*args, **kwargs):  # type: ignore[no-untyped-def]
+            opened["lock"] = real_open_lock(*args, **kwargs)
+            return opened["lock"]
+
+        def close(fd: int) -> None:
+            if len(opened) < 2:
+                real_close(fd)  # a close on the way to the folder, not one of the two final closes
+                return
+            name = next((n for n, value in opened.items() if value == fd), f"another descriptor {fd}")
+            attempted.append(name)
+            real_close(fd)  # really closed, then reported as failed: a retry would show here
+            if name in failures:
+                raise failures[name]
+
+        ring = Ring()
+        outcome: object
+        try:
+            with mock.patch.object(store_mod, "_open_owned_dir", open_dir), \
+                    mock.patch.object(store_mod, "_open_existing_regular", open_lock), \
+                    mock.patch("cockpit.keys.store.os.close", close):
+                outcome = self.store(ring).put("model_provider", "acct", FAKE)
+        except BaseException as exc:  # noqa: BLE001 - the test looks at what propagated, interrupts included
+            outcome = exc
+        finally:
+            for name, fd in opened.items():
+                if name not in attempted:
+                    with contextlib.suppress(OSError):
+                        real_close(fd)
+        return outcome, ring, attempted
+
+    def test_each_final_close_is_attempted_once_whatever_the_other_raises(self) -> None:
+        # Codex's sixth reads R6-1 (astra, sol), DeepSeek's fifth read F-1: an error that is not an OSError from the
+        # lock's close skipped the folder's close and left that descriptor open. F-2: no test said that such an
+        # error, from either close, still stops the save (an except widened to Exception passed). In every case
+        # each close is attempted exactly once, the lock's first, and the sweep had already run.
+        def oserror() -> OSError:
+            return OSError(errno.EIO, "EIO")
+
+        for failures in ({"lock": oserror()}, {"folder": oserror()}, {"lock": oserror(), "folder": oserror()}):
+            with self.subTest(oserror_from=sorted(failures)):
+                outcome, ring, attempted = self._save_with_closes_raising(failures)
+                self.assertEqual(outcome, "keyring")
+                self.assertEqual(ring.calls, [("set", "model_provider:acct")])  # saved once, no record or marker call
+                self.assertEqual(attempted, ["lock", "folder"])
+                self.assertNotIn(self.LEFT, os.listdir(self.leaf))
+        for where in ("lock", "folder"):
+            for kind in (RuntimeError, ValueError, MemoryError, KeyboardInterrupt):
+                with self.subTest(raised=kind.__name__, by=where):
+                    error = kind("injected")
+                    outcome, ring, attempted = self._save_with_closes_raising({where: error})
+                    self.assertIs(outcome, error)  # that same error propagates
+                    self.assertEqual(ring.calls, [])  # and the key is not saved
+                    self.assertEqual(attempted, ["lock", "folder"])
+                    self.assertNotIn(self.LEFT, os.listdir(self.leaf))  # the cleanup had already removed it
+        with self.subTest(raised="RuntimeError", by="lock", then="OSError from the folder"):
+            error = RuntimeError("injected")
+            outcome, ring, attempted = self._save_with_closes_raising({"lock": error, "folder": oserror()})
+            self.assertIs(outcome, error)
+            self.assertEqual(ring.calls, [])
+            self.assertEqual(attempted, ["lock", "folder"])
+
     def test_a_path_the_folder_cannot_be_opened_under_does_not_stop_the_save(self) -> None:
         # Codex's fifth read (sol): a NUL in an otherwise unused parent folder made the folder open raise ValueError,
-        # so the model save, which uses no file, failed; it saved at af932e68. Now that means "not swept".
+        # so the model save, which uses no file, failed; it saved at af932e68. Now it sweeps nothing and saves.
         ring = Ring()
         store = KeyStore(keyring=ring, key_file=os.path.join(self.root, "a\x00b", "model-keys.json"), keychain=A,
                          keychain_names=_KEYCHAIN_NAMES)
