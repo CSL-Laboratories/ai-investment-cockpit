@@ -1,0 +1,12 @@
+{
+  "schema": "cockpit.proposal/1",
+  "instrument": "FAKE-001",
+  "side": "buy",
+  "conviction_bps": 2500,
+  "horizon": "P1W",
+  "rationale": "Made-up rationale: the two made-up evidence items point the same way.",
+  "citations": [
+    "ev-1",
+    "ev-2"
+  ]
+}
