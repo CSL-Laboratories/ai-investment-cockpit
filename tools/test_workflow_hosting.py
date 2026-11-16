@@ -14,12 +14,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "workflow-checks.yml"
-CLAUDE_WORKFLOW = ROOT / ".github" / "workflows" / "claude.yml"
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 RUST_WORKFLOW = ROOT / ".github" / "workflows" / "rust.yml"
 PR_LINT_WORKFLOW = ROOT / ".github" / "workflows" / "pr-lint.yml"
 RETRIGGER_WORKFLOW = ROOT / ".github" / "workflows" / "ci-label-retrigger.yml"
-SCAN_WORKFLOW = ROOT / ".github" / "workflows" / "conflict-scan.yml"
 ACTIONLINT = ROOT / ".github" / "actionlint.yaml"
 AGENTS = ROOT / "AGENTS.md"
 
@@ -28,20 +26,12 @@ class WorkflowStructureTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.text = WORKFLOW_PATH.read_text(encoding="utf-8")
-        cls.claude = CLAUDE_WORKFLOW.read_text(encoding="utf-8")
         cls.ci = CI_WORKFLOW.read_text(encoding="utf-8")
         cls.rust = RUST_WORKFLOW.read_text(encoding="utf-8")
         cls.pr_lint = PR_LINT_WORKFLOW.read_text(encoding="utf-8")
         cls.retrigger = RETRIGGER_WORKFLOW.read_text(encoding="utf-8")
-        cls.scan = SCAN_WORKFLOW.read_text(encoding="utf-8")
         cls.actionlint = ACTIONLINT.read_text(encoding="utf-8")
         cls.agents = AGENTS.read_text(encoding="utf-8")
-
-    def test_claude_dispatch_triggers(self) -> None:
-        self.assertIn("repository_dispatch:", self.claude)
-        self.assertIn("types: [devin-review-fix]", self.claude)
-        self.assertIn("job:", self.claude)
-        self.assertIn("devin-review-fix", self.claude)
 
     def test_test_jobs_use_free_github_hosted_runners(self) -> None:
         # CSL-408: no job may run on a billed Blacksmith runner or use a Blacksmith
@@ -110,32 +100,6 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("format('label-{0}-{1}', inputs.pr_head_sha", self.rust)
         linux = self.ci.split("\n  linux:\n", 1)[1].split("\n  linux-gates:\n", 1)[0]
         self.assertIn("runs-on: ubuntu-24.04", linux)
-        claude_runners = [
-            line.strip()
-            for line in self.claude.splitlines()
-            if line.strip().startswith("runs-on:")
-        ]
-        self.assertTrue(claude_runners)
-        self.assertTrue(all(r == "runs-on: ubuntu-24.04" for r in claude_runners))
-        scan = (ROOT / ".github" / "workflows" / "conflict-scan.yml").read_text(encoding="utf-8")
-        scan_runners = [
-            line.strip()
-            for line in scan.splitlines()
-            if line.strip().startswith("runs-on:")
-        ]
-        self.assertTrue(scan_runners)
-        self.assertTrue(all(r == "runs-on: ubuntu-latest" for r in scan_runners))
-        self.assertIn('cron: "7 */2 * * *"', scan)
-        self.assertIn("workflow_dispatch:", scan)
-        scan_job = scan.split("\n  conflict-scan:\n", 1)[1].split("\n  conflict-resolve:\n", 1)[0]
-        self.assertIn("github.event_name == 'workflow_dispatch'", scan_job)
-        self.assertIn("github.event.inputs.pr_number", scan_job)
-        resolve = scan.split("\n  conflict-resolve:\n", 1)[1]
-        resolve_header = resolve.split("steps:", 1)[0]
-        self.assertIn("github.event_name != 'push'", resolve_header)
-        self.assertNotIn("github.event_name == 'schedule'", resolve_header)
-        self.assertIn("gh workflow run conflict-scan.yml", self.claude)
-        self.assertIn("forward-conflict-scan:", self.claude)
 
     def test_pr_lint_uses_github_hosted(self) -> None:
         self.assertIn("runs-on: ubuntu-latest", self.pr_lint)
@@ -143,6 +107,8 @@ class WorkflowStructureTests(unittest.TestCase):
 
     def test_agents_review_research_and_evidence_rules(self) -> None:
         self.assertIn("## Code Review Rules", self.agents)
+        # CSL-238 (Lucas, Nov 16): Devin is the only automated reviewer; nothing answers it.
+        self.assertIn("nothing answers or writes automatically", self.agents)
         # CSL-238: no automated reviewer verdict is documented as a gate any more.
         self.assertNotIn("CODEX-GATE: READY", self.agents)
         self.assertNotIn("CODEX_TRIGGER_PAT", self.agents)
@@ -227,13 +193,7 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertNotIn(
             "Grok Bots do not research or resolve decision issues", self.agents
         )
-        self.assertIn("Human-only findings need a human `@claude` mention", self.agents)
         self.assertIn("A founder may have their own bot", self.agents)
-        self.assertIn("Stuck-thread watch", self.agents)
-        self.assertIn("Stuck PR threads:", self.agents)
-        self.assertIn("stuck-pr-threads:", self.agents)
-        self.assertIn("already approved", self.agents)
-        self.assertIn("needs-decision", self.agents)
         self.assertIn("aggregator is GitHub-hosted", self.agents)
         self.assertIn("Python 3.11+3.12 matrix it wraps runs on GitHub-hosted `ubuntu-24.04`", self.agents)
         self.assertIn("fails closed until `ready_for_review`", self.agents)
@@ -282,20 +242,6 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertNotIn(
             "Grok Bots do not research or resolve decision issues", skill
         )
-        writer = (
-            ROOT / ".github" / "workflows" / "claude-conflict-writer.yml"
-        ).read_text(encoding="utf-8")
-        self.assertIn(
-            "Research bodies go to CSL-Laboratories/csl-research as a submissions record through a PR there",
-            writer,
-        )
-        self.assertGreaterEqual(
-            writer.count(
-                "Research bodies go to CSL-Laboratories/csl-research as a submissions record through a PR there"
-            ),
-            2,
-        )
-        self.assertIn("Never commit research content to this repo", writer)
         self.assertIn(
             "An agent working in both repos follows each repo's own rule",
             self.agents,
@@ -303,10 +249,6 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("This note changes neither rule", self.agents)
         self.assertNotIn("research-attestations/", self.agents)
         self.assertNotIn("research-attestations/", claude)
-        self.assertIn(
-            "any deep-research source the team has", writer
-        )
-        self.assertNotIn("web research (Parallel)", writer)
         self.assertNotIn("web research (Parallel)", claude)
         self.assertNotIn("web research (Parallel)", self.agents)
 
@@ -322,7 +264,7 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("sha256sum -c", self.text)
         self.assertNotIn("download-actionlint.bash", self.text)
         self.assertIn("./actionlint -color .github/workflows/*.yml", self.text)
-        for test in ("tools/test_claude_pr_fixer.py", "tools.test_merge_candidate", "tools.test_candidate_workflows",
+        for test in ("tools.test_merge_candidate", "tools.test_candidate_workflows",
                      "tools.test_review_gate", "tools.test_queue_gates", "tools/test_workflow_hosting.py"):
             self.assertIn(test, self.text)
 
@@ -332,6 +274,7 @@ class WorkflowStructureTests(unittest.TestCase):
             with self.subTest(path=path.name):
                 self.assertNotIn("CODEX_TRIGGER_PAT", text)
                 self.assertNotIn("chatgpt-codex-connector", text)
+                self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", text)
                 self.assertNotIn("scripts/ci/codex_gate.py", text)
         self.assertFalse((ROOT / ".github" / "workflows" / "codex-gate.yml").exists())
 
@@ -344,7 +287,7 @@ class ActionlintTests(unittest.TestCase):
         if not exe:
             self.skipTest("actionlint not on PATH")
         result = subprocess.run(
-            [exe, "-color", str(WORKFLOW_PATH), str(CLAUDE_WORKFLOW), str(CI_WORKFLOW)],
+            [exe, "-color", str(WORKFLOW_PATH), str(CI_WORKFLOW), str(RUST_WORKFLOW)],
             cwd=ROOT,
             check=False,
             capture_output=True,

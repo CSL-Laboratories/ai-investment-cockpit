@@ -19,8 +19,7 @@ them. If the two ever differ, AGENTS.md wins.
 
 **Scope.** These rules govern agents acting through a developer's account or
 session: interactive sessions, scheduled loops and Grok Bots. Repository workflows
-(`claude.yml` fixer, stuck-thread-watch, linear-pr-sync, conflict-scan,
-review-gate and other repository workflows) and Devin automations keep the roles in AGENTS.md "Review roles" and
+(CI, review-gate and the other repository workflows) and Devin automations keep the roles in AGENTS.md "Review roles" and
 "Automations". Their documented markers, receipts and audit comments are unchanged.
 Founder-directed bot reviews under AGENTS.md "Review roles" are that founder's
 reviews and are not covered here; "Review roles" alone says what counts as one.
@@ -43,7 +42,7 @@ admitted issue and even when everything on the proceed list also holds.
 - It changes no spend, credentials, permissions, settings, flags, modes or
   workflows.
 - Nobody else holds a claim on the branch, files or package, and no other writer's
-  run (such as the fixer's `claude-<PR>` lock) is in flight.
+  run is in flight.
 - It starts no CI beyond what a push to your own PR branch starts (see below).
   Read-only Actions/API queries are fine.
 
@@ -76,13 +75,6 @@ admitted issue and even when everything on the proceed list also holds.
   where that decision is recorded (see Decisions).
 - It would dispatch, re-run or cancel a workflow, or add `ci:full` or
   `enhancement`, without a human asking for that run.
-- An automation signal says a human must act: the fixer is paused (its
-  `claude-fixer-paused` or `claude-fixer-loop-cap` marker); a fix receipt cannot be
-  verified (short SHA, commit not reachable from the PR head, fingerprint
-  mismatch, no push); a branch with fixer receipts was rebased or force-pushed; or
-  `ci:full` label ownership is uncertain. Never remove a pause yourself, never
-  dispatch the fixer to get around its budget, and never report an unverified fix
-  as fixed.
 
 When unsure, escalate, in the short form below.
 
@@ -95,8 +87,7 @@ billed. The gate stays because every run uses the shared hosted-runner queue.
   `ci.yml` and `rust.yml` under their path filters (plus Windows and macOS on every
   push to a non-draft same-repository PR, CSL-238), so batch pushes. Mark a PR ready once, after
   validation, with no owner hold.
-- Dispatching, re-running or cancelling any workflow (CI, the fixer, the
-  stuck-thread watch), or adding `ci:full` or `enhancement` (which
+- Dispatching, re-running or cancelling any workflow, or adding `ci:full` or `enhancement` (which
   dispatch `ci.yml` and `rust.yml` through `ci-label-retrigger.yml`), needs a
   human ask.
 - Agents never push to `main`.

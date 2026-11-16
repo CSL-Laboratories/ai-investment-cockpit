@@ -93,7 +93,7 @@ Shared research lives in the private repository [CSL-Laboratories/csl-research](
 
 Never commit secrets, private account details, raw chats, signed URLs, bulk copyrighted material or large dataset dumps to Git; reference approved storage through manifests only. An access denial stops the affected transfer; do not look for alternative routes. Existing approved budgets and subscription routes remain subject to their actual authority; this section activates no API fallback, overage or new spend. New research spend follows the founder decisions section above: Lucas retains spend and new services; any founder may decide research continuation within an already approved budget.
 
-None of this amends accepted contracts, founder-reserved decisions, the nine invariants, the paper-only boundary, pre-live gates, current runtime, CI, fixer or review-loop roles. Agents still never merge.
+None of this amends accepted contracts, founder-reserved decisions, the nine invariants, the paper-only boundary, pre-live gates, current runtime, CI or review-loop roles. Agents still never merge.
 
 ## Proceed or escalate
 
@@ -105,8 +105,7 @@ expands on them; if the two ever differ, this section wins.
 
 **Scope.** This governs agents acting through a developer's account or session:
 interactive sessions, scheduled loops and Grok Bots. Repository workflows
-(`claude.yml` fixer, stuck-thread-watch, linear-pr-sync, conflict-scan,
-review-gate and other repository workflows) and Devin automations keep the roles in [Review roles](#review-roles) and
+(CI, review-gate and the other repository workflows) and Devin automations keep the roles in [Review roles](#review-roles) and
 [Automations](#automations); their documented markers, receipts and audit comments
 are unchanged. Founder-directed bot reviews under Review roles are that founder's
 reviews and are not covered here; Review roles alone says what counts as one.
@@ -154,11 +153,6 @@ beyond what a push to its own PR branch starts (below).
 - you would state a decision you cannot link to its record;
 - it would dispatch, re-run or cancel a workflow, or add `ci:full` or `enhancement`,
   without a human asking for that run;
-- an automation signal needs a human: the fixer is paused (its
-  `claude-fixer-paused` or `claude-fixer-loop-cap` marker), a fix receipt cannot be
-  verified, a branch with fixer receipts was rebased, or `ci:full` ownership is
-  uncertain. Never remove a pause, dispatch the fixer around its budget, or report an
-  unverified fix as fixed.
 
 **CI an agent starts on its own.** Since CSL-408, every CI job runs on free
 GitHub-hosted runners, so none of it is billed. The gate stays because every run
@@ -167,7 +161,7 @@ fine: on a non-draft PR it runs `ci.yml` and `rust.yml` under their path filters
 (plus Windows and macOS, and the Rust Windows and macOS cells, on every push to a
 non-draft same-repository PR since CSL-238), so batch pushes. Mark a
 PR ready once, after validation, with no owner hold. Dispatching, re-running or
-cancelling any workflow (CI, the fixer, the stuck-thread watch), or
+cancelling any workflow, or
 adding `ci:full` or `enhancement` (which dispatch `ci.yml` and `rust.yml` through
 `ci-label-retrigger.yml`), needs a human ask. Agents never push to `main`.
 Read-only API queries are fine.
@@ -376,8 +370,7 @@ Existing files stay until the CSL-536 move round that lists them, and no earlier
 - **Linear MCP** — issues, comments, and status at https://mcp.linear.app/mcp (or the Devin Linear integration).
 - **Linear** — source of truth for work. Workspace **CSL laboratories**, team key **CSL**, project **ai-investment-cockpit**.
 - **GitHub** — org **CSL-Laboratories**.
-- **Devin** — no longer reviews: its trial expired, and its `Devin Review` required check was removed on Nov 11, 2026.
-- **Claude Code Action** — PR fixer for Devin findings and `@claude` mentions on open, same-repository PRs whose author (and, for `@claude`, the commenter) has write, maintain or admin permission on the repo (other PRs are skipped by the workflow's event gate) (`.github/workflows/claude.yml`).
+- **Devin Review** — the only automated PR reviewer: the `devin-ai-integration` GitHub App, run from Devin's side (no workflow here starts it). Its required check was removed on Nov 11, 2026; on some heads it reports that its trial credits ran out (#326), on others it still reviews (#329).
 - **GitHub-hosted runners** — all CI, free because this repo is public. The test matrix (Python linux/windows, rust-book) uses `ubuntu-24.04` and `windows-2025`; non-test jobs use `ubuntu-latest`; macOS uses `macos-latest`. CSL-408 moved the test matrix off Blacksmith.
 - **Google Workspace** (`csl-laboratories.com`) — meetings and notes.
 - **Discord bot** (`csl-bot-operations`) — slash commands and MCP below.
@@ -405,10 +398,10 @@ Agents must stay Linear-aware and proactive. Linear is the source of truth for e
 - In the PR body, write `Related to CSL-N` by default; use a closing keyword (`Fixes CSL-N`) only when this PR completes the issue's acceptance criteria. Name the REGISTER package ID, or `none` for process work. Linear automation moving an issue to **Done**, a merge, or an AI PASS is not acceptance evidence.
 - **Formal review requests.** Every review ask needs both (a) an @mention on the Linear issue (`samirshahahmed`, `chaandansaini101`) and (b) a formal GitHub review request: `gh pr edit <n> --add-reviewer samir-shah-ahmed,CDanTheMan` (whichever apply). This is mandatory for agents too.
 - Comment progress on the issue. Move it to **In Progress** once your claim record is confirmed, then **In Review** when the PR is up. A hosted agent without Linear access reports its blocker on the PR to the PR author through its existing channel; the author relays it to the current Linear owner. The hosted agent does not invent API access, and this guide changes no workflow prompts.
-- Grok Bots must read the PR's live state on GitHub before touching shared files: its link, mergeable/conflict state, head SHA and changed files (`gh pr view <n> --json url,mergeable,headRefOid,files`). Three people work this repo at once. The Linear PR-sync comment (`<!-- pr-sync:<repo>#<n> -->`) is no longer kept current: since #328 (CSL-862), [`.github/workflows/linear-pr-sync.yml`](.github/workflows/linear-pr-sync.yml) runs only on manual dispatch and writes nothing, so an existing comment may be stale and a new PR gets none.
+- Grok Bots must read the PR's live state on GitHub before touching shared files: its link, mergeable/conflict state, head SHA and changed files (`gh pr view <n> --json url,mergeable,headRefOid,files`). Three people work this repo at once. The Linear PR-sync comment (`<!-- pr-sync:<repo>#<n> -->`) is no longer kept current: the workflow that wrote it (`linear-pr-sync.yml`) wrote nothing after #328 (CSL-862) and was retired in CSL-238 (Lucas, Nov 16, 2026), so an existing comment may be stale and a new PR gets none.
 - When work reveals follow-ups, bugs, or next steps, create new **Triage** issues with one Type label, the repo label `ai-investment-cockpit`, the project, and a link back to the parent issue or PR — not drive-by changes.
 - **Assignees:** the three founders are Lucas (NotSkittlz), Chaandan (CDanTheMan), and Samir (samir-shah-ahmed). All are admins, and ownership changes over time, so never hardcode owners. Check the current assignee or project lead in Linear. Assign new issues to the owner of the parent issue, or leave them in Triage unassigned when unclear.
-- The author addresses CI comments on their own PR, then resolves the threads. Devin findings and `@claude` mentions are handled by the Claude Code Action (`.github/workflows/claude.yml`) on open, same-repository PRs by repo writers; on other PRs the author addresses them. Do not run review-fix loops on other agents' PRs.
+- The author addresses CI comments and Devin findings on their own PR by hand, then resolves the threads. Nothing answers review threads automatically (CSL-238, Lucas, Nov 16, 2026). Do not run review-fix loops on other agents' PRs.
 - Humans make the load-bearing decisions (architecture, security, trading-risk, merge order). Agents propose; humans decide.
 
 ## Hosted CI
@@ -420,37 +413,25 @@ Hosted split (PR #102):
 - Label reruns carry the PR number, expected head, and immutable merge candidate. They validate that context before testing the merge candidate. Their concurrency suffix is `label-<expected-head>-<scope>`, separate from ordinary PR runs, because `gh workflow run --ref` resolves to the current head and a stale dispatch must not cancel that head's PR or label run. Scope isolation prevents a delayed Linux-only request from cancelling a full request on the same head. The label dispatcher also isolates heads. Filter still fail-closes stale dispatch context before billed matrix work; manual branch dispatch without PR context remains available in its own scope group.
 - Windows runs on push to `main`, `merge_group`, every non-draft same-repository PR event (CSL-238), the `ci:full` label, and full manual dispatch (GitHub-hosted `windows-2025`). Main-push Linux/Windows and relevant Rust coverage stays enabled until the owner separately approves removal after queue enforcement is proven.
 - macOS runs nightly at 07:17 UTC on `main` (skipped if idle 24h), on every non-draft same-repository PR event (CSL-238), on the `ci:full` label, and on full manual dispatch — not on ordinary `main` pushes (GitHub-hosted).
-- Non-test jobs (filter, `linux-gates` aggregator, pr-lint, Claude fixer/conflict-scan) use GitHub-hosted `ubuntu-latest`.
+- Non-test jobs (filter, `linux-gates` aggregator, pr-lint, review-gate, workflow-checks) use GitHub-hosted `ubuntu-latest`.
 - Ordinary PR runs share a queue with automatic cancellation disabled. The trusted default-branch companion requests cancellation only for verified strict-ancestor CI/Rust runs after checking a real current-head successor; bootstrap and uncertain evidence leave runs queued. Draft synchronize uses a separate group from `ready_for_review`. See [controller policy and limits](docs/ci-cancellation-controller.md).
 - Non-draft synchronize events wait in `settle` for 120 seconds. Paid jobs and required aggregates accept successful settle or an event's intentional skip; failure, cancellation, and unexpected skips block. The wait consumes hosted capacity and does not guarantee savings.
 - CI caches pip downloads, never virtualenvs. Each cell creates a fresh environment, installs direct pins, and runs `pip check`; one fresh no-cache retry handles install/cache failure. Direct pins are not a transitive hash lock.
 - Queue protection is staged: proposed stable checks are `linux-gates`, `queue-gates`, `rust-gates`, and `review-gate`. The latter verifies the current genuine Devin bot commit status on every exact required PR head, with bounded polling and manual same-head recovery. `linux-gates` is the only required check (`Devin Review` was removed on Nov 11, 2026). See [the rollout and owner decisions](docs/ci-queue-rollout.md); synthetic tests do not establish live queue enforcement.
-- The stuck-thread watch runs only when a person dispatches it (CSL-238). It reads with `github.token` and holds no write token; it posts nothing on a PR. Inside the script, only a failure to list pull requests (which a `github.token` rate limit can cause) or a missing `GITHUB_REPOSITORY` returns non-zero; the job can also fail at checkout or on its 10-minute timeout. So read the log before treating a failed run as a code problem. The required checks (`linux-gates`; `Devin Review` until Nov 11, 2026) decide CI either way (Lucas's decision on CSL-390, comment 242120cc).
+- The required checks (`linux-gates`; `Devin Review` until Nov 11, 2026) decide CI (Lucas's decision on CSL-390, comment 242120cc).
 
 ## Review roles
 
-- **Devin** was the GitHub PR code reviewer (findings) until its trial expired; it no longer reviews, and its required check was removed on Nov 11, 2026.
-- **Claude Code Action** (`.github/workflows/claude.yml`) is the fixer for Devin findings and `@claude` mentions on open, same-repository PRs whose author (and, for `@claude`, the commenter) has write, maintain or admin permission on the repo (other PRs are skipped by the workflow's event gate).
-- **Codex** no longer reviews on GitHub. Its subscription and API key expired, and CSL-238 removed the Codex CI/fixer gate (`codex-gate.yml`, CSL-103/259) and the stuck-thread watch's Codex mediation. No automated reviewer verdict gates CI, a candidate or a merge.
-- **Stuck-thread watch** (CSL-86 / PR #124, `.github/workflows/stuck-thread-watch.yml`) runs only when a person dispatches it. It lists the unresolved Devin threads Claude could not settle in its run log and step summary, skips PRs that are already approved and posts nothing on the PR. Since #328 (CSL-862) it writes nothing to Linear (`FILE_LINEAR: "false"`): it no longer files or updates the Linear `needs-decision` Triage roll-up titled `Stuck PR threads: <repo>#<PR>`, so a roll-up filed earlier may be stale. Shared key: `<!-- stuck-pr-threads:owner/repo#N -->`.
+- **Devin Review** is the only automated reviewer: the `devin-ai-integration` GitHub App, run from Devin's side. No workflow in this repository starts it, and nothing in this repository answers it; people, and agents working by hand for a person, read and answer its threads.
+- **Retired** (CSL-238, Lucas, Nov 16, 2026): the Codex CI/fixer gate, the Claude Code Action fixer and `@claude` path (`claude.yml`), the Claude conflict scan and writer, the CSL-474 probe workflow, the stuck-thread watch and the Linear PR sync. No automated reviewer verdict gates CI, a candidate or a merge, and no workflow writes to a PR, a label or Linear.
 - **GitHub-hosted runners** host the test matrix. That is the GitHub test-CI path, not a revival of this cockpit's retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired from this cockpit's research/dev swarm dispatch" still apply to cockpit research/dev swarm jobs. Devin may still post research briefs, which, like all research, land in csl-research.
 - Cursor, Codex (as a coding agent), Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs. A founder may have their own bot post reviews under their account when they direct it. The author agent may fix CI failures on its own PR.
 
 ## Review loop
 
-Devin reviews (no longer: see [Review roles](#review-roles)) → Claude fixes (`claude.yml`).
-Devin findings and `@claude` mentions trigger Claude directly. All Claude jobs share one
-per-PR lock with GitHub `queue: max` (one active, up to 100 pending; excess
-requests can still be dropped). The automated Devin fixer stops at eight consecutive Claude
-commits. A person can run
-[`.github/workflows/stuck-thread-watch.yml`](.github/workflows/stuck-thread-watch.yml)
-(CSL-86 / PR #124) to list stuck threads; since CSL-238 it posts nothing on the
-PR and asks no reviewer to mediate. Since #328 (CSL-862) the watcher writes
-nothing to Linear (`FILE_LINEAR: "false"`), so it no longer records or updates
-the `needs-decision` roll-up per unapproved PR (`Stuck PR threads: <repo>#<PR>`),
-and a roll-up filed earlier may be stale.
-Humans decide.
-The watcher never resolves threads, pushes, or merges.
+Devin Review posts findings → people, or agents working by hand for a person, read and
+answer the threads and push any change themselves → the author resolves the threads.
+Nothing answers or writes automatically (CSL-238, Lucas, Nov 16, 2026). Humans decide.
 
 ### Review convergence (CSL-381)
 
@@ -467,16 +448,15 @@ Lucas's decision ([CSL-381 comment 81c9a1f7](https://linear.app/csl-laboratories
   start a fourth round on their own.
 
 This changes no merge authority, Devin review or
-required check on the final head. It changes no workflow: the `claude.yml`
-fixer keeps the behavior described above.
+required check on the final head. It changes no workflow.
 
 ## Code Review Rules
 
-The Codex CI/fixer gate and its `@codex review` requests and verdict lines were
-removed in CSL-238. No automated reviewer verdict gates the full matrix, a merge
-candidate or a merge; `linux-gates` and resolved review conversations are what
-`main` requires. Human-only findings need a human `@claude` mention. Devin
-submitted reviews trigger fixes directly while Devin still reviews.
+Review is the Devin reviewer's threads, read and answered by people and by agents
+working by hand; nothing answers or writes automatically. No automated reviewer
+verdict gates the full matrix, a merge candidate or a merge; `linux-gates` and
+resolved review conversations are what `main` requires. The Codex gate and the
+Claude fixer that used to act on review threads were retired (CSL-238, Lucas, Nov 16, 2026).
 
 ## Automations
 
@@ -515,63 +495,6 @@ Trigger CI and reviews through the Discord bot (`/ci full|run`, `/devin review p
 
 Do not add paid services or raise spend limits.
 
-### Fixer receipts and bounded no-progress retries (CSL-201)
+### Fixer receipts (CSL-201)
 
-Automatic eligibility requires explicit Devin `kind: bug` metadata. Trusted Claude
-structured per-root receipts bind the original body fingerprint to a validated
-base and pushed commit; addressed receipts suppress repeats only when that commit
-is strictly newer than the base and remains an ancestor of the live PR head.
-Explicit `needs-human` receipts leave the thread unresolved for human mediation.
-New meaningful Devin or repository-writer replies rearm it; arbitrary prose,
-failed tests, tool/API errors, and no-push runs never prove completion.
-Since CSL-377 the model job cannot push or post: it commits locally and queues
-writes, and the trusted publish job validates the commits, pushes once and
-authors the receipts itself as `claude[bot]` (see `docs/claude-fixer-reliability.md`).
-
-Under the shared PR lock, at most three automatic attempt reservations are allowed
-for the same head and same meaningful pending-findings fingerprint. A new head or
-changed findings resets this budget; authorized manual `devin-review-fix` dispatch
-can retry while the eight-commit guard remains. There is no daily cap. Reservations
-can include workflow-validation stops before model execution, so after activation
-an authorized manual retry may be needed. A paused attempt budget is never READY.
-
-Receipt parsing accepts inline or indented machine markers; quoted receipts do not
-hide a repository-writer correction. Root findings must also match the REST
-numeric Devin bot identity. Invalid compare SHAs (HTTP 404/422) leave findings
-pending; authentication, transport, and server errors still fail closed. The
-eight-commit count is applied only after receipt-aware selection proves pending
-work remains, so a clean PR does not receive a misleading loop-cap pause.
-
-The READY reconciliation, candidate qualification and gate-owned `ci:full`
-label writes that this section described before CSL-238 belonged to the Codex
-gate and the candidate coordinator, both removed. Nothing writes new gate
-ownership receipts. The paragraphs below describe the receipts the gate wrote
-earlier, which the conflict writer still reads before it revokes a label the
-gate owned.
-
-Trusted Actions receipts bind gate-owned labels to exact label-event IDs across
-head changes. Only that event can be revoked. The candidate coordinator preserves
-human removals across heads until an explicit relabel; old head-bound removal
-receipts do not bypass that hold. This also covers legacy removal history without
-inventing ownership.
-Later re-adds are preserved; ambiguous ownership requires manual action. GitHub has no atomic
-compare-and-delete, so a human change between the final check and deletion is an
-unavoidable narrow race, not an atomic guarantee.
-
-Legacy label additions have trusted intents and three bounded visibility checks.
-If legacy ownership remains unknown or recording
-proof fails, the intent blocks subsequent READY processing, even after a restart.
-It never infers ownership from the PAT owner's name. Inspect the label and
-manually remove/re-add `ci:full` to reconcile; if absent, add then remove it.
-The removal must be later than the intent's timestamp (same-second ambiguity
-remains blocked). Legacy labels without ownership proof are not automatically
-removed. API failures report uncertain cleanup rather than claiming absence.
-
-An explicit HTTP 400/401/403/404/409/422/429 label-write rejection settles only
-that intent and permits retry. Transport errors, timeouts, and server failures
-remain uncertain; failure to record rejection also retains the blocker. A failed
-PR reconciliation does not prevent scheduled recovery of other PRs.
-Same-second review edits are conservatively eligible when ordering is ambiguous;
-identical follow-up content retains the same findings fingerprint and three-attempt
-budget. Same-second human removal cannot prove intent ordering: remove/re-add
-in a later second to reconcile. Event IDs and comment IDs are never compared.
+Retired with the Claude fixer on Nov 16, 2026 (CSL-238); see git history before that date.

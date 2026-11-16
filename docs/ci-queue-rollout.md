@@ -101,8 +101,7 @@ that every GitHub queue topology maps successfully.
    base policy loading and review/queue diagnostics. Preserve current direct Devin
    protection. Replacing it remains blocked on a separately approved protected
    workflow/policy control; a green canary alone cannot establish that control.
-   No role, receipt, trust or fixer
-   policy is replaced by these aggregates.
+   No role, trust or review policy is replaced by these aggregates.
 4. Queue activation is blocked until there is evidence that the currently required
    direct `Devin Review` reports on the merge-group SHA, or the owner separately
    approves a protected replacement that establishes the trust boundary described

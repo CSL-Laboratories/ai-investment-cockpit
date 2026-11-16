@@ -53,15 +53,10 @@ adds `ci:full` / `enhancement` (AGENTS.md:156-157, 168-172). Escalate on the Lin
 2. Actions tab shows **"Approve workflows to run"**: usually a fork PR under the external-contributor
    approval setting (contract G14); a writer reviews the fork diff, then approves. A `pull_request`
    opened, synchronized or reopened by a `GITHUB_TOKEN` automation also waits for approval (GitHub
-   docs, triggering a workflow); the Claude writers push with an App token instead (contract §7).
+   docs, triggering a workflow).
    `workflow_dispatch` and `repository_dispatch` are the documented exception: a `GITHUB_TOKEN`
-   identity still creates those runs. That includes `forward-conflict-scan` dispatching
-   `conflict-scan.yml`. Any other event a `GITHUB_TOKEN` triggers, such as a label or
+   identity still creates those runs. Any other event a `GITHUB_TOKEN` triggers, such as a label or
    `ready_for_review`, creates no run at all, so recovery is a human action or an App or PAT identity.
-   Model jobs may receive only the job-scoped read-only `github.token`
-   (`github_token: ${{ github.token }}`), and only when every permission on that job is `read`.
-   `secrets.GITHUB_TOKEN`, a PAT, or the same mapping on a write permission fails the
-   CrossLaneAdmissionTests (CSL-428).
 3. A run is queued for minutes: check the org runner capacity (Team plan: 60 concurrent jobs, 5
    macOS, shared with recursion and every bot workflow; GitHub docs, Actions limits). macOS
    saturates first.
@@ -70,51 +65,13 @@ adds `ci:full` / `enhancement` (AGENTS.md:156-157, 168-172). Escalate on the Lin
 
 ## 5. Stop or roll back automation
 
-### Confirmed writer collision on one PR
-
-Use the existing `claude:pause` label when a human/agent writer collision is confirmed and
-the applicable human authorization and ownership coordination allow it. It pauses Claude's
-automatic fixes, human-requested `@claude` writes and conflict repair on that PR; CI and
-reviews continue. It neither cancels running jobs nor undoes a push.
-
-1. Read the work issue's current human owner and agent claim, the PR head and active writer
-   runs. Stop competing authoring; do not take over another writer's work. If ownership or
-   authority is unclear, escalate to the owner and ownership coordinator before acting.
-2. Add `claude:pause` **additively to that PR only**. Preserve every other label, including
-   `ci:full`; do not replace the label set. Record the reason, owner, claim, branch/head and
-   pause time on the work issue so the writers can coordinate.
-3. Re-read the labels and head, inspect active runs and their terminal audits, and reconcile
-   any head movement with the owner before continuing. Preparation and publisher checks
-   refuse writes when they observe the pause, but the last live-state check and the push are
-   separate operations: a narrow race remains. The label is not an immediate cancellation or
-   an atomic veto. Do not cancel a workflow without the required human ask.
-4. Keep the pause until writer ownership, the current head, test evidence and review state
-   are reconciled and the applicable human resumption authority is obtained. Never unpause
-   automatically. Existing holds, receipts, attempt budgets and commit caps still apply.
-
-The checks are in `pause_reason` (`scripts/ci/claude_fixer_preflight.py`), the conflict
-writer's `prepare`, and `live_head` / `pause_refusal` before `push_candidate`
-(`scripts/ci/claude_fixer_publish.py`); the publisher also rechecks before queued writes.
-These controls grant no repository-wide pause-variable authority. Setting
-`CLAUDE_FIXER_PAUSE`, including for the rollback below, requires separate authorization.
-
-| Lever | Effect | Who |
-|---|---|---|
-| Label `claude:pause` or `hold` on a PR (any case) | The writers (`@claude`, Devin fixer, conflict writer) stop before checkout or reservation (`pause_reason` in `mention-prepare` and `fixer-prepare`; the conflict writer's `prepare`), and the publishers recheck it before pushing (`pause_refusal`). A detected pause refuses the candidate push and queued model writes; the workflow still posts its terminal audit. The check and push are separate, as described above. The scan never selects a paused PR. Unreadable labels count as paused | Anyone who can label PRs, with applicable coordination authority; agents must never remove a pause |
-| Repository variable `CLAUDE_FIXER_PAUSE` set to exactly `true` | Same for every PR, also rechecked by the publishers (`pause_refusal`) and by the scan | Admin |
-| Remove `ci:full` | Stops repeat Windows/macOS on later pushes of a draft or fork PR (a non-draft same-repository PR runs them anyway since CSL-238) | Human |
-| (automatic) A fixer pause while a gate-owned `ci:full` is on the PR | The writers revoke only the label event the gate itself recorded; a human-added `ci:full` is never removed (`revoke_owned_ci` in the claude.yml publishers and prepare, and in claude-conflict-writer.yml) | Automatic |
-| Actions → workflow → **Disable workflow** | Stops new runs of that workflow; runs already in progress continue (cancel them separately) | Admin; record it on Linear |
-| Revert the PR that changed a workflow | Restores the previous code in a normal PR that a founder merges; never force-push. Writer state kept in PR comments (attempt reservations, receipts, loop-cap and `ci:full` ownership markers) is not reverted, so set `CLAUDE_FIXER_PAUSE=true` first and check those markers after the revert | Founder merge |
-
-Outside this guard: `stuck-thread-watch.yml`, which runs only when a person dispatches it
-(CSL-238). It lists stuck Devin threads in its run log and posts nothing on the PR. Since #328
-(CSL-862) it keeps no Linear roll-up (`FILE_LINEAR` is `"false"`). It never resolves threads,
-pushes or merges (`.github/scripts/stuck_thread_watch.py` docstring), so a stuck thread stays open
-until a human resolves it or records the decision. It is covered by its own tests
-(`app/tests/test_stuck_thread_watch.py`, `tools/test_fixer_failure_watcher.py`), not by
-`CrossLaneAdmissionTests`. The Codex gate (`codex-gate.yml`), which used to add a gate-owned
-`ci:full` on READY, was removed in CSL-238.
+No repository workflow writes to a PR any more: the Claude fixer, the `@claude` path, the
+conflict writer, the stuck-thread watch and the Linear PR sync were retired in CSL-238 (Lucas, Nov 16, 2026),
+and with them the `claude:pause` label and the `CLAUDE_FIXER_PAUSE` variable. A collision is now
+between people or hand-driven agents: stop competing authoring, read the work issue's owner and
+claim, and settle it on Linear before anyone pushes again. To stop a workflow, a founder uses
+Actions → workflow → **Disable workflow** (runs in progress continue; cancel them separately)
+and records it on Linear; to roll back a workflow change, revert its PR (a founder merges).
 
 ## 6. Cost and capacity check
 
@@ -123,11 +80,11 @@ until a human resolves it or records the decision. It is covered by its own test
   public**. Making it private would meter minutes (Team includes 3,000 per month; GitHub docs,
   Actions billing); re-plan before that.
 - `tools/test_workflow_hosting.py` (`test_test_jobs_use_free_github_hosted_runners`) fails if any
-  workflow names a Blacksmith runner. claude.yml runs it only when fixer paths change;
-  workflow-checks.yml runs it on every same-repository `pull_request` (CSL-238 moved it there from
-  the removed codex-gate.yml). The cross-lane tests in `tools/test_ci_dispatch_scope.py`, which
-  `ci.yml` runs on every test-running PR (ci.yml:438), fail if a writer workflow leaves GitHub-hosted
-  runners.
+  workflow names a Blacksmith runner. workflow-checks.yml runs it on every same-repository
+  `pull_request` (CSL-238 moved it there from the removed codex-gate.yml). The no-writer tests in
+  `tools/test_ci_dispatch_scope.py`, which
+  `ci.yml` runs on every test-running PR, fail if any job leaves GitHub-hosted runners or any
+  workflow gains model credentials or a push.
 - Usage over time: the criterion 2 measurements on CSL-255 (queue wait, time to required check,
   concurrency).
 
@@ -138,29 +95,15 @@ until a human resolves it or records the decision. It is covered by its own test
   becomes a repository rule):** a PR that changes a workflow, `scripts/ci/**`, a required check or
   the rulesets also updates [ci-event-contract.md](ci-event-contract.md) in the same PR, including
   re-pinned `file:line` citations when lines move, or says "no contract row changes" and why.
-- Writer workflows (`claude.yml`, `conflict-scan.yml`, `claude-conflict-writer.yml`) must keep the
-  admission surface that `CrossLaneAdmissionTests` checks statically: no CI dispatch, re-run,
-  ready-for-review or CI-label add (the only CI-label write is revoking a gate-owned `ci:full`).
-  The label check reads workflow and extracted-script text; a `gh api --method PATCH` whose
-  label names live only in `--input body.json` is not visible. Also required:
-  pushes only from the model-free publish jobs as one ordinary fast-forward (no prep or publish job
-  holds `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` or the Claude action); one shared
-  `claude-<PR>` lock without cancellation; the eight-commit guard on both claude.yml writers, the
-  Devin path's three-attempt reservation, one publish per prepared run, and the pause. A new Claude
-  workflow, or a new job in any of the three, fails the test until it is classified there
-  (conflict-scan.yml: the read-only `conflict-scan` job and the `conflict-resolve` caller). Retry behaviour itself is tested in
-  `tools/test_claude_fixer_*.py` and `tools/test_claude_pr_fixer.py`.
-- **The conflict writer has no eight-commit guard and no cross-run attempt budget.** Each run
-  publishes at most once (claude-conflict-writer.yml:2318, 2394-2403); the scan starts it every two
-  hours and on manual dispatch, never on a `main` push (conflict-scan.yml:12-14, 355). A PR that stays
-  conflicted can get a Claude merge attempt on every scheduled scan; pause it if that is unwanted.
+- No workflow may hold model credentials (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, a Codex or
+  OpenAI key), run a model, push, or write contents (`NoAutomatedWriterTests` in
+  `tools/test_ci_dispatch_scope.py`). Adding an automated writer back is a founder decision.
 
 ## 8. Owners
 
 | Area | Owner |
 |---|---|
 | CI workflows, required checks, this runbook, the contract | CI lane (Lucas's session), founders approve |
-| `claude.yml`, `conflict-scan.yml`, `claude-conflict-writer.yml`, fixer scripts | Reliability lane, founders approve |
 | CI failure on `main` | Devin "Main CI failure fixer" automation (human-managed, AGENTS.md:523); a founder triages |
 | Rulesets and repository settings | Founders (admins) |
 

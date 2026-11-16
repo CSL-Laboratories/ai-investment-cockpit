@@ -155,7 +155,7 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 
 Before writing on a shared PR branch, check the current Linear owner/claim and
 active writers. For a confirmed collision, follow the
-[per-PR pause procedure](docs/ci-runbook.md#5-stop-or-roll-back-automation).
+[collision procedure](docs/ci-runbook.md#5-stop-or-roll-back-automation).
 
 ## Hard rules
 - Never put an LLM on the order or risk path.
@@ -211,15 +211,6 @@ decision.
 
 ## Review loop
 
-For writer collisions, use the [pause and resumption checklist](docs/ci-runbook.md#5-stop-or-roll-back-automation).
+For writer collisions, use the [collision procedure](docs/ci-runbook.md#5-stop-or-roll-back-automation).
 
-Devin reviews (no longer: its trial expired) → Claude fixes (`claude.yml`). A person can run
-[`.github/workflows/stuck-thread-watch.yml`](.github/workflows/stuck-thread-watch.yml)
-to list stuck threads; it posts nothing on the PR. The Codex reviewer and its
-CI/fixer gate were removed in CSL-238 (Codex expired). Since #328 (CSL-862)
-the watcher writes nothing to Linear (`FILE_LINEAR: "false"`), so it no longer
-records or updates the `needs-decision` roll-up per unapproved PR
-(`Stuck PR threads: <repo>#<PR>`), and a roll-up filed earlier may be
-stale. Shared key: `<!-- stuck-pr-threads:owner/repo#N -->`.
-Humans decide.
-The watcher never resolves threads, pushes, or merges.
+Devin Review, a GitHub App (`devin-ai-integration`) that Devin runs from its side, is the only automated reviewer; no workflow in this repository starts it. People, and agents working by hand for a person, read and answer its threads; nothing answers or writes automatically. The Codex gate, the Claude PR fixer and `@claude` path, the conflict writer, the stuck-thread watch and the Linear PR sync were retired in CSL-238 (Lucas, Nov 16, 2026). Humans decide.
