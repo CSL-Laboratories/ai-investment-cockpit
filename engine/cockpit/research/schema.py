@@ -21,7 +21,9 @@ a number out of it, and nothing downstream may.
 
 The case's ``evidence_refs`` name evidence by id and SHA-256 so that the raw inputs are
 stored apart from any summary (invariant 8); a proposal's ``citations`` must each name one
-of them.
+of them. That check needs the case: ``parse_proposal`` and ``proposal_from_value`` make it
+only when ``case=`` is given (the decision record always gives it); without it they check
+only that each citation is a well-formed id.
 """
 
 from __future__ import annotations

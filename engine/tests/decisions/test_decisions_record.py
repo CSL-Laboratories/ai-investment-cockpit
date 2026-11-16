@@ -151,7 +151,8 @@ class DecisionRecordFlow(RecordTestCase):
         out = rec.log_model_output(route_record_id="r-1", model_id="m", model_version="v1", prompt="p", output="o")
         rec2 = self.reopen()
         rec2.record_proposal_refused("quantity_forbidden", from_output=out)
-        out2 = rec2.log_model_output(route_record_id="r-2", model_id="m", model_version="v1", prompt="p", output="o2")
+        out2 = rec2.log_model_output(route_record_id="r-2", model_id="m", model_version="v1", prompt="p",
+                                     output=read("proposal_valid.txt"))
         rec2.record_proposal(make_proposal(), from_output=out2)
         self.assertEqual([r["kind"] for r in self.reopen().rows()],
                          ["case_opened", "model_output", "proposal_refused", "model_output", "proposal"])
@@ -187,7 +188,8 @@ class DecisionRecordOrder(RecordTestCase):
 
     def test_one_proposal_per_record(self):
         rec = self.new()
-        out = rec.log_model_output(route_record_id="r", model_id="m", model_version="v", prompt="p", output="o")
+        out = rec.log_model_output(route_record_id="r", model_id="m", model_version="v", prompt="p",
+                                   output=read("proposal_valid.txt"))
         rec.record_proposal(make_proposal(), from_output=out)
         self.refused("row_order", rec.log_model_output, route_record_id="r", model_id="m",
                      model_version="v", prompt="p", output="o")
@@ -205,7 +207,8 @@ class DecisionRecordOrder(RecordTestCase):
         good = dict(proposal_digest=make_proposal().digest(), approval_id="appr-1", effect_digest=EFFECT,
                     answered_by="operator-made-up", answer="approve", reason="")
         self.refused("row_order", rec.record_answer, **good)
-        out = rec.log_model_output(route_record_id="r", model_id="m", model_version="v", prompt="p", output="o")
+        out = rec.log_model_output(route_record_id="r", model_id="m", model_version="v", prompt="p",
+                                   output=read("proposal_valid.txt"))
         rec.record_proposal(make_proposal(), from_output=out)
         bad_cases = [
             ("digest_mismatch", {"proposal_digest": "sha256:" + "0" * 64}),
@@ -264,16 +267,16 @@ class DecisionRecordTamper(RecordTestCase):
         self.write_raw(edited)
         self.refused("chain_broken", self.reopen)
 
-    def test_an_edit_of_the_last_row_needs_the_head_kept_elsewhere(self):
-        # The chain cannot see an edit of its own last row: no later row names it. A caller
-        # that keeps the head (the last row's digest) somewhere else passes it to open().
+    def test_an_edit_of_the_last_row_is_refused_by_the_head(self):
+        # No later row names the last row, so the chain alone cannot see an edit of it; the
+        # head file the record keeps (and a head a caller kept elsewhere) can.
         rec = self.full()
         head = rec.head()
         data = self.raw()
         edited = data.replace(b'"answer":"approve"', b'"answer":"veto"')
         self.assertNotEqual(edited, data)
         self.write_raw(edited)
-        self.assertEqual(self.reopen().rows()[3]["body"]["answer"], "veto")  # the stated limit
+        self.refused("head_mismatch", self.reopen)  # round 1: the persisted head sees it
         self.refused("head_mismatch", DecisionRecord.open, self.dir, "case-0001-made-up",
                      clock=self.clock, expect_head=head)
         self.write_raw(data)

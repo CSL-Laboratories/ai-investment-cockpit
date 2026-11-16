@@ -33,13 +33,23 @@ signature (``unsigned``); a malformed signature; a document whose ``issuer_key_i
 not the verifier's (``wrong_key``); a signature that does not verify
 (``signature_invalid``); any missing, unknown or wrongly typed field; a scope for another
 account, venue or mode (``scope_mismatch``); any mode but ``paper``
-(``live_not_authorised``: live capital is not authorised); a document outside its window
+(``live_not_authorised``: live capital is not authorised, checked before the scope so a
+live document is named as such); a currency other than ``USD`` (``currency_unsupported``:
+the caps are the paper gateway's minor units); a document outside its window
 (``not_yet_valid``, ``expired``); an operator approval dated after ``now``; and replay:
 a ``sequence`` lower than the highest one accepted for the scope (``rollback``), or the
 same ``sequence`` with a different document (``sequence_conflict``). The highest sequence
 is kept in a high-water store; ``FileHighWater`` keeps it in an owner-only file that the
-installer creates (``create_high_water``) and that is never re-created when missing, so
-deleting it does not reset replay protection.
+installer creates (``create_high_water``) beside an owner-only lock file. Every floor
+transaction (read, check, write, replace) runs under an ``flock`` on the lock file, which
+is never replaced, so two loaders in two processes cannot both accept one sequence or
+move the floor back. A new floor is written in full (short writes completed) to a
+temporary file, synced, and moved over the old one, so a failed write keeps the previous
+floor; a floor that would outgrow what its reader reads is refused before it is written
+(``high_water_full``); a failed write or sync is ``high_water_unwritable``, never a raw
+``OSError``. Neither file is re-created when missing (deleting the floor alone does not
+reset it). Without POSIX owners and ``fcntl`` (native Windows) the file floor refuses
+(``platform_unsupported``) rather than run unprotected.
 """
 
 from __future__ import annotations
@@ -53,6 +63,11 @@ import threading
 from dataclasses import dataclass
 from typing import Protocol
 
+try:  # POSIX advisory lock: one floor transaction across processes; absent on Windows
+    import fcntl
+except ImportError:  # pragma: no cover - platform without fcntl
+    fcntl = None
+
 from cockpit.research.canonical import MAX_INT, canonical, parse
 from cockpit.research.errors import Refused
 
@@ -63,6 +78,7 @@ LIMITS_SCHEMA = "cockpit.limits/1"
 HIGH_WATER_SCHEMA = "cockpit.limits_high_water/1"
 SIGNING_PREFIX = b"cockpit.limits/1\n"
 MAX_FILE = 256 * 1024
+CURRENCY = "USD"  # the paper gateway's minor units; any other currency is refused
 MAX_ALLOWLIST = 1_000
 PAPER = "paper"
 
@@ -227,26 +243,127 @@ def _advance_check(current, sequence: int, digest: str) -> None:
         raise Refused("sequence_conflict")
 
 
-def create_high_water(path: str) -> None:
-    """The installer's step: create an empty, owner-only high-water file. Refuses if it exists."""
-    if type(path) is not str or not path:
-        raise Refused("path_invalid")
-    raw = canonical({"schema": HIGH_WATER_SCHEMA, "entries": {}})
+def _require_platform() -> None:
+    """Owner checks and the process lock are this floor's contract; without them, refuse."""
+    if not _POSIX or fcntl is None:
+        raise Refused("platform_unsupported", "needs POSIX owners and fcntl")
+
+
+def _fsync_file(fd: int) -> None:
+    os.fsync(fd)
+
+
+def _fsync_dir(directory: str) -> None:
+    fd = os.open(directory, os.O_RDONLY | _CLOEXEC)
     try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW | _BINARY | _CLOEXEC, 0o600)
-    except FileExistsError:
-        raise Refused("high_water_exists") from None
-    try:
-        os.write(fd, raw)
         os.fsync(fd)
     finally:
         os.close(fd)
 
 
+def _write_all(fd: int, data: bytes) -> None:
+    view = memoryview(data)
+    while view:
+        n = os.write(fd, view)
+        if n <= 0:
+            raise OSError("no progress writing")
+        view = view[n:]
+
+
+def _read_bounded(fd: int, limit: int) -> bytes:
+    """Read up to ``limit + 1`` bytes, so a caller can tell 'more than limit'."""
+    chunks, total = [], 0
+    while total <= limit:
+        chunk = os.read(fd, min(1 << 20, limit + 1 - total))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+    return b"".join(chunks)
+
+
+def _floor_bytes(entries: dict) -> bytes:
+    return canonical({"schema": HIGH_WATER_SCHEMA, "entries": {
+        k: {"sequence": s, "digest": d} for k, (s, d) in entries.items()}})
+
+
+def _open_lock(path: str) -> int:
+    """Open the floor's lock file, which is never replaced, and check it is owner-only."""
+    try:
+        fd = os.open(path + ".lock", os.O_RDWR | _NOFOLLOW | _BINARY | _CLOEXEC)
+    except FileNotFoundError:
+        raise Refused("high_water_missing", "lock file") from None
+    except OSError:
+        raise Refused("high_water_invalid", "lock file") from None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise Refused("high_water_invalid", "lock file")
+        if st.st_uid != os.getuid() or st.st_mode & 0o077:
+            raise Refused("high_water_not_owner_only", "lock file")
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def create_high_water(path: str) -> None:
+    """The installer's step: create an empty, owner-only floor and its lock file.
+
+    Refuses if either exists, so deleting the floor alone and calling this again does not
+    reset it (deleting both does: same-uid code is outside this file's protection)."""
+    _require_platform()
+    if type(path) is not str or not path:
+        raise Refused("path_invalid")
+    for existing in (path,):  # the lock file is refused below by O_EXCL
+        try:
+            st = os.lstat(existing)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise Refused("high_water_unwritable", exc.strerror or "") from None
+        if not stat.S_ISREG(st.st_mode):
+            raise Refused("path_invalid")
+        raise Refused("high_water_exists")
+    try:
+        lock = os.open(path + ".lock", os.O_RDWR | os.O_CREAT | os.O_EXCL | _NOFOLLOW | _BINARY | _CLOEXEC, 0o600)
+    except FileExistsError:
+        raise Refused("high_water_exists") from None
+    except OSError as exc:
+        raise Refused("high_water_unwritable", exc.strerror or "") from None
+    created = False
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        _fsync_file(lock)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW | _BINARY | _CLOEXEC, 0o600)
+        try:
+            _write_all(fd, _floor_bytes({}))
+            _fsync_file(fd)
+        finally:
+            os.close(fd)
+        _fsync_dir(os.path.dirname(os.path.abspath(path)))
+        created = True
+    except OSError as exc:
+        raise Refused("high_water_unwritable", exc.strerror or "") from None
+    finally:
+        if not created:
+            for leftover in (path, path + ".lock"):
+                try:
+                    os.unlink(leftover)
+                except OSError:
+                    pass
+        os.close(lock)
+
+
 class FileHighWater:
-    """Replay floor in an owner-only file the installer made. A missing file refuses."""
+    """Replay floor in an owner-only file the installer made. A missing file refuses.
+
+    Every ``get`` and ``advance`` is one transaction under an ``flock`` on ``<path>.lock``, a
+    file that is never replaced, so instances in this process and in other processes see
+    one floor: it never goes back, and an update for one scope never drops another's."""
 
     def __init__(self, path: str) -> None:
+        _require_platform()
         if type(path) is not str or not path:
             raise Refused("path_invalid")
         self._path = path
@@ -261,13 +378,15 @@ class FileHighWater:
             raise Refused("high_water_invalid") from None
         try:
             st = os.fstat(fd)
-            if not stat.S_ISREG(st.st_mode) or st.st_size > MAX_FILE:
+            if not stat.S_ISREG(st.st_mode):
                 raise Refused("high_water_invalid")
-            if _POSIX and (st.st_uid != os.getuid() or st.st_mode & 0o077):
+            if st.st_uid != os.getuid() or st.st_mode & 0o077:
                 raise Refused("high_water_not_owner_only")
-            raw = os.read(fd, MAX_FILE + 1)
+            raw = _read_bounded(fd, MAX_FILE)
         finally:
             os.close(fd)
+        if len(raw) > MAX_FILE:
+            raise Refused("high_water_invalid", "too large")
         try:
             value = parse(raw)
         except Refused:
@@ -285,40 +404,56 @@ class FileHighWater:
         return entries
 
     def get(self, key: str):
+        _require_platform()
         with self._lock:
-            return self._read().get(key)
+            lock = _open_lock(self._path)
+            try:
+                fcntl.flock(lock, fcntl.LOCK_SH)
+                return self._read().get(key)
+            finally:
+                os.close(lock)
 
     def advance(self, key: str, sequence: int, digest: str) -> None:
+        _require_platform()
         with self._lock:
-            entries = self._read()
-            _advance_check(entries.get(key), sequence, digest)
-            if entries.get(key) == (sequence, digest):
-                return
-            entries[key] = (sequence, digest)
-            raw = canonical({"schema": HIGH_WATER_SCHEMA, "entries": {
-                k: {"sequence": s, "digest": d} for k, (s, d) in entries.items()}})
-            directory = os.path.dirname(os.path.abspath(self._path))
-            tmp = os.path.join(directory, f".{os.path.basename(self._path)}.{secrets.token_hex(8)}.tmp")
+            lock = _open_lock(self._path)
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX)  # the whole read, check and replace runs under it
+                entries = self._read()
+                _advance_check(entries.get(key), sequence, digest)
+                if entries.get(key) == (sequence, digest):
+                    return
+                entries[key] = (sequence, digest)
+                raw = _floor_bytes(entries)
+                if len(raw) > MAX_FILE:
+                    raise Refused("high_water_full")
+                self._replace(raw)
+            finally:
+                os.close(lock)
+
+    def _replace(self, raw: bytes) -> None:
+        """Write the new floor beside the old one and move it over; the old floor stays
+        whole until the move, so a failed write leaves the previous floor in force."""
+        directory = os.path.dirname(os.path.abspath(self._path))
+        tmp = os.path.join(directory, f".{os.path.basename(self._path)}.{secrets.token_hex(8)}.tmp")
+        replaced = False
+        try:
             fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW | _BINARY | _CLOEXEC, 0o600)
             try:
-                try:
-                    os.write(fd, raw)
-                    os.fsync(fd)
-                finally:
-                    os.close(fd)
-                os.replace(tmp, self._path)
-            except BaseException:
+                _write_all(fd, raw)
+                _fsync_file(fd)
+            finally:
+                os.close(fd)
+            os.replace(tmp, self._path)
+            replaced = True
+            _fsync_dir(directory)
+        except OSError as exc:
+            if not replaced:
                 try:
                     os.unlink(tmp)
                 except OSError:
                     pass
-                raise
-            if _POSIX:
-                dfd = os.open(directory, os.O_RDONLY)
-                try:
-                    os.fsync(dfd)
-                finally:
-                    os.close(dfd)
+            raise Refused("high_water_unwritable", exc.strerror or "") from None
 
 
 class LimitsSource:
@@ -330,8 +465,11 @@ class LimitsSource:
         self._mode = _str(mode, _MODE, "mode")
         if self._mode != PAPER:
             raise Refused("live_not_authorised")
-        key_id = getattr(verifier, "key_id", None)
-        verify = getattr(verifier, "verify", None)
+        try:
+            key_id = getattr(verifier, "key_id", None)
+            verify = getattr(verifier, "verify", None)
+        except Exception:
+            raise Refused("verifier_invalid") from None
         if type(key_id) is not str or not _ID.fullmatch(key_id) or not callable(verify):
             raise Refused("verifier_invalid")
         if not callable(getattr(high_water, "get", None)) or not callable(getattr(high_water, "advance", None)):
@@ -373,10 +511,12 @@ class LimitsSource:
         if ok is not True:
             raise Refused("signature_invalid")
         fields = _document(document)
-        if (fields["account"], fields["venue"], fields["mode"]) != (self._account, self._venue, self._mode):
-            raise Refused("scope_mismatch")
         if fields["mode"] != PAPER:
             raise Refused("live_not_authorised")
+        if (fields["account"], fields["venue"], fields["mode"]) != (self._account, self._venue, self._mode):
+            raise Refused("scope_mismatch")
+        if fields["currency"] != CURRENCY:
+            raise Refused("currency_unsupported")
         if now_ms < fields["not_before"]:
             raise Refused("not_yet_valid")
         if now_ms >= fields["expires_at"]:
@@ -386,4 +526,3 @@ class LimitsSource:
         digest = "sha256:" + hashlib.sha256(canonical(document)).hexdigest()
         self._high_water.advance(self._scope_key, fields["sequence"], digest)
         return Limits(digest=digest, **fields)
-

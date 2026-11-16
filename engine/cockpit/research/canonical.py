@@ -17,13 +17,14 @@ money is integer minor units. No whitespace. Nesting at most 32 deep.
 signed): anything that does not round-trip to the identical bytes is refused.
 ``loads_untrusted`` is the reader for text from outside (a model's output): it allows
 any JSON whitespace but refuses duplicate keys, floats, non-finite numbers, oversized
-integers and lone surrogates, and leaves the field rules to the schema.
+integers and lone surrogates (raw in the text or written as a JSON escape), and leaves the field rules to the schema.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 
 from .errors import Refused
 
@@ -33,6 +34,7 @@ DIGEST_FORM = "csl-cj/v0"
 MAX_INT = 2**53 - 1
 _MAX_DEPTH = 32
 _MAX_INT_DIGITS = 16  # 2**53 - 1 has 16 digits; a longer literal is refused before int() runs
+_SURROGATE = re.compile("[" + chr(0xD800) + "-" + chr(0xDFFF) + "]")
 
 
 def check_value(value: object, depth: int = 0) -> None:
@@ -147,9 +149,30 @@ def loads_untrusted(text: object, *, max_chars: int) -> object:
     except UnicodeEncodeError:
         raise Refused("text_invalid", "lone surrogate") from None
     try:
-        return json.loads(text, object_pairs_hook=_no_duplicates, parse_float=_no_float,
-                          parse_constant=_no_constant, parse_int=_bounded_int)
+        value = json.loads(text, object_pairs_hook=_no_duplicates, parse_float=_no_float,
+                           parse_constant=_no_constant, parse_int=_bounded_int)
     except Refused:
         raise
     except (ValueError, RecursionError):
         raise Refused("not_json") from None
+    _no_lone_surrogates(value)
+    return value
+
+
+def _no_lone_surrogates(value: object) -> None:
+    """Refuse a lone surrogate that came in as an escape (the text itself was checked).
+
+    Iterative, so a deeply nested value cannot exhaust the stack here."""
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if type(item) is str:
+            if _SURROGATE.search(item):
+                raise Refused("text_invalid", "lone surrogate")
+        elif type(item) is list:
+            stack.extend(item)
+        elif type(item) is dict:
+            for key, sub in item.items():
+                if _SURROGATE.search(key):
+                    raise Refused("text_invalid", "lone surrogate")
+                stack.append(sub)

@@ -181,7 +181,7 @@ class Scope(unittest.TestCase):
     def test_live_is_not_authorised(self):
         doc = fixture_document()
         doc["scope"]["mode"] = "live"
-        self.refused(envelope(doc), "scope_mismatch")
+        self.refused(envelope(doc), "live_not_authorised")
         for mode in ("live", "Paper", "paper ", "auto"):
             with self.subTest(mode=mode):
                 with self.assertRaises(Refused) as ctx:
@@ -235,7 +235,8 @@ class Replay(unittest.TestCase):
                 again.load(envelope(self.doc(4)), now_ms=NOW)
             self.assertEqual(ctx.exception.code, "rollback")
             again.load(envelope(self.doc(5)), now_ms=NOW)
-            self.assertEqual(sorted(os.listdir(tmp)), ["limits-high-water.json"])  # no temp file left
+            self.assertEqual(sorted(os.listdir(tmp)),  # no temp file left
+                             ["limits-high-water.json", "limits-high-water.json.lock"])
             with self.assertRaises(Refused) as ctx:
                 create_high_water(path)
             self.assertEqual(ctx.exception.code, "high_water_exists")

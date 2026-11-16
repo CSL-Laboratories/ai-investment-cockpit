@@ -141,12 +141,16 @@ class UntrustedLoads(unittest.TestCase):
                     cj.loads_untrusted(bad, max_chars=64)
                 self.assertEqual(ctx.exception.code, code)
 
-    def test_an_escaped_lone_surrogate_decodes_but_is_not_ascii_text(self):
-        escaped = '{"a":"' + chr(92) + 'ud800"}'
-        value = cj.loads_untrusted(escaped, max_chars=64)
-        self.assertEqual(value, {"a": chr(0xD800)})
-        with self.assertRaises(Refused):
-            cj.canonical(value)
+    def test_an_escaped_lone_surrogate_is_refused_too(self):
+        # DeepSeek F9: the escape decodes to a lone surrogate, which the reader refuses.
+        for escaped in ('{"a":"' + chr(92) + 'ud800"}', '{"a":"x' + chr(92) + 'udfffy"}',
+                        '{"' + chr(92) + 'ud800":1}', '["' + chr(92) + 'udbff"]'):
+            with self.subTest(escaped=escaped):
+                with self.assertRaises(Refused) as ctx:
+                    cj.loads_untrusted(escaped, max_chars=64)
+                self.assertEqual(ctx.exception.code, "text_invalid")
+        pair = '"' + chr(92) + 'ud83d' + chr(92) + 'ude00"'  # a valid escaped pair is one character
+        self.assertEqual(cj.loads_untrusted(pair, max_chars=64), chr(0x1F600))
 
 
 if __name__ == "__main__":

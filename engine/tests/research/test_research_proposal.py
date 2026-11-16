@@ -267,7 +267,7 @@ class UntrustedModelText(unittest.TestCase):
             parse_proposal(deep)  # refused, whether the JSON reader or the schema stops it
         self.refused(good.replace("Made-up rationale", "Made-up " + chr(0xD800)), "text_invalid")
         escaped = good.replace("Made-up rationale", "Made-up " + chr(92) + "ud800")
-        self.refused(escaped, "text_not_ascii")
+        self.refused(escaped, "text_invalid")
 
 
 if __name__ == "__main__":
