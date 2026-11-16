@@ -628,6 +628,28 @@ class DispatchScopeTests(unittest.TestCase):
 MODEL_ACCESS = re.compile(r'ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN|anthropics/claude-code|'
                           r'CODEX_TRIGGER_PAT|OPENAI_API_KEY', re.IGNORECASE)
 HOSTED = {'ubuntu-latest', 'ubuntu-24.04', 'ubuntu-22.04', 'windows-2025', 'windows-latest', 'macos-latest'}
+# The Linear PR sync (kept on the owner's word, Nov 16, 2026) reads exactly one secret, by name; no other
+# workflow reads any.
+ADMITTED_SECRETS = {'linear-pr-sync.yml': {'LINEAR_API_KEY'}}
+
+
+def writer_guard_violations(name, text):
+    out = []
+    if set(re.findall(r'secrets\.([A-Za-z0-9_]+)', text)) != ADMITTED_SECRETS.get(name, set()):
+        out.append('secret')
+    if MODEL_ACCESS.search(text):
+        out.append('model credential')
+    if re.search(r'contents:\s*write|permissions:\s*write-all', text):
+        out.append('contents write')
+    if re.search(r'id-token:\s*write', text):
+        out.append('id-token')
+    if re.search(r'(?m)^\s*(?:-\s*)?(?:run:\s*)?git push\b', text):
+        out.append('git push')
+    for job in ((yaml.safe_load(text) or {}).get('jobs') or {}).values():
+        runner = job.get('runs-on')
+        if runner is not None and '${{' not in str(runner) and runner not in HOSTED:
+            out.append('runner')
+    return out
 
 
 class NoAutomatedWriterTests(unittest.TestCase):
@@ -645,8 +667,46 @@ class NoAutomatedWriterTests(unittest.TestCase):
 
     def test_retired_writer_workflows_are_absent(self):
         for name in ('claude.yml', 'claude-conflict-writer.yml', 'conflict-scan.yml',
-                     'csl-474-p9-probes.yml', 'stuck-thread-watch.yml', 'linear-pr-sync.yml'):
+                     'csl-474-p9-probes.yml', 'stuck-thread-watch.yml'):
             self.assertFalse((WORKFLOWS / name).exists(), name)
+
+    def test_linear_pr_sync_is_kept(self):
+        # CSL-238, Lucas, Nov 16, 2026: "Keep in both". Five workflows are retired, not six.
+        self.assertTrue((WORKFLOWS / 'linear-pr-sync.yml').exists())
+        self.assertTrue((ROOT / '.github' / 'scripts' / 'linear_pr_sync.py').exists())
+
+    def test_secrets_are_admitted_by_name_for_one_workflow(self):
+        for path in sorted(WORKFLOWS.glob('*.y*ml')):
+            found = set(re.findall(r'secrets\.([A-Za-z0-9_]+)', path.read_text()))
+            with self.subTest(path=path.name):
+                self.assertEqual(found, ADMITTED_SECRETS.get(path.name, set()))
+
+    def test_every_workflow_passes_the_writer_guard(self):
+        for path in sorted(WORKFLOWS.glob('*.y*ml')):
+            with self.subTest(path=path.name):
+                self.assertEqual(writer_guard_violations(path.name, path.read_text()), [])
+
+    def test_writer_guard_turns_red_on_a_second_secret_a_model_credential_or_a_write(self):
+        name = 'linear-pr-sync.yml'
+        text = (WORKFLOWS / name).read_text()
+        self.assertEqual(writer_guard_violations(name, text), [])
+        anchor = '          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}\n'
+        self.assertIn(anchor, text)
+        mutants = {
+            'second secret': text.replace(anchor, anchor + '          OTHER: ${{ secrets.OTHER_KEY }}\n'),
+            'model credential': text.replace(anchor, anchor + '          K: ${{ secrets.ANTHROPIC_API_KEY }}\n'),
+            'model action': text.replace('actions/checkout@v4', 'anthropics/claude-code-action@v1', 1),
+            'contents write': text.replace('contents: read', 'contents: write', 1),
+            'id-token': text.replace('contents: read', 'id-token: write', 1),
+            'git push': text.replace('run: python3', 'run: git push origin HEAD\n      - run: python3', 1),
+            'self-hosted': text.replace('runs-on: ubuntu-latest', 'runs-on: self-hosted', 1),
+        }
+        for label, mutated in mutants.items():
+            with self.subTest(mutant=label):
+                self.assertNotEqual(mutated, text)
+                self.assertTrue(writer_guard_violations(name, mutated), label)
+        # The one admitted secret is admitted for that workflow only.
+        self.assertTrue(writer_guard_violations('ci.yml', text))
 
     def test_every_job_uses_a_github_hosted_runner(self):
         for path in sorted(WORKFLOWS.glob('*.y*ml')):

@@ -19,7 +19,7 @@ them. If the two ever differ, AGENTS.md wins.
 
 **Scope.** These rules govern agents acting through a developer's account or
 session: interactive sessions, scheduled loops and Grok Bots. Repository workflows
-(CI, review-gate and the other repository workflows) and Devin automations keep the roles in AGENTS.md "Review roles" and
+(CI, review-gate, linear-pr-sync and the other repository workflows) and Devin automations keep the roles in AGENTS.md "Review roles" and
 "Automations". Their documented markers, receipts and audit comments are unchanged.
 Founder-directed bot reviews under AGENTS.md "Review roles" are that founder's
 reviews and are not covered here; "Review roles" alone says what counts as one.

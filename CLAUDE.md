@@ -213,4 +213,4 @@ decision.
 
 For writer collisions, use the [collision procedure](docs/ci-runbook.md#5-stop-or-roll-back-automation).
 
-Devin Review, a GitHub App (`devin-ai-integration`) that Devin runs from its side, is the only automated reviewer; no workflow in this repository starts it. People, and agents working by hand for a person, read and answer its threads; nothing answers or writes automatically. The Codex gate, the Claude PR fixer and `@claude` path, the conflict writer, the stuck-thread watch and the Linear PR sync were retired in CSL-238 (Lucas, Nov 16, 2026). Humans decide.
+Devin Review, a GitHub App (`devin-ai-integration`) that Devin runs from its side, is the only automated reviewer; no workflow in this repository starts it. People, and agents working by hand for a person, read and answer its threads; nothing answers or writes automatically. The Codex gate, the Claude PR fixer and `@claude` path, the conflict writer and the stuck-thread watch were retired in CSL-238 (Lucas, Nov 16, 2026); the Linear PR sync (`.github/workflows/linear-pr-sync.yml`, dispatch-only, writes nothing) is kept on his word. Humans decide.
