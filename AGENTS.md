@@ -105,9 +105,8 @@ expands on them; if the two ever differ, this section wins.
 
 **Scope.** This governs agents acting through a developer's account or session:
 interactive sessions, scheduled loops and Grok Bots. Repository workflows
-(`claude.yml` fixer, Codex CI/fixer gate, stuck-thread-watch, linear-pr-sync,
-conflict-scan, review-gate, the CSL-259 candidate coordinator and other repository
-workflows) and Devin automations keep the roles in [Review roles](#review-roles) and
+(`claude.yml` fixer, stuck-thread-watch, linear-pr-sync, conflict-scan,
+review-gate and other repository workflows) and Devin automations keep the roles in [Review roles](#review-roles) and
 [Automations](#automations); their documented markers, receipts and audit comments
 are unchanged. Founder-directed bot reviews under Review roles are that founder's
 reviews and are not covered here; Review roles alone says what counts as one.
@@ -165,9 +164,10 @@ beyond what a push to its own PR branch starts (below).
 GitHub-hosted runners, so none of it is billed. The gate stays because every run
 uses the shared hosted-runner queue. A push to your own PR branch, draft or not, is
 fine: on a non-draft PR it runs `ci.yml` and `rust.yml` under their path filters
-(plus Windows and macOS when the PR already has `ci:full`), so batch pushes. Mark a
+(plus Windows and macOS, and the Rust Windows and macOS cells, on every push to a
+non-draft same-repository PR since CSL-238), so batch pushes. Mark a
 PR ready once, after validation, with no owner hold. Dispatching, re-running or
-cancelling any workflow (CI, the fixer, the Codex gate, the stuck-thread watch), or
+cancelling any workflow (CI, the fixer, the stuck-thread watch), or
 adding `ci:full` or `enhancement` (which dispatch `ci.yml` and `rust.yml` through
 `ci-label-retrigger.yml`), needs a human ask. Agents never push to `main`.
 Read-only API queries are fine.
@@ -329,22 +329,13 @@ provisioned.
    the reason and rerun the combined gates. Never edit
    `.github/workflows/**` unless a Linear issue explicitly assigned by a human
    asks for it; bots mark a PR ready with their own identity, never
-   `GITHUB_TOKEN`. A `ci:full` added by a person or Devin persists, so every
-   later qualifying push reruns Windows and macOS, plus the Rust Windows and
-   Rust macOS cells when the Rust path list matches (CSL-385 G8). Remove it once
-   its full-matrix run has passed on the current head and the PR needs no
-   further automatic READY. Removing it keeps the Linux pytest cells, including
-   order-path, `risk/` and PnL tests, on every push that is not docs-only once
-   the PR is ready for review (drafts run no test matrix); Windows, macOS and
-   the Rust Windows and macOS cells wait until the label is back or a full
-   dispatch runs. A manual removal is a human hold: the Codex gate skips READY
-   on the head where it first sees the removal, and with the candidate
-   coordinator on, READY delivery, candidate runs and `CODEX-GATE: MEDIATE`
-   human handoffs stay blocked on every later head until someone re-adds
-   `ci:full`. Re-add it before the PR needs READY, a candidate run or a MEDIATE
-   handoff. Codex READY's own label is cleared automatically on the next push,
-   after that push's CI has already read it, so one more Windows and macOS run
-   can start first.
+   `GITHUB_TOKEN`. Since CSL-238 a same-repository PR that is ready for review
+   runs the full matrix (Windows, macOS, and the Rust Windows and macOS cells
+   when the Rust path list matches) when it is marked ready and on every later
+   push, with no label; drafts run no test matrix. `ci:full` still requests the
+   full matrix for a draft or fork PR, and adding it dispatches a full rerun
+   through `ci-label-retrigger.yml`. No workflow adds or clears `ci:full` any
+   more: the Codex gate that did so on READY was removed with its reviewer.
 7. Any order-path change needs an adversarial-review round.
 8. The release-blocking local matrix is **native Windows plus Ubuntu under WSL2**, each on
    Python 3.11 and 3.12. Run all four cells on the operator's Windows workstation. Hosted
@@ -427,40 +418,37 @@ Hosted split (PR #102):
 - Required check: **`linux-gates`**. The aggregator is GitHub-hosted `ubuntu-latest`. The Python 3.11+3.12 matrix it wraps runs on GitHub-hosted `ubuntu-24.04`. Ordinary label add/remove does not start `ci.yml`, so it cannot post a skipped or successful `linux-gates`. Drafts skip the test matrix; the aggregator still runs and fails closed until `ready_for_review`. `ci:full` / `enhancement` re-trigger via `ci-label-retrigger.yml`, which has no job named `linux-gates`.
 - Enhancement-only label reruns request Linux scope; `ci:full` or enhancement on an already-`ci:full` PR requests the full matrix. Manual/API dispatch defaults to full; explicit `scope=linux` requests Linux only.
 - Label reruns carry the PR number, expected head, and immutable merge candidate. They validate that context before testing the merge candidate. Their concurrency suffix is `label-<expected-head>-<scope>`, separate from ordinary PR runs, because `gh workflow run --ref` resolves to the current head and a stale dispatch must not cancel that head's PR or label run. Scope isolation prevents a delayed Linux-only request from cancelling a full request on the same head. The label dispatcher also isolates heads. Filter still fail-closes stale dispatch context before billed matrix work; manual branch dispatch without PR context remains available in its own scope group.
-- Windows runs on push to `main`, `merge_group`, the `ci:full` label, and full manual dispatch (GitHub-hosted `windows-2025`). Main-push Linux/Windows and relevant Rust coverage stays enabled until the owner separately approves removal after queue enforcement is proven.
-- macOS runs nightly at 07:17 UTC on `main` (skipped if idle 24h), on the `ci:full` label, and on full manual dispatch — not on ordinary `main` pushes (GitHub-hosted).
+- Windows runs on push to `main`, `merge_group`, every non-draft same-repository PR event (CSL-238), the `ci:full` label, and full manual dispatch (GitHub-hosted `windows-2025`). Main-push Linux/Windows and relevant Rust coverage stays enabled until the owner separately approves removal after queue enforcement is proven.
+- macOS runs nightly at 07:17 UTC on `main` (skipped if idle 24h), on every non-draft same-repository PR event (CSL-238), on the `ci:full` label, and on full manual dispatch — not on ordinary `main` pushes (GitHub-hosted).
 - Non-test jobs (filter, `linux-gates` aggregator, pr-lint, Claude fixer/conflict-scan) use GitHub-hosted `ubuntu-latest`.
 - Ordinary PR runs share a queue with automatic cancellation disabled. The trusted default-branch companion requests cancellation only for verified strict-ancestor CI/Rust runs after checking a real current-head successor; bootstrap and uncertain evidence leave runs queued. Draft synchronize uses a separate group from `ready_for_review`. See [controller policy and limits](docs/ci-cancellation-controller.md).
 - Non-draft synchronize events wait in `settle` for 120 seconds. Paid jobs and required aggregates accept successful settle or an event's intentional skip; failure, cancellation, and unexpected skips block. The wait consumes hosted capacity and does not guarantee savings.
 - CI caches pip downloads, never virtualenvs. Each cell creates a fresh environment, installs direct pins, and runs `pip check`; one fresh no-cache retry handles install/cache failure. Direct pins are not a transitive hash lock.
 - Queue protection is staged: proposed stable checks are `linux-gates`, `queue-gates`, `rust-gates`, and `review-gate`. The latter verifies the current genuine Devin bot commit status on every exact required PR head, with bounded polling and manual same-head recovery. `linux-gates` is the only required check (`Devin Review` was removed on Nov 11, 2026). See [the rollout and owner decisions](docs/ci-queue-rollout.md); synthetic tests do not establish live queue enforcement.
-- A rate-limited `CODEX_TRIGGER_PAT` does not fail the stuck-thread watch workflow run. The watcher reads with `github.token` and uses the PAT only for writes; a failed write is logged as `pr=<N> thread=<id> mediate=error` (or `pr=<N> label=error` when labelling is on) in a run that still passes. Inside the script, only a failure to list pull requests (which a `github.token` rate limit can cause) or a missing `GITHUB_REPOSITORY` returns non-zero; the job can also fail at checkout or on its 10-minute timeout. So read the log before treating a failed run as a code problem. The required checks (`linux-gates`; `Devin Review` until Nov 11, 2026) decide CI either way (Lucas's decision on CSL-390, comment 242120cc).
+- The stuck-thread watch runs only when a person dispatches it (CSL-238). It reads with `github.token` and holds no write token; it posts nothing on a PR. Inside the script, only a failure to list pull requests (which a `github.token` rate limit can cause) or a missing `GITHUB_REPOSITORY` returns non-zero; the job can also fail at checkout or on its 10-minute timeout. So read the log before treating a failed run as a code problem. The required checks (`linux-gates`; `Devin Review` until Nov 11, 2026) decide CI either way (Lucas's decision on CSL-390, comment 242120cc).
 
 ## Review roles
 
 - **Devin** was the GitHub PR code reviewer (findings) until its trial expired; it no longer reviews, and its required check was removed on Nov 11, 2026.
 - **Claude Code Action** (`.github/workflows/claude.yml`) is the fixer for Devin findings and `@claude` mentions on open, same-repository PRs whose author (and, for `@claude`, the commenter) has write, maintain or admin permission on the repo (other PRs are skipped by the workflow's event gate).
-- **Codex** has two allowed GitHub review paths, neither a Devin substitute:
-  1. **CI/fixer gate** (CSL-103/259, `.github/workflows/codex-gate.yml`) - one nonce-bound `@codex review` per exact head/base/merge/tree candidate and fixer generation; the reply echoes that identity and ends with `CODEX-GATE: READY|MEDIATE`. See Code Review Rules.
-  2. **Stuck-thread watch** (CSL-86 / PR #124, `.github/workflows/stuck-thread-watch.yml`) — one advisory `@codex review` on unresolved Devin threads Claude could not settle, posted on the PR; it skips already-approved PRs. Since #328 (CSL-862) it writes nothing to Linear (`FILE_LINEAR: "false"`): it no longer files or updates the Linear `needs-decision` Triage roll-up titled `Stuck PR threads: <repo>#<PR>`, so a roll-up it filed earlier may be stale. The Codex CI/fixer gate still files or updates that roll-up on MEDIATE (see Code Review Rules). Shared keys: `<!-- stuck-pr-threads:owner/repo#N -->` and `<!-- codex-gate-mediate:owner/repo:N -->`; each writer owns only its fenced block. The reply to the watcher's `@codex review` must **not** include a `CODEX-GATE:` line, and must not push, merge, resolve the thread, or open a fix PR.
+- **Codex** no longer reviews on GitHub. Its subscription and API key expired, and CSL-238 removed the Codex CI/fixer gate (`codex-gate.yml`, CSL-103/259) and the stuck-thread watch's Codex mediation. No automated reviewer verdict gates CI, a candidate or a merge.
+- **Stuck-thread watch** (CSL-86 / PR #124, `.github/workflows/stuck-thread-watch.yml`) runs only when a person dispatches it. It lists the unresolved Devin threads Claude could not settle in its run log and step summary, skips PRs that are already approved and posts nothing on the PR. Since #328 (CSL-862) it writes nothing to Linear (`FILE_LINEAR: "false"`): it no longer files or updates the Linear `needs-decision` Triage roll-up titled `Stuck PR threads: <repo>#<PR>`, so a roll-up filed earlier may be stale. Shared key: `<!-- stuck-pr-threads:owner/repo#N -->`.
 - **GitHub-hosted runners** host the test matrix. That is the GitHub test-CI path, not a revival of this cockpit's retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired from this cockpit's research/dev swarm dispatch" still apply to cockpit research/dev swarm jobs. Devin may still post research briefs, which, like all research, land in csl-research.
-- Cursor, Codex (as a coding agent), Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs, except the stuck-thread watcher. A founder may have their own bot post reviews under their account when they direct it. The author agent may fix CI failures on its own PR.
+- Cursor, Codex (as a coding agent), Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs. A founder may have their own bot post reviews under their account when they direct it. The author agent may fix CI failures on its own PR.
 
 ## Review loop
 
-Devin reviews (no longer: see [Review roles](#review-roles)) → Claude fixes (`claude.yml`) → the Codex gate (CSL-103) oversees
-candidate full CI / human handoff only. Devin findings
-trigger Claude directly without waiting for Codex. All Claude jobs share one
+Devin reviews (no longer: see [Review roles](#review-roles)) → Claude fixes (`claude.yml`).
+Devin findings and `@claude` mentions trigger Claude directly. All Claude jobs share one
 per-PR lock with GitHub `queue: max` (one active, up to 100 pending; excess
 requests can still be dropped). The automated Devin fixer stops at eight consecutive Claude
-commits. Stuck threads are also picked up by
+commits. A person can run
 [`.github/workflows/stuck-thread-watch.yml`](.github/workflows/stuck-thread-watch.yml)
-(CSL-86 / PR #124), which asks Codex to mediate on the PR (`@codex review`,
-no `CODEX-GATE:` line). Since #328 (CSL-862) the watcher writes nothing to
-Linear (`FILE_LINEAR: "false"`), so it no longer records or updates the
-`needs-decision` roll-up per unapproved PR (`Stuck PR threads: <repo>#<PR>`),
-and a roll-up it filed earlier may be stale. The Codex gate still files or
-updates that roll-up on MEDIATE (see [Code Review Rules](#code-review-rules)).
+(CSL-86 / PR #124) to list stuck threads; since CSL-238 it posts nothing on the
+PR and asks no reviewer to mediate. Since #328 (CSL-862) the watcher writes
+nothing to Linear (`FILE_LINEAR: "false"`), so it no longer records or updates
+the `needs-decision` roll-up per unapproved PR (`Stuck PR threads: <repo>#<PR>`),
+and a roll-up filed earlier may be stale.
 Humans decide.
 The watcher never resolves threads, pushes, or merges.
 
@@ -468,7 +456,7 @@ The watcher never resolves threads, pushes, or merges.
 
 Lucas's decision ([CSL-381 comment 81c9a1f7](https://linear.app/csl-laboratories/issue/CSL-381#comment-81c9a1f7-695b-4149-bd78-fc360175fafb)) bounds review rounds:
 
-- **Round 1** is the first full review round on a ready PR (Devin, Codex and
+- **Round 1** is the first full review round on a ready PR (the bot and
   human reviews of that head) plus the fixes for it. Any finding can block in
   round 1.
 - **After round 1**, only P0/P1 findings block merge or justify a fix push.
@@ -480,43 +468,15 @@ Lucas's decision ([CSL-381 comment 81c9a1f7](https://linear.app/csl-laboratories
 
 This changes no merge authority, Devin review or
 required check on the final head. It changes no workflow: the `claude.yml`
-fixer and the Codex gate keep the behavior described above until a separate
-`.github` change.
+fixer keeps the behavior described above.
 
 ## Code Review Rules
 
-These rules apply to the **CI/fixer gate** `@codex review`. For READY, echo
-`CODEX-CANDIDATE` and `CODEX-REQUEST` exactly outside quotes or code fences and
-review the named head, base, merge commit and tree. When that candidate is ready for full CI or the current head needs a
-human decision, **end the review body with exactly one applicable verdict
-line**. When fixes are still pending, leave advisory findings without a verdict:
-
-    CODEX-GATE: READY
-    CODEX-GATE: MEDIATE
-
-- Legacy `CODEX-GATE: FIX` verdicts are ignored. Human-only findings need a human `@claude` mention.
-  Devin submitted reviews trigger fixes directly; Codex never dispatches the fixer.
-- `READY` - findings are settled or none remain; the locked coordinator requests
-  both full matrices for the exact candidate, before human approval. Do not add
-  `ci:full`; persistent labels and legacy head-only replies are not qualification.
-- `MEDIATE` — Devin and Claude disagree or a thread needs a human. File or
-  update the shared Linear `needs-decision` Triage issue per PR, titled
-  `Stuck PR threads: <repo>#<PR>` (key `<!-- stuck-pr-threads:owner/repo#N -->`).
-  A genuine current-head, unquoted terminal MEDIATE does not require a mergeable
-  synthetic candidate or candidate nonce; it grants human handoff only, never CI.
-  Skip if the PR is already approved. Do not wait for stuck-thread-watch (it
-  only flags a needs-human phrase or a 6-hour-old Claude reply).
-
-If fixes remain, leave advisory findings without a gate verdict. READY and
-MEDIATE are the only actionable verdicts; missing verdicts never time out
-into fixer dispatch. Recovery scans retry missing requests and those two
-verdicts only. There is no daily fixer dispatch cap. Locked live-head and
-unresolved-finding checks skip obsolete queued events; failed runs remain
-retryable through a new Devin submitted review or authorized manual dispatch.
-
-If this `@codex review` is a stuck-thread mediation (the comment contains
-`<!-- codex-mediation:`), do **not** add a `CODEX-GATE:` line. The gate
-ignores those reviews and never dispatches a fixer from them.
+The Codex CI/fixer gate and its `@codex review` requests and verdict lines were
+removed in CSL-238. No automated reviewer verdict gates the full matrix, a merge
+candidate or a merge; `linux-gates` and resolved review conversations are what
+`main` requires. Human-only findings need a human `@claude` mention. Devin
+submitted reviews trigger fixes directly while Devin still reviews.
 
 ## Automations
 
@@ -582,12 +542,12 @@ pending; authentication, transport, and server errors still fail closed. The
 eight-commit count is applied only after receipt-aware selection proves pending
 work remains, so a clean PR does not receive a misleading loop-cap pause.
 
-READY is reconciled against live unresolved bug findings and exact candidate
-identity before delivery and qualification, including explicit human handoffs.
-Verified addressed receipts count as handled. Historical READY comments and
-persistent labels never qualify a different candidate; MEDIATE retains trusted
-deduplication. Every candidate, including docs-only, needs the five Python and
-five Rust cells. See [candidate policy and deployment limits](docs/ci-candidate-readiness.md).
+The READY reconciliation, candidate qualification and gate-owned `ci:full`
+label writes that this section described before CSL-238 belonged to the Codex
+gate and the candidate coordinator, both removed. Nothing writes new gate
+ownership receipts. The paragraphs below describe the receipts the gate wrote
+earlier, which the conflict writer still reads before it revokes a label the
+gate owned.
 
 Trusted Actions receipts bind gate-owned labels to exact label-event IDs across
 head changes. Only that event can be revoked. The candidate coordinator preserves
@@ -599,7 +559,7 @@ compare-and-delete, so a human change between the final check and deletion is an
 unavoidable narrow race, not an atomic guarantee.
 
 Legacy label additions have trusted intents and three bounded visibility checks.
-New candidate READY uses journaled direct dispatch without adding a label. If legacy ownership remains unknown or recording
+If legacy ownership remains unknown or recording
 proof fails, the intent blocks subsequent READY processing, even after a restart.
 It never infers ownership from the PAT owner's name. Inspect the label and
 manually remove/re-add `ci:full` to reconcile; if absent, add then remove it.

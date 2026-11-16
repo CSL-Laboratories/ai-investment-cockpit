@@ -140,10 +140,10 @@ class WorkflowSizeTests(unittest.TestCase):
         self.assertIn(ACTION_PIN, claude)
         self.assertEqual(claude.count(ACTION_PIN), 2)
 
-    def test_conflict_writer_and_codex_gate_still_load(self) -> None:
+    def test_conflict_writer_and_workflow_checks_still_load(self) -> None:
         import yaml
 
-        for name in ("claude-conflict-writer.yml", "codex-gate.yml", "claude.yml"):
+        for name in ("claude-conflict-writer.yml", "workflow-checks.yml", "claude.yml"):
             path = WORKFLOWS / name
             data = yaml.safe_load(path.read_text(encoding="utf-8"))
             self.assertIn("jobs", data, name)

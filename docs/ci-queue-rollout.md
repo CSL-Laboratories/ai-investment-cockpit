@@ -123,9 +123,9 @@ ratified or trade validation for it.
 
 # Candidate follow-on (CSL-259)
 
-The [exact candidate coordinator](ci-candidate-readiness.md) adds staged full
-ordinary-candidate evidence for all five Python and five Rust cells, including
-docs-only candidates, after independent READY and before human approval.
-`candidate-ci-gates` is an additional staged aggregate; no existing required name
-or repository protection changes here. The protected-policy and live-canary
-holds above still apply.
+The [exact candidate coordinator](ci-candidate-readiness.md), which requested full
+candidate evidence after an independent Codex READY, was removed with the Codex
+gate in CSL-238. A person can still dispatch an exact-candidate run;
+`candidate-ci-gates` stays an additional staged aggregate, and no existing
+required name or repository protection changes here. The protected-policy and
+live-canary holds above still apply.

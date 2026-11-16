@@ -30,11 +30,9 @@ adds `ci:full` / `enhancement` (AGENTS.md:156-157, 168-172). Escalate on the Lin
   `linux` cell also re-runs `linux-gates` (contract §3 row 20). The controller does not target manual
   re-runs (contract §6 row 20); GitHub's own re-run semantics are an accepted untested gap.
 - **Flaky test:** re-run once. If it fails again on the same head, treat it as real and file a Bug.
-- **`ci:full`:** add it when Windows and macOS evidence is needed; remove it once that full run has
-  passed on the current head and the PR needs no further automatic READY (AGENTS.md:332-347). A
-  manual removal is a human hold: the Codex gate skips READY on that head, and with the candidate
-  coordinator on, READY, candidate runs and `CODEX-GATE: MEDIATE` handoffs stay blocked until someone
-  re-adds it. Otherwise it persists and repeats the full matrix on every qualifying push.
+- **Full matrix:** since CSL-238 every event of a non-draft same-repository PR runs Windows and
+  macOS without a label. `ci:full` is needed only on a draft or fork PR; adding it also dispatches a
+  full rerun. No workflow adds or removes it.
 
 ## 3. Cancellation
 
@@ -104,19 +102,19 @@ These controls grant no repository-wide pause-variable authority. Setting
 |---|---|---|
 | Label `claude:pause` or `hold` on a PR (any case) | The writers (`@claude`, Devin fixer, conflict writer) stop before checkout or reservation (`pause_reason` in `mention-prepare` and `fixer-prepare`; the conflict writer's `prepare`), and the publishers recheck it before pushing (`pause_refusal`). A detected pause refuses the candidate push and queued model writes; the workflow still posts its terminal audit. The check and push are separate, as described above. The scan never selects a paused PR. Unreadable labels count as paused | Anyone who can label PRs, with applicable coordination authority; agents must never remove a pause |
 | Repository variable `CLAUDE_FIXER_PAUSE` set to exactly `true` | Same for every PR, also rechecked by the publishers (`pause_refusal`) and by the scan | Admin |
-| Remove `ci:full` | Stops repeat Windows/macOS on later pushes | Human |
+| Remove `ci:full` | Stops repeat Windows/macOS on later pushes of a draft or fork PR (a non-draft same-repository PR runs them anyway since CSL-238) | Human |
 | (automatic) A fixer pause while a gate-owned `ci:full` is on the PR | The writers revoke only the label event the gate itself recorded; a human-added `ci:full` is never removed (`revoke_owned_ci` in the claude.yml publishers and prepare, and in claude-conflict-writer.yml) | Automatic |
 | Actions → workflow → **Disable workflow** | Stops new runs of that workflow; runs already in progress continue (cancel them separately) | Admin; record it on Linear |
 | Revert the PR that changed a workflow | Restores the previous code in a normal PR that a founder merges; never force-push. Writer state kept in PR comments (attempt reservations, receipts, loop-cap and `ci:full` ownership markers) is not reverted, so set `CLAUDE_FIXER_PAUSE=true` first and check those markers after the revert | Founder merge |
 
-Writers outside this guard: `codex-gate.yml` (adds the gate-owned `ci:full` on READY) and
-`stuck-thread-watch.yml`. The watcher is advisory: it posts one `@codex review` comment on a stuck
-Devin thread with `CODEX_TRIGGER_PAT`. Since #328 (CSL-862) it keeps no Linear roll-up
-(`FILE_LINEAR` is `"false"`). It never resolves threads, pushes or merges
-(`.github/scripts/stuck_thread_watch.py` docstring; AGENTS.md:445), so a stuck thread stays open
-until a human resolves it or records the decision. They are covered by
-their own tests (`tools/test_codex_gate.py`, `app/tests/test_stuck_thread_watch.py`) and by contract §7, not by
-`CrossLaneAdmissionTests`.
+Outside this guard: `stuck-thread-watch.yml`, which runs only when a person dispatches it
+(CSL-238). It lists stuck Devin threads in its run log and posts nothing on the PR. Since #328
+(CSL-862) it keeps no Linear roll-up (`FILE_LINEAR` is `"false"`). It never resolves threads,
+pushes or merges (`.github/scripts/stuck_thread_watch.py` docstring), so a stuck thread stays open
+until a human resolves it or records the decision. It is covered by its own tests
+(`app/tests/test_stuck_thread_watch.py`, `tools/test_fixer_failure_watcher.py`), not by
+`CrossLaneAdmissionTests`. The Codex gate (`codex-gate.yml`), which used to add a gate-owned
+`ci:full` on READY, was removed in CSL-238.
 
 ## 6. Cost and capacity check
 
@@ -124,10 +122,10 @@ their own tests (`tools/test_codex_gate.py`, `app/tests/test_stuck_thread_watch.
   `ubuntu-24.04`, `ubuntu-22.04`, `windows-2025`, `windows-latest` and `macos-latest`. Since CSL-408 these are free **because the repository is
   public**. Making it private would meter minutes (Team includes 3,000 per month; GitHub docs,
   Actions billing); re-plan before that.
-- `tools/test_codex_gate.py` (`test_test_jobs_use_free_github_hosted_runners`) fails if any
-  workflow names a Blacksmith runner. claude.yml runs it only when fixer or gate paths change
-  (claude.yml:22-46, 521); codex-gate.yml runs it on every listed same-repository `pull_request` event type
-  (codex-gate.yml:11-12, 240-254). The cross-lane tests in `tools/test_ci_dispatch_scope.py`, which
+- `tools/test_workflow_hosting.py` (`test_test_jobs_use_free_github_hosted_runners`) fails if any
+  workflow names a Blacksmith runner. claude.yml runs it only when fixer paths change;
+  workflow-checks.yml runs it on every same-repository `pull_request` (CSL-238 moved it there from
+  the removed codex-gate.yml). The cross-lane tests in `tools/test_ci_dispatch_scope.py`, which
   `ci.yml` runs on every test-running PR (ci.yml:438), fail if a writer workflow leaves GitHub-hosted
   runners.
 - Usage over time: the criterion 2 measurements on CSL-255 (queue wait, time to required check,

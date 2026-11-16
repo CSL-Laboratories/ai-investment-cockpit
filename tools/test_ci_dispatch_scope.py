@@ -153,20 +153,30 @@ class DispatchScopeTests(unittest.TestCase):
     def test_platform_conditions_and_actual_rust_matrix(self):
         rust_step = next(step for step in self.rust['jobs']['filter']['steps']
                          if step.get('id') == 'gate')
-        for event, scope, labels, win, mac, rust_win, rust_mac in [
-            ('workflow_dispatch', '', [], True, True, True, True),
-            ('workflow_dispatch', 'full', [], True, True, True, True),
-            ('workflow_dispatch', 'linux', [], False, False, False, False),
-            ('pull_request', '', [], False, False, False, False),
-            ('pull_request', '', ['enhancement'], False, False, False, False),
-            ('pull_request', '', ['ci:full'], True, True, True, True),
-            ('push', '', [], True, False, True, False),
-            ('merge_group', '', [], True, False, True, False),
-            ('schedule', '', [], False, True, False, False),
+        # CSL-238: a non-draft same-repository PR runs every cell without a label;
+        # a draft or a fork PR still needs ci:full, as before.
+        for event, scope, labels, draft, repo, win, mac, rust_win, rust_mac in [
+            ('workflow_dispatch', '', [], False, 'owner/repo', True, True, True, True),
+            ('workflow_dispatch', 'full', [], False, 'owner/repo', True, True, True, True),
+            ('workflow_dispatch', 'linux', [], False, 'owner/repo', False, False, False, False),
+            ('pull_request', '', [], False, 'owner/repo', True, True, True, True),
+            ('pull_request', '', ['enhancement'], False, 'owner/repo', True, True, True, True),
+            ('pull_request', '', [], True, 'owner/repo', False, False, False, False),
+            ('pull_request', '', ['enhancement'], True, 'owner/repo', False, False, False, False),
+            ('pull_request', '', [], False, 'fork/repo', False, False, False, False),
+            ('pull_request', '', ['enhancement'], False, 'fork/repo', False, False, False, False),
+            ('pull_request', '', ['ci:full'], False, 'owner/repo', True, True, True, True),
+            ('pull_request', '', ['ci:full'], True, 'owner/repo', True, True, True, True),
+            ('pull_request', '', ['ci:full'], False, 'fork/repo', True, True, True, True),
+            ('push', '', [], False, 'owner/repo', True, False, True, False),
+            ('merge_group', '', [], False, 'owner/repo', True, False, True, False),
+            ('schedule', '', [], False, 'owner/repo', False, True, False, False),
         ]:
-            with self.subTest(event=event, scope=scope, labels=labels):
+            with self.subTest(event=event, scope=scope, labels=labels, draft=draft, repo=repo):
                 context = {'github.event_name': event, 'inputs.scope': scope,
                            'github.ref': 'refs/heads/main',
+                           'github.event.pull_request.draft': draft,
+                           'github.event.pull_request.head.repo.full_name': repo,
                            'github.event.pull_request.labels.*.name': labels}
                 self.assertEqual(bool(evaluate(self.ci['jobs']['windows']['if'], **context)), win)
                 self.assertEqual(bool(evaluate(self.ci['jobs']['macos']['if'], **context)), mac)

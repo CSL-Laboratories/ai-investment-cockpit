@@ -19,9 +19,8 @@ them. If the two ever differ, AGENTS.md wins.
 
 **Scope.** These rules govern agents acting through a developer's account or
 session: interactive sessions, scheduled loops and Grok Bots. Repository workflows
-(`claude.yml` fixer, Codex CI/fixer gate, stuck-thread-watch, linear-pr-sync,
-conflict-scan, review-gate, the CSL-259 candidate coordinator and other repository
-workflows) and Devin automations keep the roles in AGENTS.md "Review roles" and
+(`claude.yml` fixer, stuck-thread-watch, linear-pr-sync, conflict-scan,
+review-gate and other repository workflows) and Devin automations keep the roles in AGENTS.md "Review roles" and
 "Automations". Their documented markers, receipts and audit comments are unchanged.
 Founder-directed bot reviews under AGENTS.md "Review roles" are that founder's
 reviews and are not covered here; "Review roles" alone says what counts as one.
@@ -93,11 +92,11 @@ Since CSL-408, every CI job runs on free GitHub-hosted runners, so none of it is
 billed. The gate stays because every run uses the shared hosted-runner queue.
 
 - A push to your own PR branch, draft or not, is fine. On a non-draft PR it runs
-  `ci.yml` and `rust.yml` under their path filters (plus Windows and macOS when the
-  PR already has `ci:full`), so batch pushes. Mark a PR ready once, after
+  `ci.yml` and `rust.yml` under their path filters (plus Windows and macOS on every
+  push to a non-draft same-repository PR, CSL-238), so batch pushes. Mark a PR ready once, after
   validation, with no owner hold.
-- Dispatching, re-running or cancelling any workflow (CI, the fixer, the Codex
-  gate, the stuck-thread watch), or adding `ci:full` or `enhancement` (which
+- Dispatching, re-running or cancelling any workflow (CI, the fixer, the
+  stuck-thread watch), or adding `ci:full` or `enhancement` (which
   dispatch `ci.yml` and `rust.yml` through `ci-label-retrigger.yml`), needs a
   human ask.
 - Agents never push to `main`.

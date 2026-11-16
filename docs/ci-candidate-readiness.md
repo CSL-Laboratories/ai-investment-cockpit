@@ -1,5 +1,17 @@
 # Exact candidate readiness (CSL-259)
 
+> **Retired in CSL-238 (2026-11-16).** The coordinator described below
+> (`scripts/ci/candidate_gate.py` and the `scan`/`gate` jobs of
+> `codex-gate.yml`) asked Codex for an exact-candidate review and dispatched the
+> full matrix only after a `CODEX-GATE: READY`. Codex expired, so the
+> coordinator, its workflow jobs and its tests were removed. What remains is the
+> Codex-free part: `scripts/ci/merge_candidate.py` (candidate identity, policy
+> staging and the `validate-dispatch` check that `ci.yml` and `rust.yml` run on a
+> candidate dispatch), the `candidate-ci-gates` aggregate, and its tests. A
+> candidate run now starts only when a person dispatches one. Since CSL-238 every
+> non-draft same-repository PR runs the full matrix without a label. The text
+> below is kept as the record of the retired design.
+
 This is staged code. It does not activate repository protections, replace direct
 `Devin Review`, authorize a merge, or prove live queue enforcement. The existing
 required checks and post-merge fallback remain. Protected policy, required-check

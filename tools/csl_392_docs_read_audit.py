@@ -58,7 +58,7 @@ EXCLUDED: dict[tuple[str, str], str] = {
     (".", r'python -I -X utf8 -B "\$stage/merge_candidate\.py" stage-policy "\$stage"'): (
         "candidate policy staging; needs the Actions env (GITHUB_SHA, RUNNER_TEMP)"
     ),
-    (".", r'python -I -X utf8 -B "\$CODEX_POLICY_VALIDATOR" validate-dispatch'): (
+    (".", r'python -I -X utf8 -B "\$CANDIDATE_POLICY_VALIDATOR" validate-dispatch'): (
         "candidate dispatch validation; needs the Actions env and a staged validator"
     ),
     (".", r"python -P \.github/actions/run-gates/install\.py"): (

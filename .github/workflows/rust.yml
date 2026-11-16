@@ -6,9 +6,11 @@ run-name: ${{ inputs.candidate_id && format('candidate:{0}:rust:{1}', inputs.can
 #
 # Hosted cells follow the split already used by ci.yml:
 #   linux   — Python 3.11 and 3.12 whenever this path filter runs
-#   windows — Python 3.11 and 3.12 on push to main, workflow_dispatch, or the
+#   windows — Python 3.11 and 3.12 on push to main, workflow_dispatch, every
+#             non-draft same-repository pull_request event (CSL-238), or the
 #             pull_request label ci:full
-#   macos   — Python 3.12 on workflow_dispatch or the pull_request label ci:full
+#   macos   — Python 3.12 on workflow_dispatch, every non-draft same-repository
+#             pull_request event (CSL-238), or the pull_request label ci:full
 # Nightly macOS stays in ci.yml (07:17 UTC, skipped when main was idle 24h) and
 # is not duplicated here.
 #
@@ -133,7 +135,7 @@ jobs:
             echo "::error::Trusted candidate validator is absent from policy commit ${head}; the candidate copy is never substituted."
             exit 1
           fi
-          stage="${RUNNER_TEMP}/codex-policy"
+          stage="${RUNNER_TEMP}/candidate-policy"
           rm -rf "$stage"
           mkdir -p "$stage"
           cp "$helper" "$stage/merge_candidate.py"
@@ -143,9 +145,9 @@ jobs:
           python -I -X utf8 -B "$stage/merge_candidate.py" stage-policy "$stage"
           [ -f "$stage/manifest.json" ]
           {
-            echo "CODEX_POLICY_SHA=$head"
-            echo "CODEX_POLICY_BRANCH=$DEFAULT_BRANCH"
-            echo "CODEX_POLICY_VALIDATOR=$stage/merge_candidate.py"
+            echo "CANDIDATE_POLICY_SHA=$head"
+            echo "CANDIDATE_POLICY_BRANCH=$DEFAULT_BRANCH"
+            echo "CANDIDATE_POLICY_VALIDATOR=$stage/merge_candidate.py"
           } >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
         with:
@@ -169,14 +171,14 @@ jobs:
           [ "$CANDIDATE_SCOPE" = "full" ]
           # The staged policy validator, never scripts/ci/merge_candidate.py from
           # the candidate workspace; -I keeps candidate paths off sys.path.
-          [ -n "${CODEX_POLICY_SHA:-}" ]
-          [ -n "${CODEX_POLICY_VALIDATOR:-}" ]
-          [ "$GITHUB_SHA" = "$CODEX_POLICY_SHA" ]
-          [ "$GITHUB_WORKFLOW_SHA" = "$CODEX_POLICY_SHA" ]
-          [ ! -L "$CODEX_POLICY_VALIDATOR" ]
-          [ -f "$CODEX_POLICY_VALIDATOR" ]
-          [ -f "${CODEX_POLICY_VALIDATOR%/*}/manifest.json" ]
-          python -I -X utf8 -B "$CODEX_POLICY_VALIDATOR" validate-dispatch
+          [ -n "${CANDIDATE_POLICY_SHA:-}" ]
+          [ -n "${CANDIDATE_POLICY_VALIDATOR:-}" ]
+          [ "$GITHUB_SHA" = "$CANDIDATE_POLICY_SHA" ]
+          [ "$GITHUB_WORKFLOW_SHA" = "$CANDIDATE_POLICY_SHA" ]
+          [ ! -L "$CANDIDATE_POLICY_VALIDATOR" ]
+          [ -f "$CANDIDATE_POLICY_VALIDATOR" ]
+          [ -f "${CANDIDATE_POLICY_VALIDATOR%/*}/manifest.json" ]
+          python -I -X utf8 -B "$CANDIDATE_POLICY_VALIDATOR" validate-dispatch
       # Skipped only for a complete candidate tuple, whose independent validator
       # above fails closed on partial or invalid inputs. Partial tuples run both.
       - name: Validate label dispatch context
@@ -203,8 +205,8 @@ jobs:
         env:
           SKIP_CELLS: "false"
           CHECK_PATHS: ${{ github.event_name != 'workflow_dispatch' }}
-          RUN_WINDOWS: ${{ (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') || (github.event_name == 'merge_group') || (github.event_name == 'push') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
-          RUN_MACOS: ${{ (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
+          RUN_WINDOWS: ${{ (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') || (github.event_name == 'merge_group') || (github.event_name == 'push') || (github.event_name == 'pull_request' && (contains(github.event.pull_request.labels.*.name, 'ci:full') || (github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository))) }}
+          RUN_MACOS: ${{ (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') || (github.event_name == 'pull_request' && (contains(github.event.pull_request.labels.*.name, 'ci:full') || (github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository))) }}
           EVENT_NAME: ${{ github.event_name }}
           EXPECTED_PR_HEAD: ${{ github.event.pull_request.head.sha }}
           MERGE_CANDIDATE: ${{ github.sha }}
@@ -360,7 +362,7 @@ jobs:
             echo "::error::Trusted candidate validator is absent from policy commit ${head}; the candidate copy is never substituted."
             exit 1
           fi
-          stage="${RUNNER_TEMP}/codex-policy"
+          stage="${RUNNER_TEMP}/candidate-policy"
           rm -rf "$stage"
           mkdir -p "$stage"
           cp "$helper" "$stage/merge_candidate.py"
@@ -370,9 +372,9 @@ jobs:
           python -I -X utf8 -B "$stage/merge_candidate.py" stage-policy "$stage"
           [ -f "$stage/manifest.json" ]
           {
-            echo "CODEX_POLICY_SHA=$head"
-            echo "CODEX_POLICY_BRANCH=$DEFAULT_BRANCH"
-            echo "CODEX_POLICY_VALIDATOR=$stage/merge_candidate.py"
+            echo "CANDIDATE_POLICY_SHA=$head"
+            echo "CANDIDATE_POLICY_BRANCH=$DEFAULT_BRANCH"
+            echo "CANDIDATE_POLICY_VALIDATOR=$stage/merge_candidate.py"
           } >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
         with:
@@ -397,14 +399,14 @@ jobs:
           [ "$CANDIDATE_SCOPE" = "full" ]
           # The staged policy validator, never scripts/ci/merge_candidate.py from
           # the candidate workspace; -I keeps candidate paths off sys.path.
-          [ -n "${CODEX_POLICY_SHA:-}" ]
-          [ -n "${CODEX_POLICY_VALIDATOR:-}" ]
-          [ "$GITHUB_SHA" = "$CODEX_POLICY_SHA" ]
-          [ "$GITHUB_WORKFLOW_SHA" = "$CODEX_POLICY_SHA" ]
-          [ ! -L "$CODEX_POLICY_VALIDATOR" ]
-          [ -f "$CODEX_POLICY_VALIDATOR" ]
-          [ -f "${CODEX_POLICY_VALIDATOR%/*}/manifest.json" ]
-          python -I -X utf8 -B "$CODEX_POLICY_VALIDATOR" validate-dispatch
+          [ -n "${CANDIDATE_POLICY_SHA:-}" ]
+          [ -n "${CANDIDATE_POLICY_VALIDATOR:-}" ]
+          [ "$GITHUB_SHA" = "$CANDIDATE_POLICY_SHA" ]
+          [ "$GITHUB_WORKFLOW_SHA" = "$CANDIDATE_POLICY_SHA" ]
+          [ ! -L "$CANDIDATE_POLICY_VALIDATOR" ]
+          [ -f "$CANDIDATE_POLICY_VALIDATOR" ]
+          [ -f "${CANDIDATE_POLICY_VALIDATOR%/*}/manifest.json" ]
+          python -I -X utf8 -B "$CANDIDATE_POLICY_VALIDATOR" validate-dispatch
       - uses: dtolnay/rust-toolchain@master
         with:
           # Same channel as rust/rust-toolchain.toml. Passing `stable` as well

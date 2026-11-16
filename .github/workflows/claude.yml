@@ -24,7 +24,6 @@ on:
       - ".github/workflows/claude.yml"
       - ".github/workflows/conflict-scan.yml"
       - ".github/workflows/claude-conflict-writer.yml"
-      - ".github/workflows/codex-gate.yml"
       - ".github/actionlint.yaml"
       - "scripts/ci/claude_pr_fixer_gate.py"
       - "scripts/ci/claude_fixer_preflight.py"
@@ -40,7 +39,6 @@ on:
       - "tools/test_fixer_failure_watcher.py"
       - ".github/scripts/stuck_thread_watch.py"
       - "scripts/ci/claude_conflict_scan.py"
-      - "scripts/ci/codex_gate.py"
       - "tools/test_claude_pr_fixer.py"
       - "tools/test_sandbox_e3.py"
       - "tools/test_sandbox_e2.py"
@@ -49,6 +47,7 @@ on:
       - "scripts/ci/sandbox_debug_filter.pin"
       - "tools/test_sandbox_native.py"
       - "tools/test_workflow_size.py"
+      - "tools/test_workflow_hosting.py"
       - "tools/extract_claude_yml_embeds.py"
       - "scripts/ci/sandbox_e3_environ.py"
       - "scripts/ci/sandbox_e3_record.py"
@@ -59,8 +58,6 @@ on:
       - "scripts/ci/sandbox_*.c"
       - "scripts/ci/sandbox_*.h"
       - "scripts/ci/sandbox_c.pin"
-      - "tools/test_codex_gate.py"
-      - "tools/test_codex_gate_identity.py"
 
 # Job-level concurrency only. Workflow-level concurrency would admit skipped
 # comments and cancel a queued fixer run.
@@ -73,7 +70,6 @@ jobs:
   resolve-pr:
     # Job-level `if` is the runner gate (CSL-103): bot-noise and non-@claude
     # comments start no runner. Trusted Devin submitted reviews may fix directly.
-    # Codex submitted reviews are audit-only here.
     # Skip every other bot sender and bot review comment (claude[bot],
     # cursor[bot], github-actions[bot], blacksmith-sh[bot], …).
     if: >-
@@ -94,10 +90,7 @@ jobs:
       ) ||
       (
         github.event_name == 'pull_request_review' &&
-        (
-          github.event.review.user.login == 'devin-ai-integration[bot]' ||
-          github.event.review.user.login == 'chatgpt-codex-connector[bot]'
-        )
+        github.event.review.user.login == 'devin-ai-integration[bot]'
       ) ||
       (
         github.event_name == 'repository_dispatch' &&
@@ -175,8 +168,8 @@ jobs:
           python3 -X utf8 -B tools/test_fixer_failure_escalation.py
           python3 -X utf8 -B tools/test_workflow_size.py
           python3 -X utf8 -B tools/test_fixer_failure_watcher.py
-      - name: Codex-gate tests
-        run: python3 -X utf8 -B tools/test_codex_gate.py
+      - name: Workflow hosting and trigger guards
+        run: python3 -X utf8 -B tools/test_workflow_hosting.py
       - name: actionlint
         env:
           ACTIONLINT_VERSION: "1.7.7"

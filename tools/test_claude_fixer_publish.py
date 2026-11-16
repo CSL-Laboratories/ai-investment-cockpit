@@ -2715,7 +2715,7 @@ class WorkflowWiringTests(unittest.TestCase):
         # ~/.cache/pip into the default-branch cache scope; later jobs restore by
         # prefix (including the conflict writer that holds the OAuth token).
         pip_cache_line = re.compile(r"^[ \t]*cache:[ \t]*pip[ \t]*$", re.M)
-        names = ("claude.yml", "ci.yml", "rust.yml", "codex-gate.yml",
+        names = ("claude.yml", "ci.yml", "rust.yml", "workflow-checks.yml",
                  "claude-conflict-writer.yml")
         checked = 0
         for name in names:

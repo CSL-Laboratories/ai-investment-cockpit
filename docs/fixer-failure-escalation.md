@@ -1,5 +1,11 @@
 # Exhausted fixer failure handoff
 
+> **CSL-238 (2026-11-16):** the watcher no longer posts a Codex mediation request.
+> It runs only when a person dispatches it, and a verified fixer failure now ends
+> as a line in its run log and summary (and in the Linear roll-up when
+> `FILE_LINEAR` is on). The mediation cap, markers and posts described below
+> are gone from this repository; the evidence rules are unchanged.
+
 CSL-201 adds a separate intake to the existing stuck-thread watcher. It does
 not run another fixer, reset attempts, synthesize a Claude reply/result,
 apply READY, push, merge or change the resolver. The existing schedule,

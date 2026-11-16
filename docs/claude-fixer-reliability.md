@@ -264,10 +264,11 @@ conflict scan, not the fixers.
 
 ## Mediation and implementation remain separate
 
-Devin submitted reviews and authorized human requests drive Claude. Codex
-READY requests CI only after live reconciliation; MEDIATE requests adjudication.
-Neither is a fix receipt. Codex comments cannot impersonate Claude receipts or
-consume Claude attempt reservations. Legacy FIX/timeout dispatch stays disabled.
+Devin submitted reviews and authorized human requests drive Claude. The Codex
+gate that requested CI on READY and adjudication on MEDIATE was removed in
+CSL-238; neither verdict was ever a fix receipt, and no other bot comment can
+impersonate Claude receipts or consume Claude attempt reservations. Legacy
+FIX/timeout dispatch stays disabled.
 The new tests retain these distinctions, alongside the existing permission,
 same-repository, queue and readiness controls. CSL-89 owns resolution policy;
 this change does not enable new thread-resolution authority.
