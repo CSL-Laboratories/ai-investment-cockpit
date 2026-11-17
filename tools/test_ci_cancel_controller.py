@@ -1080,8 +1080,7 @@ class QueuePolicyTests(unittest.TestCase):
         parsed = yaml.load(config, Loader=yaml.BaseLoader)
         diagnostic = (r'^unexpected key "queue" for "concurrency" section\. expected one of '
                       r'"cancel-in-progress", "group"$')
-        allowed_paths = {'ci.yml', 'rust.yml', 'claude.yml', 'conflict-scan.yml', 'codex-gate.yml',
-                         'claude-conflict-writer.yml'}
+        allowed_paths = {'ci.yml', 'rust.yml'}
         self.assertEqual(parsed['paths'], {
             f'.github/workflows/{name}': {'ignore': [diagnostic]} for name in allowed_paths})
         template = '''name: queue test
@@ -1107,12 +1106,12 @@ jobs:
             directory.mkdir(parents=True)
             (root / '.github/actionlint.yaml').write_text(config)
             for name, body, allowed in [('ci.yml', template, True), ('rust.yml', template, True),
-                                        ('codex-gate.yml', job_template, True),
+                                        ('rust.yml', job_template, True),
                                         ('other.yml', template, False),
                                         ('other.yml', job_template, False),
                                         ('ci.yml', template.replace('queue: max', 'queues: max'), False),
-                                        ('codex-gate.yml', job_template.replace('queue: max', 'queues: max'), False),
-                                        ('codex-gate.yml', job_template.replace('echo ok', 'echo $unbound'), False),
+                                        ('rust.yml', job_template.replace('queue: max', 'queues: max'), False),
+                                        ('rust.yml', job_template.replace('echo ok', 'echo $unbound'), False),
                                         ('rust.yml', template.replace('echo ok', 'echo $unbound'), False)]:
                 path = directory / name
                 path.write_text(body)

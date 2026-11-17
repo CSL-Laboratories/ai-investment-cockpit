@@ -1,4 +1,4 @@
-"""Offline candidate identity/review/full-CI regressions; no external mutations."""
+"""Offline candidate identity/full-CI regressions; no external mutations."""
 import copy
 import importlib
 import os
@@ -57,19 +57,6 @@ class API:
 
 def candidate():
     return m.resolve_candidate(API(), REPO, 42)
-
-
-def request(c=None):
-    return {'id': 5, 'candidate': (c or candidate()).key, 'nonce': N,
-            'created_at': '2026-10-16T23:00:00Z'}
-
-
-def review(identifier=6, c=None):
-    c = c or candidate()
-    return {'id': identifier, 'commit_id': H, 'state': 'COMMENTED',
-            'submitted_at': '2026-10-16T23:00:01Z',
-            'user': {'id': m.CODEX_ID, 'login': m.CODEX_LOGIN, 'type': 'Bot'},
-            'body': f'CODEX-CANDIDATE: {c.key}\nCODEX-REQUEST: {N}\nCODEX-GATE: READY'}
 
 
 def evidence(kind='ci'):
@@ -291,7 +278,7 @@ class PolicyTests(unittest.TestCase):
     def test_validator_must_be_the_staged_copy_outside_the_workspace(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            staged = root / 'runner-temp' / 'codex-policy' / 'merge_candidate.py'
+            staged = root / 'runner-temp' / 'candidate-policy' / 'merge_candidate.py'
             staged.parent.mkdir(parents=True)
             staged.write_text('# policy copy\n')
             workspace = root / 'workspace'
@@ -325,250 +312,6 @@ class PolicyTests(unittest.TestCase):
             with self.assertRaises(m.CandidateError):
                 m.trusted_location(str(workspace / 'shadow-dir' / 'merge_candidate.py'),
                                    str(workspace / 'shadow-dir' / 'merge_candidate.py'), str(workspace))
-
-
-class ReviewTests(unittest.TestCase):
-    def test_exact_codex_ready_is_accepted(self):
-        self.assertEqual(m.ready_review([review()], candidate(), request()), review())
-
-    def test_mediate_has_same_candidate_binding_but_cannot_qualify_ci(self):
-        r = review()
-        r['body'] = r['body'].replace('CODEX-GATE: READY', 'CODEX-GATE: MEDIATE')
-        self.assertEqual(m.candidate_verdict([r], candidate(), request()), 'MEDIATE')
-        self.assertEqual(m.candidate_review([r], candidate(), request()), r)
-        self.assertIsNone(m.ready_review([r], candidate(), request()))
-        self.assertEqual(m.candidate_verdict([review()], candidate(), request()), 'READY')
-        r['body'] = r['body'].replace(N, '0' * 32)
-        self.assertEqual(m.candidate_verdict([r], candidate(), request()), '')
-
-    def test_forged_bot_identity_is_not_a_verdict(self):
-        for field, value in [('id', 1), ('login', 'lookalike[bot]'), ('type', 'User')]:
-            r = review()
-            r['user'][field] = value
-            self.assertIsNone(m.ready_review([r], candidate(), request()))
-
-    def test_head_base_candidate_or_nonce_replay_is_rejected(self):
-        for field, value in [('commit_id', X),
-                             ('body', review()['body'].replace(N, '0' * 32)),
-                             ('body', review()['body'].replace(candidate().key, '0' * 64))]:
-            r = {**review(), field: value}
-            self.assertIsNone(m.ready_review([r], candidate(), request()))
-        changed = replace(candidate(), base=X)
-        self.assertIsNone(m.ready_review([review()], changed, request(changed)))
-
-    def test_same_second_or_older_review_cannot_acknowledge_new_request(self):
-        for stamp in ('2026-10-16T23:00:00Z', '2026-10-16T22:59:59Z'):
-            self.assertIsNone(m.ready_review([{**review(), 'submitted_at': stamp}], candidate(), request()))
-
-    def test_latest_negative_pending_dismissed_or_missing_verdict_wins(self):
-        for change in [{'state': 'DISMISSED'}, {'state': 'PENDING'},
-                       {'body': 'Findings remain'}, {'body': 'CODEX-GATE: MEDIATE'}]:
-            r = {**review(7), 'submitted_at': '2026-10-16T23:00:02Z', **change}
-            self.assertIsNone(m.ready_review([r, review()], candidate(), request()))
-
-    def test_submitted_time_handles_old_draft_review_id(self):
-        later = {**review(4), 'submitted_at': '2026-10-16T23:00:02Z', 'body': 'Findings'}
-        self.assertIsNone(m.ready_review([later, review()], candidate(), request()))
-
-    def test_same_second_distinct_reviews_are_ambiguous(self):
-        self.assertIsNone(m.ready_review([review(), review(7)], candidate(), request()))
-
-    def test_duplicate_identical_records_coalesce_conflicting_records_refuse(self):
-        self.assertIsNotNone(m.ready_review([review(), review()], candidate(), request()))
-        with self.assertRaises(m.CandidateError):
-            m.ready_review([review(), {**review(), 'body': 'Findings'}], candidate(), request())
-
-    def test_echoes_and_final_unique_verdict_are_required(self):
-        body = review()['body']
-        for invalid in [body.replace('CODEX-REQUEST:', '> CODEX-REQUEST:'),
-                        body + '\nMore text', body + '\nCODEX-GATE: READY',
-                        body.replace('CODEX-CANDIDATE:', 'Candidate:'),
-                        f'CODEX-REQUEST: {N}\n' + body,
-                        '```\n' + '\n'.join(body.splitlines()[:2]) + '\n```\nCODEX-GATE: READY']:
-            self.assertIsNone(m.ready_review([{**review(), 'body': invalid}], candidate(), request()))
-
-    def test_quoted_ready_examples_and_negative_tail_cannot_authorize_ci(self):
-        body = review()['body']
-        for invalid in ['\n'.join('> ' + line for line in body.splitlines()),
-                        body.replace('CODEX-GATE: READY', '`CODEX-GATE: READY`'),
-                        body.replace('CODEX-GATE: READY', '"CODEX-GATE: READY"'),
-                        '```example\n' + body + '\n```',
-                        body + '\nDo not approve.', body + '\n> Do not approve.',
-                        body + '\n```\nDo not approve.\n```',
-                        body + '\n    Do not approve.',
-                        body.replace('CODEX-GATE: READY', 'CODEX-GATE: READY — do not approve')]:
-            with self.subTest(body=invalid):
-                self.assertIsNone(m.ready_review([{**review(), 'body': invalid}], candidate(), request()))
-
-    def test_inline_backtick_span_does_not_open_a_fence(self):
-        for prefix in ['```foo```', '````foo````', '   ```foo```']:
-            with self.subTest(prefix=prefix):
-                r = {**review(), 'body': prefix + '\n' + review()['body']}
-                self.assertEqual(m.ready_review([r], candidate(), request()), r)
-
-    def test_shorter_or_different_fence_cannot_promote_quoted_markers(self):
-        for opener, closer in [('````', '```'), ('~~~~', '~~~'), ('````', '~~~~'),
-                               ('~~~~', '````'), ('````', '```` trailing text')]:
-            with self.subTest(opener=opener, closer=closer):
-                body = opener + '\nquoted example\n' + closer + '\n' + review()['body']
-                self.assertIsNone(m.ready_review([{**review(), 'body': body}], candidate(), request()))
-
-    def test_matching_or_longer_fence_closes_before_plain_verdict(self):
-        for opener, closer in [('````python', '````'), ('````', '`````'),
-                               ('~~~~text', '~~~~'), ('~~~~', '~~~~~'),
-                               ('   ````python', '   ```` \t')]:
-            with self.subTest(opener=opener, closer=closer):
-                # The fenced duplicate must not enter the marker inventory.
-                body = opener + '\n' + review()['body'] + '\n' + closer + '\n' + review()['body']
-                r = {**review(), 'body': body}
-                self.assertEqual(m.ready_review([r], candidate(), request()), r)
-
-    def test_indented_code_markers_do_not_authorize_a_verdict(self):
-        for indent in ['    ', '\t', ' \t', '   \t']:
-            for marker_index in range(3):
-                with self.subTest(indent=indent, marker_index=marker_index):
-                    lines = review()['body'].splitlines()
-                    lines[marker_index] = indent + lines[marker_index]
-                    r = {**review(), 'body': '\n'.join(lines)}
-                    self.assertIsNone(m.ready_review([r], candidate(), request()))
-
-    def test_plain_markers_allow_up_to_three_spaces(self):
-        for count in range(4):
-            r = {**review(), 'body': '\n'.join(' ' * count + line for line in review()['body'].splitlines())}
-            self.assertEqual(m.ready_review([r], candidate(), request()), r)
-
-    def test_indented_fence_cannot_close_an_open_fence(self):
-        for indent in ['    ', '\t']:
-            body = '````\nquoted example\n' + indent + '````\n' + review()['body']
-            self.assertIsNone(m.ready_review([{**review(), 'body': body}], candidate(), request()))
-
-    def test_final_indented_quoted_or_fenced_copy_is_not_a_terminal_verdict(self):
-        # An earlier plain READY must not lend verdict status to a final line
-        # that is itself code, quoted, a fence delimiter or inside a fence.
-        body = review()['body']
-        verdict = 'CODEX-GATE: READY'
-        for tail in ['\n    ' + verdict, '\n\t' + verdict, '\n   \t' + verdict, '\n \t' + verdict,
-                     '\n```\n' + verdict, '\n~~~\n' + verdict, '\n````\n```\n' + verdict,
-                     '\n~~~~\n~~~\n' + verdict, '\n~~~\n' + verdict + '\n```',
-                     '\n```\n' + verdict + '\n```', '\n```\n```', '\n```',
-                     '\n```\n' + verdict + '\n```\n    ' + verdict,
-                     '\n> ' + verdict, '\n"' + verdict + '"', '\n`' + verdict + '`',
-                     '\n    CODEX-GATE: MEDIATE', '\n```\nCODEX-GATE: MEDIATE']:
-            with self.subTest(tail=tail):
-                r = {**review(), 'body': body + tail}
-                self.assertEqual(m._terminal_verdict(body + tail)[1], '')
-                self.assertIsNone(m.ready_review([r], candidate(), request()))
-                self.assertEqual(m.candidate_verdict([r], candidate(), request()), '')
-                self.assertIsNone(m.candidate_review([r], candidate(), request()))
-                self.assertIsNone(m.head_mediate_review([r], H))
-
-    def test_terminal_plain_verdict_after_fenced_copies_and_trailing_blanks_is_accepted(self):
-        echoes, verdict = review()['body'].splitlines()[:2], 'CODEX-GATE: READY'
-        for body in ['\n'.join(echoes + ['```', verdict, '```', verdict]),
-                     '\n'.join(echoes + ['~~~~', '```', verdict, '~~~~', verdict]),
-                     '\n'.join(['````text', verdict, '    ' + verdict, '````'] + echoes + [verdict]),
-                     '\n'.join(echoes + ['```', '    ' + verdict, '\t' + verdict, '```', verdict]),
-                     '\n'.join(echoes + [verdict]) + '\n\n   \n\t\n',
-                     '\n'.join('   ' + line for line in echoes + [verdict]) + '\n\n',
-                     '\n'.join(echoes + ['> ' + verdict, verdict])]:
-            with self.subTest(body=body):
-                r = {**review(), 'body': body}
-                self.assertEqual(m._terminal_verdict(body)[1], 'READY')
-                self.assertEqual(m.ready_review([r], candidate(), request()), r)
-                self.assertEqual(m.candidate_verdict([r], candidate(), request()), 'READY')
-
-    def test_malformed_request_and_review_timestamp_refuse(self):
-        for change in [{'id': True}, {'candidate': 'wrong'}, {'nonce': 'wrong'},
-                       {'created_at': '2026-10-16T23:00:00'}]:
-            with self.assertRaises(m.CandidateError):
-                m.ready_review([review()], candidate(), {**request(), **change})
-        with self.assertRaises(m.CandidateError):
-            m.ready_review([{**review(), 'submitted_at': None}], candidate(), request())
-
-
-class HeadMediateTests(unittest.TestCase):
-    @staticmethod
-    def mediate():
-        return {**review(), 'body': 'A human decision is needed.\nCODEX-GATE: MEDIATE'}
-
-    def test_handoff_needs_only_current_head_not_mergeability_or_request(self):
-        r = self.mediate()
-        self.assertEqual(m.head_mediate_review([r], H), r)
-        self.assertIsNone(m.head_mediate_review([review()], H))
-
-    def test_completed_change_request_can_mediate_but_never_authorize_ready(self):
-        r = {**self.mediate(), 'state': 'CHANGES_REQUESTED'}
-        self.assertEqual(m.head_mediate_review([r], H), r)
-        self.assertIsNone(m.ready_review([{**review(), 'state': 'CHANGES_REQUESTED'}], candidate(), request()))
-
-    def test_old_candidate_markers_do_not_block_human_handoff_or_grant_ready(self):
-        r = {**self.mediate(), 'body': 'CODEX-CANDIDATE: old\nCODEX-REQUEST: old\nCODEX-GATE: MEDIATE'}
-        self.assertEqual(m.head_mediate_review([r], H), r)
-        self.assertIsNone(m.ready_review([r], candidate(), request()))
-        r['body'] = r['body'].replace('MEDIATE', 'READY')
-        self.assertIsNone(m.head_mediate_review([r], H))
-        self.assertIsNone(m.ready_review([r], candidate(), request()))
-
-    def test_wrong_head_or_bot_cannot_request_handoff(self):
-        r = self.mediate()
-        self.assertIsNone(m.head_mediate_review([r], X))
-        for field, value in [('id', 1), ('login', 'lookalike[bot]'), ('type', 'User')]:
-            forged = copy.deepcopy(r)
-            forged['user'][field] = value
-            self.assertIsNone(m.head_mediate_review([forged], H))
-
-    def test_later_negative_pending_or_ready_review_supersedes_mediate(self):
-        for change in [{'body': 'Findings remain.'}, {'state': 'PENDING'},
-                       {'state': 'DISMISSED'}, {'body': 'CODEX-GATE: READY'}]:
-            newer = {**review(4), 'submitted_at': '2026-10-16T23:00:02Z', **change}
-            self.assertIsNone(m.head_mediate_review([self.mediate(), newer], H))
-
-    def test_quoted_fenced_indented_and_trailing_mediate_are_not_handoffs(self):
-        marker = 'CODEX-GATE: MEDIATE'
-        for body in ['> ' + marker, '"' + marker + '"', '`' + marker + '`',
-                     '```\n' + marker + '\n```', '````\n```\n' + marker,
-                     '    ' + marker, '\t' + marker,
-                     marker + '\nDo not approve.', marker + '\n> Do not approve.',
-                     marker + '\n' + marker]:
-            with self.subTest(body=body):
-                self.assertIsNone(m.head_mediate_review([{**self.mediate(), 'body': body}], H))
-
-    def test_final_indented_quoted_or_fenced_mediate_copy_is_not_a_handoff(self):
-        marker = 'CODEX-GATE: MEDIATE'
-        head = 'A human decision is needed.\n' + marker
-        for tail in ['\n    ' + marker, '\n\t' + marker, '\n   \t' + marker,
-                     '\n```\n' + marker, '\n~~~\n' + marker, '\n````\n```\n' + marker,
-                     '\n~~~~\n~~~\n' + marker, '\n~~~\n' + marker + '\n```',
-                     '\n```\n' + marker + '\n```', '\n```\n```', '\n```',
-                     '\n```\n' + marker + '\n```\n    ' + marker,
-                     '\n> ' + marker, '\n"' + marker + '"', '\n`' + marker + '`',
-                     '\n    CODEX-GATE: READY', '\n```\nCODEX-GATE: READY']:
-            with self.subTest(tail=tail):
-                r = {**self.mediate(), 'body': head + tail}
-                self.assertEqual(m._terminal_verdict(head + tail)[1], '')
-                self.assertIsNone(m.head_mediate_review([r], H))
-                self.assertIsNone(m.ready_review([r], candidate(), request()))
-
-    def test_terminal_plain_mediate_after_fenced_copies_and_trailing_blanks_is_a_handoff(self):
-        marker = 'CODEX-GATE: MEDIATE'
-        for body in ['```\n' + marker + '\n```\n' + marker,
-                     '~~~~\n```\n' + marker + '\n~~~~\n' + marker,
-                     '````\n' + marker + '\n\t' + marker + '\n````\nNeeds a human.\n' + marker,
-                     marker + '\n\n  \n\t\n', '   ' + marker + '\n\n',
-                     '> ' + marker + '\n' + marker]:
-            with self.subTest(body=body):
-                r = {**self.mediate(), 'body': body}
-                self.assertEqual(m._terminal_verdict(body)[1], 'MEDIATE')
-                self.assertEqual(m.head_mediate_review([r], H), r)
-                self.assertIsNone(m.ready_review([r], candidate(), request()))
-
-    def test_ambiguous_latest_reviews_and_conflicting_records_refuse(self):
-        r = self.mediate()
-        self.assertIsNone(m.head_mediate_review([r, {**r, 'id': 7}], H))
-        with self.assertRaises(m.CandidateError):
-            m.head_mediate_review([r, {**r, 'body': 'Conflicting record'}], H)
-        with self.assertRaises(m.CandidateError):
-            m.head_mediate_review([r], 'invalid')
 
 
 class RunTests(unittest.TestCase):
@@ -683,8 +426,8 @@ class CLITests(unittest.TestCase):
         return {'GITHUB_REPOSITORY': REPO, 'GITHUB_SHA': B, 'GITHUB_WORKFLOW_SHA': B,
                 'GITHUB_REF': 'refs/heads/main', 'GITHUB_REF_NAME': 'main',
                 'GITHUB_EVENT_NAME': 'workflow_dispatch', 'GITHUB_WORKSPACE': str(ROOT / 'app'),
-                'CODEX_POLICY_SHA': B, 'CODEX_POLICY_BRANCH': 'main',
-                'CODEX_POLICY_VALIDATOR': m.__file__,
+                'CANDIDATE_POLICY_SHA': B, 'CANDIDATE_POLICY_BRANCH': 'main',
+                'CANDIDATE_POLICY_VALIDATOR': m.__file__,
                 'CANDIDATE_SCOPE': 'full', 'DISPATCH_NONCE': N,
                 **{key.upper(): value for key, value in candidate().fields().items()}}
 
@@ -726,25 +469,25 @@ class CLITests(unittest.TestCase):
                 self.run_main({**self.env(), field: value})
 
     def test_policy_witness_disagreement_or_candidate_head_dispatch_is_refused(self):
-        for field, value in [('GITHUB_SHA', H), ('GITHUB_WORKFLOW_SHA', H), ('CODEX_POLICY_SHA', H),
-                             ('GITHUB_SHA', X), ('GITHUB_WORKFLOW_SHA', X), ('CODEX_POLICY_SHA', X),
-                             ('GITHUB_SHA', ''), ('GITHUB_WORKFLOW_SHA', ''), ('CODEX_POLICY_SHA', ''),
+        for field, value in [('GITHUB_SHA', H), ('GITHUB_WORKFLOW_SHA', H), ('CANDIDATE_POLICY_SHA', H),
+                             ('GITHUB_SHA', X), ('GITHUB_WORKFLOW_SHA', X), ('CANDIDATE_POLICY_SHA', X),
+                             ('GITHUB_SHA', ''), ('GITHUB_WORKFLOW_SHA', ''), ('CANDIDATE_POLICY_SHA', ''),
                              ('GITHUB_REF', 'refs/heads/feature'), ('GITHUB_REF', 'refs/pull/42/merge'),
                              ('GITHUB_REF', 'main'), ('GITHUB_REF', ''), ('GITHUB_REF_NAME', 'feature'),
-                             ('CODEX_POLICY_BRANCH', 'feature'), ('CODEX_POLICY_BRANCH', '')]:
+                             ('CANDIDATE_POLICY_BRANCH', 'feature'), ('CANDIDATE_POLICY_BRANCH', '')]:
             with self.subTest(field=field, value=value), self.assertRaises(m.CandidateError):
                 self.run_main({**self.env(), field: value})
         # A consistent witness that names the candidate head is a candidate-head
         # dispatch running candidate YAML: refused even though all SHAs agree.
         with self.assertRaises(m.CandidateError):
-            self.run_main({**self.env(), 'GITHUB_SHA': H, 'GITHUB_WORKFLOW_SHA': H, 'CODEX_POLICY_SHA': H,
+            self.run_main({**self.env(), 'GITHUB_SHA': H, 'GITHUB_WORKFLOW_SHA': H, 'CANDIDATE_POLICY_SHA': H,
                            'GITHUB_REF': 'refs/heads/feature', 'GITHUB_REF_NAME': 'feature',
-                           'CODEX_POLICY_BRANCH': 'feature'})
+                           'CANDIDATE_POLICY_BRANCH': 'feature'})
 
     def test_validator_location_and_live_default_branch_are_bound(self):
         for field, value in [('GITHUB_WORKSPACE', str(ROOT)), ('GITHUB_WORKSPACE', ''),
-                             ('CODEX_POLICY_VALIDATOR', ''),
-                             ('CODEX_POLICY_VALIDATOR', str(ROOT / 'tools' / 'test_merge_candidate.py'))]:
+                             ('CANDIDATE_POLICY_VALIDATOR', ''),
+                             ('CANDIDATE_POLICY_VALIDATOR', str(ROOT / 'tools' / 'test_merge_candidate.py'))]:
             with self.subTest(field=field, value=value), self.assertRaises(m.CandidateError):
                 self.run_main({**self.env(), field: value})
         for repo_data in [{'id': 10, 'full_name': REPO, 'default_branch': 'feature'},

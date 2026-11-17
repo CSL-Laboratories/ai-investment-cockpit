@@ -155,7 +155,7 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 
 Before writing on a shared PR branch, check the current Linear owner/claim and
 active writers. For a confirmed collision, follow the
-[per-PR pause procedure](docs/ci-runbook.md#5-stop-or-roll-back-automation).
+[collision procedure](docs/ci-runbook.md#5-stop-or-roll-back-automation).
 
 ## Hard rules
 - Never put an LLM on the order or risk path.
@@ -171,17 +171,16 @@ active writers. For a confirmed collision, follow the
 `DEC-09` defines the release-blocking matrix: run the full suite and Ruff locally on native
 Windows and Ubuntu/WSL2, each with Python 3.11 and 3.12. macOS is best-effort. Hosted Actions
 do not replace that matrix: Linux `linux-gates` is the cheap required PR check; Windows runs
-on push to `main`, `merge_group`, the `ci:full` label, or full `workflow_dispatch`; macOS runs nightly on `main` (07:17 UTC,
-skipped if idle 24h), on `ci:full`, or on `workflow_dispatch`. Hetzner is not part of
+on push to `main`, `merge_group`, every non-draft same-repository PR event (CSL-238), the `ci:full` label, or full
+`workflow_dispatch`; macOS runs nightly on `main` (07:17 UTC, skipped if idle 24h), on every non-draft
+same-repository PR event, on `ci:full`, or on `workflow_dispatch`. Hetzner is not part of
 current package validation. This changes platform evidence only and does not waive any online,
 broker, witness, paper-day, or pre-live gate.
 
-The staged [CSL-259 candidate coordinator](docs/ci-candidate-readiness.md) requests
-all five Python and five Rust cells, including docs-only candidates, after an
-authenticated exact head/base/merge/tree independent READY and before human
-approval. It preserves human holds and manual label removal; persistent labels
-and legacy head-only review/CI are not proof. No repository protections or queue
-settings are activated by this code.
+The staged CSL-259 candidate coordinator, which requested the full matrix after an
+independent Codex READY, was removed with the Codex gate in CSL-238
+([what remains](docs/ci-candidate-readiness.md)). No automated reviewer verdict gates
+CI or a merge.
 
 ```bash
 cd app
@@ -212,16 +211,6 @@ decision.
 
 ## Review loop
 
-For writer collisions, use the [pause and resumption checklist](docs/ci-runbook.md#5-stop-or-roll-back-automation).
+For writer collisions, use the [collision procedure](docs/ci-runbook.md#5-stop-or-roll-back-automation).
 
-Devin reviews (no longer: its trial expired) → Claude fixes (`claude.yml`) → stuck threads are picked up by
-[`.github/workflows/stuck-thread-watch.yml`](.github/workflows/stuck-thread-watch.yml),
-which asks Codex to mediate on the PR (`@codex review`). Since #328 (CSL-862)
-the watcher writes nothing to Linear (`FILE_LINEAR: "false"`), so it no longer
-records or updates the `needs-decision` roll-up per unapproved PR
-(`Stuck PR threads: <repo>#<PR>`), and a roll-up it filed earlier may be
-stale. The Codex CI/fixer gate still files or updates that roll-up on
-MEDIATE. Shared keys: `<!-- stuck-pr-threads:owner/repo#N -->` and
-`<!-- codex-gate-mediate:owner/repo:N -->` (`AGENTS.md` Code Review Rules).
-Humans decide.
-The watcher never resolves threads, pushes, or merges.
+Devin Review, a GitHub App (`devin-ai-integration`) that Devin runs from its side, is the only automated reviewer; no workflow in this repository starts it. People, and agents working by hand for a person, read and answer its threads; nothing answers or writes automatically. The Codex gate, the Claude PR fixer and `@claude` path, the conflict writer and the stuck-thread watch were retired in CSL-238 (Lucas, Nov 16, 2026); the Linear PR sync (`.github/workflows/linear-pr-sync.yml`, dispatch-only, writes nothing) is kept on his word. Humans decide.

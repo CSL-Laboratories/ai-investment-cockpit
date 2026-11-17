@@ -233,7 +233,8 @@ def test_benchmarks_job_is_not_part_of_linux_gates():
     assert "timeout-minutes: 5" in bench
     assert "--threshold 0.10" in bench
     assert "pull_request" in bench
-    assert "issues: write" in bench
-    assert "pull-requests: write" in bench
-    assert "select_comment_update" in bench
-    assert "leaving any existing performance comment unchanged" not in bench.lower()
+    # CSL-238 (Lucas, Nov 16, 2026): the job no longer posts a pull request comment.
+    assert "issues: write" not in bench
+    assert "pull-requests: write" not in bench
+    assert "select_comment_update" not in bench
+    assert "gh api" not in bench

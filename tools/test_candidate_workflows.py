@@ -249,7 +249,7 @@ class CandidateWorkflowTests(unittest.TestCase):
             candidate_copy = workspace / 'scripts/ci/merge_candidate.py'
             candidate_copy.parent.mkdir(parents=True)
             candidate_copy.write_text("raise SystemExit('candidate validator copy executed')\n")
-            stage = root / 'runner-temp' / 'codex-policy'
+            stage = root / 'runner-temp' / 'candidate-policy'
             stage.mkdir(parents=True)
             staged = stage / 'merge_candidate.py'
             staged.write_text(stub)
@@ -264,10 +264,10 @@ class CandidateWorkflowTests(unittest.TestCase):
                 link = None
             bindir = python_only_path(root)
             policy_env = {'GITHUB_SHA': POLICY_SHA, 'GITHUB_WORKFLOW_SHA': POLICY_SHA,
-                          'CODEX_POLICY_SHA': POLICY_SHA, 'CODEX_POLICY_BRANCH': 'main',
+                          'CANDIDATE_POLICY_SHA': POLICY_SHA, 'CANDIDATE_POLICY_BRANCH': 'main',
                           # Match the slash-delimited path emitted by the actual
                           # Bash staging step, including on Windows.
-                          'CODEX_POLICY_VALIDATOR': staged.as_posix(), 'GITHUB_WORKSPACE': str(workspace)}
+                          'CANDIDATE_POLICY_VALIDATOR': staged.as_posix(), 'GITHUB_WORKSPACE': str(workspace)}
             for name, _doc, job, steps, index in self.validation_steps():
                 step = steps[index]
                 for scope, refusal in [('full', 0), ('linux', 0), ('', 0), ('full', 1)]:
@@ -287,13 +287,13 @@ class CandidateWorkflowTests(unittest.TestCase):
                 # Without a staged policy, with a disagreeing witness, a missing
                 # manifest or a symlinked validator the step stops before any
                 # validator (staged or candidate) can print.
-                broken = [{'CODEX_POLICY_VALIDATOR': ''}, {'CODEX_POLICY_SHA': ''},
-                          {'CODEX_POLICY_VALIDATOR': str(root / 'runner-temp' / 'absent.py')},
-                          {'CODEX_POLICY_VALIDATOR': str(no_manifest / 'merge_candidate.py')},
+                broken = [{'CANDIDATE_POLICY_VALIDATOR': ''}, {'CANDIDATE_POLICY_SHA': ''},
+                          {'CANDIDATE_POLICY_VALIDATOR': str(root / 'runner-temp' / 'absent.py')},
+                          {'CANDIDATE_POLICY_VALIDATOR': str(no_manifest / 'merge_candidate.py')},
                           {'GITHUB_SHA': 'a' * 40}, {'GITHUB_WORKFLOW_SHA': 'a' * 40},
-                          {'CODEX_POLICY_SHA': 'a' * 40}]
+                          {'CANDIDATE_POLICY_SHA': 'a' * 40}]
                 if link is not None:
-                    broken.append({'CODEX_POLICY_VALIDATOR': str(link)})
+                    broken.append({'CANDIDATE_POLICY_VALIDATOR': str(link)})
                 for change in broken:
                     with self.subTest(workflow=name, job=job, change=change):
                         result = subprocess.run([BASH, '-c', step['run']], cwd=workspace,
@@ -355,13 +355,13 @@ class CandidateWorkflowTests(unittest.TestCase):
             for bad in [{'sha': 'a' * 40}, {'default_branch': ''}]:
                 result = self.run_staging(repo, runner_temp, env_file, **{**{'sha': sha}, **bad})
                 self.assertNotEqual(result.returncode, 0, bad)
-                self.assertFalse((runner_temp / 'codex-policy' / 'manifest.json').exists())
+                self.assertFalse((runner_temp / 'candidate-policy' / 'manifest.json').exists())
             result = self.run_staging(repo, runner_temp, env_file, sha)
             self.assertEqual(result.returncode, 0, result.stderr)
             recorded = dict(line.split('=', 1) for line in env_file.read_text().splitlines() if line)
-            self.assertEqual(recorded['CODEX_POLICY_SHA'], sha)
-            self.assertEqual(recorded['CODEX_POLICY_BRANCH'], 'main')
-            staged = Path(recorded['CODEX_POLICY_VALIDATOR'])
+            self.assertEqual(recorded['CANDIDATE_POLICY_SHA'], sha)
+            self.assertEqual(recorded['CANDIDATE_POLICY_BRANCH'], 'main')
+            staged = Path(recorded['CANDIDATE_POLICY_VALIDATOR'])
             stage = staged.parent
             self.assertEqual(staged.read_bytes(), Path(m.__file__).read_bytes())
             self.assertFalse(stage.is_relative_to(repo))
@@ -483,7 +483,7 @@ class CandidateWorkflowTests(unittest.TestCase):
             missing = git('rev-parse', 'HEAD')
             result = self.run_staging(repo, runner_temp, env_file, missing)
             self.assertNotEqual(result.returncode, 0)
-            self.assertFalse((runner_temp / 'codex-policy' / 'manifest.json').exists())
+            self.assertFalse((runner_temp / 'candidate-policy' / 'manifest.json').exists())
             self.assertEqual(env_file.read_text(), '')
             # A symlink tree entry for the installer, recorded in the index
             # without needing filesystem symlink support.
@@ -495,7 +495,7 @@ class CandidateWorkflowTests(unittest.TestCase):
             linked = git('rev-parse', 'HEAD')
             result = self.run_staging(repo, runner_temp, env_file, linked)
             self.assertNotEqual(result.returncode, 0)
-            self.assertFalse((runner_temp / 'codex-policy' / 'manifest.json').exists())
+            self.assertFalse((runner_temp / 'candidate-policy' / 'manifest.json').exists())
             self.assertEqual(env_file.read_text(), '')
             # An unlisted entry inside the closed action tree is refused as policy too.
             git('reset', '-q', '--hard', 'HEAD~1')
@@ -504,7 +504,7 @@ class CandidateWorkflowTests(unittest.TestCase):
             git('commit', '-m', 'extra action file')
             result = self.run_staging(repo, runner_temp, env_file, git('rev-parse', 'HEAD'))
             self.assertNotEqual(result.returncode, 0)
-            self.assertFalse((runner_temp / 'codex-policy' / 'manifest.json').exists())
+            self.assertFalse((runner_temp / 'candidate-policy' / 'manifest.json').exists())
 
     def test_docs_candidate_executes_all_five_python_and_rust_cells(self):
         for files in ('docs/example.md', '', 'app/main.py'):

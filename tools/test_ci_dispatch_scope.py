@@ -3,7 +3,6 @@
 Run: python -m unittest discover -s tools -p test_ci_dispatch_scope.py -v
 Requires PyYAML (already part of the repository validation dependencies).
 """
-import copy
 import json
 import os
 import re
@@ -12,6 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import yaml
 
@@ -153,22 +153,37 @@ class DispatchScopeTests(unittest.TestCase):
     def test_platform_conditions_and_actual_rust_matrix(self):
         rust_step = next(step for step in self.rust['jobs']['filter']['steps']
                          if step.get('id') == 'gate')
-        for event, scope, labels, win, mac, rust_win, rust_mac in [
-            ('workflow_dispatch', '', [], True, True, True, True),
-            ('workflow_dispatch', 'full', [], True, True, True, True),
-            ('workflow_dispatch', 'linux', [], False, False, False, False),
-            ('pull_request', '', [], False, False, False, False),
-            ('pull_request', '', ['enhancement'], False, False, False, False),
-            ('pull_request', '', ['ci:full'], True, True, True, True),
-            ('push', '', [], True, False, True, False),
-            ('merge_group', '', [], True, False, True, False),
-            ('schedule', '', [], False, True, False, False),
+        queue_env = next(step for step in self.ci['jobs']['queue-gates']['steps']
+                         if step.get('name') == 'Require all mandatory platform cells')['env']
+        # CSL-238: a non-draft same-repository PR runs every cell without a label;
+        # a draft runs no matrix at all (filter is skipped, whatever the labels) and a fork PR still needs
+        # ci:full; the rows below evaluate the platform conditions only, as before.
+        for event, scope, labels, draft, repo, win, mac, rust_win, rust_mac in [
+            ('workflow_dispatch', '', [], False, 'owner/repo', True, True, True, True),
+            ('workflow_dispatch', 'full', [], False, 'owner/repo', True, True, True, True),
+            ('workflow_dispatch', 'linux', [], False, 'owner/repo', False, False, False, False),
+            ('pull_request', '', [], False, 'owner/repo', True, True, True, True),
+            ('pull_request', '', ['enhancement'], False, 'owner/repo', True, True, True, True),
+            ('pull_request', '', [], True, 'owner/repo', False, False, False, False),
+            ('pull_request', '', ['enhancement'], True, 'owner/repo', False, False, False, False),
+            ('pull_request', '', [], False, 'fork/repo', False, False, False, False),
+            ('pull_request', '', ['enhancement'], False, 'fork/repo', False, False, False, False),
+            ('pull_request', '', ['ci:full'], False, 'owner/repo', True, True, True, True),
+            ('pull_request', '', ['ci:full'], True, 'owner/repo', True, True, True, True),
+            ('pull_request', '', ['ci:full'], False, 'fork/repo', True, True, True, True),
+            ('push', '', [], False, 'owner/repo', True, False, True, False),
+            ('merge_group', '', [], False, 'owner/repo', True, False, True, False),
+            ('schedule', '', [], False, 'owner/repo', False, True, False, False),
         ]:
-            with self.subTest(event=event, scope=scope, labels=labels):
+            with self.subTest(event=event, scope=scope, labels=labels, draft=draft, repo=repo):
                 context = {'github.event_name': event, 'inputs.scope': scope,
                            'github.ref': 'refs/heads/main',
+                           'github.event.pull_request.draft': draft,
+                           'github.event.pull_request.head.repo.full_name': repo,
                            'github.event.pull_request.labels.*.name': labels}
                 self.assertEqual(bool(evaluate(self.ci['jobs']['windows']['if'], **context)), win)
+                # R5 (Fable round 1): queue-gates must expect Windows exactly when the windows job runs.
+                self.assertEqual(bool(evaluate(queue_env['WINDOWS_REQUIRED'], **context)), win)
                 self.assertEqual(bool(evaluate(self.ci['jobs']['macos']['if'], **context)), mac)
                 self.assertEqual(bool(evaluate(self.ci['jobs']['linux']['if'], **context)), True)
                 env = {key: str(bool(evaluate(expr, **context))).lower()
@@ -188,6 +203,14 @@ class DispatchScopeTests(unittest.TestCase):
                 self.assertEqual([c['os-name'] for c in matrix],
                                      ['linux', 'linux'] + ['windows'] * (2 * rust_win)
                                      + ['macos'] * rust_mac)
+        # Dropping the same-repository clause (a mutant) must differ from the windows job on a fork pull request.
+        mutant = queue_env['WINDOWS_REQUIRED'].replace(
+            " && github.event.pull_request.head.repo.full_name == github.repository", '')
+        self.assertNotEqual(mutant, queue_env['WINDOWS_REQUIRED'])
+        fork = {'github.event_name': 'pull_request', 'github.event.pull_request.draft': False,
+                'github.event.pull_request.head.repo.full_name': 'fork/repo',
+                'github.event.pull_request.labels.*.name': []}
+        self.assertNotEqual(bool(evaluate(mutant, **fork)), bool(evaluate(queue_env['WINDOWS_REQUIRED'], **fork)))
         self.assertFalse(evaluate(self.ci['jobs']['macos']['if'], **{
             'github.event_name': 'schedule', 'needs.filter.outputs.run-macos': 'false'}))
         rust_step = next(step for step in self.rust['jobs']['filter']['steps']
@@ -611,1222 +634,1527 @@ class DispatchScopeTests(unittest.TestCase):
 
 
 
-# CSL-416 (CSL-255 exit criterion 5): a static guard on the admission surface of the Claude
-# writers. They reach CI only through the ordinary `synchronize` of their own push: no CI
-# dispatch, re-run, ready-for-review or CI-label add (the only CI-label write is revoking a
-# gate-owned `ci:full`); GitHub-hosted runners only; one shared per-PR lock without
-# cancellation; pushes only from model-free publish jobs as one ordinary fast-forward; the
-# eight-commit guard, the one-attempt publish guard and the pause. Retry behaviour itself is
-# exercised by tools/test_claude_fixer_*.py and tools/test_claude_pr_fixer.py.
-WRITER_FILES = ('claude.yml', 'claude-conflict-writer.yml', 'conflict-scan.yml')
-# CSL-474 P9: dispatch-only measurement. Not a writer. Optional OAuth is an
-# explicit workflow_dispatch input defaulting off; Lucas dispatches.
-P9_PROBE_FILE = 'csl-474-p9-probes.yml'
-# Roles: prep, model, publish. No job has the credential-free 'verify' role yet; CSL-409 adds one,
-# and the 'verify' branches below are ready for it.
-WRITER_JOBS = {
-    'claude.yml': {'mention-prepare': 'prep', 'claude-mention': 'model', 'mention-publish': 'publish',
-                   'fixer-prepare': 'prep', 'devin-review-fix': 'model', 'fixer-publish': 'publish'},
-    'claude-conflict-writer.yml': {'prepare': 'prep', 'model': 'model', 'publish': 'publish'},
-}
-NON_WRITER_JOBS = {'claude.yml': {'resolve-pr', 'event-paths', 'forward-conflict-scan'},
-                   'claude-conflict-writer.yml': set()}
-# conflict-scan.yml's complete job inventory: the read-only scan, and the reusable-workflow caller of
-# claude-conflict-writer.yml (its permissions are checked exactly below). A new job there must be added.
-SCAN_JOBS = {'conflict-scan': 'scan', 'conflict-resolve': 'caller'}
-# Every way to hand a job a model: the two credentials and the action. Prep and publish jobs hold none.
-MODEL_ACCESS = re.compile(r'ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN|anthropics/claude-code-action', re.IGNORECASE)
+# CSL-416 guarded the admission surface of the Claude writers (claude.yml,
+# claude-conflict-writer.yml, conflict-scan.yml) and the CSL-474 P9 probe workflow.
+# CSL-238 (Lucas, Nov 16, 2026) retired every automated reviewer and writer except
+# the Devin GitHub App, so those workflows are gone. What stays is the property the
+# guard protected: no workflow holds model credentials, runs a model, or can push.
+MODEL_ACCESS = re.compile(r'ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN|anthropics/claude-code|'
+                          r'CODEX_TRIGGER_PAT|OPENAI_API_KEY|GEMINI_API_KEY|GOOGLE_API_KEY|gemini-cli|run-gemini|'
+                          r'OPENROUTER|DEEPSEEK|XAI_API_KEY|MISTRAL_API_KEY|actions/ai-inference|gh-models',
+                          re.IGNORECASE)
 HOSTED = {'ubuntu-latest', 'ubuntu-24.04', 'ubuntu-22.04', 'windows-2025', 'windows-latest', 'macos-latest'}
-MODEL_BASH = 'Bash(python3 ${{ runner.temp }}/claude-fixer-guard/model-api --:*)'
-# A push, in shell or argv form. Shell: `git`, then global options (`-C dir`, `-c k=v`,
-# `--git-dir path`, `--no-pager`), then `push`, across backslash continuations. Argv: any
-# `[`/`(` list or a quoted `"git"` list, then `"push"` — helpers named `run_git`, `GIT`,
-# `_git`, `run`, or `cmd` all count. Quotes may be backslash-escaped. False positives are
-# excluded narrowly: a bare `"push"` passed to print/logging, or the confirmed
-# display list `allowed_commands` / `ALLOWED_COMMANDS`. Value-taking git options
-# (`--git-dir`, `--work-tree`, `--namespace`, `-C`, `-c`) consume their following token.
-_Q = r'\\?["\']'
-_STR = r'[rbfuRBFU]{0,2}' + _Q + r'[^"\'\n]*' + _Q
-_OPT = r'[rbfuRBFU]{0,2}' + _Q + r'-[^"\'\n]*' + _Q
-_EXPR = r'\*?[A-Za-z_][\w.]*(?:\([^()\n]*\)|\[[^\[\]\n]*\])*'
-_SEP = r'\s*,\s*'
-_TOKEN = rf'(?:{_OPT}(?:{_SEP}(?:{_STR}|{_EXPR}))?|{_EXPR})'
-_GAP = r'(?:\s|\\\n)+'
-_GIT_VAL = (r'(?:--(?:git-dir|work-tree|namespace|config-env|super-prefix|attr-source))'
-            rf'(?:={_GAP}?\S+|{_GAP}\S+)')
-_GIT_OPT = rf'(?:-[Cc]{_GAP}\S+|{_GIT_VAL}|--?[A-Za-z][\w-]*(?:=\S+)?)'
-_PUSH_RAW = re.compile(
-    rf'(?:[\[(]\s*|{_Q}git{_Q}{_SEP})(?:{_TOKEN}{_SEP}){{0,12}}{_Q}push{_Q}'
-    rf'|\bgit(?:{_GAP}{_GIT_OPT})*{_GAP}push\b|/git/refs/'
-)
-_BENIGN_CALL = re.compile(
-    r'(?i:(?:print|pprint|logging(?:\.\w+)+|logger(?:\.\w+)*|\blog)\s*\(?\s*$)'
-    r'|\b(?:allowed_commands|ALLOWED_COMMANDS)\s*[:=]\s*$'
-)
+# The Linear PR sync (kept on the owner's word, Nov 16, 2026) reads exactly one secret, by name; no other
+# workflow reads any. Names are upper case (GitHub reads them case-insensitively). Variables: none anywhere.
+ADMITTED_SECRETS = {'linear-pr-sync.yml': {'LINEAR_API_KEY'}}
+ADMITTED_VARS = {}
+# The only spellings of the secrets or vars context that may stand anywhere in a workflow's text, outside
+# YAML comments, per file. Everything else that contains the word `secrets` or `vars` (any case) is refused,
+# whether or not the expression parser understood it.
+ADMITTED_REFS = {name: {'secrets.' + n for n in names} for name, names in ADMITTED_SECRETS.items()}
+# Token permissions above read, admitted by workflow file, by job (None = the workflow-level block) and by
+# scope. Exactly one is in the tree: ci-label-retrigger.yml dispatches CI (actions). The `benchmarks` job
+# of ci.yml no longer posts a pull request comment (the owner's decision, Nov 16, 2026), so no workflow
+# holds issues or pull-requests write, and a comment posted through gh, the API or github-script is
+# refused in every workflow. `models` counts as above read at ANY level (read is enough to call a model),
+# and `read-all` / `write-all` are refused outright: every workflow names its scopes.
+# `contents` and `id-token` are never admissible, whatever this table says.
+ADMITTED_WRITES = {('ci-label-retrigger.yml', None): {'actions'}}
+# Lines of a run script that may contain the token `push` (see below), by workflow file; each with its reason.
+# The key is the line after the normalisation described below, stripped.
+ADMITTED_PUSH_LINES = {
+    ('ci.yml', ('echo ::error::Cannot fetch the pinned Recursion route contract commit $pin '
+               '(successor/route_consumer/contract/PIN.json, source.head_sha). The pin must be reachable from '
+               'CSL-Laboratories/recursion master or a protected tag; a draft PR head can disappear after a push, '
+               'rebase or squash-merge. Re-pin PIN.json to a commit on recursion master.')):
+        'an error message that explains why a pinned commit can vanish; it runs no git command',
+    ('rust.yml', '# Push and queue events retain their explicit before/base -> head range.'):
+        'a shell comment about the push event trigger, not a command',
+}
+
+# THE CAPABILITY LAYER'S ALLOWLISTS (CSL-238, the answer to DeepSeek's third read). Every entry is a decision of
+# the owner (Lucas), with one line of reason. The tables pin today's tree: a new entry is a decision, not an edit.
+# 1. Jobs whose EFFECTIVE token permissions (the job's own block, else the workflow's, else UNSPECIFIED) hold a
+#    scope above read (`models` at any level; any whole-token string such as `write-all`) or are UNSPECIFIED.
+#    (file, job) -> (the exact scopes, or UNSPECIFIED; the reason). Both jobs of ci-label-retrigger.yml inherit
+#    the workflow-level `actions: write`. No job has unspecified permissions today.
+UNSPECIFIED = 'UNSPECIFIED'
+ADMITTED_JOB_POWER = {
+    ('ci-label-retrigger.yml', 'retrigger'): (
+        frozenset({'actions'}), 'dispatches ci.yml and rust.yml for a labelled pull request (gh workflow run)'),
+    ('ci-label-retrigger.yml', 'cancel-ancestors'): (
+        frozenset({'actions'}), 'cancels verified obsolete pull request CI runs (scripts/ci/ci_cancel_controller.py)'),
+}
+# 2. Secrets (other than GITHUB_TOKEN) that a workflow or a local composite action may name: (file, name) -> reason.
+#    Files are the workflow's name under .github/workflows, or an action's path from the repository root.
+ADMITTED_SECRET_USE = {
+    ('linear-pr-sync.yml', 'LINEAR_API_KEY'):
+        'the Linear pull request sync, kept on the owner\'s word; it runs on manual dispatch only today',
+}
+# 3. Triggers that run with the base repository's rights on a pull request's behalf: (file, event) -> reason.
+DANGEROUS_TRIGGERS = ('pull_request_target', 'workflow_run')
+ADMITTED_TRIGGERS = {
+    ('ci-label-retrigger.yml', 'workflow_run'):
+        'job cancel-ancestors cancels obsolete pull request CI runs; its policy script is read from the default branch',
+}
+
+# THE SHAPE OF THIS GUARD. Two layers. The CAPABILITY LAYER (`guard_tree_violations`, below `writer_guard_violations`)
+# checks what the tree lets a job DO: the shape of .github, the token permissions, the secrets, the triggers and the
+# local composite actions. The TEXT LAYER reads workflow TEXT (it never runs anything), from the strongest line to the
+# weakest, each failing CLOSED (a text it cannot read to the end with certainty is refused). A command assembled at
+# run time has no fixed spelling and is outside any text scan: the capability layer is what bounds it.
+# 1. RAW TEXT, no expression parsing: every occurrence of the word `secrets` or `vars` (any case) in the
+#    text of any YAML scalar (comments excluded; the decoded value of every string is checked as well) must
+#    start one of the exact spellings in ADMITTED_REFS for that file, else the workflow is refused.
+# 2. PARSED: an expression ends at the first `}}` outside a single-quoted string, as GitHub's runner reads it
+#    (a doubled quote is an escaped quote); an expression that does not end is refused; every reference to
+#    the secrets or vars context inside it must be in ADMITTED_SECRETS / ADMITTED_VARS. Every token
+#    permission above read (`models` at any level, `read-all`, `write-all` included) must be in
+#    ADMITTED_WRITES by file, job and scope; every job runs on a GitHub-hosted runner and calls no remote
+#    reusable workflow. A workflow that cannot reach a secret or a write scope cannot push to this
+#    repository, post to a pull request or call a model with the repository token, whatever its scripts say.
+# 3. THE WORD `push`: in every run script (and github-script `script`, `args`, `entrypoint`, `command`), after
+#    joining backslash-newline pairs and deleting quote characters, backslashes, backticks and carets, the
+#    token `push` (any case, not part of a longer word) may not appear at all, unless that exact line is in
+#    ADMITTED_PUSH_LINES. A harmless line that merely mentions the word (`echo "no push here"`, a commit
+#    message, a shell comment) is refused too, on purpose: it must be admitted by name or reworded.
+# 4. A command scan (git push, gh writes, an HTTP client with a write method against GitHub, label, comment and
+#    contents API calls) as a last line.
+# WHAT NO SCAN OF TEXT CAN SEE: a script or action fetched or assembled at run time (curl | sh, a downloaded
+# file, an action whose ref moves), a script committed in the repository that a step calls
+# (`bash scripts/push.sh`: the word `push` in a file name is refused, a script's body is not read), an encoded
+# or built command (`base64 -d | sh`, `cmd=pu; git ${cmd}sh`, `git pu{sh,}`, `$'push'`, an alias made from
+# parts, `eval`), a reusable workflow elsewhere (refused when named, but its content is not read), what a
+# `fromJson` matrix yields at run time (only the producer's runner literals are read), the rights an
+# organization default or a token held outside this repository gives, and what a step may do with the one
+# admitted write (`gh workflow disable`, `gh run cancel`): the table admits a scope for a file by name, not a
+# use of it. Triggers are checked for `pull_request_target` and `workflow_run` only (the capability layer); the
+# other events that run with the base repository's rights (`issue_comment`, `pull_request_review`, `issues`,
+# `repository_dispatch`) are not. GitHub's own reading of expressions (where `${{`
+# ends, whether `read-all` carries `models`) was read from the runner's public source and its documentation,
+# not observed in a run.
+_NOT_SHELL = {'name', 'if', 'description', 'group'}
+_RUN_KEYS = {'run', 'script', 'args', 'entrypoint', 'command', 'cmd'}
+_PUSH_WORD = re.compile(r'(?<![A-Za-z0-9_])push(?![A-Za-z0-9_])', re.IGNORECASE)
+_CONTEXT_WORD = re.compile(r'(?<![A-Za-z0-9_])(secrets|vars)(?![A-Za-z0-9_])', re.IGNORECASE)
+_GH_VALUE_OPTIONS = {'-R', '--repo', '-X', '--method', '-f', '-F', '--field', '--raw-field', '-H', '--header',
+                     '-q', '--jq', '--input', '-t', '--template', '--hostname', '-b', '--body', '--title'}
+_CONTENT_ENDPOINT = re.compile(r'/(?:contents|git/(?:refs|commits|trees|blobs|tags)|merges?|releases)(?:/|$|\?)'
+                               r'|/pulls/[^/]+/merge|/branches/[^/]+/(?:protection|rename)')
+_LABEL_ENDPOINT = re.compile(r'/labels(?:/|$|\?)')
+_COMMENT_ENDPOINT = re.compile(r'/(?:issues|pulls)/[^/]+/comments(?:/|$|\?)|/issues/comments/|/pulls/comments/')
+_COMMENT_API = re.compile(r'createComment|updateComment|deleteComment|createReview\b')
+_CONTENT_API = re.compile(r'createOrUpdateFileContents|deleteFile|git\.(?:createRef|updateRef|deleteRef|'
+                          r'createCommit|createTree|createBlob|createTag)|pulls\.merge|repos\.merge|'
+                          r'createRelease|uploadReleaseAsset')
+_LABEL_API = re.compile(r'addLabels|setLabels|removeLabel|removeAllLabels|createLabel|updateLabel|deleteLabel')
+_CONTEXT = re.compile(r'(?<![\w.-])(secrets|vars)(?![\w-])\s*(?:\.\s*([A-Za-z0-9_*-]+)|\[\s*([\'"])(.*?)\3\s*\])?',
+                      re.IGNORECASE | re.DOTALL)
 
 
-class _PushMatcher:
-    """Broad argv/shell push detector with narrow exclusions for prompt/log word lists."""
-
-    def finditer(self, text):
-        for match in _PUSH_RAW.finditer(text):
-            if not self._benign(text, match):
-                yield match
-
-    def search(self, text):
-        return next(self.finditer(text), None)
-
-    @staticmethod
-    def _benign(text, match):
-        snippet = match.group(0)
-        if snippet.startswith(('git', '/git/refs/')):
-            return False
-        # Only confirmed display/log lists are excluded. `args = ["push", "pull"]`
-        # then `run_git(args)` is a push to a remote named `pull`.
-        return bool(_BENIGN_CALL.search(text[max(0, match.start() - 80):match.start()]))
+def _scalars(node, key=None):
+    """Every string value of the parsed workflow, except names, conditions and descriptions."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            yield from _scalars(v, str(k))
+    elif isinstance(node, list):
+        for v in node:
+            yield from _scalars(v, key)
+    elif isinstance(node, str) and key not in _NOT_SHELL:
+        yield node
 
 
-PUSH = _PushMatcher()
-CI_LABELS = frozenset({'ci:full', 'enhancement'})
-HANDOFF_CONST = re.compile(
-    r"(?m)^\s*(?:HANDOFF_LABEL|MODEL_API_LABEL)\s*[=:]\s*(?:['\"]([^'\"]+)['\"]|(\S+))"
-)
-LABEL_ARRAY = re.compile(
-    r'''(?:["']labels["']\s*:|labels\s*=)\s*\[([^\]]*)\]''', re.IGNORECASE | re.DOTALL
-)
-ISSUE_RESOURCE = re.compile(r'/issues/(?:\{[^}]+\}|\$[\w.]+|\d+)(?!/)')
-_SECRET_EXPR = re.compile(
-    r'''secrets(?:\.[A-Za-z0-9_]+|\[\s*['"][A-Za-z0-9_]+['"]\s*\])'''
-)
-_SECRETS_CONTEXT = re.compile(r'(?<![\w.])secrets\b', re.IGNORECASE)
-_OAUTH_ACTION_INPUT = re.compile(
-    r'''['"]?claude_code_oauth_token['"]?\s*:\s*['"]?\$\{\{\s*secrets\.CLAUDE_CODE_OAUTH_TOKEN\s*\}\}['"]?'''
-)
-_OAUTH_VALUE = re.compile(r'^\$\{\{\s*secrets\.CLAUDE_CODE_OAUTH_TOKEN\s*\}\}$')
+def _all_strings(node):
+    """Every string of the parsed workflow, keys and values, nothing left out."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            yield str(k)
+            yield from _all_strings(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _all_strings(v)
+    elif isinstance(node, str):
+        yield node
 
 
-class _ModelSecrets:
-    """secrets.* in a model job or inherited workflow env. OAuth only as the Claude action `with` input."""
+def _scalar_texts(text):
+    """The raw text of every YAML scalar (comments are not scalars), from the scanner's own marks."""
+    return [text[t.start_mark.index:t.end_mark.index] for t in yaml.scan(text) if isinstance(t, yaml.ScalarToken)]
 
-    def search(self, job, inherited=None):
-        if not isinstance(job, dict):
-            hit = self._in_exprs(str(job))
+
+def _context_word_refused(name, texts):
+    """True when a text holds the word secrets or vars (any case) outside the admitted exact spellings."""
+    allowed = ADMITTED_REFS.get(name, set())
+    for t in texts:
+        for m in _CONTEXT_WORD.finditer(t):
+            if not any(t.startswith(ref, m.start()) and not re.match(r'[A-Za-z0-9_]', t[m.start() + len(ref):][:1] or ' ')
+                       for ref in allowed):
+                return True
+    return False
+
+
+def _expressions(text):
+    """Bodies of every ${{ }} in a string, each ended at the first `}}` outside a single-quoted string (a
+    doubled quote is an escaped quote); None when one does not end, which is refused."""
+    bodies, i = [], 0
+    while True:
+        i = text.find('${{', i)
+        if i < 0:
+            return bodies
+        j, quoted = i + 3, False
+        while j < len(text):
+            if text[j] == "'":
+                quoted = not quoted
+            elif not quoted and text.startswith('}}', j):
+                break
+            j += 1
         else:
-            scanned = copy.deepcopy(job)
-            for step in scanned.get('steps') or []:
-                with_block = step.get('with') or {}
-                token = with_block.get('claude_code_oauth_token')
-                if (str(step.get('uses') or '').startswith('anthropics/claude-code-action')
-                        and token is not None
-                        and _OAUTH_VALUE.fullmatch(str(token).strip())):
-                    with_block.pop('claude_code_oauth_token')
-            hit = self._walk(scanned)
-        if hit:
-            return hit
-        return None if inherited is None else self._walk(inherited)
-
-    def _walk(self, value):
-        if isinstance(value, str):
-            return self._in_exprs(value)
-        if isinstance(value, dict):
-            for item in value.values():
-                hit = self._walk(item)
-                if hit:
-                    return hit
             return None
-        if isinstance(value, (list, tuple)):
-            for item in value:
-                hit = self._walk(item)
-                if hit:
-                    return hit
-            return None
-        return None
+        bodies.append(text[i + 3:j])
+        i = j + 2
 
-    @staticmethod
-    def _in_exprs(text):
-        for body in _ModelSecrets._expr_bodies(text):
-            hit = _ModelSecrets._unquoted_secrets(body)
-            if hit:
-                return hit
-        return None
 
-    @staticmethod
-    def _expr_bodies(text):
-        """Yield `${{ }}` bodies. Quoted `}}` is not a closer. Unclosed expressions fail closed."""
-        i, n = 0, len(text)
-        while i < n:
-            start = text.find('${{', i)
-            if start < 0:
-                return
-            i = start + 3
-            quote = None
-            while i < n:
-                ch = text[i]
-                if quote is not None:
-                    if ch == quote:
-                        if i + 1 < n and text[i + 1] == quote:
-                            i += 2
-                            continue
-                        quote = None
-                    i += 1
-                    continue
-                if ch in "'\"":
-                    quote = ch
-                    i += 1
-                    continue
-                if ch == '}' and i + 1 < n and text[i + 1] == '}':
-                    yield text[start + 3:i]
-                    i += 2
-                    break
+def _context_refs(node, key=None):
+    """{('secrets'|'vars', NAME)} for every use of either context in any expression; '*' for a wildcard,
+    a dynamic index, the whole object or `secrets: inherit`; ('unreadable', '*') for an expression that does
+    not end."""
+    refs = set()
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if str(k).lower() == 'secrets' and isinstance(v, str) and '${{' not in v:
+                refs.add(('secrets', '*'))
+            refs |= _context_refs(v, str(k))
+    elif isinstance(node, list):
+        for v in node:
+            refs |= _context_refs(v, key)
+    elif isinstance(node, str):
+        bodies = _expressions(node)
+        if bodies is None:
+            refs.add(('unreadable', '*'))
+            bodies = []
+        if key == 'if' and not bodies and '${{' not in node:
+            bodies = [node]
+        for body in bodies:
+            for m in _CONTEXT.finditer(body):
+                refs.add((m.group(1).lower(), (m.group(2) or m.group(4) or '*').upper()))
+    return refs
+
+
+def _run_scripts(node, key=None):
+    if isinstance(node, dict):
+        for k, v in node.items():
+            yield from _run_scripts(v, str(k))
+    elif isinstance(node, list):
+        for v in node:
+            yield from _run_scripts(v, key)
+    elif isinstance(node, str) and key in _RUN_KEYS:
+        yield node
+
+
+def _push_lines(script):
+    """Lines of a script that hold the token `push` once quotes, backslashes, backticks and carets are gone."""
+    flat = re.sub(r'[\"\'\\`^]', '', re.sub(r'\\\r?\n', '', script))
+    return [line.strip() for line in flat.split('\n') if _PUSH_WORD.search(line)]
+
+
+def _shell_segments(text, depth=0):
+    """Split shell-ish text into segments of normalised words. Separators (&& || ; | & newline) count only
+    outside quotes; quotes and backslashes are removed inside words (`pu""sh`, `p\\ush`, a backslash-newline
+    pair joins the word); `, [ ] { } ( ) ` < >` and blanks end a word; a quoted string that holds blanks is
+    read again as a command (bash -c '...')."""
+    segs, words, word, inner = [], [], [], []
+    quote, i, n = None, 0, len(text)
+
+    def end_word():
+        if word:
+            words.append(''.join(word))
+            word.clear()
+
+    def end_segment():
+        end_word()
+        if words:
+            segs.append(list(words))
+            words.clear()
+
+    while i < n:
+        c = text[i]
+        if quote:
+            if c == quote:
+                quote, said = None, ''.join(inner)
+                inner.clear()
+                if depth < 3 and re.search(r'[\s;&|]', said):
+                    segs.extend(_shell_segments(said, depth + 1))
+            elif c == '\\' and quote == '"' and i + 1 < n:
                 i += 1
+                inner.append(text[i])
+                word.append(text[i])
             else:
-                yield text[start + 3:]
-                return
-
-    @staticmethod
-    def _unquoted_secrets(body):
-        """secrets context in unquoted GitHub expression text. Doubled quotes are literals."""
-        i, n = 0, len(body)
-        while i < n:
-            if body[i] in "'\"":
-                quote = body[i]
+                inner.append(c)
+                word.append(c)
+        elif c in '"\'':
+            quote = c
+        elif c == '\\' and i + 1 < n:
+            i += 1
+            if text[i] == '\r' and text[i + 1:i + 2] == '\n':
                 i += 1
-                start = i
-                while i < n:
-                    if body[i] == quote:
-                        if i + 1 < n and body[i + 1] == quote:
-                            i += 2
-                            continue
-                        i += 1
+            elif text[i] != '\n':
+                word.append(text[i])
+        elif c in ' \t\r,[]{}()`<>':
+            end_word()
+        elif c in '\n;|':
+            end_segment()
+        elif c == '&':
+            if (i and text[i - 1] in '<>') or text[i + 1:i + 2] == '>':
+                end_word()
+            else:
+                end_segment()
+        else:
+            word.append(c)
+        i += 1
+    if quote and depth < 3 and inner:
+        segs.extend(_shell_segments(''.join(inner), depth + 1))
+    end_segment()
+    return segs
+
+
+_HTTP_CLIENTS = {'curl', 'curl.exe', 'wget', 'wget.exe', 'invoke-webrequest', 'invoke-restmethod', 'iwr', 'irm',
+                 'http', 'https', 'xh'}
+_HTTP_WRITE = {'PUT', 'POST', 'PATCH', 'DELETE'}
+_GITHUB_WORD = re.compile(r'github|gh_token', re.IGNORECASE)
+_CURL_ARG_SHORT = set('AbcCdDeEFHKmoPQrtTuUwxXyYz')
+_CURL_BODY_LONG = {'--data', '--data-raw', '--data-binary', '--data-ascii', '--data-urlencode', '--form',
+                   '--form-string', '--upload-file', '--json'}
+
+
+def _http_write(client, rest):
+    """True when one call of an HTTP client (curl, wget, Invoke-WebRequest, Invoke-RestMethod, httpie) carries a
+    write method (PUT, POST, PATCH, DELETE): by an explicit method option, or by sending a body, which makes the
+    client POST. A literal form only; a method or an address assembled at run time is not seen."""
+    method, body, query = '', False, False
+    if client in ('curl', 'curl.exe'):
+        for k, w in enumerate(rest):
+            nxt = rest[k + 1] if k + 1 < len(rest) else ''
+            if w.startswith('--'):
+                opt, _, val = w.partition('=')
+                if opt == '--request':
+                    method = (val or nxt).upper()
+                elif opt in _CURL_BODY_LONG:
+                    body = True
+                elif opt == '--get':
+                    query = True
+            elif w.startswith('-') and len(w) > 1:
+                for at, ch in enumerate(w[1:], 1):
+                    if ch in _CURL_ARG_SHORT:  # the rest of the word, or the next word, is this option's value
+                        if ch == 'X':
+                            method = (w[at + 1:] or nxt).upper()
+                        elif ch in 'dFT':
+                            body = True
                         break
-                    i += 1
-                else:
-                    return _SECRETS_CONTEXT.search(body[start:])
-            else:
-                start = i
-                while i < n and body[i] not in "'\"":
-                    i += 1
-                hit = _SECRETS_CONTEXT.search(body[start:i])
-                if hit:
-                    return hit
-        return None
+                    if ch == 'G':
+                        query = True
+        return method in _HTTP_WRITE or (not method and body and not query)
+    if client in ('wget', 'wget.exe'):
+        for k, w in enumerate(rest):
+            opt, _, val = w.partition('=')
+            if opt == '--method':
+                method = (val or (rest[k + 1] if k + 1 < len(rest) else '')).upper()
+            elif opt in ('--post-data', '--post-file', '--body-data', '--body-file'):
+                body = True
+        return method in _HTTP_WRITE or (not method and body)
+    if client in ('invoke-webrequest', 'invoke-restmethod', 'iwr', 'irm'):
+        for k, w in enumerate(rest):
+            if w.startswith('-') and len(w) > 1:
+                param, _, val = w[1:].partition(':')
+                param = param.lower()
+                if len(param) >= 2 and 'method'.startswith(param):
+                    method = (val or (rest[k + 1] if k + 1 < len(rest) else '')).upper()
+                elif param and 'body'.startswith(param) or len(param) >= 4 and 'infile'.startswith(param):
+                    body = True
+        return method in _HTTP_WRITE or (not method and body)
+    positional = [w for w in rest if not w.startswith('-')]  # httpie: a method word, or key=value items
+    return bool(positional) and (positional[0].upper() in _HTTP_WRITE or
+                                 any(re.match(r'[A-Za-z0-9_.\[\]-]+:?=[^=]', w) for w in positional))
 
 
-MODEL_SECRETS = _ModelSecrets()
-# Named allow-list: the Claude action may receive the job-scoped token, and
-# only that mapping, when every permission on the model job is `read`.
-MODEL_GITHUB_TOKEN_EXCEPTION = re.compile(
-    r'''['"]?github_token['"]?\s*:\s*['"]?\$\{\{\s*github\.token\s*\}\}['"]?'''
-)
-_GITHUB_TOKEN_VALUE = re.compile(r'^\$\{\{\s*github\.token\s*\}\}$')
-_SECRET_GITHUB_TOKEN = re.compile(
-    r'''['"]?github_token['"]?\s*:\s*['"]?\$\{\{\s*secrets\.'''
-)
-EXPECTED_LOCK = {
-    'claude.yml': 'claude-${{ needs.resolve-pr.outputs.pr_number }}',
-    'claude-conflict-writer.yml': 'claude-${{ inputs.pr_number }}',
-}
-ROLE_USES = {
-    'prep': ('actions/checkout@',),
-    'model': ('actions/checkout@', 'actions/setup-python@', 'oven-sh/setup-bun@',
-              'anthropics/claude-code-action@', 'actions/upload-artifact@'),
-    'publish': ('actions/checkout@', 'actions/download-artifact@'),
-    'verify': (),
-}
-MODEL_PERMS = {'contents': 'read', 'pull-requests': 'read', 'issues': 'read'}
-# Inside a whole push command: force, lease, mirror or delete options (also in short-option clusters
-# such as `-fq`), and a refspec that starts with `+` (forced) or `:` (delete).
-FORCED_PUSH = re.compile(r'--force|--mirror|--delete|(?<![\w-])-[A-Za-z]*[fd][A-Za-z]*(?![\w-])'
-                         r'|(?:^|[\s,(\[])[rbfuRBFU]{0,2}\\?["\']?[+:][^\s"\'+:]'
-                         r'|["\']?force["\']?\s*[:=]\s*["\']?(?:true|True)')
-# A request that writes: explicit method, or a body option that makes `gh api`/`curl` POST.
-LABEL_WRITE = re.compile(r'\b(?:POST|PUT|PATCH)\b|(?<![\w-])(?:-f|-F|--field|--raw-field|--input|-d|--data[\w-]*'
-                         r'|--json)(?![\w-])')
-SPAN_LINES = 40
+def _command_violations(text):
+    """Last line: refuse a push, a write to repository contents, a write through an HTTP client or `gh api`, a
+    label write, a pull request comment or a model call wherever the words stand (see the comment above for what
+    this is and is not)."""
+    out = set()
+    text = text.replace('${IFS}', ' ').replace('$IFS', ' ')
+    if _CONTENT_API.search(text):
+        out.add('api writes contents')
+    if _LABEL_API.search(text):
+        out.add('label write')
+    if _COMMENT_API.search(text):
+        out.add('pull request comment')
+    for words in _shell_segments(text):
+        base = [w.rsplit('/', 1)[-1].lower() for w in words]
+        if 'git-push' in base or 'git-send-pack' in base or 'git-receive-pack' in base:
+            out.add('git push')
+        git_at = next((i for i, b in enumerate(base) if b in ('git', 'git.exe')), None)
+        if git_at is not None and {'push', 'send-pack'} & set(words[git_at + 1:]):
+            out.add('git push')
+        if 'gh' in base:
+            rest = words[base.index('gh') + 1:]
+            pos, skip = [], False
+            for w in rest:  # the command words, minus options and the values of the options that take one
+                if skip:
+                    skip = False
+                elif w in _GH_VALUE_OPTIONS:
+                    skip = True
+                elif not w.startswith('-'):
+                    pos.append(w)
+            if pos[:1] in (['models'], ['copilot']):
+                out.add('model call')
+            if pos[:2] in (['pr', 'merge'], ['pr', 'create'], ['repo', 'sync'], ['repo', 'create'],
+                           ['repo', 'delete'], ['release', 'create'], ['release', 'upload'],
+                           ['release', 'delete'], ['release', 'edit']):
+                out.add('gh writes contents')
+            if pos[:2] in (['pr', 'comment'], ['issue', 'comment']):
+                out.add('pull request comment')
+            if pos[:2] in (['pr', 'ready'], ['pr', 'close'], ['pr', 'reopen'], ['pr', 'review'], ['pr', 'edit']):
+                out.add('gh writes a pull request')
+            if pos[:2] in (['label', 'create'], ['label', 'edit'], ['label', 'delete'], ['label', 'clone']) or \
+                    any(w.startswith(('--add-label', '--remove-label')) for w in rest):
+                out.add('label write')
+            if pos[:1] == ['api'] and len(pos) > 1:
+                method = ''
+                for i, w in enumerate(rest):
+                    if w in ('-X', '--method') and i + 1 < len(rest):
+                        method = rest[i + 1].upper()
+                    elif w.startswith('--method='):
+                        method = w.split('=', 1)[1].upper()
+                fields = any(w in ('-f', '-F', '--field', '--raw-field', '--input') for w in rest)
+                if method in ('PUT', 'POST', 'PATCH', 'DELETE') or (not method and fields):
+                    if pos[1].lower() != 'graphql' or 'mutation' in ' '.join(rest).lower():
+                        out.add('github api write')
+                    if _CONTENT_ENDPOINT.search(pos[1]):
+                        out.add('gh writes contents')
+                    if _LABEL_ENDPOINT.search(pos[1]):
+                        out.add('label write')
+                    if _COMMENT_ENDPOINT.search(pos[1]):
+                        out.add('pull request comment')
+        for at, client in enumerate(base):  # an HTTP client call with a write method, with GitHub named in it
+            if client in _HTTP_CLIENTS and _http_write(client, words[at + 1:]) and any(_GITHUB_WORD.search(w) for w in words):
+                out.add('github api write')
+    return out
 
 
-def job_keys(text):
-    """Job ids at the `jobs:` indent, including quoted keys such as `"extra-job":`."""
-    match = re.search(r'(?m)^jobs:\s*(?:#.*)?$', text)
-    if not match:
-        return set()
-    rest = text[match.end():]
-    stop = re.search(r'(?m)^[^\s#]', rest)
-    block = rest[:stop.start()] if stop else rest
-    keys = []
-    for item in re.finditer(r'(?m)^  (?:["\']([^"\']+)["\']|([A-Za-z_][\w-]*)):', block):
-        keys.append(item.group(1) or item.group(2))
-    return set(keys)
-
-
-def job_uses(job):
-    return [str(step.get('uses')) for step in job.get('steps') or [] if step.get('uses')]
-
-
-_THIRD_PARTY_SHA = re.compile(r'^[^@\s]+@[0-9a-f]{40}$')
-
-
-def uses_sha_pinned(uses):
-    """GitHub-owned actions/* may use a tag. Everything else needs a 40-hex SHA."""
-    return uses.startswith('actions/') or bool(_THIRD_PARTY_SHA.fullmatch(uses))
-
-
-def uses_allowed(job, role):
-    allowed = ROLE_USES[role]
-    return all(
-        any(uses.startswith(prefix) for prefix in allowed) and uses_sha_pinned(uses)
-        for uses in job_uses(job)
-    )
-
-
-def model_github_token_ok(job):
-    """Allow only `github_token: ${{ github.token }}` when every permission is read.
-
-    Checked on each step `with:` input, so a decoy `github.token` mention cannot
-    hide a PAT or `vars.*` mapping on the Claude action.
-    """
-    perms = job.get('permissions') or {}
-    if (not isinstance(perms, dict) or not perms
-            or any(value != 'read' for value in perms.values())):
-        return False
-    tokens = []
-    for step in job.get('steps') or []:
-        token = (step.get('with') or {}).get('github_token')
-        if token is not None:
-            tokens.append(str(token).strip())
-    return bool(tokens) and all(_GITHUB_TOKEN_VALUE.fullmatch(token) for token in tokens)
-
-
-CONFLICT_WRITER_FILES = (
-    '.github/workflows/claude-conflict-writer.yml',
-    '.github/workflows/claude-conflict-writer.yaml',
-)
-CONFLICT_WRITER_REPO = 'CSL-Laboratories/ai-investment-cockpit/'
-
-
-def conflict_writer_uses(uses):
-    """Job-level reusable-workflow call of this repo's claude-conflict-writer.yml/.yaml.
-
-    Accepts a local path (`./.github/workflows/...`) or this repository at a ref.
-    Owner/repo on a remote call is matched case-insensitively (GitHub names are
-    case-insensitive). A same-named workflow in another owner/repo is not a caller.
-    """
-    if not isinstance(uses, str):
-        return False
-    path = uses.split('@', 1)[0].replace('\\', '/').removeprefix('./')
-    if path in CONFLICT_WRITER_FILES:
-        return True
-    owner, _, rest = path.partition('/')
-    repo, _, workflow = rest.partition('/')
-    if not (owner and repo and workflow):
-        return False
-    owner_repo = f'{owner}/{repo}/'
-    return (owner_repo.casefold() == CONFLICT_WRITER_REPO.casefold()
-            and workflow in CONFLICT_WRITER_FILES)
-
-
-def calls_conflict_writer(doc):
-    jobs = (doc or {}).get('jobs') if isinstance(doc, dict) else None
-    if not isinstance(jobs, dict):
-        return False
-    return any(isinstance(job, dict) and conflict_writer_uses(job.get('uses'))
-               for job in jobs.values())
-
-
-def writer_callers(directory):
-    found = set()
-    for path in Path(directory).glob('*.y*ml'):
-        doc = yaml.load(path.read_text(encoding='utf-8'), Loader=yaml.BaseLoader)
-        if calls_conflict_writer(doc):
-            found.add(path.name)
+def _written_scopes(doc):
+    """{job or None: set of token scopes above read}; '*' for any whole-token string (`read-all`, `write-all`);
+    `models` at any level."""
+    found = {}
+    blocks = [(None, doc.get('permissions'))] + [(n, j.get('permissions')) for n, j in (doc.get('jobs') or {}).items()]
+    for job, block in blocks:
+        if isinstance(block, str):
+            found.setdefault(job, set()).add('*')
+            continue
+        for scope, level in (block or {}).items():
+            if str(level).strip().lower() not in ('read', 'none') or str(scope).strip().lower() == 'models':
+                found.setdefault(job, set()).add(str(scope).strip().lower())
     return found
 
 
-def handoff_constants(text):
-    return [match.group(1) or match.group(2) for match in HANDOFF_CONST.finditer(text)]
+def _runner_values(doc, job):
+    runner = job.get('runs-on')
+    if isinstance(runner, list):
+        values = []
+        for item in runner:
+            sub = _runner_values(doc, {**job, 'runs-on': item})
+            if sub is None:
+                return None
+            values += sub
+        return values
+    if not isinstance(runner, str):
+        return None
+    hit = re.fullmatch(r'\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\s*\}\}', runner.strip())
+    if not hit:
+        return None if '${{' in runner else [runner]
+    key, matrix = hit.group(1), (job.get('strategy') or {}).get('matrix')
+    if isinstance(matrix, dict):
+        values = matrix.get(key, [])
+        values = list(values) if isinstance(values, list) else [values]
+        values += [i[key] for i in matrix.get('include') or [] if isinstance(i, dict) and key in i]
+        return [str(v) for v in values] or None
+    producer = re.fullmatch(r'\$\{\{\s*fromJson\(\s*needs\.([A-Za-z0-9_-]+)\.outputs\.[A-Za-z0-9_-]+\s*\)\s*\}\}',
+                            str(matrix or '').strip())
+    if producer and producer.group(1) in (doc.get('jobs') or {}):
+        literals = [v for s in _scalars(doc['jobs'][producer.group(1)])
+                    for v in re.findall(r'["\']' + re.escape(key) + r'["\']\s*:\s*["\']([^"\']+)["\']', s)]
+        return literals or None
+    return None
 
 
-def labels_in_span(span):
-    names = []
-    for match in LABEL_ARRAY.finditer(span):
-        for token in re.finditer(r'HANDOFF_LABEL|[rbfuRBFU]{0,2}["\']([^"\']+)["\']', match.group(1)):
-            names.append('needs-decision' if token.group(0) == 'HANDOFF_LABEL' else token.group(1))
-    if re.search(r'addLabelsToLabelable', span, re.IGNORECASE):
-        if 'HANDOFF_LABEL' in span:
-            names.append('needs-decision')
-        names.extend(token.group(1) for token in re.finditer(r'["\']([^"\']+)["\']', span)
-                     if token.group(1) in CI_LABELS | {'needs-decision'})
-    return names
+def _runner_violations(doc):
+    out = []
+    for name, job in (doc.get('jobs') or {}).items():
+        if 'uses' in job:
+            if not str(job['uses']).startswith('./.github/workflows/') or str(job.get('secrets')) == 'inherit':
+                out.append((name, 'reusable workflow'))
+            continue
+        values = _runner_values(doc, job)
+        if not values or any(v not in HOSTED for v in values):
+            out.append((name, 'runner'))
+    return out
 
 
-def ci_label_add_violations(text):
-    """CI-label adds the writers must not perform, including issue PATCH and GraphQL."""
-    hits, seen = [], set()
-
-    def consider(pos, kind):
-        span = command_span(text, pos)
-        key = (kind, span)
-        if key in seen:
-            return
-        seen.add(key)
-        names = labels_in_span(span)
-        if kind == 'graphql':
-            if set(names) & CI_LABELS or (
-                    'HANDOFF_LABEL' not in span and 'needs-decision' not in names):
-                hits.append(span)
-            return
-        if not LABEL_WRITE.search(span):
-            return
-        if kind == 'issue-patch' and not names and not re.search(r'\blabels\b', span):
-            return
-        if set(names) & CI_LABELS:
-            hits.append(span)
-            return
-        if kind == 'labels-path' and 'HANDOFF_LABEL' not in span and 'needs-decision' not in names:
-            hits.append(span)
-
-    for match in re.finditer(r'/labels\b', text):
-        consider(match.start(), 'labels-path')
-    for match in ISSUE_RESOURCE.finditer(text):
-        consider(match.start(), 'issue-patch')
-    for match in re.finditer(r'addLabelsToLabelable', text, re.IGNORECASE):
-        consider(match.start(), 'graphql')
-    return hits
-
-
-def job_text(job):
-    """Raw `run` scripts and `with` values of a job's steps, unescaped."""
-    parts = []
-    for step in job.get('steps', []):
-        parts.append(str(step.get('run', '')))
-        parts.extend(str(v) for v in (step.get('with') or {}).values())
-    return '\n'.join(parts)
-
-
-def claude_trusted_sources(role):
-    """scripts/ci files claude.yml copies from github.workflow_sha for that role."""
-    names = {
-        'prep': ('claude_fixer_preflight.py', 'claude_fixer_receipts.py'),
-        'publish': ('claude_fixer_publish.py', 'claude_fixer_receipts.py'),
-    }.get(role, ())
-    return '\n'.join((ROOT / 'scripts' / 'ci' / name).read_text(encoding='utf-8') for name in names)
-
-
-# After CSL-474, claude.yml no longer inlines HANDOFF_LABEL; the extracted
-# model helper and publisher hold the constant.
-CLAUDE_HANDOFF_SOURCES = ('claude_fixer_outbox.py', 'claude_fixer_publish.py')
-
-
-def writer_handoff_text(name):
-    """Workflow YAML plus, for claude.yml, the extracted HANDOFF_LABEL scripts."""
-    text = (WORKFLOWS / name).read_text(encoding='utf-8')
-    if name == 'claude.yml':
-        extra = '\n'.join(
-            (ROOT / 'scripts' / 'ci' / src).read_text(encoding='utf-8')
-            for src in CLAUDE_HANDOFF_SOURCES
-        )
-        text = text + '\n' + extra
-    return text
-
-
-def writer_contract_text(name, job, role):
-    text = job_text(job)
-    if name == 'claude.yml':
-        text = text + '\n' + claude_trusted_sources(role)
-    return text
-
-
-def command_span(text, pos):
-    """The whole command or call around text[pos].
-
-    It starts at the line of the outermost bracket still open at `pos` (within SPAN_LINES lines),
-    or earlier when the previous lines end in a shell backslash continuation, and ends at the first
-    newline after `pos` with every bracket closed and no continuation. So a multiline python call
-    or argv list, or a continued shell command, is read as one unit.
-    """
-    floor = 0
-    for _ in range(SPAN_LINES):
-        floor = text.rfind('\n', 0, floor or pos)
-        if floor < 0:
-            floor = 0
+def writer_guard_violations(name, text):
+    out = []
+    if MODEL_ACCESS.search(text):
+        out.append('model credential')
+    if re.search(r'(?i)contents:\s*[\'"]?write|permissions:\s*[\'"]?write-all', text):
+        out.append('contents write')
+    if re.search(r'(?i)id-token:\s*[\'"]?write', text):
+        out.append('id-token')
+    try:
+        doc = yaml.safe_load(text) or {}
+        raw = _scalar_texts(text)
+    except yaml.YAMLError:
+        return out + ['unparseable']
+    if not isinstance(doc, dict):
+        return out + ['unparseable']
+    # 1. raw text, no expression parsing
+    if _context_word_refused(name, raw + list(_all_strings(doc))):
+        out.append('secret')
+    # 2. parsed
+    refs = _context_refs(doc)
+    if ('unreadable', '*') in refs:
+        out.append('unreadable expression')
+    if {n for c, n in refs if c == 'secrets'} != ADMITTED_SECRETS.get(name, set()) and 'secret' not in out:
+        out.append('secret')
+    if {n for c, n in refs if c == 'vars'} != ADMITTED_VARS.get(name, set()):
+        out.append('variable')
+    scopes = _written_scopes(doc)
+    granted = {s for v in scopes.values() for s in v}
+    if 'contents' in granted and 'contents write' not in out:
+        out.append('contents write')
+    if 'id-token' in granted and 'id-token' not in out:
+        out.append('id-token')
+    if scopes != {job: s for (file, job), s in ADMITTED_WRITES.items() if file == name}:
+        out.append('permission write')
+    if doc.get('permissions') is None:
+        out.append('no permissions block')
+    out += [why for _, why in _runner_violations(doc)]
+    # 3. the word push
+    for script in _run_scripts(doc):
+        if any((name, line) not in ADMITTED_PUSH_LINES for line in _push_lines(script)):
+            out.append('push word')
             break
-    start = text.rfind('\n', 0, pos) + 1
-    depth = 0
-    for i in range(pos - 1, floor - 1, -1):
-        if text[i] in ')]}':
-            depth += 1
-        elif text[i] in '([{':
-            if depth:
-                depth -= 1
+    # 4. command scan
+    for scalar in _scalars(doc):
+        out += sorted(_command_violations(scalar) - set(out))
+    return out
+
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# THE CAPABILITY LAYER (CSL-238, DeepSeek round 3). It does not read what a job SAYS; it checks what a job is ABLE
+# to do. A scan of shell text can never be complete (a command assembled at run time has no fixed spelling), so
+# these checks are made on the parsed tree, whatever the scripts contain:
+#   a. THE TREE. Every workflow lies directly under .github/workflows. A .yml or .yaml file in a subfolder of it
+#      is refused. GitHub runs no workflow from a subfolder (its documentation says so; not observed in a run
+#      here), so nothing there can write, and refusing the shape means nothing can hide there either. A symlink
+#      under .github/workflows or .github/actions is refused too.
+#   b. PERMISSIONS. Each job's effective `permissions` (its own block, else the workflow's, else UNSPECIFIED): a
+#      job that holds a scope above read, or is UNSPECIFIED, must be in ADMITTED_JOB_POWER by file and job, with
+#      exactly those scopes. A new job with write power, or one that drops its block, is refused.
+#   c. SECRETS. Every `secrets.<NAME>` other than GITHUB_TOKEN that a workflow or a local composite action names
+#      (the bare word `secrets` counts as `*`) must be in ADMITTED_SECRET_USE.
+#   d. TRIGGERS. `pull_request_target` and `workflow_run` must be in ADMITTED_TRIGGERS.
+#   e. LOCAL COMPOSITE ACTIONS (`uses: ./...`, and every action.yml under .github/actions). They run with the
+#      job's token, so (b) bounds their power. Each is read for (c); it must lie under .github/actions and be a
+#      composite (a JavaScript or Docker action's code is not read, so it is refused); its `run:` steps go to the
+#      text scan as well.
+# The text scan above (the word `push`, the command scan) stays as the second layer. THE LIMITS, stated: a command
+# assembled at run time is outside any text scan; layers (b) to (d) are what bound it. A job whose token holds no
+# write scope and which names no secret can still run what it likes inside the runner (read the repository,
+# call a network host without a credential, spend minutes); a script that a step calls is not read; a third-party
+# action (`uses: owner/name@ref`) is not read and runs with the job's token; the use made of an admitted write
+# (`actions: write` can disable or cancel workflows) is not checked; the repository's and the organization's
+# default token permission, and what a ruleset or a branch protection allows, are not visible from the tree.
+
+def _read_text(path):
+    try:
+        return path.read_text(encoding='utf-8')
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _block_power(block):
+    """The scopes above read of one `permissions` value; `*` for any whole-token string (or any shape that is
+    not a mapping); `models` counts at any level."""
+    if not isinstance(block, dict):
+        return {'*'}
+    power = set()
+    for scope, level in block.items():
+        name = str(scope).strip().lower()
+        if str(level).strip().lower() not in ('read', 'none') or name == 'models':
+            power.add(name)
+    return power
+
+
+def _job_power(doc, job):
+    """The token power a job ends up with: a set of scopes above read (empty = read only), or UNSPECIFIED."""
+    if isinstance(job, dict) and job.get('permissions') is not None:
+        return _block_power(job['permissions'])
+    if doc.get('permissions') is not None:
+        return _block_power(doc['permissions'])
+    return UNSPECIFIED
+
+
+def _jobs_with_power(doc):
+    """{job: frozenset of scopes | UNSPECIFIED} for every job that holds a write scope or is unspecified."""
+    jobs = doc.get('jobs')
+    held = {}
+    for name, job in (jobs.items() if isinstance(jobs, dict) else []):
+        power = _job_power(doc, job)
+        if power == UNSPECIFIED or power:
+            held[str(name)] = power if power == UNSPECIFIED else frozenset(power)
+    return held
+
+
+def _events(doc):
+    """The lower-case event names a workflow is triggered by. `on` is the key `True` under safe_load."""
+    found = set()
+    for key in ('on', True):
+        value = doc.get(key)
+        if isinstance(value, str):
+            found.add(value.strip().lower())
+        elif isinstance(value, (list, dict)):
+            found |= {str(event).strip().lower() for event in value}
+    return found
+
+
+_SECRET_NAME = re.compile(r'(?<![A-Za-z0-9_])secrets(?![A-Za-z0-9_])\s*(?:\.\s*([A-Za-z0-9_-]+)|\[\s*([\'"])(.*?)\2\s*\])?',
+                          re.IGNORECASE | re.DOTALL)
+
+
+def _secret_names(texts):
+    """Upper-case names after the word `secrets` in any text; `*` when the word stands without a name."""
+    return {(m.group(1) or m.group(3) or '*').upper() for t in texts for m in _SECRET_NAME.finditer(t)}
+
+
+def _local_action_refs(node):
+    """Every `uses: ./...` of a parsed workflow or action (a step, or a job's reusable workflow)."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if str(key) == 'uses' and isinstance(value, str):
+                if value.strip().startswith('./'):
+                    yield value.strip()
             else:
-                start = text.rfind('\n', 0, i) + 1
-    while start > 0 and text[:start - 1].rstrip(' \t').endswith('\\'):
-        start = text.rfind('\n', 0, start - 1) + 1
-    depth, end, lines = 0, len(text), 0
-    for i in range(start, len(text)):
-        char = text[i]
-        if char in '([{':
-            depth += 1
-        elif char in ')]}':
-            depth -= 1
-        elif char == '\n' and i >= pos:
-            lines += 1
-            if (depth <= 0 and not text[:i].rstrip(' \t').endswith('\\')) or lines > SPAN_LINES:
-                end = i
-                break
-    return text[start:end]
+                yield from _local_action_refs(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _local_action_refs(value)
 
 
-def granted(text):
-    # `--disallowedTools` denials (e.g. `Bash(git push:*)`) are not grants.
-    return re.sub(r'--disallowedTools "[^"]*"', '', text)
+def action_guard_violations(key, text):
+    """The text layer for a local composite action: no model access, no mention of `secrets` or `vars`, the word
+    `push` only on an admitted line, and the command scan over every scalar. `key` is its path from the root."""
+    out = []
+    if MODEL_ACCESS.search(text):
+        out.append('model credential')
+    try:
+        doc = yaml.safe_load(text) or {}
+        raw = _scalar_texts(text)
+    except yaml.YAMLError:
+        return out + ['unparseable']
+    if not isinstance(doc, dict):
+        return out + ['unparseable']
+    if _context_word_refused(key, raw + list(_all_strings(doc))):
+        out.append('secret')
+    for script in _run_scripts(doc):
+        if any((key, line) not in ADMITTED_PUSH_LINES for line in _push_lines(script)):
+            out.append('push word')
+            break
+    for scalar in _scalars(doc):
+        out += sorted(_command_violations(scalar) - set(out))
+    return out
 
 
-class CrossLaneAdmissionTests(unittest.TestCase):
-    def test_writer_workflow_set_is_complete(self):
-        # A new Claude workflow must be added here (and to the contract) before it can merge.
-        found = {p.name for p in WORKFLOWS.glob('*.y*ml')
-                 if re.search(r'anthropics/claude-code|ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN', p.read_text())}
-        self.assertEqual(found, set(WRITER_FILES) | {P9_PROBE_FILE})
-        for name, jobs in WRITER_JOBS.items():
-            parsed = set(workflow(name)['jobs'])
-            self.assertEqual(parsed, set(jobs) | NON_WRITER_JOBS[name])
-            self.assertEqual(job_keys((WORKFLOWS / name).read_text()), parsed)
-        scan_jobs = set(workflow('conflict-scan.yml')['jobs'])
-        self.assertEqual(scan_jobs, set(SCAN_JOBS))
-        self.assertEqual(job_keys((WORKFLOWS / 'conflict-scan.yml').read_text()), scan_jobs)
-        self.assertEqual(writer_callers(WORKFLOWS), {'conflict-scan.yml'})
+def guard_tree_violations(root):
+    """The whole guard over one repository tree: [(path, layer, what)], layers `tree`, `permissions`, `secrets`,
+    `triggers`, `composite` and `text`. Empty when the tree passes."""
+    root = Path(root)
+    workflows, actions = root / '.github' / 'workflows', root / '.github' / 'actions'
+    out, top, queue, seen = [], [], [], set()
 
-    def test_writers_never_dispatch_rerun_or_ready_ci(self):
-        for name in WRITER_FILES:
-            text = (WORKFLOWS / name).read_text()
-            with self.subTest(workflow=name):
-                self.assertNotRegex(text, r'/dispatches\b|createWorkflowDispatch|reRunWorkflow|actions/github-script')
-                self.assertNotRegex(text, r'/rerun|rerun-failed-jobs|gh run rerun|gh pr ready|ready_for_review"?\s*[,)]'
-                                          r'|markPullRequestReadyForReview|ReadyForReview\(')
-                if name != 'claude.yml':
-                    self.assertEqual(re.findall(r'gh workflow run (\S+)', text), [])
-        dispatching = {job for job, spec in workflow('claude.yml')['jobs'].items()
-                       if 'gh workflow run' in job_text(spec)}
-        self.assertEqual(dispatching, {'forward-conflict-scan'})
-        self.assertEqual(set(re.findall(r'gh workflow run (\S+)', (WORKFLOWS / 'claude.yml').read_text())),
-                         {'conflict-scan.yml'})
+    def rel(path):
+        return path.relative_to(root).as_posix()
 
-    def test_writers_never_add_ci_labels(self):
-        for name in WRITER_FILES:
-            text = writer_handoff_text(name)
-            with self.subTest(workflow=name):
-                self.assertNotRegex(text, r'--add-label|gh pr edit|labels\[\]=')
-                self.assertNotRegex(text, r'"labels":\s*\[\s*"(ci:full|enhancement)"')
-                # Every label write is the handoff label; ci:full is only ever removed (DELETE of a
-                # gate-owned label event). The span covers `/labels`, PATCH of the issue resource,
-                # and GraphQL addLabelsToLabelable, and the complete label set — not the first name.
-                self.assertEqual(ci_label_add_violations(text), [])
-                constants = handoff_constants(text)
-                self.assertTrue(set(constants) <= {'needs-decision'}, constants)
-                if name != 'conflict-scan.yml':
-                    self.assertTrue(constants)
-                    self.assertEqual(set(constants), {'needs-decision'})
+    def secrets_layer(key, texts):
+        for name in sorted(_secret_names(texts) - {'GITHUB_TOKEN'}):
+            if (key, name) not in ADMITTED_SECRET_USE:
+                out.append((key, 'secrets', 'names secrets.' + name + ', which is not admitted'))
 
-    def test_conflict_resolve_caller_permissions_are_exact(self):
-        # The reusable-workflow caller grants its inner jobs their ceiling; it holds no lock itself.
-        caller = workflow('conflict-scan.yml')['jobs']['conflict-resolve']
-        self.assertEqual(caller['permissions'], {'contents': 'read', 'pull-requests': 'write',
-                                                 'issues': 'write', 'id-token': 'write'})
-        self.assertNotIn('concurrency', caller)
-        self.assertIn("github.event_name != 'push'", caller['if'])
+    def want(owner, ref):
+        target = Path(os.path.normpath(root / ref[2:]))
+        if target.suffix.lower() in ('.yml', '.yaml'):
+            return  # a reusable workflow: it is a workflow file and is read as one
+        if target != root and root not in target.parents:
+            out.append((owner, 'composite', 'local action ' + ref + ' lies outside the repository'))
+            return
+        files = [target / n for n in ('action.yml', 'action.yaml') if (target / n).is_file()]
+        if not files:
+            out.append((owner, 'composite', 'local action ' + ref + ' has no action.yml: its code is not read'))
+        if actions != target and actions not in target.parents:
+            out.append((owner, 'composite', 'local action ' + ref + ' lies outside .github/actions'))
+        queue.extend(files)
 
-    def test_writer_workflows_use_github_hosted_runners_only(self):
-        for name in WRITER_FILES:
-            for job_name, job in workflow(name)['jobs'].items():
-                with self.subTest(workflow=name, job=job_name):
-                    if 'uses' in job:
-                        self.assertEqual(job['uses'], './.github/workflows/claude-conflict-writer.yml')
-                    else:
-                        self.assertIn(job['runs-on'], HOSTED)
+    # a. the tree
+    for base in (workflows, actions):
+        for path in sorted(base.rglob('*')) if base.is_dir() else []:
+            if path.is_symlink():
+                out.append((rel(path), 'tree', 'symlink under ' + rel(base)))
+            elif base == workflows and path.is_file() and path.suffix.lower() in ('.yml', '.yaml'):
+                if path.parent != workflows:
+                    out.append((rel(path), 'tree', 'workflow in a subfolder of .github/workflows (GitHub runs none)'))
+                else:
+                    top.append(path)
+            elif base == actions and path.is_file() and path.name.lower() in ('action.yml', 'action.yaml'):
+                queue.append(path)
+    # every workflow: the text layer, then permissions, secrets and triggers
+    for path in top:
+        text = _read_text(path)
+        if text is None:
+            out.append((rel(path), 'tree', 'unreadable file'))
+            continue
+        out += [(rel(path), 'text', kind) for kind in writer_guard_violations(path.name, text)]
+        try:
+            doc = yaml.safe_load(text)
+            raw = _scalar_texts(text)
+        except yaml.YAMLError:
+            continue
+        if not isinstance(doc, dict):
+            continue
+        for job, power in sorted(_jobs_with_power(doc).items()):
+            admitted = ADMITTED_JOB_POWER.get((path.name, job))
+            if admitted is None or admitted[0] != power:
+                out.append((rel(path), 'permissions', 'job ' + job + ' holds ' +
+                            (power if power == UNSPECIFIED else ' '.join(sorted(power))) + ', which is not admitted'))
+        secrets_layer(path.name, raw + list(_all_strings(doc)))
+        events = _events(doc)
+        if not events:
+            out.append((rel(path), 'triggers', 'no readable trigger'))
+        for event in sorted(events & set(DANGEROUS_TRIGGERS)):
+            if (path.name, event) not in ADMITTED_TRIGGERS:
+                out.append((rel(path), 'triggers', event + ' is not admitted'))
+        for ref in sorted(set(_local_action_refs(doc))):
+            want(rel(path), ref)
+    # e. every local composite action, once
+    while queue:
+        path = queue.pop(0)
+        key = rel(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        text = _read_text(path)
+        if text is None:
+            out.append((key, 'composite', 'unreadable file'))
+            continue
+        out += [(key, 'composite', kind) for kind in action_guard_violations(key, text)]
+        try:
+            doc = yaml.safe_load(text) or {}
+            raw = _scalar_texts(text)
+        except yaml.YAMLError:
+            continue
+        if not isinstance(doc, dict):
+            continue
+        runs = doc.get('runs')
+        if not isinstance(runs, dict) or str(runs.get('using')).strip().lower() != 'composite':
+            out.append((key, 'composite', 'not a composite action: its code is not read'))
+        secrets_layer(key, raw + list(_all_strings(doc)))
+        for ref in sorted(set(_local_action_refs(doc))):
+            want(key, ref)
+    return out
 
-    def test_non_writer_jobs_cannot_push(self):
-        for name, jobs in NON_WRITER_JOBS.items():
-            doc = workflow(name)
-            for job_name in jobs:
-                job = doc['jobs'][job_name]
-                perms = job.get('permissions') or {}
-                with self.subTest(workflow=name, job=job_name):
-                    if job_name == 'forward-conflict-scan':
-                        # The one dispatch (of conflict-scan.yml, checked above) needs exactly this.
-                        self.assertEqual(perms, {'actions': 'write', 'contents': 'read'})
-                    else:
-                        self.assertEqual(perms.get('contents'), 'read')
-                        self.assertTrue(set(perms.values()) <= {'read', 'none'})
-                    self.assertFalse(PUSH.search(job_text(job)))
-        # Jobs without their own `permissions:` inherit the workflow default, which must be read-only.
-        for name in WRITER_FILES:
-            with self.subTest(workflow=name, check='default token'):
-                default = workflow(name).get('permissions')
-                self.assertIsInstance(default, dict)
-                self.assertTrue(default)
-                self.assertTrue(set(default.values()) <= {'read', 'none'})
-        scan = workflow('conflict-scan.yml')['jobs']['conflict-scan']
-        self.assertEqual(scan['permissions'], {'actions': 'read', 'contents': 'read', 'pull-requests': 'read'})
-        self.assertFalse(PUSH.search(job_text(scan)))
-        self.assertIsNone(MODEL_ACCESS.search(str(scan)))
 
-    def test_push_matcher_and_spans(self):
-        # Option-bearing and prefixed argv pushes are pushes; a prompt word list is not.
-        for push in ('subprocess.run(["git", "-C", repo, "push", ...])', 'run_git(["-C", repo, "push"])',
-                     'subprocess.run(prefix + ["push", "origin", "HEAD"])', 'run([*prefix, "push", "origin"])',
-                     'python3 -c "run([\\"git\\", \\"-C\\", \\"$R\\", \\"push\\"])"', 'git -C "$dir" \\\n  push origin',
-                     'repo.run_git(["push", "-q", "--no-verify", url, ref], token=token)',
-                     'subprocess.run([GIT, "push", url])', 'git("push", url)', 'self.git("push")',
-                     '_git(["push", url])', 'run(["push", url])', 'cmd(["push", "--force", url])',
-                     'git_cmd = ["push", url]',
-                     'subprocess.run(["git", "push", "pull", "HEAD"])',
-                     'run_git(["push", "pull", "HEAD"])', 'run_git(["push", "pull"])',
-                     'args = ["push", "pull"]\nrepo.run_git(args)',
-                     'git_cmd = ["push", "pull"]',
-                     'allowed_args = ["push", "origin", "HEAD"]\n_git(*allowed_args)',
-                     'push_display = ["push","origin"]\nsubprocess.run(["git", *push_display])',
-                     'disallowed = ["push", "origin"]',
-                     'keywords = ["push"]'):
-            with self.subTest(push=push):
-                self.assertTrue(PUSH.search(push))
-        for other in ('"check", "commit", "diff", "gh", "git", "log", "origin", "pr", "push", "pytest",',
-                      'NEVER push or force-push', 'subprocess.run(["git", "-C", repo, "status"])',
-                      'print("push")', 'allowed_commands = ["push", "pull"]', 'allowed_commands = ["push", "origin"]',
-                      'ALLOWED_COMMANDS = ["push", "origin"]',
-                      'logging.info("push")', 'logger.debug("push")'):
-            with self.subTest(other=other):
-                self.assertFalse(PUSH.search(other))
-        for push in ('git --git-dir "$X" push origin HEAD',
-                     'git --work-tree "$W" --git-dir "$G" push',
-                     'git --namespace foo push origin'):
-            with self.subTest(valued=push):
-                self.assertTrue(PUSH.search(push))
-        # The force check reads the whole wrapped command.
-        for forced in ('run_git([\n    "push",\n    "--force-with-lease", url])', 'run_git(["push",\n    "-f"])',
-                       'git push \\\n  --force origin HEAD', 'run_git(["push", url, f"+{sha}:refs/heads/x"])',
-                       'run_git(["push", "--delete", url, ref])', 'run_git(["push", "--mirror", url])'):
-            with self.subTest(forced=forced):
-                self.assertRegex(command_span(forced, PUSH.search(forced).start()), FORCED_PUSH)
-        ordinary = 'repo.run_git([\n    "push", "-q", "--no-verify", url,\n    f"{sha}:refs/heads/x"], token=token)'
-        self.assertNotRegex(command_span(ordinary, PUSH.search(ordinary).start()), FORCED_PUSH)
-        # The label check reads the whole call, so a method before the URL still counts as a write.
-        post = 'check_call(\n    ["gh", "api", "--method", "POST",\n     f"repos/{r}/issues/{n}/labels",\n     "--input", f])'
-        self.assertRegex(command_span(post, post.index('/labels')), LABEL_WRITE)
-        delete = 'check_call(\n    ["gh", "api", "-X", "DELETE",\n     f"repos/{r}/issues/{n}/labels/ci:full"])'
-        self.assertNotRegex(command_span(delete, delete.index('/labels')), LABEL_WRITE)
+class NoAutomatedWriterTests(unittest.TestCase):
+    def test_no_workflow_holds_model_credentials(self):
+        found = {p.name for p in WORKFLOWS.glob('*.y*ml') if MODEL_ACCESS.search(p.read_text())}
+        self.assertEqual(found, set())
 
-    def test_writers_share_one_per_pr_lock_without_cancellation(self):
-        for name, jobs in WRITER_JOBS.items():
-            doc = workflow(name)
-            for job_name, role in jobs.items():
-                if role == 'verify':
-                    continue
-                self.assertIn('concurrency', doc['jobs'][job_name], f'{name}:{job_name} needs the claude-<PR> lock')
-                conc = doc['jobs'][job_name]['concurrency']
-                with self.subTest(workflow=name, job=job_name):
-                    self.assertEqual(conc['group'], EXPECTED_LOCK[name])
-                    self.assertEqual(conc['cancel-in-progress'], 'false')
-                    self.assertEqual(conc['queue'], 'max')
+    def test_no_workflow_can_push_or_write_contents(self):
+        for path in sorted(WORKFLOWS.glob('*.y*ml')):
+            text = path.read_text()
+            with self.subTest(path=path.name):
+                doc = yaml.safe_load(text)
+                self.assertNotIn('git push', _command_violations('\n'.join(_scalars(doc))))
+                granted = {s for v in _written_scopes(doc).values() for s in v}
+                self.assertEqual(granted & {'contents', 'id-token', '*'}, set())
 
-    def test_only_model_free_publish_jobs_can_push(self):
-        for name, jobs in WRITER_JOBS.items():
-            doc = workflow(name)
-            for job_name, role in jobs.items():
-                job = doc['jobs'][job_name]
-                text = writer_contract_text(name, job, role)
-                perms = job.get('permissions') or {}
-                with self.subTest(workflow=name, job=job_name, role=role):
-                    self.assertEqual(bool(PUSH.search(granted(text))), role == 'publish')
-                    self.assertEqual(perms.get('id-token') == 'write', role == 'publish')
-                    if role == 'verify':
-                        # A credential-free verify job (CSL-409): no write scope and no secrets.
-                        self.assertTrue(set(perms.items()) <= {('contents', 'read')})
-                        self.assertNotIn('secrets.', text)
-                    else:
-                        self.assertEqual(perms.get('contents'), 'read')
-                        # No writer job may write code, workflows or packages; PR and issue writes only.
-                        self.assertTrue(set(perms) <= {'contents', 'pull-requests', 'issues', 'id-token'})
-                    if role == 'model':
-                        # Values, not only scope names: the model token stays read-only.
-                        self.assertEqual(perms, MODEL_PERMS)
-                        self.assertIsNone(MODEL_SECRETS.search(job, inherited=doc.get('env')))
-                        self.assertTrue(model_github_token_ok(job))
-                    self.assertTrue(uses_allowed(job, role), job_uses(job))
-                    uses_model = any(str(s.get('uses', '')).startswith('anthropics/claude-code-action') for s in job['steps'])
-                    self.assertEqual(uses_model, role == 'model')
-                    if role != 'model':
-                        # The whole job (env, step env, `with`, `uses`, scripts), not only run/with text.
-                        self.assertIsNone(MODEL_ACCESS.search(str(job)))
-                    if role == 'publish':
-                        self.assertNotRegex(text, r'"\+[^"]*:refs/heads|\+\{[^}]*\}:refs/heads')
-                        # The whole push command, however it is wrapped: one ordinary fast-forward.
-                        for match in PUSH.finditer(granted(text)):
-                            self.assertNotRegex(command_span(granted(text), match.start()), FORCED_PUSH)
-                        self.assertIn('# Ordinary push: no force, no lease.', text)
-                    if role == 'model':
-                        allowed = re.findall(r'--allowedTools "([^"]*)"', text)
-                        denied = re.findall(r'--disallowedTools "([^"]*)"', text)
-                        self.assertEqual(len(allowed), 1)
-                        self.assertTrue(denied and 'Bash(git push:*)' in denied[0])
-                        bash = [tool for tool in allowed[0].split(',') if tool.startswith('Bash')]
-                        self.assertEqual(bash, [MODEL_BASH])
-                        for step in job['steps']:
-                            if str(step.get('uses', '')).startswith('actions/checkout'):
-                                self.assertEqual(step['with']['persist-credentials'], 'false')
+    def test_retired_writer_workflows_are_absent(self):
+        for name in ('claude.yml', 'claude-conflict-writer.yml', 'conflict-scan.yml',
+                     'csl-474-p9-probes.yml', 'stuck-thread-watch.yml'):
+            self.assertFalse((WORKFLOWS / name).exists(), name)
 
-    def test_retries_are_bounded_and_pausable(self):
-        claude = (WORKFLOWS / 'claude.yml').read_text()
-        writer = (WORKFLOWS / 'claude-conflict-writer.yml').read_text()
-        scan = (WORKFLOWS / 'conflict-scan.yml').read_text()
-        preflight = (ROOT / 'scripts' / 'ci' / 'claude_fixer_preflight.py').read_text()
-        receipts = (ROOT / 'scripts' / 'ci' / 'claude_fixer_receipts.py').read_text()
-        # Eight-commit guard lives in the trusted preflight source copied twice.
-        self.assertEqual(re.findall(r'^\s*LOOP_CAP = (\d+)$', preflight, re.MULTILINE), ['8'])
-        self.assertEqual(claude.count('python3 -I "$TRUSTED/claude_fixer_preflight.py"'), 2)
-        # A conflict-writer guard (CSL-419) may add one, but only at the same cap.
-        self.assertTrue(set(re.findall(r'^\s*LOOP_CAP = (\d+)$', writer + scan, re.MULTILINE)) <= {'8'})
-        self.assertIn('if streak >= LOOP_CAP:', preflight)
-        cap = job_text(workflow('claude.yml')['jobs']['fixer-prepare'])
-        self.assertRegex(cap, r'if \[ "\$total" -ge 250 \] && \[ "\$count" -lt 8 \]')
-        self.assertIn('echo "loop_commit_count=$count"', cap)
-        # The Devin path reserves bounded attempts; every publisher allows one publish per prepared run.
-        self.assertEqual(set(re.findall(r'^\s*MAX_ATTEMPTS = (\d+)$', receipts, re.MULTILINE)), {'3'})
-        self.assertIn('Select pending findings and reserve bounded attempt', claude)
-        for name, jobs in WRITER_JOBS.items():
-            doc = workflow(name)
-            for job_name, role in jobs.items():
-                if role == 'publish':
-                    with self.subTest(publisher=f'{name}:{job_name}'):
-                        self.assertIn(
-                            'publish attempt already used; nothing published',
-                            writer_contract_text(name, doc['jobs'][job_name], role),
-                        )
-        # The human pause, per job: every prepare and publish job reads both labels and the repository
-        # variable, every publisher refuses on them before pushing, and the scan skips paused PRs.
-        pause_py = 'PAUSE_LABELS = frozenset({"claude:pause", "hold"})'
-        pause_jq = 'select(. == "claude:pause" or . == "hold")'
-        for name, jobs in WRITER_JOBS.items():
-            doc = workflow(name)
-            for job_name, role in jobs.items():
-                if role not in ('prep', 'publish'):
-                    continue
-                job = doc['jobs'][job_name]
-                text = writer_contract_text(name, job, role)
-                with self.subTest(pause=f'{name}:{job_name}'):
-                    self.assertTrue(pause_py in text or pause_jq in text)
-                    self.assertIn('${{ vars.CLAUDE_FIXER_PAUSE }}', str(job))
-                    if role == 'publish':
-                        self.assertIn('reason = pause_refusal(pr, env)', text)
-        scan_job = workflow('conflict-scan.yml')['jobs']['conflict-scan']
-        self.assertIn(pause_py, job_text(scan_job))
-        self.assertIn('${{ vars.CLAUDE_FIXER_PAUSE }}', str(scan_job))
+    def test_linear_pr_sync_is_kept(self):
+        # CSL-238, Lucas, Nov 16, 2026: "Keep in both". Five workflows are retired, not six.
+        self.assertTrue((WORKFLOWS / 'linear-pr-sync.yml').exists())
+        self.assertTrue((ROOT / '.github' / 'scripts' / 'linear_pr_sync.py').exists())
 
-    def test_lock_group_mutation_rejects_the_other_workflows_expression(self):
-        # Before: any of the two expressions passed. After: each workflow is pinned.
-        old = re.compile(r'^claude-\$\{\{ (needs\.resolve-pr\.outputs\.pr_number|inputs\.pr_number) \}\}$')
-        swapped = 'claude-${{ inputs.pr_number }}'
-        self.assertRegex(swapped, old)
-        live = workflow('claude.yml')['jobs']['claude-mention']
-        self.assertEqual(live['concurrency']['group'], EXPECTED_LOCK['claude.yml'])
-        self.assertEqual(live['concurrency']['cancel-in-progress'], 'false')
-        self.assertEqual(live['concurrency']['queue'], 'max')
-        mutated = copy.deepcopy(live)
-        mutated['concurrency']['group'] = swapped
-        self.assertRegex(mutated['concurrency']['group'], old)
-        self.assertNotEqual(mutated['concurrency']['group'], EXPECTED_LOCK['claude.yml'])
+    def test_secrets_are_admitted_by_name_for_one_workflow(self):
+        for path in sorted(WORKFLOWS.glob('*.y*ml')):
+            found = set(re.findall(r'secrets\.([A-Za-z0-9_]+)', path.read_text()))
+            with self.subTest(path=path.name):
+                self.assertEqual(found, ADMITTED_SECRETS.get(path.name, set()))
 
-    def test_label_write_mutations_cover_issue_patch_graphql_and_full_set(self):
-        mixed = 'write("POST", f"{root}/issues/{n}/labels", {"labels": [HANDOFF_LABEL, "ci:full"]})'
-        self.assertIn('HANDOFF_LABEL', mixed)
-        self.assertTrue(ci_label_add_violations(mixed))
-        patch = ('check_call(["gh", "api", "--method", "PATCH", '
-                 'f"repos/{r}/issues/{n}", "--input", '
-                 '\'{"labels": [HANDOFF_LABEL, "ci:full"]}\'])')
-        self.assertFalse(re.search(r'/labels\b', patch))
-        self.assertTrue(ci_label_add_violations(patch))
-        graphql = ('gh api graphql -f query=\'mutation { addLabelsToLabelable(input: '
-                   '{labelableId: $id, labelIds: ["ci:full"]}) { clientMutationId } }\'')
-        self.assertFalse(re.search(r'/labels\b', graphql))
-        self.assertTrue(ci_label_add_violations(graphql))
-        handoff = 'write("POST", f"{root}/issues/{n}/labels", {"labels": [HANDOFF_LABEL]})'
-        self.assertEqual(ci_label_add_violations(handoff), [])
-        title = 'check_call(["gh", "api", "--method", "PATCH", f"repos/{r}/issues/{n}", "-f", "title=x"])'
-        self.assertEqual(ci_label_add_violations(title), [])
+    def test_every_workflow_passes_the_writer_guard(self):
+        for path in sorted(WORKFLOWS.glob('*.y*ml')):
+            with self.subTest(path=path.name):
+                self.assertEqual(writer_guard_violations(path.name, path.read_text()), [])
 
-    def test_handoff_constant_mutations_reject_empty_and_wrong_values(self):
-        def old(text):
-            return set(re.findall(r'HANDOFF_LABEL = "([^"]+)"', text)) - {'needs-decision'}
-        self.assertEqual(old(''), set())
-        self.assertEqual(handoff_constants(''), [])
-        quoted = "HANDOFF_LABEL = 'needs-decision'\nMODEL_API_LABEL: needs-decision\n"
-        self.assertEqual(old(quoted), set())
-        self.assertEqual(set(handoff_constants(quoted)), {'needs-decision'})
-        self.assertEqual(set(handoff_constants('HANDOFF_LABEL = \'ci:full\'\n')), {'ci:full'})
-        self.assertEqual(set(handoff_constants('MODEL_API_LABEL: enhancement\n')), {'enhancement'})
-        # CSL-474 extracted HANDOFF_LABEL from claude.yml. YAML-only is empty;
-        # the scan must include the extracted outbox and publisher.
-        yaml_only = (WORKFLOWS / 'claude.yml').read_text(encoding='utf-8')
-        self.assertEqual(handoff_constants(yaml_only), [])
-        combined = writer_handoff_text('claude.yml')
-        self.assertEqual(set(handoff_constants(combined)), {'needs-decision'})
-        wrong = combined.replace('HANDOFF_LABEL = "needs-decision"', 'HANDOFF_LABEL = "ci:full"', 1)
-        self.assertIn('ci:full', handoff_constants(wrong))
-
-    def test_model_job_permission_and_secret_mutations(self):
-        job = copy.deepcopy(workflow('claude.yml')['jobs']['claude-mention'])
-        job['permissions']['issues'] = 'write'
-        self.assertTrue(set(job['permissions']) <= {'contents', 'pull-requests', 'issues', 'id-token'})
-        self.assertNotEqual(job['permissions'], MODEL_PERMS)
-        leaked = copy.deepcopy(workflow('claude.yml')['jobs']['claude-mention'])
-        leaked['steps'][0]['env'] = {**(leaked['steps'][0].get('env') or {}),
-                                     'GH_TOKEN': '${{ secrets.MY_PAT }}'}
-        self.assertIsNotNone(MODEL_SECRETS.search(leaked))
-        live = workflow('claude.yml')['jobs']['claude-mention']
-        self.assertIsNone(MODEL_SECRETS.search(live))
-        self.assertIsNone(MODEL_SECRETS.search(live, inherited=workflow('claude.yml').get('env')))
-        workflow_env = {'GH_TOKEN': '${{ secrets.MY_PAT }}'}
-        self.assertIsNotNone(MODEL_SECRETS.search(live, inherited=workflow_env))
-        oauth_env = copy.deepcopy(live)
-        oauth_env['steps'][0]['env'] = {**(oauth_env['steps'][0].get('env') or {}),
-                                        'CLAUDE_CODE_OAUTH_TOKEN':
-                                            '${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}'}
-        self.assertIsNotNone(MODEL_SECRETS.search(oauth_env))
-        gh_secret = copy.deepcopy(live)
-        gh_secret['steps'][0]['env'] = {**(gh_secret['steps'][0].get('env') or {}),
-                                        'GH_TOKEN': '${{ secrets.GITHUB_TOKEN }}'}
-        self.assertIsNotNone(MODEL_SECRETS.search(gh_secret))
-        oauth_job_env = copy.deepcopy(live)
-        oauth_job_env['env'] = {**(oauth_job_env.get('env') or {}),
-                                'claude_code_oauth_token':
-                                    '${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}'}
-        self.assertIsNone(_SECRET_EXPR.search(_OAUTH_ACTION_INPUT.sub('', str(oauth_job_env))))
-        self.assertIsNotNone(MODEL_SECRETS.search(oauth_job_env))
-        oauth_step_env = copy.deepcopy(live)
-        for step in oauth_step_env['steps']:
-            if str(step.get('uses') or '').startswith('anthropics/claude-code-action'):
-                step['env'] = {**(step.get('env') or {}),
-                               'claude_code_oauth_token':
-                                   '${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}'}
-                break
-        self.assertIsNone(_SECRET_EXPR.search(_OAUTH_ACTION_INPUT.sub('', str(oauth_step_env))))
-        self.assertIsNotNone(MODEL_SECRETS.search(oauth_step_env))
-        if_secret = copy.deepcopy(live)
-        if_secret['steps'][0]['if'] = "${{ secrets.MY_PAT != '' }}"
-        self.assertIsNotNone(MODEL_SECRETS.search(if_secret))
-        container = copy.deepcopy(live)
-        container['container'] = {
-            'image': 'x',
-            'credentials': {'password': '${{ secrets.MY_PAT }}'},
+    def test_writer_guard_turns_red_on_a_second_secret_a_model_credential_or_a_write(self):
+        name = 'linear-pr-sync.yml'
+        text = (WORKFLOWS / name).read_text()
+        self.assertEqual(writer_guard_violations(name, text), [])
+        anchor = '          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}\n'
+        self.assertIn(anchor, text)
+        mutants = {
+            'second secret': text.replace(anchor, anchor + '          OTHER: ${{ secrets.OTHER_KEY }}\n'),
+            'model credential': text.replace(anchor, anchor + '          K: ${{ secrets.ANTHROPIC_API_KEY }}\n'),
+            'model action': text.replace('actions/checkout@v4', 'anthropics/claude-code-action@v1', 1),
+            'contents write': text.replace('contents: read', 'contents: write', 1),
+            'id-token': text.replace('contents: read', 'id-token: write', 1),
+            'git push': text.replace('run: python3', 'run: git push origin HEAD\n      - run: python3', 1),
+            'self-hosted': text.replace('runs-on: ubuntu-latest', 'runs-on: self-hosted', 1),
+            'git push after &&': text.replace('run: python3', 'run: make && git push\n      - run: python3', 1),
+            'quoted contents write': text.replace('contents: read', 'contents: "write"', 1),
+            'pull-requests write': text.replace('pull-requests: read', 'pull-requests: write', 1),
         }
-        self.assertIsNotNone(MODEL_SECRETS.search(container))
-        indexed = copy.deepcopy(live)
-        indexed.setdefault('env', {})['GH_TOKEN'] = "${{ secrets['MY_PAT'] }}"
-        self.assertIsNotNone(MODEL_SECRETS.search(indexed))
-        lower = copy.deepcopy(live)
-        lower.setdefault('env', {})['GH_TOKEN'] = '${{ secrets.my_pat }}'
-        self.assertIsNotNone(MODEL_SECRETS.search(lower))
-        mixed = copy.deepcopy(live)
-        mixed.setdefault('env', {})['GH_TOKEN'] = "${{ secrets['My_Pat'] }}"
-        self.assertIsNotNone(MODEL_SECRETS.search(mixed))
-        ctx_title = copy.deepcopy(live)
-        ctx_title.setdefault('env', {})['GH_TOKEN'] = '${{ Secrets.MY_PAT }}'
-        self.assertIsNotNone(MODEL_SECRETS.search(ctx_title))
-        ctx_upper = copy.deepcopy(live)
-        ctx_upper.setdefault('env', {})['GH_TOKEN'] = '${{ SECRETS.MY_PAT }}'
-        self.assertIsNotNone(MODEL_SECRETS.search(ctx_upper))
-        quoted_indexed = copy.deepcopy(live)
-        run = 'echo "${{ secrets[\'MY_PAT\'] }}"'
-        quoted_indexed['steps'][0]['run'] = run
-        self.assertIsNone(_SECRET_EXPR.search(str({'run': run})))
-        self.assertIsNotNone(MODEL_SECRETS.search(quoted_indexed))
-        literal = copy.deepcopy(live)
-        literal['steps'][0]['run'] = "echo 'secrets.MY_PAT'"
-        self.assertIsNone(MODEL_SECRETS.search(literal))
-        for dump in ('echo ${{ toJSON(secrets) }}', 'echo ${{ toJson(secrets) }}',
-                     'echo ${{ join(secrets.*) }}',
-                     "echo ${{ secrets[format('MY_{0}','PAT')] }}"):
-            dumped = copy.deepcopy(live)
-            dumped['steps'][0]['run'] = dump
-            self.assertIsNotNone(MODEL_SECRETS.search(dumped), dump)
-        title = copy.deepcopy(live)
-        title['steps'][0]['if'] = "${{ contains(github.event.pull_request.title, 'secrets') }}"
-        self.assertIsNone(MODEL_SECRETS.search(title))
-        phrase = copy.deepcopy(live)
-        phrase['steps'][0]['if'] = (
-            "${{ contains(github.event.pull_request.title, 'update secrets handling') }}")
-        self.assertIsNone(MODEL_SECRETS.search(phrase))
-        doubled = copy.deepcopy(live)
-        doubled['steps'][0]['if'] = (
-            "${{ contains(github.event.pull_request.title, 'it''s secrets') }}")
-        self.assertIsNone(MODEL_SECRETS.search(doubled))
-        inputs = copy.deepcopy(live)
-        inputs['steps'][0]['if'] = '${{ github.event.inputs.secrets }}'
-        self.assertIsNone(MODEL_SECRETS.search(inputs))
-        quoted_span = copy.deepcopy(live)
-        quoted_span['steps'][0]['run'] = '''echo ${{ 'x" && secrets.MY_PAT && "y' }}'''
-        self.assertIsNone(MODEL_SECRETS.search(quoted_span))
-        after_literal = copy.deepcopy(live)
-        after_literal['steps'][0]['run'] = "echo ${{ contains(foo, 'x') && secrets.MY_PAT }}"
-        self.assertIsNotNone(MODEL_SECRETS.search(after_literal))
-        after_doubled = copy.deepcopy(live)
-        after_doubled['steps'][0]['run'] = (
-            "echo ${{ contains(foo, 'it''s x') && secrets.MY_PAT }}")
-        self.assertIsNotNone(MODEL_SECRETS.search(after_doubled))
-        quoted_closer = copy.deepcopy(live)
-        quoted_closer.setdefault('env', {})['GH_TOKEN'] = "${{ '}}' && secrets.MY_PAT }}"
-        self.assertIsNotNone(MODEL_SECRETS.search(quoted_closer))
-        quoted_closer_only = copy.deepcopy(live)
-        quoted_closer_only['steps'][0]['if'] = "${{ '}}' }}"
-        self.assertIsNone(MODEL_SECRETS.search(quoted_closer_only))
-        self.assertTrue(model_github_token_ok(live))
-        self.assertFalse(model_github_token_ok(job))
-        pat_input = copy.deepcopy(live)
-        for step in pat_input['steps']:
-            with_block = step.get('with') or {}
-            if 'github_token' in with_block:
-                with_block['github_token'] = '${{ secrets.MY_PAT }}'
-                step['with'] = with_block
-                break
-        self.assertIsNotNone(_SECRET_GITHUB_TOKEN.search(str(pat_input)))
-        self.assertFalse(model_github_token_ok(pat_input))
-        gh_token_input = copy.deepcopy(live)
-        for step in gh_token_input['steps']:
-            with_block = step.get('with') or {}
-            if 'github_token' in with_block:
-                with_block['github_token'] = '${{ secrets.GITHUB_TOKEN }}'
-                step['with'] = with_block
-                break
-        self.assertIsNotNone(_SECRET_GITHUB_TOKEN.search(str(gh_token_input)))
-        self.assertFalse(model_github_token_ok(gh_token_input))
-        vars_pat = copy.deepcopy(live)
-        for step in vars_pat['steps']:
-            if str(step.get('uses') or '').startswith('anthropics/claude-code-action'):
-                step.setdefault('with', {})['github_token'] = '${{ vars.MY_PAT }}'
-                break
-        vars_pat.setdefault('steps', []).append(
-            {'name': 'decoy', 'run': 'echo github_token: ${{ github.token }}'})
-        self.assertIsNotNone(MODEL_GITHUB_TOKEN_EXCEPTION.search(str(vars_pat)))
-        self.assertFalse(model_github_token_ok(vars_pat))
-        multiline = copy.deepcopy(live)
-        decoy = '${{ vars.MY_PAT }}\ngithub_token: ${{ github.token }}'
-        for step in multiline['steps']:
-            with_block = step.get('with') or {}
-            if 'github_token' in with_block:
-                with_block['github_token'] = decoy
-                step['with'] = with_block
-                break
-        self.assertIsNotNone(MODEL_GITHUB_TOKEN_EXCEPTION.search(f'github_token: {decoy}'))
-        self.assertIsNone(MODEL_SECRETS.search(multiline))
-        self.assertFalse(model_github_token_ok(multiline))
-        string_perms = copy.deepcopy(live)
-        string_perms['permissions'] = 'read-all'
-        self.assertFalse(model_github_token_ok(string_perms))
+        for label, mutated in mutants.items():
+            with self.subTest(mutant=label):
+                self.assertNotEqual(mutated, text)
+                self.assertTrue(writer_guard_violations(name, mutated), label)
+        # The one admitted secret is admitted for that workflow only.
+        self.assertTrue(writer_guard_violations('ci.yml', text))
 
-    def test_quoted_job_key_mutation_is_inventoried(self):
-        text = (WORKFLOWS / 'claude.yml').read_text()
-        mutated = text.replace('\n  claude-mention:',
-                               '\n  "extra-job":\n    runs-on: ubuntu-latest\n  claude-mention:', 1)
-        expected = set(WRITER_JOBS['claude.yml']) | NON_WRITER_JOBS['claude.yml']
-        self.assertEqual(job_keys(text), expected)
-        self.assertIn('extra-job', job_keys(mutated))
-        self.assertIn('extra-job', yaml.load(mutated, Loader=yaml.BaseLoader)['jobs'])
-        self.assertNotEqual(job_keys(mutated), expected)
+    def test_every_job_uses_a_github_hosted_runner(self):
+        for path in sorted(WORKFLOWS.glob('*.y*ml')):
+            with self.subTest(path=path.name):
+                self.assertEqual(_runner_violations(yaml.safe_load(path.read_text())), [])
 
-    def test_reusable_writer_caller_without_model_markers_is_inventoried(self):
+def _wf(run='echo ok', top='permissions:\n  contents: read\n', job='', runs_on='ubuntu-latest'):
+    """A minimal new workflow (a name no table admits) whose one step runs `run`."""
+    body = '\n'.join('          ' + line for line in run.strip('\n').split('\n'))
+    return ('name: t\non: workflow_dispatch\n' + top + 'jobs:\n  j:\n    runs-on: ' + runs_on + '\n' + job +
+            '    steps:\n      - run: |\n' + body + '\n')
+
+
+def _kinds(text, name='new.yml'):
+    return writer_guard_violations(name, text)
+
+
+class WriterGuardWitnessTests(unittest.TestCase):
+    """DeepSeek round 1 on #332: each finding as a failing-then-passing witness, written as text.
+
+    These are strings, not files under .github/. Reader witnesses are marked F1..F4.
+    """
+
+    def test_control_the_template_is_clean(self):
+        self.assertEqual(_kinds(_wf()), [])
+
+    def test_f1_push_is_found_wherever_it_stands_in_a_run_step(self):
+        forms = [
+            'make && git push origin HEAD',                  # F1 witness C2b
+            'git -C . push origin HEAD',                     # F1 witness C3b
+            'true; git push',
+            'make | git push',
+            'make || git push',
+            'git commit -am x\nmake\ngit push',              # a later line of a multi-line script
+            'git -c user.name=x push',
+            'git --no-pager push',
+            'git --git-dir=.git push',
+            "bash -c 'make && git push'",
+            'sh -c "git push origin HEAD"',
+            'bash -c "cd x; git -C y push"',
+            '/usr/bin/git push',
+            'git "push"',
+            "git 'push'",
+            'make && \\\n  git push',                       # after a line continuation
+            'git${IFS}push',
+            '(cd x && git push)',
+            'echo $(git push)',
+            'env GIT_TRACE=1 git push',
+            'if true; then git push; fi',
+            'git send-pack origin HEAD',
+            'git-push origin',
+            'git.exe push',
+            'x=1 git push',
+        ]
+        for form in forms:
+            with self.subTest(form=form):
+                self.assertIn('git push', _kinds(_wf(form)))
+
+    def test_f1_push_in_other_scalars_and_not_in_names(self):
+        script = ("name: t\non: workflow_dispatch\npermissions:\n  contents: read\njobs:\n  j:\n    runs-on: ubuntu-latest\n"
+                  "    steps:\n      - uses: actions/github-script@v7\n        with:\n          script: |\n"
+                  "            await exec.exec('git', ['push'])\n            await exec.exec('sh -c \"git push\"')\n")
+        self.assertIn('git push', _kinds(script))
+        named = _wf().replace('- run: |', '- name: Wait for a follow-up git push\n        run: |')
+        self.assertEqual(_kinds(named), [])
+
+    def test_f1_benign_git_and_words_do_not_trip_the_push_check(self):
+        for form in ('git status', 'git log --oneline -3', 'git fetch origin', 'git diff --name-only',
+                     'echo pushed && make pushes', 'python3 push_tool.py', 'git checkout -b x'):
+            with self.subTest(form=form):
+                self.assertNotIn('git push', _kinds(_wf(form)))
+
+    def test_f2_write_permissions_other_than_contents_are_refused_unless_admitted_by_name(self):
+        for scope in ('pull-requests', 'issues', 'statuses', 'checks', 'actions', 'deployments', 'packages',
+                      'security-events', 'pages', 'discussions', 'attestations'):
+            for placement in ('workflow', 'job'):
+                with self.subTest(scope=scope, placement=placement):
+                    if placement == 'workflow':
+                        text = _wf(top=f'permissions:\n  contents: read\n  {scope}: write\n')
+                    else:
+                        text = _wf(job=f'    permissions:\n      contents: read\n      {scope}: write\n')
+                    self.assertIn('permission write', _kinds(text))
+        # F2 witnesses A, E and A6, verbatim in shape.
+        comment = _wf('gh pr comment 149 --body "looks good"', top='permissions:\n  contents: read\n  pull-requests: write\n')
+        self.assertIn('permission write', _kinds(comment))
+        dispatch = _wf('gh workflow run ci.yml', top='permissions:\n  contents: read\n  actions: write\n')
+        self.assertIn('permission write', _kinds(dispatch))
+        self.assertIn('permission write', _kinds(_wf(top='permissions: write-all\n')))
+
+    def test_f2_a_missing_permissions_block_is_refused(self):
+        text = _wf(top='')
+        self.assertIn('no permissions block', _kinds(text))
+
+    def test_f2_the_admitted_writes_are_exact_for_the_real_files(self):
+        # The one workflow that holds a write keeps exactly that write; a different or an extra one is red, and
+        # so is the benchmarks job's old comment permission.
+        bench = '    name: benchmarks\n    permissions:\n      contents: read\n'
+        for name, anchor, extra in (('ci-label-retrigger.yml', '  actions: write\n', '  statuses: write\n'),
+                                    ('ci.yml', bench, '      pull-requests: write\n'),
+                                    ('ci.yml', bench, '      issues: write\n      pull-requests: write\n'),
+                                    ('ci.yml', bench, '      actions: write\n')):
+            text = (WORKFLOWS / name).read_text()
+            self.assertEqual(writer_guard_violations(name, text), [])
+            with self.subTest(name=name, extra=extra.strip()):
+                self.assertIn(anchor, text)
+                self.assertIn('permission write', writer_guard_violations(name, text.replace(anchor, anchor + extra, 1)))
+        # Admission is by file name: the same text under another name is red.
+        self.assertIn('permission write', writer_guard_violations('other.yml', (WORKFLOWS / 'ci-label-retrigger.yml').read_text()))
+        # Dropping an admitted write also turns the table red, so the table cannot go stale.
+        text = (WORKFLOWS / 'ci-label-retrigger.yml').read_text()
+        self.assertIn('permission write', writer_guard_violations('ci-label-retrigger.yml', text.replace('  actions: write\n', '  actions: read\n', 1)))
+
+    def test_f2_labels_and_contents_through_gh_or_the_api_are_refused_even_with_an_admitted_write(self):
+        forms = {
+            'label write': ['gh pr edit 1 --add-label ci:full', 'gh issue edit 1 --remove-label x', 'gh label create x',
+                            'gh api --method POST repos/o/r/issues/1/labels -f labels[]=x',
+                            "await github.rest.issues.addLabels({})"],
+            'gh writes contents': ['gh api -X PUT repos/o/r/contents/x -f message=m -f content=Zm9v',
+                                   'gh api --method POST repos/o/r/git/refs -f ref=refs/heads/x -f sha=1',
+                                   'gh api repos/o/r/merges -f base=main -f head=x', 'gh pr merge 1 --squash',
+                                   'gh release create v1', 'gh repo sync o/r', 'gh pr create --fill'],
+            'api writes contents': ['createOrUpdateFileContents({})', 'github.rest.git.updateRef({})'],
+            'gh writes a pull request': ['gh pr ready 1', 'gh pr close 1', 'gh pr review 1 --approve', 'gh pr edit 1 --title x'],
+        }
+        for kind, lines in forms.items():
+            for line in lines:
+                with self.subTest(kind=kind, line=line):
+                    text = _wf(line, top='permissions:\n  contents: read\n  pull-requests: write\n')
+                    self.assertIn(kind, _kinds(text))
+        # Reads are not a write of any kind.
+        ok = _wf('gh api --paginate repos/o/r/pulls/1/files --jq .[].filename\n'
+                 'gh api --paginate repos/o/r/issues/1/comments --jq .[].id\n'
+                 'gh api repos/o/r/contents/x')
+        self.assertEqual(_kinds(ok), [])
+
+    def test_the_benchmarks_job_no_longer_posts_a_pull_request_comment(self):
+        # CSL-238, Lucas, Nov 16, 2026: "The benchmarks job should not keep posting". The removed step, as it was.
+        step = ('gh api "repos/${REPO}/issues/${PR}/comments" --paginate --jq ".[].id"\n'
+                'gh api --method PATCH "repos/${REPO}/issues/comments/${existing}" --raw-field body="$(cat f)"\n'
+                'gh api --method POST "repos/${REPO}/issues/${PR}/comments" --raw-field body="$(cat f)"\n')
+        for line in step.splitlines()[1:]:
+            with self.subTest(line=line[:60]):
+                self.assertIn('pull request comment', _kinds(_wf(line)))
+        for line in ('gh pr comment 1 --body x', 'gh issue comment 1 --body x', 'github.rest.issues.createComment({})',
+                     'github.rest.pulls.createReview({})'):
+            with self.subTest(line=line):
+                self.assertIn('pull request comment', _kinds(_wf(line)))
+        real = (WORKFLOWS / 'ci.yml').read_text()
+        self.assertEqual(writer_guard_violations('ci.yml', real), [])
+        self.assertEqual(_written_scopes(yaml.safe_load(real)), {})
+        self.assertNotIn('csl-perf-bench', real)
+        self.assertNotIn('Flag regressions on the pull request', real)
+        # The job still runs the comparison, and putting the old comment step and permissions back is red.
+        self.assertIn('benchmarks.compare', real)
+        old = real.replace('    name: benchmarks\n    permissions:\n      contents: read\n',
+                           '    name: benchmarks\n    permissions:\n      contents: read\n      issues: write\n'
+                           '      pull-requests: write\n', 1)
+        old = old.rstrip('\n') + '\n      - name: Flag regressions on the pull request\n        run: |\n' + \
+            ''.join('          ' + line + '\n' for line in step.splitlines())
+        kinds = writer_guard_violations('ci.yml', old)
+        self.assertIn('permission write', kinds)
+        self.assertIn('pull request comment', kinds)
+
+    def test_f3_quoted_and_flow_forms_of_a_write_are_refused(self):
+        for top in ('permissions:\n  contents: "write"\n', "permissions:\n  contents: 'write'\n",
+                    'permissions: {contents: write}\n', 'permissions: {contents: "write"}\n',
+                    'permissions:\n  contents: WRITE\n', 'permissions: "write-all"\n'):
+            with self.subTest(top=top):
+                self.assertIn('contents write', _kinds(_wf(top=top)))
+        job_level = _wf(job='    permissions:\n      contents: "write"\n')
+        self.assertIn('contents write', _kinds(job_level))
+        self.assertIn('id-token', _kinds(_wf(top='permissions:\n  id-token: "write"\n')))
+
+    def test_f4_a_matrix_runner_must_resolve_to_hosted_runners(self):
+        def matrix(runs_on, strategy):
+            return _wf(runs_on=runs_on, job=strategy)
+        self.assertEqual(_kinds(matrix('${{ matrix.os }}', '    strategy:\n      matrix:\n        os: [ubuntu-latest, windows-2025]\n')), [])
+        witnesses = {
+            'F4 witness D2': '    strategy:\n      matrix:\n        os: [self-hosted, ubuntu-latest]\n',
+            'include leg': '    strategy:\n      matrix:\n        os: [ubuntu-latest]\n        include:\n          - os: self-hosted\n',
+            'unknown key': '    strategy:\n      matrix:\n        other: [ubuntu-latest]\n',
+            'no matrix': '',
+            'expression matrix, no producer': '    strategy:\n      matrix: ${{ fromJson(inputs.m) }}\n',
+        }
+        for label, strategy in witnesses.items():
+            with self.subTest(witness=label):
+                self.assertIn('runner', _kinds(matrix('${{ matrix.os }}', strategy)))
+        for runs_on in ('${{ inputs.runner }}', '[self-hosted, linux]', '[ubuntu-latest, self-hosted]',
+                        '{group: big, labels: x}', '${{ matrix.os }}-extra', 'self-hosted'):
+            with self.subTest(runs_on=runs_on):
+                self.assertIn('runner', _kinds(_wf(runs_on=runs_on)))
+        self.assertIn('runner', _kinds(_wf().replace('    runs-on: ubuntu-latest\n', '')))
+
+    def test_f4_a_generated_matrix_is_read_from_the_job_that_produces_it(self):
+        def two_jobs(literals):
+            return ('name: t\non: workflow_dispatch\npermissions:\n  contents: read\njobs:\n  plan:\n    runs-on: ubuntu-latest\n'
+                    '    outputs:\n      matrix: ${{ steps.m.outputs.matrix }}\n    steps:\n      - id: m\n        run: |\n'
+                    "          echo 'matrix=" + literals + "' >> \"$GITHUB_OUTPUT\"\n"
+                    '  build:\n    needs: plan\n    runs-on: ${{ matrix.runner }}\n    strategy:\n'
+                    '      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}\n    steps:\n      - run: echo ok\n')
+        good = '{"include": [{"runner": "ubuntu-24.04"}, {"runner": "windows-2025"}]}'
+        self.assertEqual(_kinds(two_jobs(good)), [])
+        self.assertIn('runner', _kinds(two_jobs('{"include": [{"runner": "ubuntu-24.04"}, {"runner": "self-hosted"}]}')))
+        self.assertIn('runner', _kinds(two_jobs('{"include": []}')))
+
+    def test_f4_a_remote_reusable_workflow_or_inherited_secrets_are_refused(self):
+        def caller(uses, extra=''):
+            return ('name: t\non: workflow_dispatch\npermissions:\n  contents: read\njobs:\n  call:\n    uses: ' + uses + '\n' + extra)
+        self.assertIn('reusable workflow', _kinds(caller('someone/elsewhere/.github/workflows/build.yml@main', '    secrets: inherit\n')))
+        self.assertIn('reusable workflow', _kinds(caller('someone/elsewhere/.github/workflows/build.yml@main')))
+        self.assertIn('reusable workflow', _kinds(caller('./.github/workflows/ci.yml', '    secrets: inherit\n')))
+        self.assertIn('secret', _kinds(caller('./.github/workflows/ci.yml', '    secrets: inherit\n')))
+        self.assertEqual(_kinds(caller('./.github/workflows/ci.yml')), [])
+
+    def test_secrets_and_variables_by_any_spelling_and_other_model_tools_are_refused(self):
+        for step in ('env:\n          K: ${{ secrets[\'OTHER\'] }}', 'env:\n          K: ${{ toJSON(secrets) }}',
+                     'env:\n          K: ${{ secrets.OTHER_KEY }}'):
+            with self.subTest(step=step):
+                self.assertIn('secret', _kinds(_wf().replace('- run: |', '- ' + step + '\n        run: |')))
+        self.assertIn('variable', _kinds(_wf().replace('- run: |', '- env:\n          K: ${{ vars.SOME_KEY }}\n        run: |')))
+        for token in ('GEMINI_API_KEY', 'google-github-actions/run-gemini-cli', 'OPENROUTER_API_KEY', 'DEEPSEEK_API_KEY'):
+            with self.subTest(token=token):
+                self.assertIn('model credential', _kinds(_wf('echo ' + token)))
+
+    def test_r2_every_reference_to_the_secrets_or_vars_context_must_be_admitted_by_name(self):
+        # Fable round 1, R2: the witnesses, in every spelling GitHub reads; each is red unless admitted.
+        secret_forms = [
+            "${{ SECRETS.OTHER_KEY }}", "${{ Secrets.OTHER_KEY }}", "${{ SECRETS['OTHER'] }}",
+            "${{ secrets[\"OTHER\"] }}", "${{ TOJSON(SECRETS) }}", "${{ toJSON(secrets) }}",
+            "${{ join(secrets.*, ',') }}", "${{ secrets.* }}", "${{ secrets .OTHER }}",
+            "${{ secrets[format('{0}', 'x')] }}", "${{ fromJSON('1') && secrets.OTHER }}",
+            "${{ secrets.GITHUB_TOKEN }}"]
+        for form in secret_forms:
+            with self.subTest(form=form):
+                text = _wf().replace('- run: |', '- env:\n          K: ' + form + '\n        run: |')
+                self.assertIn('secret', _kinds(text))
+        for form in ("${{ VARS.X }}", "${{ vars['X'] }}", "${{ vars.X }}", "${{ toJSON(vars) }}", "${{ Vars .X }}"):
+            with self.subTest(form=form):
+                text = _wf().replace('- run: |', '- env:\n          K: ' + form + '\n        run: |')
+                self.assertIn('variable', _kinds(text))
+        # An `if:` is an expression without delimiters, and a job-level env or with block is read too.
+        self.assertIn('secret', _kinds(_wf().replace('- run: |', "- if: secrets.OTHER != ''\n        run: |")))
+        self.assertIn('secret', _kinds(_wf().replace('- run: |', "- if: ${{ SECRETS.OTHER }}\n        run: |")))
+        self.assertIn('secret', _kinds(_wf(job='    env:\n      K: ${{ SECRETS.OTHER }}\n')))
+        self.assertIn('variable', _kinds(_wf(job="    if: vars.X == '1'\n")))
+        # The admitted workflow: its one name, in any case, is fine; a second one, in any spelling, is not.
+        name = 'linear-pr-sync.yml'
+        text = (WORKFLOWS / name).read_text()
+        anchor = '          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}\n'
+        self.assertIn(anchor, text)
+        self.assertEqual(writer_guard_violations(name, text), [])
+        # The admitted spelling is exact (round 2): another case is refused by the raw-text line.
+        self.assertIn('secret', writer_guard_violations(name, text.replace(anchor, anchor.replace('secrets.LINEAR_API_KEY', 'SECRETS.linear_api_key'))))
+        for form in ("${{ SECRETS.OTHER_KEY }}", "${{ toJSON(SECRETS) }}", "${{ secrets['OTHER'] }}", '${{ secrets.* }}'):
+            with self.subTest(admitted_plus=form):
+                self.assertIn('secret', writer_guard_violations(name, text.replace(anchor, anchor + '          OTHER: ' + form + '\n')))
+        self.assertIn('secret', writer_guard_violations(name, text.replace(anchor, '')))
+        # Fail closed (round 2): another context that merely holds the word is refused too, on purpose.
+        quiet = _wf().replace('- run: |', "- env:\n          K: ${{ needs.a.outputs.secrets }} ${{ github.event.vars.x }}\n        run: |")
+        self.assertIn('secret', _kinds(quiet))
+
+    def test_r3_the_push_scan_reads_options_quotes_and_separators_inside_quotes(self):
+        forms = [
+            'git -C "$(pwd)" push origin HEAD',
+            'git -C $(pwd) push origin HEAD',
+            'git -c http.extraheader="AUTHORIZATION: basic $(printf x | base64)" push origin HEAD',
+            'git -c "alias.z=status;x" push',
+            "git -c 'a=b&&c' push",
+            'git 2>/dev/null push',
+            'git >/dev/null push',
+            'git 2>&1 push',
+            'git pu""sh',
+            "git p''ush",
+            'git p\\ush',
+            '"git" "pu""sh"',
+            'python3 -c "import subprocess;subprocess.run([\'git\',\'push\'])"',
+            "node -e \"require('child_process').execFileSync('git', ['push'])\"",
+            'bash -c "git -C \\"$(pwd)\\" push"',
+        ]
+        for form in forms:
+            with self.subTest(form=form):
+                self.assertIn('git push', _kinds(_wf(form)))
+        # M3 of the read: a new workflow that reads a PAT and pushes is refused twice over.
+        pat = _wf('git -C "$(pwd)" push origin HEAD').replace('- run: |', '- env:\n          T: ${{ SECRETS.DEPLOY_PAT }}\n        run: |')
+        kinds = _kinds(pat)
+        self.assertIn('git push', kinds)
+        self.assertIn('secret', kinds)
+        # Round 2 (R9): a line that merely mentions the word is refused too, on purpose; a quoted word that is
+        # not push is not.
+        for form in ('git commit -m "no push here"', "git log --grep='push'"):
+            with self.subTest(refused_on_purpose=form):
+                self.assertIn('push word', _kinds(_wf(form)))
+        self.assertNotIn('git push', _kinds(_wf('echo "git status"')))
+
+    def test_r4_a_models_permission_or_a_model_call_is_refused(self):
+        for top in ('permissions:\n  contents: read\n  models: read\n', 'permissions:\n  contents: read\n  models: write\n',
+                    'permissions:\n  contents: read\n  Models: READ\n'):
+            with self.subTest(top=top):
+                self.assertIn('permission write', _kinds(_wf(top=top)))
+        self.assertIn('permission write', _kinds(_wf(job='    permissions:\n      contents: read\n      models: read\n')))
+        self.assertIn('model call', _kinds(_wf('gh models run openai/gpt-4o-mini "hello"')))
+        self.assertIn('model call', _kinds(_wf('gh copilot suggest "x"')))
+        self.assertIn('model credential', _kinds(_wf().replace('- run: |', '- uses: actions/ai-inference@v1\n        run: |')))
+        witness = ('name: t\non: workflow_dispatch\npermissions:\n  contents: read\n  models: read\njobs:\n  j:\n'
+                   '    runs-on: ubuntu-latest\n    steps:\n      - run: gh models run x "y"\n        env:\n'
+                   '          GH_TOKEN: ${{ github.token }}\n')
+        kinds = _kinds(witness)
+        self.assertIn('permission write', kinds)
+        self.assertIn('model call', kinds)
+
+    def test_r2_to_r4_nothing_in_the_tree_holds_what_the_tables_would_admit_twice(self):
+        # The tables are exact: every admitted name is used, every admitted write is held.
+        used = set()
+        for path in sorted(WORKFLOWS.glob('*.y*ml')):
+            used |= {(path.name, n) for c, n in _context_refs(yaml.safe_load(path.read_text())) if c == 'secrets'}
+        self.assertEqual(used, {(f, n) for f, names in ADMITTED_SECRETS.items() for n in names})
+        self.assertEqual(ADMITTED_VARS, {})
+
+    def test_r8_a_closing_brace_pair_inside_a_string_literal_hides_nothing(self):
+        # Fable round 2, R8: GitHub ends an expression at the first `}}` outside a single-quoted string.
+        secret_forms = [
+            "${{ '}}' && secrets.OTHER }}",
+            "${{ '}}' != '' && SECRETS.DEPLOY_PAT }}",
+            "${{ format('}}{0}', SECRETS['OTHER']) }}",
+            "${{ format('a}}b') && SECRETS['OTHER'] }}",
+            "${{ '}}' && toJSON(secrets) }}",
+            "${{ 'it''s }}' && secrets.OTHER }}",
+        ]
+        for form in secret_forms:
+            with self.subTest(form=form):
+                self.assertIn('secret', _kinds(_wf().replace('- run: |', '- env:\n          K: ' + form + '\n        run: |')))
+        self.assertIn('variable', _kinds(_wf().replace('- run: |', "- env:\n          K: ${{ '}}' && vars.X }}\n        run: |")))
+        self.assertIn('secret', _kinds(_wf().replace('- run: |', "- if: ${{ '}}' != '' && secrets.OTHER != '' }}\n        run: |")))
+        self.assertIn('secret', _kinds(_wf("echo ${{ '}}' && secrets.OTHER }}")))
+        # M3c of the read: a workflow that reads a PAT behind '}}' and pushes is refused twice over.
+        pat = _wf('git pu\\\nsh "https://x:${K}@github.com/o/r" HEAD:main').replace(
+            '- run: |', "- env:\n          K: ${{ '}}' != '' && SECRETS.DEPLOY_PAT }}\n        run: |")
+        kinds = _kinds(pat)
+        self.assertIn('secret', kinds)
+        self.assertIn('push word', kinds)
+        # M3g: the admitted workflow plus a second secret hidden the same way (a key name the test does not use).
+        name = 'linear-pr-sync.yml'
+        text = (WORKFLOWS / name).read_text()
+        anchor = '          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}\n'
+        self.assertIn('secret', writer_guard_violations(
+            name, text.replace(anchor, anchor + "          SECOND_KEY: ${{ '}}' != '' && SECRETS.OTHER_KEY }}\n")))
+
+    def test_r8_an_expression_that_does_not_end_is_refused_and_the_word_alone_is_enough(self):
+        for form in ("${{ 'abc }}", "${{ secrets.X", "${{ 'a' && 'b }}"):
+            with self.subTest(form=form):
+                text = _wf().replace('- run: |', '- env:\n          K: "' + form + '"\n        run: |')
+                self.assertIn('unreadable expression', _kinds(text))
+        # Raw text, no parsing at all: the word anywhere in a scalar is enough, in any case and any place.
+        for step in ("- run: echo secrets", "- name: Use the Secrets here\n        run: echo ok", "- run: echo VARS",
+                     '- env:\n          K: "${{ \\x73ecrets.OTHER }}"\n        run: echo ok'):
+            with self.subTest(step=step):
+                self.assertIn('secret', _kinds(_wf().replace('- run: |', step + '\n      - run: |')))
+        # A comment is not a scalar and does not count; a longer word does not count.
+        quiet = _wf().replace('- run: |', '# the secrets are not used here\n      - env:\n          K: my_secrets_dir\n        run: |')
+        self.assertEqual(_kinds(quiet), [])
+        # Admission is by exact spelling and the whole name.
+        name = 'linear-pr-sync.yml'
+        text = (WORKFLOWS / name).read_text()
+        for variant in ('SECRETS.LINEAR_API_KEY', 'secrets.linear_api_key', 'secrets.LINEAR_API_KEY_2'):
+            with self.subTest(variant=variant):
+                self.assertIn('secret', writer_guard_violations(name, text.replace('secrets.LINEAR_API_KEY', variant, 1)))
+
+    def test_r9_the_word_push_may_not_appear_in_a_run_script_unless_the_exact_line_is_admitted(self):
+        forms = [
+            'git -c "alias.z=!git push" z',                       # R9 witnesses, refused at e5a640ed
+            'git config alias.p "push origin HEAD"\ngit p',
+            'git "push origin"',
+            'git commit -m "no push here"',                        # refused on purpose: it mentions the word
+            'git pu\\\nsh origin HEAD',                            # bash joins the pair
+            'git pu""sh', "git p''ush", 'git p\\ush', "git p'u's\"h\"",
+            'git PUSH', 'Git Push origin', 'echo "$(git push)"',
+            'make && git push origin HEAD', 'git -C "$(pwd)" push origin HEAD',
+            'git 2>/dev/null push', 'git "pu"\'sh\'', 'sh -c "git push"', 'echo push',
+            '# push is mentioned in a shell comment',
+        ]
+        for form in forms:
+            with self.subTest(form=form):
+                self.assertIn('push word', _kinds(_wf(form)))
+        # Not the word: longer words and file names with underscores stay allowed.
+        for form in ('echo pushed && make pushes', 'python3 push_tool.py', 'git status', 'git log --oneline -3'):
+            with self.subTest(form=form):
+                self.assertNotIn('push word', _kinds(_wf(form)))
+        # github-script and other executing keys are read the same way.
+        script = ("name: t\non: workflow_dispatch\npermissions:\n  contents: read\njobs:\n  j:\n    runs-on: ubuntu-latest\n"
+                  "    steps:\n      - uses: actions/github-script@v7\n        with:\n          script: |\n"
+                  "            await exec.exec('git', ['pu' + 'sh'])\n            await exec.exec('git push')\n")
+        self.assertIn('push word', _kinds(script))
+        # A backslash-newline pair joins words in the command scan too.
+        self.assertIn('pull request comment', _kinds(_wf('gh pr com\\\nment 1 --body x')))
+
+    def test_r9_admitted_push_lines_are_exact_by_file_and_none_is_stale(self):
+        held = set()
+        for path in sorted(WORKFLOWS.glob('*.y*ml')):
+            doc = yaml.safe_load(path.read_text())
+            for script in _run_scripts(doc):
+                held |= {(path.name, line) for line in _push_lines(script)}
+        self.assertEqual(held, set(ADMITTED_PUSH_LINES))
+        for (name, line), reason in ADMITTED_PUSH_LINES.items():
+            self.assertTrue(reason)
+            self.assertEqual(writer_guard_violations(name, (WORKFLOWS / name).read_text()), [])
+            # the line itself is fine under its own name; under another name, or grown by one word, it is refused
+            self.assertNotIn('push word', writer_guard_violations(name, _wf(line)))
+            self.assertIn('push word', writer_guard_violations(name, _wf(line + ' now')))
+            self.assertIn('push word', writer_guard_violations('other.yml', _wf(line)))
+
+    def test_read_all_and_write_all_are_refused_outright(self):
+        for top in ('permissions: read-all\n', 'permissions: write-all\n', 'permissions: "read-all"\n'):
+            with self.subTest(top=top):
+                self.assertIn('permission write', _kinds(_wf(top=top)))
+        self.assertIn('permission write', _kinds(_wf(job='    permissions: read-all\n')))
+        witness = ('name: t\non: workflow_dispatch\npermissions: read-all\njobs:\n  j:\n    runs-on: ubuntu-latest\n'
+                   '    steps:\n      - run: gh models run x "y"\n')
+        kinds = _kinds(witness)
+        self.assertIn('permission write', kinds)
+        self.assertIn('model call', kinds)
+        for path in sorted(WORKFLOWS.glob('*.y*ml')):
+            self.assertNotIn('*', {s for v in _written_scopes(yaml.safe_load(path.read_text())).values() for s in v}, path.name)
+
+    def test_every_real_workflow_still_passes_and_the_real_admissions_are_what_the_tree_holds(self):
+        held = {}
+        for path in sorted(WORKFLOWS.glob('*.y*ml')):
+            self.assertEqual(writer_guard_violations(path.name, path.read_text()), [], path.name)
+            for job, scopes in _written_scopes(yaml.safe_load(path.read_text())).items():
+                held[(path.name, job)] = scopes
+        self.assertEqual(held, ADMITTED_WRITES)
+        for scopes in ADMITTED_WRITES.values():
+            self.assertFalse({'contents', 'id-token', '*'} & scopes)
+
+
+def _guard(files):
+    """guard_tree_violations over a throwaway tree built from {path from the repository root: text}."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        for rel, text in files.items():
+            path = root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding='utf-8')
+        return guard_tree_violations(root)
+
+
+def _has(found, layer, what=''):
+    """True when a violation of this layer (whose text holds `what`) was reported."""
+    return any(l == layer and what in w for _, l, w in found)
+
+
+def _action(run='echo ok', using='composite'):
+    return ('name: helper\ndescription: a local action\nruns:\n  using: ' + using + '\n  steps:\n    - shell: bash\n'
+            '      run: |\n' + ''.join('        ' + line + '\n' for line in run.split('\n')))
+
+
+def _caller(uses='./.github/actions/helper'):
+    return _wf().replace('- run: |', '- uses: ' + uses + '\n      - run: |')
+
+
+NEW = '.github/workflows/new.yml'
+HELPER = '.github/actions/helper/action.yml'
+# DeepSeek round 3, finding A (M-A) verbatim in shape: a complete push workflow with a PAT.
+EVIL = ('name: helper\non:\n  workflow_dispatch:\npermissions:\n  contents: write\njobs:\n  publish:\n    runs-on: ubuntu-latest\n'
+        '    steps:\n      - uses: actions/checkout@v4\n      - name: sync\n        env:\n          PAT: ${{ secrets.DEPLOY_PAT }}\n'
+        '        run: |\n          git config user.name bot\n          git push "https://x:${PAT}@github.com/o/r.git" HEAD:main\n')
+# What no text scan can refuse: the command is built at run time, encoded, or lives in a script nobody reads here.
+ASSEMBLED = {
+    'N10 an assembled word': 'P=pu; P=${P}sh; git $P origin HEAD',
+    'N11 ANSI-C quoting': "git $'\\x70ush' origin HEAD",
+    'N12 an empty expansion': 'git pu${EMPTY}sh origin HEAD',
+    'N15 an encoded command': 'echo Z2l0IHB1c2ggb3JpZ2luIEhFQUQ= | base64 -d | sh',
+    'N16 a committed script': 'bash scripts/sync.sh',
+    'N22 character codes': 'python3 -c "import os; os.system(chr(103)+chr(105)+chr(116)+chr(32)+chr(112)+chr(117)+chr(115)+chr(104))"',
+}
+
+
+class CapabilityLayerTests(unittest.TestCase):
+    """DeepSeek round 3 on #332: each witness as a fixture, and the layer that refuses it named in the test.
+
+    Layers: `tree` (the shape of .github), `permissions`, `secrets`, `triggers`, `composite` (a local action's
+    own checks) and `text` (the older scan, kept). A witness the text scan cannot see is shown BOUND by the
+    capability layer instead: the same script, given any write power or any secret, is refused; with neither, it
+    holds a read-only token and no credential, which is the stated limit.
+    """
+
+    def test_the_real_tree_passes_every_layer_and_every_table_is_exact(self):
+        self.assertEqual(guard_tree_violations(ROOT), [])
+        power, events, secrets, files = {}, set(), set(), sorted(WORKFLOWS.glob('*.y*ml'))
+        for path in files:
+            doc = yaml.safe_load(path.read_text())
+            power.update({(path.name, job): scopes for job, scopes in _jobs_with_power(doc).items()})
+            events |= {(path.name, event) for event in _events(doc) & set(DANGEROUS_TRIGGERS)}
+            secrets |= {(path.name, n) for n in _secret_names(_scalar_texts(path.read_text())) - {'GITHUB_TOKEN'}}
+        self.assertEqual(power, {key: value[0] for key, value in ADMITTED_JOB_POWER.items()})
+        self.assertEqual(events, set(ADMITTED_TRIGGERS))
+        self.assertEqual(secrets, set(ADMITTED_SECRET_USE))
+        # no workflow lives below the top level, and the tree is the one the old tests glob
+        self.assertEqual(sorted(WORKFLOWS.rglob('*.y*ml')), files)
+        for table in (ADMITTED_JOB_POWER, ADMITTED_SECRET_USE, ADMITTED_TRIGGERS):
+            for key, value in table.items():
+                reason = value[1] if isinstance(value, tuple) else value
+                self.assertTrue(reason and '\n' not in reason, key)
+        # the layer's tables agree with the older ones
+        self.assertEqual({(f, n) for f, names in ADMITTED_SECRETS.items() for n in names}, set(ADMITTED_SECRET_USE))
+        self.assertEqual({f: set(s) for (f, _), (s, _) in ADMITTED_JOB_POWER.items()},
+                         {f: set(s) for (f, _), s in ADMITTED_WRITES.items()})
+        self.assertEqual(ADMITTED_VARS, {})
+
+    # ---- A. a workflow in a subfolder (layer: tree) ------------------------------------------------------------
+    def test_w_a_a_workflow_in_a_subfolder_is_refused_by_the_tree_layer(self):
+        for rel, text in (('.github/workflows/sub/evil.yml', EVIL), ('.github/workflows/a/b/evil.yaml', EVIL),
+                          ('.github/workflows/SUB/Evil.YML', EVIL), ('.github/workflows/sub/clean.yml', _wf())):
+            with self.subTest(rel=rel):
+                self.assertTrue(_has(_guard({rel: text}), 'tree', 'subfolder'))
+        # the same file at the top level is refused by three other layers, so the shape rule is what is new
+        top = _guard({'.github/workflows/evil.yml': EVIL})
+        for layer, what in (('text', 'git push'), ('permissions', 'contents'), ('secrets', 'DEPLOY_PAT')):
+            self.assertTrue(_has(top, layer, what), layer)
+        self.assertFalse(_has(top, 'tree'))
+        # a symlink under the two folders is refused as well
         with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
-            (tmp / 'quiet.yml').write_text(
-                'name: quiet\non: workflow_dispatch\njobs:\n  call:\n'
-                '    uses: ./.github/workflows/claude-conflict-writer.yml\n'
-                '    secrets: inherit\n', encoding='utf-8')
-            (tmp / 'remote.yml').write_text(
-                'name: remote\non: workflow_dispatch\njobs:\n  call:\n'
-                '    uses: CSL-Laboratories/ai-investment-cockpit/'
-                '.github/workflows/claude-conflict-writer.yml@main\n'
-                '    secrets: inherit\n', encoding='utf-8')
-            (tmp / 'flow.yml').write_text(
-                'name: flow\non: workflow_dispatch\njobs:\n'
-                '  call: {uses: ./.github/workflows/claude-conflict-writer.yml}\n',
-                encoding='utf-8')
-            (tmp / 'yaml-ext.yml').write_text(
-                'name: yaml-ext\non: workflow_dispatch\njobs:\n  call:\n'
-                '    uses: ./.github/workflows/claude-conflict-writer.yaml@'
-                + 'a' * 40 + '\n', encoding='utf-8')
-            (tmp / 'other.yml').write_text(
-                'name: other\non: workflow_dispatch\njobs:\n  x:\n'
-                '    runs-on: ubuntu-latest\n    steps:\n'
-                '      - uses: actions/checkout@v4\n', encoding='utf-8')
-            (tmp / 'foreign.yml').write_text(
-                'name: foreign\non: workflow_dispatch\njobs:\n  call:\n'
-                '    uses: other-org/tools/.github/workflows/claude-conflict-writer.yml@main\n'
-                '    secrets: inherit\n', encoding='utf-8')
-            (tmp / 'lower.yml').write_text(
-                'name: lower\non: workflow_dispatch\njobs:\n  call:\n'
-                '    uses: csl-laboratories/ai-investment-cockpit/'
-                '.github/workflows/claude-conflict-writer.yml@main\n'
-                '    secrets: inherit\n', encoding='utf-8')
-            (tmp / 'mixed.yml').write_text(
-                'name: mixed\non: workflow_dispatch\njobs:\n  call:\n'
-                '    uses: Csl-Laboratories/Ai-Investment-Cockpit/'
-                '.github/workflows/claude-conflict-writer.yml@main\n'
-                '    secrets: inherit\n', encoding='utf-8')
-            markers = {path.name for path in tmp.glob('*.y*ml')
-                       if re.search(r'anthropics/claude-code|ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN',
-                                    path.read_text(encoding='utf-8'))}
-            self.assertEqual(markers, set())
-            self.assertEqual(writer_callers(tmp),
-                             {'quiet.yml', 'remote.yml', 'flow.yml', 'yaml-ext.yml',
-                              'lower.yml', 'mixed.yml'})
-            old = re.compile(
-                r'(?m)^\s+uses:\s*["\']?(?:\./)?\.github/workflows/claude-conflict-writer\.ya?ml["\']?\s*(?:#.*)?$'
-            )
-            self.assertTrue(old.search((tmp / 'quiet.yml').read_text(encoding='utf-8')))
-            self.assertFalse(old.search((tmp / 'remote.yml').read_text(encoding='utf-8')))
-            self.assertFalse(old.search((tmp / 'flow.yml').read_text(encoding='utf-8')))
-            self.assertFalse(calls_conflict_writer(
-                yaml.load((tmp / 'other.yml').read_text(encoding='utf-8'), Loader=yaml.BaseLoader)))
-            foreign = yaml.load((tmp / 'foreign.yml').read_text(encoding='utf-8'),
-                                Loader=yaml.BaseLoader)
-            # Filename-only match would treat another repo's writer as ours.
-            self.assertIn('.github/workflows/claude-conflict-writer.yml',
-                          foreign['jobs']['call']['uses'])
-            self.assertFalse(calls_conflict_writer(foreign))
-            self.assertFalse(conflict_writer_uses(foreign['jobs']['call']['uses']))
-            lower = yaml.load((tmp / 'lower.yml').read_text(encoding='utf-8'),
-                              Loader=yaml.BaseLoader)
-            mixed = yaml.load((tmp / 'mixed.yml').read_text(encoding='utf-8'),
-                              Loader=yaml.BaseLoader)
-            lower_uses = lower['jobs']['call']['uses']
-            mixed_uses = mixed['jobs']['call']['uses']
-            self.assertTrue(conflict_writer_uses(lower_uses))
-            self.assertTrue(conflict_writer_uses(mixed_uses))
-            # Case-sensitive owner/repo startswith misses valid GitHub names.
-            prefix = CONFLICT_WRITER_REPO
-            lower_path = lower_uses.split('@', 1)[0]
-            mixed_path = mixed_uses.split('@', 1)[0]
-            self.assertFalse(lower_path.startswith(prefix))
-            self.assertFalse(mixed_path.startswith(prefix))
-            self.assertFalse(lower_path.startswith(prefix)
-                             and lower_path[len(prefix):] in CONFLICT_WRITER_FILES)
-            self.assertFalse(mixed_path.startswith(prefix)
-                             and mixed_path[len(prefix):] in CONFLICT_WRITER_FILES)
+            root = Path(tmp)
+            (root / '.github' / 'workflows').mkdir(parents=True)
+            (root / 'elsewhere.yml').write_text(_wf(), encoding='utf-8')
+            try:
+                (root / '.github' / 'workflows' / 'link.yml').symlink_to(root / 'elsewhere.yml')
+            except (OSError, NotImplementedError):
+                self.skipTest('no symlinks here')
+            self.assertTrue(_has(guard_tree_violations(root), 'tree', 'symlink'))
 
-    def test_unapproved_action_in_prep_or_model_is_rejected(self):
-        prep = copy.deepcopy(workflow('claude.yml')['jobs']['mention-prepare'])
-        prep.setdefault('steps', []).append({'uses': 'ad-m/github-push-action@v0.8.0'})
-        self.assertFalse(PUSH.search(job_text(prep)))
-        self.assertFalse(uses_allowed(prep, 'prep'))
-        model = copy.deepcopy(workflow('claude.yml')['jobs']['claude-mention'])
-        model['steps'].append({'uses': './.github/actions/publish/action.yml'})
-        self.assertFalse(uses_allowed(model, 'model'))
-        live = workflow('claude.yml')['jobs']['claude-mention']
-        self.assertTrue(any(u.startswith('oven-sh/setup-bun@') for u in job_uses(live)))
-        self.assertTrue(uses_allowed(live, 'model'))
-        tagged = copy.deepcopy(live)
-        for step in tagged['steps']:
-            uses = str(step.get('uses') or '')
-            if uses.startswith('oven-sh/setup-bun@'):
-                step['uses'] = 'oven-sh/setup-bun@v1.2.3'
-                break
-        self.assertTrue(any(u.startswith('oven-sh/setup-bun@') for u in job_uses(tagged)))
-        self.assertTrue(any(u.startswith('oven-sh/setup-bun@') for u in ROLE_USES['model']))
-        self.assertFalse(uses_sha_pinned('oven-sh/setup-bun@v1.2.3'))
-        self.assertFalse(uses_allowed(tagged, 'model'))
-        pin = next(u for u in job_uses(live) if u.startswith('oven-sh/setup-bun@'))
-        self.assertRegex(pin, r'@([0-9a-f]{40})$')
-        self.assertTrue(uses_sha_pinned(pin))
-        # After Lucas merged main (CSL-474 embeds extracted), prep and publish
-        # check out github.workflow_sha. The old empty/no-checkout allow-lists fail.
-        live_prep = workflow('claude.yml')['jobs']['mention-prepare']
-        live_publish = workflow('claude.yml')['jobs']['mention-publish']
-        self.assertTrue(any(u.startswith('actions/checkout@') for u in job_uses(live_prep)))
-        self.assertTrue(any(u.startswith('actions/checkout@') for u in job_uses(live_publish)))
-        old_prep, old_publish = (), ('actions/download-artifact@',)
-        self.assertFalse(all(
-            any(uses.startswith(prefix) for prefix in old_prep) and uses_sha_pinned(uses)
-            for uses in job_uses(live_prep)))
-        self.assertFalse(all(
-            any(uses.startswith(prefix) for prefix in old_publish) and uses_sha_pinned(uses)
-            for uses in job_uses(live_publish)))
-        self.assertTrue(uses_allowed(live_prep, 'prep'))
-        self.assertTrue(uses_allowed(live_publish, 'publish'))
-        self.assertTrue(any(u.startswith('actions/checkout@') for u in ROLE_USES['prep']))
-        self.assertTrue(any(u.startswith('actions/checkout@') for u in ROLE_USES['publish']))
+    # ---- B. a composite action (layers: composite, secrets) ----------------------------------------------------
+    def test_w_b_a_composite_action_is_read_and_its_run_steps_go_to_the_text_scan(self):
+        pushing = _action('git push origin HEAD:main')
+        self.assertTrue(_has(_guard({NEW: _caller(), HELPER: pushing}), 'composite', 'git push'))
+        self.assertTrue(_has(_guard({HELPER: pushing}), 'composite', 'push word'))      # even when nothing calls it
+        self.assertTrue(_has(_guard({NEW: _caller(), HELPER: _action('make && gh pr comment 1 --body x')}),
+                             'composite', 'pull request comment'))
+        self.assertTrue(_has(_guard({NEW: _caller(), HELPER: _action('echo secrets')}), 'composite', 'secret'))
+        self.assertTrue(_has(_guard({NEW: _caller(), HELPER: _action('echo ${{ secrets.DEPLOY_PAT }}')}), 'secrets', 'DEPLOY_PAT'))
+        self.assertTrue(_has(_guard({NEW: _caller(), HELPER: _action('echo ANTHROPIC_API_KEY')}), 'composite', 'model credential'))
+        # a clean one passes, and so does the real one
+        self.assertEqual(_guard({NEW: _caller(), HELPER: _action()}), [])
 
-    def test_runbook_names_the_github_token_dispatch_exception(self):
-        runbook = next(path for path in (ROOT / 'docs').iterdir() if path.name == 'ci-runbook.md')
-        section = runbook.read_text(encoding='utf-8').split('## 5.', 1)[0]
-        self.assertIn('workflow_dispatch', section)
-        self.assertIn('repository_dispatch', section)
-        self.assertIn('forward-conflict-scan', section)
-        self.assertIn('github_token: ${{ github.token }}', section)
-        self.assertIn('CSL-428', section)
+    def test_w_b_a_local_action_must_be_a_composite_under_dot_github_actions_and_must_exist(self):
+        outside = _guard({NEW: _caller('./scripts/act'), 'scripts/act/action.yml': _action()})
+        self.assertTrue(_has(outside, 'composite', 'outside .github/actions'))
+        pushing = _guard({NEW: _caller('./scripts/act'), 'scripts/act/action.yml': _action('git push')})
+        self.assertTrue(_has(pushing, 'composite', 'git push'))   # read wherever it is, and refused for the place
+        node = _guard({NEW: _caller(), HELPER: _action(using='node20')})
+        self.assertTrue(_has(node, 'composite', 'not a composite'))
+        docker = _guard({NEW: _caller(), HELPER: _action(using='docker')})
+        self.assertTrue(_has(docker, 'composite', 'not a composite'))
+        self.assertTrue(_has(_guard({NEW: _caller('./.github/actions/missing')}), 'composite', 'no action.yml'))
+        self.assertTrue(_has(_guard({NEW: _caller('./../elsewhere')}), 'composite', 'outside the repository'))
+        # a composite that calls another is followed
+        chain = _guard({NEW: _caller(), HELPER: _action().replace('    - shell: bash', '    - uses: ./other/deep\n    - shell: bash'),
+                        'other/deep/action.yml': _action('git push origin HEAD')})
+        self.assertTrue(_has(chain, 'composite', 'outside .github/actions'))
+        self.assertTrue(_has(chain, 'composite', 'git push'))
+        # a reusable workflow named by a job is a workflow file, read as one
+        caller = ('name: t\non: workflow_dispatch\npermissions:\n  contents: read\njobs:\n  call:\n'
+                  '    uses: ./.github/workflows/other.yml\n')
+        self.assertEqual(_guard({NEW: caller, '.github/workflows/other.yml': _wf()}), [])
 
+    # ---- C. an HTTP client with a write method (layer: text) ---------------------------------------------------
+    def test_w_c_an_http_client_with_a_write_method_against_github_is_refused(self):
+        for form in ('curl -sS -X PUT https://api.github.com/repos/o/r/contents/f -d @x',          # N19, the witness
+                     'curl -XPUT https://api.github.com/repos/o/r/contents/f -d @x',
+                     'curl -sSX PUT https://api.github.com/x', 'curl --request PUT https://api.github.com/x',
+                     'curl --request=DELETE https://api.github.com/x', 'curl -d @x https://api.github.com/repos/o/r/git/refs',
+                     'curl --data-binary @x https://api.github.com/x', 'curl -F f=@x https://uploads.github.com/x',
+                     'curl -X POST "$GITHUB_API_URL/repos/o/r/issues/1/comments" -d @x',
+                     'curl -X PATCH -H "Authorization: Bearer $GITHUB_TOKEN" https://example.com/x',
+                     'wget --method=PUT --body-file=x https://api.github.com/x', 'wget --post-data=a=b https://api.github.com/x',
+                     'Invoke-RestMethod -Method Put -Uri https://api.github.com/x -Body $b',
+                     'iwr -Method:Post https://api.github.com/x', 'irm https://api.github.com/x -Body $b',
+                     'http PUT api.github.com/repos/o/r/contents/f content=x'):
+            with self.subTest(form=form):
+                self.assertIn('github api write', _kinds(_wf(form)))
+                self.assertTrue(_has(_guard({NEW: _wf(form)}), 'text', 'github api write'))
+        for form in ('curl -fsSL -o actionlint.tgz "https://github.com/rhysd/actionlint/releases/download/v1/x.tar.gz"',
+                     'curl -sS -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/repos/o/r/pulls/1',
+                     'curl -G -d per_page=100 https://api.github.com/repos/o/r/pulls',
+                     'curl -X GET https://api.github.com/x', 'curl -X POST https://example.com/hook -d x',
+                     'wget -qO- https://api.github.com/x', 'Invoke-RestMethod -Uri https://api.github.com/x',
+                     'gh api --paginate repos/o/r/pulls/1/files --jq .[].filename'):
+            with self.subTest(read=form):
+                self.assertNotIn('github api write', _kinds(_wf(form)))
 
-class P9ProbeWorkflowTests(unittest.TestCase):
-    """CSL-474 P9 Probes 0/2: dispatch-only measurement, not a writer."""
+    # ---- N18. an assembled gh api address, and N17 a literal receive-pack (layer: text) ------------------------
+    def test_w_n18_gh_api_with_a_write_method_is_refused_whatever_the_endpoint(self):
+        assembled = 'U=https://api.github.com/repos/o/r/cont; U=${U}ents/f; gh api -X PUT "$U" -f content=x'
+        self.assertIn('github api write', _kinds(_wf(assembled)))
+        for form in ('gh api -X PUT "$U" -f content=x', 'gh api --method POST repos/o/r/actions/runs/1/cancel',
+                     'gh api -X DELETE repos/o/r/actions/runs/1', 'gh api repos/o/r/anything -f a=b',
+                     "gh api graphql -f query='mutation { x }'"):
+            with self.subTest(form=form):
+                self.assertIn('github api write', _kinds(_wf(form)))
+        for form in ('gh api graphql -f query=\'query { viewer { login } }\'', 'gh api -X GET repos/o/r/pulls -f per_page=100',
+                     'gh api repos/o/r/pulls/1/files --paginate'):
+            with self.subTest(read=form):
+                self.assertNotIn('github api write', _kinds(_wf(form)))
 
-    def setUp(self):
-        self.path = WORKFLOWS / P9_PROBE_FILE
-        self.text = self.path.read_text(encoding='utf-8')
-        self.doc = workflow(P9_PROBE_FILE)
+    def test_w_n17_a_literal_git_receive_pack_over_ssh_is_refused(self):
+        for form in ('ssh git@github.com "git-receive-pack \'o/r.git\'"', 'git-receive-pack o/r.git'):
+            with self.subTest(form=form):
+                self.assertIn('git push', _kinds(_wf(form)))
 
-    def test_dispatch_only_least_privilege(self):
-        header = self.text.split('\njobs:', 1)[0]
-        self.assertIn('workflow_dispatch:', header)
-        self.assertIn(
-            'With enable_probe2_oauth=false (the intended unattended dispatch), Probe 2 is',
-            header,
-        )
-        self.assertIn('INCONCLUSIVE/non-green', header)
-        self.assertIn('That is not a CLI isolation finding', header)
-        self.assertIn('P9 in this form rests on Probe 0', header)
-        self.assertNotIn('\npull_request:', header)
-        self.assertNotIn('\npush:', header)
-        self.assertNotIn('\nschedule:', header)
-        self.assertNotIn('\nissue_comment:', header)
-        self.assertNotIn('\nrepository_dispatch:', header)
-        self.assertNotIn('\nworkflow_call:', header)
-        self.assertNotIn('\nworkflow_run:', header)
-        self.assertEqual(self.doc.get('permissions'), {'contents': 'read'})
-        self.assertEqual(set(self.doc['jobs']), {'probe-0', 'probe-2'})
-        for name, job in self.doc['jobs'].items():
-            with self.subTest(job=name):
-                self.assertEqual(job['runs-on'], 'ubuntu-24.04')
-                self.assertEqual(job.get('permissions'), {'contents': 'read'})
-                self.assertNotIn('id-token', job.get('permissions') or {})
-                self.assertFalse(PUSH.search(job_text(job)))
-                uses = [str(s.get('uses') or '') for s in job.get('steps') or []]
-                self.assertFalse(any(u.startswith('anthropics/claude-code-action') for u in uses))
+    # ---- N10, N11, N12, N15, N16, N22: assembled, encoded or hidden commands (layers: permissions, secrets) -----
+    def test_w_assembled_commands_are_bound_by_the_token_and_the_secrets_not_refused_as_text(self):
+        for label, form in ASSEMBLED.items():
+            with self.subTest(witness=label):
+                # No text scan sees it: the older layer is silent (this is the stated limit)...
+                self.assertEqual(_kinds(_wf(form)), [])
+                # ...and with a read-only token and no secret it holds no power to write: nothing to refuse.
+                self.assertEqual(_guard({NEW: _wf(form)}), [])
+                # Given any power it is refused by the capability layer, whatever it says.
+                for top in ('permissions:\n  contents: write\n', 'permissions:\n  pull-requests: write\n', 'permissions: write-all\n'):
+                    self.assertTrue(_has(_guard({NEW: _wf(form, top=top)}), 'permissions', 'not admitted'), top)
+                self.assertTrue(_has(_guard({NEW: _wf(form, top='')}), 'permissions', 'UNSPECIFIED'))
+                self.assertTrue(_has(_guard({NEW: _wf(form, job='    permissions:\n      contents: write\n')}), 'permissions', 'contents'))
+                keyed = _wf(form).replace('- run: |', '- env:\n          T: ${{ secrets.DEPLOY_PAT }}\n        run: |')
+                self.assertTrue(_has(_guard({NEW: keyed}), 'secrets', 'DEPLOY_PAT'))
+                # (At the top level the older text layer refused all of these already, and still does.)
+                self.assertTrue(_has(_guard({NEW: keyed}), 'text', 'secret'))
+                self.assertTrue(_has(_guard({NEW: _wf(form, top='permissions:\n  contents: write\n')}), 'text', 'contents write'))
+                # In a subfolder the shape is refused. In a composite action the job's token is what bounds it.
+                self.assertTrue(_has(_guard({'.github/workflows/sub/x.yml': _wf(form)}), 'tree'))
+                self.assertEqual(_guard({NEW: _caller(), HELPER: _action(form)}), [])
+                writer = _caller().replace('permissions:\n  contents: read\n', 'permissions:\n  contents: write\n')
+                self.assertNotEqual(writer, _caller())
+                self.assertTrue(_has(_guard({NEW: writer, HELPER: _action(form)}), 'permissions', 'contents'))
 
-    def test_oauth_input_defaults_off_and_gates_the_secret(self):
-        spec = self.doc['on']['workflow_dispatch']['inputs']['enable_probe2_oauth']
-        self.assertEqual(spec['type'], 'boolean')
-        self.assertIn(spec['default'], (False, 'false'))
-        oauth_steps = [s for s in self.doc['jobs']['probe-2']['steps']
-                       if 'secrets.CLAUDE_CODE_OAUTH_TOKEN' in str(s)]
-        self.assertEqual(len(oauth_steps), 2)
-        for step in oauth_steps:
-            with self.subTest(step=step.get('name')):
-                self.assertIn('enable_probe2_oauth', str(step.get('if')))
-                self.assertIn('success()', str(step.get('if')))
-                self.assertNotIn('always()', str(step.get('if')))
-        self.assertNotIn('secrets.CLAUDE_CODE_OAUTH_TOKEN', str(self.doc['jobs']['probe-0']))
-        self.assertNotIn('secrets: inherit', self.text)
-        hooked = [s for s in self.doc['jobs']['probe-2']['steps']
-                  if s.get('name') == 'Probe 2 OAuth hooked trials (token in CLI env, subprocess-scrubbed)']
-        self.assertEqual(len(hooked), 1)
-        self.assertIn('secrets.CLAUDE_CODE_OAUTH_TOKEN', str(hooked[0]))
-        self.assertIn('env -u CLAUDE_CODE_OAUTH_TOKEN', job_text(self.doc['jobs']['probe-2']))
-        self.assertEqual(
-            self.doc['jobs']['probe-2']['env'].get('CLAUDE_CODE_SUBPROCESS_ENV_SCRUB'),
-            '1',
-        )
+    def test_the_text_scan_misses_a_third_party_action_and_a_script_it_does_not_read(self):
+        # KNOWN LIMITS, pinned: a third-party action and a script a step calls are not read; the job's token bounds them.
+        remote = _wf().replace('- run: |', '- uses: someone/elsewhere@v1\n      - run: |')
+        self.assertEqual(_guard({NEW: remote}), [])
+        self.assertEqual(_guard({NEW: _wf('bash scripts/sync.sh'), 'scripts/sync.sh': 'git push origin HEAD\n'}), [])
 
-    def test_same_cli_pin_as_e3(self):
-        pin = (ROOT / 'scripts' / 'ci' / 'claude-code-2.1.306-linux-x64.pin').read_text(encoding='utf-8')
-        sha = [line.split('=', 1)[1].strip() for line in pin.splitlines() if line.startswith('sha256=')][0]
-        self.assertIn('2.1.306', self.text)
-        self.assertIn(sha, self.text)
-        self.assertIn('a5a423f75c251dcbff8a74e99f83b2cb03c72bfa', self.text)
-        self.assertIn('https://downloads.claude.ai/claude-code-releases', self.text)
-        self.assertIn('${RELEASE_BASE}/${CLAUDE_VERSION}/${PLATFORM}/claude', self.text)
-        self.assertNotIn('claude.ai/install', self.text)
-        self.assertNotIn('anthropics/claude-code', self.text)
+    # ---- the raw-text first line (layer: text, and secrets) ----------------------------------------------------
+    def test_the_raw_text_line_sees_a_secret_that_a_duplicate_key_hides(self):
+        text = _wf().replace('- run: |', '- env:\n          K: ${{ secrets.OTHER }}\n          K: ok\n        run: |')
+        self.assertEqual(yaml.safe_load(text)['jobs']['j']['steps'][0]['env'], {'K': 'ok'})   # the parse lost it
+        self.assertEqual(_context_refs(yaml.safe_load(text)), set())
+        self.assertIn('secret', _kinds(text))                                                  # the raw line has it
+        self.assertTrue(_has(_guard({NEW: text}), 'secrets', 'OTHER'))
+        name = 'linear-pr-sync.yml'
+        real = (WORKFLOWS / name).read_text()
+        anchor = '          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}\n'
+        hidden = real.replace(anchor, anchor + '          K: ${{ secrets.OTHER_KEY }}\n          K: ok\n')
+        self.assertIn('secret', writer_guard_violations(name, hidden))
+        self.assertTrue(_has(_guard({'.github/workflows/' + name: hidden}), 'secrets', 'OTHER_KEY'))
 
-    def test_probe_bodies_record_host_and_p1_facts(self):
-        p0 = job_text(self.doc['jobs']['probe-0'])
-        self.assertIn('cgroup.controllers', p0)
-        self.assertIn('cgroup.kill', p0)
-        self.assertIn('cgroup.procs', p0)
-        self.assertIn('apparmor_restrict_unprivileged_userns', p0)
-        self.assertIn('unshare --user --pid', p0)
-        self.assertIn('HOSTED_ONLY', p0)
-        self.assertIn('CLASS_CGROUP_PROCS observational', p0)
-        self.assertIn('} 2>/tmp/csl-p9-cgroup-procs.err', p0)
-        p2 = job_text(self.doc['jobs']['probe-2'])
-        self.assertIn('settings.local.json', p2)
-        self.assertIn('$WORK/AGENTS.md', p2)
-        self.assertIn('instructionFiles', p2)
-        self.assertIn('CSL474_AGENTS_CANARY', p2)
-        self.assertIn('--setting-sources user', p2)
-        self.assertIn('mcp.empty', p2)
+    # ---- b. permissions ----------------------------------------------------------------------------------------
+    def test_permissions_a_job_that_inherits_or_drops_its_block_must_be_admitted(self):
+        name = 'ci-label-retrigger.yml'
+        real = (WORKFLOWS / name).read_text()
+        path = '.github/workflows/' + name
+        self.assertEqual(_guard({path: real}), [])
+        # A third job in the admitted file inherits `actions: write`; the older table, keyed by workflow, cannot see it.
+        extra = real.rstrip('\n') + '\n\n  extra:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n'
+        found = _guard({path: extra})
+        self.assertTrue(_has(found, 'permissions', 'job extra holds actions'))
+        self.assertEqual({layer for _, layer, _ in found}, {'permissions'})
+        # Its own read-only block takes the inherited power away, as GitHub reads it.
+        own = extra.replace('    steps:\n      - run: echo hi\n', '    permissions:\n      contents: read\n    steps:\n      - run: echo hi\n')
+        self.assertEqual(_guard({path: own}), [])
+        # A grown scope is refused (older layer too); the same text under another name is refused for both jobs.
+        grown = real.replace('  actions: write\n', '  actions: write\n  statuses: write\n', 1)
+        self.assertTrue(_has(_guard({path: grown}), 'permissions', 'job retrigger holds actions statuses'))
+        self.assertTrue(_has(_guard({path: grown}), 'text', 'permission write'))
+        other = _guard({'.github/workflows/other.yml': real})
+        self.assertTrue(_has(other, 'permissions', 'job retrigger') and _has(other, 'permissions', 'job cancel-ancestors'))
+        # A dropped block is UNSPECIFIED; a whole-token string and `models` are power; an empty block is none.
+        self.assertTrue(_has(_guard({NEW: _wf(top='')}), 'permissions', 'UNSPECIFIED'))
+        self.assertTrue(_has(_guard({NEW: _wf(top='permissions: write-all\n')}), 'permissions', '*'))
+        self.assertTrue(_has(_guard({NEW: _wf(top='permissions:\n  contents: read\n  models: read\n')}), 'permissions', 'models'))
+        self.assertFalse(_has(_guard({NEW: _wf(top='permissions:\n  contents: read\n', job='    permissions: {}\n')}), 'permissions'))
+        self.assertFalse(_has(_guard({NEW: _wf(top='', job='    permissions:\n      contents: read\n')}), 'permissions'))
+        # An admitted UNSPECIFIED job is a named decision, and only for that file and job.
+        with mock.patch.dict(ADMITTED_JOB_POWER, {('new.yml', 'j'): (UNSPECIFIED, 'unspecified today; owner\'s point')}):
+            self.assertFalse(_has(_guard({NEW: _wf(top='')}), 'permissions'))
+            self.assertTrue(_has(_guard({'.github/workflows/o.yml': _wf(top='')}), 'permissions'))
 
-    def test_probe2_oracle_forces_tool_and_positive_control(self):
-        jobs = self.doc['jobs']
-        self.assertEqual(jobs['probe-0']['timeout-minutes'], '10')
-        self.assertEqual(jobs['probe-2']['timeout-minutes'], '20')
-        p2 = job_text(jobs['probe-2'])
-        self.assertIn('--allowedTools "Bash(true)"', p2)
-        self.assertIn('--max-turns 4', p2)
-        self.assertIn('CSL474_AGENTS_LOADED', p2)
-        self.assertIn('HOOK_CONTROL', p2)
-        self.assertIn('INCONCLUSIVE', p2)
-        self.assertIn('EVIDENCE_EXIT non-green', p2)
-        self.assertIn('Positive control omits --setting-sources user', p2)
-        self.assertIn('CONTROL: instructionFiles=claude-md-or-agents-md', p2)
-        self.assertIn('IFISO: same sources as CONTROL', p2)
-        self.assertIn('ISOLATION: restore CONTROL instructionFiles', p2)
-        self.assertIn('instructionFiles toggled between CONTROL', p2)
-        self.assertIn('claude-md-or-agents-md', p2)
-        self.assertIn('run_probe_invoke CONTROL ""', p2)
-        self.assertIn('run_probe_invoke IFISO ""', p2)
-        self.assertIn('run_probe_invoke ISOLATION user', p2)
-        self.assertIn('run_probe_invoke MCPRO user "$MCP_RO"', p2)
-        self.assertIn('} 2>/tmp/csl-p9-mcp-write.err', p2)
-        self.assertNotIn('refused-unverified-isolation', p2)
-        self.assertNotIn('hooks-stripped', p2)
-        self.assertIn('TOKEN_EXPOSURE cli-env-subprocess-scrubbed', p2)
-        self.assertIn('TOKEN_EXPOSURE', p2)
-        self.assertIn('CLAUDE_CODE_SUBPROCESS_ENV_SCRUB', p2)
-        self.assertIn('bubblewrap', p2)
-        self.assertIn('kernel.apparmor_restrict_unprivileged_userns=0', p2)
-        self.assertIn('bwrap --unshare-user --ro-bind / / -- /bin/true', p2)
-        self.assertNotIn('always() && inputs.enable_probe2_oauth', self.text)
-        self.assertIn('success() && inputs.enable_probe2_oauth', self.text)
-        self.assertIn('https://code.claude.com/docs/en/memory', p2)
-        self.assertNotIn("absent = pass", p2)
-        self.assertIn('AUTH_BOOTSTRAP FAIL', p2)
-        self.assertIn('not recording DONE', p2)
-        self.assertIn('Hook-marker alone or timeout is not a completed session', p2)
-        self.assertIn('CANARY_ISOLATION PASS requires completed P9PROBE2OK', p2)
-        self.assertIn('[ "$MCPRO" = PASS ]', p2)
-        self.assertIn('MCPRO=INCONCLUSIVE', p2)
-        self.assertIn('MCPRO PASS requires user hook marker', p2)
-        self.assertIn('skipping hooked OAuth trials; bootstrap did not PASS', p2)
-        self.assertNotIn('session_ok', p2)
-        self.assertIn('Probe 2 OAuth bootstrap in clean cwd', self.text)
-        self.assertIn('Probe 2 OAuth hooked trials (token in CLI env, subprocess-scrubbed)', self.text)
-        self.assertIn('deferred-to-oauth', p2)
-        self.assertIn('env -u CLAUDE_CODE_OAUTH_TOKEN', p2)
-        self.assertIn('not the isolation claim', p2)
+    # ---- c. secrets --------------------------------------------------------------------------------------------
+    def test_secrets_every_name_but_the_github_token_must_be_admitted_for_the_file(self):
+        self.assertTrue(_has(_guard({NEW: _wf().replace('- run: |', '- env:\n          K: ${{ secrets.OTHER }}\n        run: |')}),
+                             'secrets', 'OTHER'))
+        for form in ("${{ secrets['OTHER'] }}", '${{ toJSON(secrets) }}', '${{ secrets.* }}', '${{ SECRETS.other }}'):
+            with self.subTest(form=form):
+                self.assertTrue(_has(_guard({NEW: _wf().replace('- run: |', '- env:\n          K: ' + form + '\n        run: |')}), 'secrets'))
+        self.assertTrue(_has(_guard({NEW: _wf().replace('- run: |', '- name: all the secrets\n        run: |')}), 'secrets', '*'))
+        inherit = _wf().replace('    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          echo ok\n',
+                                '    uses: ./.github/workflows/other.yml\n    secrets: inherit\n')
+        self.assertTrue(_has(_guard({NEW: inherit, '.github/workflows/other.yml': _wf()}), 'secrets', '*'))
+        # The admitted name is admitted for its own file only; a second one in that file is refused.
+        name = 'linear-pr-sync.yml'
+        real = (WORKFLOWS / name).read_text()
+        anchor = '          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}\n'
+        self.assertEqual([x for x in _guard({'.github/workflows/' + name: real}) if x[1] == 'secrets'], [])
+        self.assertTrue(_has(_guard({'.github/workflows/other.yml': real}), 'secrets', 'LINEAR_API_KEY'))
+        second = _guard({'.github/workflows/' + name: real.replace(anchor, anchor + '          K: ${{ secrets.OTHER_KEY }}\n')})
+        self.assertTrue(_has(second, 'secrets', 'OTHER_KEY'))
+        self.assertFalse(_has(second, 'secrets', 'LINEAR_API_KEY'))
+        # GITHUB_TOKEN is not this layer's concern (the older text scan still refuses it).
+        token = _guard({NEW: _wf().replace('- run: |', '- env:\n          K: ${{ secrets.GITHUB_TOKEN }}\n        run: |')})
+        self.assertFalse(_has(token, 'secrets'))
+        self.assertTrue(_has(token, 'text', 'secret'))
 
-    def test_probe2_fail_is_not_deferred_to_oauth(self):
-        """Samir #278: FAIL still exits non-zero when OAuth is enabled."""
-        p2 = job_text(self.doc['jobs']['probe-2'])
-        fail_idx = p2.find('EVIDENCE_EXIT fail')
-        defer_idx = p2.find('deferred-to-oauth')
-        self.assertGreaterEqual(fail_idx, 0)
-        self.assertGreaterEqual(defer_idx, 0)
-        self.assertLess(fail_idx, defer_idx)
-        self.assertIn(
-            '[ "$HOOK_CONTROL" = FAIL ] || [ "$HOOK_ISOLATION" = FAIL ] || [ "$CANARY_CONTROL" = FAIL ] || [ "$CANARY_ISOLATION" = FAIL ] || [ "$MCPRO" = FAIL ]',
-            p2,
-        )
-        self.assertIn('EVIDENCE_EXIT fail', p2)
-        noauth = [s for s in self.doc['jobs']['probe-2']['steps']
-                  if s.get('name') == 'Probe 2 without OAuth']
-        self.assertEqual(len(noauth), 1)
-        body = noauth[0]['run']
-        after_fail = body.split('rec EVIDENCE_EXIT fail', 1)[1]
-        before_defer = after_fail.split('deferred-to-oauth', 1)[0]
-        self.assertIn('exit 1', before_defer)
-        oauth_steps = [s for s in self.doc['jobs']['probe-2']['steps']
-                       if 'secrets.CLAUDE_CODE_OAUTH_TOKEN' in str(s)]
-        self.assertEqual(len(oauth_steps), 2)
-        for step in oauth_steps:
-            self.assertIn('success()', str(step.get('if')))
+    # ---- d. triggers -------------------------------------------------------------------------------------------
+    def test_triggers_pull_request_target_and_workflow_run_must_be_admitted(self):
+        for on in ('on: pull_request_target\n', 'on: [pull_request_target]\n', 'on: [push, WORKFLOW_RUN]\n',
+                   'on:\n  pull_request_target:\n    types: [opened]\n',
+                   'on:\n  workflow_dispatch:\n  workflow_run:\n    workflows: [ci]\n'):
+            with self.subTest(on=on):
+                text = _wf().replace('on: workflow_dispatch\n', on)
+                self.assertNotEqual(text, _wf())
+                self.assertTrue(_has(_guard({NEW: text}), 'triggers', 'not admitted'))
+        self.assertFalse(_has(_guard({NEW: _wf()}), 'triggers'))
+        real = (WORKFLOWS / 'ci-label-retrigger.yml').read_text()
+        self.assertFalse(_has(_guard({'.github/workflows/ci-label-retrigger.yml': real}), 'triggers'))
+        self.assertTrue(_has(_guard({'.github/workflows/other.yml': real}), 'triggers', 'workflow_run'))
+        self.assertTrue(_has(_guard({NEW: _wf().replace('on: workflow_dispatch\n', 'on: {}\n')}), 'triggers', 'no readable trigger'))
+        # an unreadable workflow is refused by the older layer; the capability layer does not guess
+        self.assertTrue(_has(_guard({NEW: 'name: [unclosed\n'}), 'text', 'unparseable'))
+
 
 # The linux job runs this file by path, not every tools/test_*.py. Importing
 # the class makes that invocation collect the pinned-checkout regression.

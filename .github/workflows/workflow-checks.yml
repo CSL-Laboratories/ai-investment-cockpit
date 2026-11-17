@@ -1,0 +1,45 @@
+# Repository workflow and CI-script checks (CSL-238). These ran as the
+# `event-paths` job of the retired Codex CI/fixer gate (codex-gate.yml) and moved
+# here unchanged, minus the tests of the deleted gate, candidate coordinator and
+# (CSL-238, Lucas, Nov 16) the retired Claude writers.
+# GitHub-hosted ubuntu-latest, read-only token, no secret, same-repository PRs only.
+name: workflow checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  event-paths:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install workflow-test dependency
+        working-directory: ${{ runner.temp }}
+        run: python3 -P -m pip install PyYAML
+      - name: Workflow hosting and trigger guards
+        run: python3 -X utf8 -B tools/test_workflow_hosting.py
+      - name: Exact candidate behavior
+        run: |
+          python3 -X utf8 -B -m unittest tools.test_merge_candidate tools.test_candidate_workflows -v
+      - name: Queue and review gate behavioral tests
+        run: |
+          python3 -X utf8 -B -m unittest tools.test_review_gate tools.test_queue_gates -v
+      - name: actionlint
+        env:
+          ACTIONLINT_VERSION: "1.7.7"
+          ACTIONLINT_SHA256: "023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757"
+        run: |
+          set -euo pipefail
+          curl -fsSL -o actionlint.tgz \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  actionlint.tgz" | sha256sum -c -
+          tar -xzf actionlint.tgz actionlint
+          ./actionlint -color .github/workflows/*.yml
