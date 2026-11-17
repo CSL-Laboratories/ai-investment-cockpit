@@ -626,29 +626,191 @@ class DispatchScopeTests(unittest.TestCase):
 # the Devin GitHub App, so those workflows are gone. What stays is the property the
 # guard protected: no workflow holds model credentials, runs a model, or can push.
 MODEL_ACCESS = re.compile(r'ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN|anthropics/claude-code|'
-                          r'CODEX_TRIGGER_PAT|OPENAI_API_KEY', re.IGNORECASE)
+                          r'CODEX_TRIGGER_PAT|OPENAI_API_KEY|GEMINI_API_KEY|GOOGLE_API_KEY|gemini-cli|run-gemini|'
+                          r'OPENROUTER|DEEPSEEK|XAI_API_KEY|MISTRAL_API_KEY', re.IGNORECASE)
 HOSTED = {'ubuntu-latest', 'ubuntu-24.04', 'ubuntu-22.04', 'windows-2025', 'windows-latest', 'macos-latest'}
 # The Linear PR sync (kept on the owner's word, Nov 16, 2026) reads exactly one secret, by name; no other
 # workflow reads any.
 ADMITTED_SECRETS = {'linear-pr-sync.yml': {'LINEAR_API_KEY'}}
+# Token permissions above read, admitted by workflow file, by job (None = the workflow-level block) and by
+# scope. These are the only two in the tree today: ci-label-retrigger.yml dispatches CI (actions), and the
+# `benchmarks` job of ci.yml posts its informational comment (issues, pull-requests). `contents` and
+# `id-token` are never admissible, whatever this table says.
+ADMITTED_WRITES = {('ci-label-retrigger.yml', None): {'actions'},
+                   ('ci.yml', 'benchmarks'): {'issues', 'pull-requests'}}
+
+# WHAT THIS GUARD CANNOT SEE (it reads workflow TEXT only, never runs anything):
+# - a script or action fetched or built at run time (curl | sh, a downloaded or generated file, an
+#   action pinned to a ref that changes), and any script committed in the repository that a `run:` step
+#   calls (`bash scripts/push.sh`): the guard looks at the step's own words, not at the file's contents;
+# - a command assembled at run time (`cmd=push; git $cmd`, an alias, `eval "$(...)"`, base64, a variable
+#   holding the word `git`);
+# - which runner a `fromJson` matrix really yields at run time: the guard only reads the runner literals
+#   in the job that produces the matrix;
+# - the token's real rights: org or repository defaults are not in the file, and an App or a PAT used
+#   outside this repository's secrets is out of sight.
+# It is deliberately over-strict in one place: any `git` command word followed, in the same shell
+# segment, by the word `push` is refused, even inside an echo or a commit message.
+_SEG = re.compile(r'&&|\|\||\$\(|[;|&\n`()<>]')
+_GH_VALUE_OPTIONS = {'-R', '--repo', '-X', '--method', '-f', '-F', '--field', '--raw-field', '-H', '--header',
+                     '-q', '--jq', '--input', '-t', '--template', '--hostname', '-b', '--body', '--title'}
+_NOT_SHELL = {'name', 'if', 'description', 'group'}
+_CONTENT_ENDPOINT = re.compile(r'/(?:contents|git/(?:refs|commits|trees|blobs|tags)|merges?|releases)(?:/|$|\?)'
+                               r'|/pulls/[^/]+/merge|/branches/[^/]+/(?:protection|rename)')
+_LABEL_ENDPOINT = re.compile(r'/labels(?:/|$|\?)')
+_CONTENT_API = re.compile(r'createOrUpdateFileContents|deleteFile|git\.(?:createRef|updateRef|deleteRef|'
+                          r'createCommit|createTree|createBlob|createTag)|pulls\.merge|repos\.merge|'
+                          r'createRelease|uploadReleaseAsset')
+_LABEL_API = re.compile(r'addLabels|setLabels|removeLabel|removeAllLabels|createLabel|updateLabel|deleteLabel')
+_SECRET_FORMS = re.compile(r'secrets\s*\[|(?i:tojson)\(\s*secrets|secrets:\s*inherit|\bvars\.[A-Za-z_]')
+
+
+def _scalars(node, key=None):
+    """Every string value of the parsed workflow, except names, conditions and descriptions."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            yield from _scalars(v, str(k))
+    elif isinstance(node, list):
+        for v in node:
+            yield from _scalars(v, key)
+    elif isinstance(node, str) and key not in _NOT_SHELL:
+        yield node
+
+
+def _command_violations(text):
+    """Refuse a push, a write to repository contents or a label write, wherever the words stand."""
+    out = set()
+    text = re.sub(r'\\\r?\n', ' ', text).replace('${IFS}', ' ').replace('$IFS', ' ')
+    if _CONTENT_API.search(text):
+        out.add('api writes contents')
+    if _LABEL_API.search(text):
+        out.add('label write')
+    for segment in _SEG.split(text):
+        words = [w.strip('"\',[]{}') for w in segment.split()]
+        base = [w.rsplit('/', 1)[-1].lower() for w in words]
+        if 'git-push' in base or 'git-send-pack' in base:
+            out.add('git push')
+        git_at = next((i for i, b in enumerate(base) if b in ('git', 'git.exe')), None)
+        if git_at is not None and {'push', 'send-pack'} & set(words[git_at + 1:]):
+            out.add('git push')
+        if 'gh' in base:
+            rest = words[base.index('gh') + 1:]
+            pos, skip = [], False
+            for w in rest:  # the command words, minus options and the values of the options that take one
+                if skip:
+                    skip = False
+                elif w in _GH_VALUE_OPTIONS:
+                    skip = True
+                elif not w.startswith('-'):
+                    pos.append(w)
+            if pos[:2] in (['pr', 'merge'], ['pr', 'create'], ['repo', 'sync'], ['repo', 'create'],
+                           ['repo', 'delete'], ['release', 'create'], ['release', 'upload'],
+                           ['release', 'delete'], ['release', 'edit']):
+                out.add('gh writes contents')
+            if pos[:2] in (['pr', 'ready'], ['pr', 'close'], ['pr', 'reopen'], ['pr', 'review'], ['pr', 'edit']):
+                out.add('gh writes a pull request')
+            if pos[:2] in (['label', 'create'], ['label', 'edit'], ['label', 'delete'], ['label', 'clone']) or                     any(w.startswith(('--add-label', '--remove-label')) for w in rest):
+                out.add('label write')
+            if pos[:1] == ['api'] and len(pos) > 1:
+                method = ''
+                for i, w in enumerate(rest):
+                    if w in ('-X', '--method') and i + 1 < len(rest):
+                        method = rest[i + 1].upper()
+                    elif w.startswith('--method='):
+                        method = w.split('=', 1)[1].upper()
+                fields = any(w in ('-f', '-F', '--field', '--raw-field', '--input') for w in rest)
+                if method in ('PUT', 'POST', 'PATCH', 'DELETE') or (not method and fields):
+                    if _CONTENT_ENDPOINT.search(pos[1]):
+                        out.add('gh writes contents')
+                    if _LABEL_ENDPOINT.search(pos[1]):
+                        out.add('label write')
+    return out
+
+
+def _written_scopes(doc):
+    """{job or None: set of token scopes granted above read}; '*' for a whole-token string."""
+    found = {}
+    blocks = [(None, doc.get('permissions'))] + [(n, j.get('permissions')) for n, j in (doc.get('jobs') or {}).items()]
+    for job, block in blocks:
+        if isinstance(block, str):
+            block = {'*': block}
+        for scope, level in (block or {}).items():
+            if str(level).strip().lower() not in ('read', 'none', 'read-all'):
+                found.setdefault(job, set()).add(str(scope))
+    return found
+
+
+def _runner_values(doc, job):
+    runner = job.get('runs-on')
+    if isinstance(runner, list):
+        values = []
+        for item in runner:
+            sub = _runner_values(doc, {**job, 'runs-on': item})
+            if sub is None:
+                return None
+            values += sub
+        return values
+    if not isinstance(runner, str):
+        return None
+    hit = re.fullmatch(r'\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\s*\}\}', runner.strip())
+    if not hit:
+        return None if '${{' in runner else [runner]
+    key, matrix = hit.group(1), (job.get('strategy') or {}).get('matrix')
+    if isinstance(matrix, dict):
+        values = matrix.get(key, [])
+        values = list(values) if isinstance(values, list) else [values]
+        values += [i[key] for i in matrix.get('include') or [] if isinstance(i, dict) and key in i]
+        return [str(v) for v in values] or None
+    producer = re.fullmatch(r'\$\{\{\s*fromJson\(\s*needs\.([A-Za-z0-9_-]+)\.outputs\.[A-Za-z0-9_-]+\s*\)\s*\}\}',
+                            str(matrix or '').strip())
+    if producer and producer.group(1) in (doc.get('jobs') or {}):
+        literals = [v for s in _scalars(doc['jobs'][producer.group(1)])
+                    for v in re.findall(r'["\']' + re.escape(key) + r'["\']\s*:\s*["\']([^"\']+)["\']', s)]
+        return literals or None
+    return None
+
+
+def _runner_violations(doc):
+    out = []
+    for name, job in (doc.get('jobs') or {}).items():
+        if 'uses' in job:
+            if not str(job['uses']).startswith('./.github/workflows/') or str(job.get('secrets')) == 'inherit':
+                out.append((name, 'reusable workflow'))
+            continue
+        values = _runner_values(doc, job)
+        if not values or any(v not in HOSTED for v in values):
+            out.append((name, 'runner'))
+    return out
 
 
 def writer_guard_violations(name, text):
     out = []
-    if set(re.findall(r'secrets\.([A-Za-z0-9_]+)', text)) != ADMITTED_SECRETS.get(name, set()):
+    if set(re.findall(r'secrets\.([A-Za-z0-9_]+)', text)) != ADMITTED_SECRETS.get(name, set()) or \
+            _SECRET_FORMS.search(text):
         out.append('secret')
     if MODEL_ACCESS.search(text):
         out.append('model credential')
-    if re.search(r'contents:\s*write|permissions:\s*write-all', text):
+    if re.search(r'contents:\s*[\'"]?write|permissions:\s*[\'"]?write-all', text):
         out.append('contents write')
-    if re.search(r'id-token:\s*write', text):
+    if re.search(r'id-token:\s*[\'"]?write', text):
         out.append('id-token')
-    if re.search(r'(?m)^\s*(?:-\s*)?(?:run:\s*)?git push\b', text):
-        out.append('git push')
-    for job in ((yaml.safe_load(text) or {}).get('jobs') or {}).values():
-        runner = job.get('runs-on')
-        if runner is not None and '${{' not in str(runner) and runner not in HOSTED:
-            out.append('runner')
+    try:
+        doc = yaml.safe_load(text) or {}
+    except yaml.YAMLError:
+        return out + ['unparseable']
+    if not isinstance(doc, dict):
+        return out + ['unparseable']
+    scopes = _written_scopes(doc)
+    if 'contents' in {s for v in scopes.values() for s in v} and 'contents write' not in out:
+        out.append('contents write')
+    if 'id-token' in {s for v in scopes.values() for s in v} and 'id-token' not in out:
+        out.append('id-token')
+    if scopes != {job: s for (file, job), s in ADMITTED_WRITES.items() if file == name}:
+        out.append('permission write')
+    if doc.get('permissions') is None:
+        out.append('no permissions block')
+    out += sorted(_command_violations('\n'.join(_scalars(doc))))
+    out += ['runner' if why == 'runner' else why for _, why in _runner_violations(doc)]
     return out
 
 
@@ -661,9 +823,10 @@ class NoAutomatedWriterTests(unittest.TestCase):
         for path in sorted(WORKFLOWS.glob('*.y*ml')):
             text = path.read_text()
             with self.subTest(path=path.name):
-                self.assertNotRegex(text, r'contents:\s*write')
-                self.assertNotRegex(text, r'id-token:\s*write')
-                self.assertNotRegex(text, r'(?m)^\s*git push\b')
+                doc = yaml.safe_load(text)
+                self.assertNotIn('git push', _command_violations('\n'.join(_scalars(doc))))
+                granted = {s for v in _written_scopes(doc).values() for s in v}
+                self.assertEqual(granted & {'contents', 'id-token', '*'}, set())
 
     def test_retired_writer_workflows_are_absent(self):
         for name in ('claude.yml', 'claude-conflict-writer.yml', 'conflict-scan.yml',
@@ -700,6 +863,9 @@ class NoAutomatedWriterTests(unittest.TestCase):
             'id-token': text.replace('contents: read', 'id-token: write', 1),
             'git push': text.replace('run: python3', 'run: git push origin HEAD\n      - run: python3', 1),
             'self-hosted': text.replace('runs-on: ubuntu-latest', 'runs-on: self-hosted', 1),
+            'git push after &&': text.replace('run: python3', 'run: make && git push\n      - run: python3', 1),
+            'quoted contents write': text.replace('contents: read', 'contents: "write"', 1),
+            'pull-requests write': text.replace('pull-requests: read', 'pull-requests: write', 1),
         }
         for label, mutated in mutants.items():
             with self.subTest(mutant=label):
@@ -710,12 +876,206 @@ class NoAutomatedWriterTests(unittest.TestCase):
 
     def test_every_job_uses_a_github_hosted_runner(self):
         for path in sorted(WORKFLOWS.glob('*.y*ml')):
-            for job_name, job in (workflow(path.name).get('jobs') or {}).items():
-                runner = job.get('runs-on')
-                if runner is None or '${{' in str(runner):
-                    continue
-                with self.subTest(path=path.name, job=job_name):
-                    self.assertIn(runner, HOSTED)
+            with self.subTest(path=path.name):
+                self.assertEqual(_runner_violations(yaml.safe_load(path.read_text())), [])
+
+def _wf(run='echo ok', top='permissions:\n  contents: read\n', job='', runs_on='ubuntu-latest'):
+    """A minimal new workflow (a name no table admits) whose one step runs `run`."""
+    body = '\n'.join('          ' + line for line in run.strip('\n').split('\n'))
+    return ('name: t\non: workflow_dispatch\n' + top + 'jobs:\n  j:\n    runs-on: ' + runs_on + '\n' + job +
+            '    steps:\n      - run: |\n' + body + '\n')
+
+
+def _kinds(text, name='new.yml'):
+    return writer_guard_violations(name, text)
+
+
+class WriterGuardWitnessTests(unittest.TestCase):
+    """DeepSeek round 1 on #332: each finding as a failing-then-passing witness, written as text.
+
+    These are strings, not files under .github/. Reader witnesses are marked F1..F4.
+    """
+
+    def test_control_the_template_is_clean(self):
+        self.assertEqual(_kinds(_wf()), [])
+
+    def test_f1_push_is_found_wherever_it_stands_in_a_run_step(self):
+        forms = [
+            'make && git push origin HEAD',                  # F1 witness C2b
+            'git -C . push origin HEAD',                     # F1 witness C3b
+            'true; git push',
+            'make | git push',
+            'make || git push',
+            'git commit -am x\nmake\ngit push',              # a later line of a multi-line script
+            'git -c user.name=x push',
+            'git --no-pager push',
+            'git --git-dir=.git push',
+            "bash -c 'make && git push'",
+            'sh -c "git push origin HEAD"',
+            'bash -c "cd x; git -C y push"',
+            '/usr/bin/git push',
+            'git "push"',
+            "git 'push'",
+            'make && \\\n  git push',                       # after a line continuation
+            'git${IFS}push',
+            '(cd x && git push)',
+            'echo $(git push)',
+            'env GIT_TRACE=1 git push',
+            'if true; then git push; fi',
+            'git send-pack origin HEAD',
+            'git-push origin',
+            'git.exe push',
+            'x=1 git push',
+        ]
+        for form in forms:
+            with self.subTest(form=form):
+                self.assertIn('git push', _kinds(_wf(form)))
+
+    def test_f1_push_in_other_scalars_and_not_in_names(self):
+        script = ("name: t\non: workflow_dispatch\npermissions:\n  contents: read\njobs:\n  j:\n    runs-on: ubuntu-latest\n"
+                  "    steps:\n      - uses: actions/github-script@v7\n        with:\n          script: |\n"
+                  "            await exec.exec('git', ['push'])\n            await exec.exec('sh -c \"git push\"')\n")
+        self.assertIn('git push', _kinds(script))
+        named = _wf().replace('- run: |', '- name: Wait for a follow-up git push\n        run: |')
+        self.assertEqual(_kinds(named), [])
+
+    def test_f1_benign_git_and_words_do_not_trip_the_push_check(self):
+        for form in ('git status', 'git log --oneline -3', 'git fetch origin', 'git diff --name-only',
+                     'echo pushed && make pushes', 'python3 push_tool.py', 'git checkout -b x'):
+            with self.subTest(form=form):
+                self.assertNotIn('git push', _kinds(_wf(form)))
+
+    def test_f2_write_permissions_other_than_contents_are_refused_unless_admitted_by_name(self):
+        for scope in ('pull-requests', 'issues', 'statuses', 'checks', 'actions', 'deployments', 'packages',
+                      'security-events', 'pages', 'discussions', 'attestations'):
+            for placement in ('workflow', 'job'):
+                with self.subTest(scope=scope, placement=placement):
+                    if placement == 'workflow':
+                        text = _wf(top=f'permissions:\n  contents: read\n  {scope}: write\n')
+                    else:
+                        text = _wf(job=f'    permissions:\n      contents: read\n      {scope}: write\n')
+                    self.assertIn('permission write', _kinds(text))
+        # F2 witnesses A, E and A6, verbatim in shape.
+        comment = _wf('gh pr comment 149 --body "looks good"', top='permissions:\n  contents: read\n  pull-requests: write\n')
+        self.assertIn('permission write', _kinds(comment))
+        dispatch = _wf('gh workflow run ci.yml', top='permissions:\n  contents: read\n  actions: write\n')
+        self.assertIn('permission write', _kinds(dispatch))
+        self.assertIn('permission write', _kinds(_wf(top='permissions: write-all\n')))
+
+    def test_f2_a_missing_permissions_block_is_refused(self):
+        text = _wf(top='')
+        self.assertIn('no permissions block', _kinds(text))
+
+    def test_f2_the_admitted_writes_are_exact_for_the_real_files(self):
+        # The two workflows that hold a write today keep exactly that write; a different or an extra one is red.
+        for name, anchor, extra in (('ci-label-retrigger.yml', '  actions: write\n', '  statuses: write\n'),
+                                    ('ci.yml', '      issues: write\n', '      statuses: write\n'),
+                                    ('ci.yml', '      issues: write\n', '      actions: write\n')):
+            text = (WORKFLOWS / name).read_text()
+            self.assertEqual(writer_guard_violations(name, text), [])
+            with self.subTest(name=name, extra=extra.strip()):
+                self.assertIn(anchor, text)
+                self.assertIn('permission write', writer_guard_violations(name, text.replace(anchor, anchor + extra, 1)))
+        # Admission is by file name: the same text under another name is red.
+        self.assertIn('permission write', writer_guard_violations('other.yml', (WORKFLOWS / 'ci-label-retrigger.yml').read_text()))
+        # Dropping an admitted write also turns the table red, so the table cannot go stale.
+        text = (WORKFLOWS / 'ci-label-retrigger.yml').read_text()
+        self.assertIn('permission write', writer_guard_violations('ci-label-retrigger.yml', text.replace('  actions: write\n', '  actions: read\n', 1)))
+
+    def test_f2_labels_and_contents_through_gh_or_the_api_are_refused_even_with_an_admitted_write(self):
+        forms = {
+            'label write': ['gh pr edit 1 --add-label ci:full', 'gh issue edit 1 --remove-label x', 'gh label create x',
+                            'gh api --method POST repos/o/r/issues/1/labels -f labels[]=x',
+                            "await github.rest.issues.addLabels({})"],
+            'gh writes contents': ['gh api -X PUT repos/o/r/contents/x -f message=m -f content=Zm9v',
+                                   'gh api --method POST repos/o/r/git/refs -f ref=refs/heads/x -f sha=1',
+                                   'gh api repos/o/r/merges -f base=main -f head=x', 'gh pr merge 1 --squash',
+                                   'gh release create v1', 'gh repo sync o/r', 'gh pr create --fill'],
+            'api writes contents': ['createOrUpdateFileContents({})', 'github.rest.git.updateRef({})'],
+            'gh writes a pull request': ['gh pr ready 1', 'gh pr close 1', 'gh pr review 1 --approve', 'gh pr edit 1 --title x'],
+        }
+        for kind, lines in forms.items():
+            for line in lines:
+                with self.subTest(kind=kind, line=line):
+                    text = _wf(line, top='permissions:\n  contents: read\n  pull-requests: write\n')
+                    self.assertIn(kind, _kinds(text))
+        # Reads, and a comment by the admitted benchmarks job, are not a contents or a label write.
+        ok = _wf('gh api --paginate repos/o/r/pulls/1/files --jq .[].filename\n'
+                 'gh api --method POST repos/o/r/issues/1/comments --raw-field body=x\n'
+                 'gh api repos/o/r/contents/x',
+                 top='permissions:\n  contents: read\n  pull-requests: write\n')
+        self.assertEqual(sorted(set(_kinds(ok)) - {'permission write'}), [])
+
+    def test_f3_quoted_and_flow_forms_of_a_write_are_refused(self):
+        for top in ('permissions:\n  contents: "write"\n', "permissions:\n  contents: 'write'\n",
+                    'permissions: {contents: write}\n', 'permissions: {contents: "write"}\n',
+                    'permissions:\n  contents: WRITE\n', 'permissions: "write-all"\n'):
+            with self.subTest(top=top):
+                self.assertIn('contents write', _kinds(_wf(top=top)))
+        job_level = _wf(job='    permissions:\n      contents: "write"\n')
+        self.assertIn('contents write', _kinds(job_level))
+        self.assertIn('id-token', _kinds(_wf(top='permissions:\n  id-token: "write"\n')))
+
+    def test_f4_a_matrix_runner_must_resolve_to_hosted_runners(self):
+        def matrix(runs_on, strategy):
+            return _wf(runs_on=runs_on, job=strategy)
+        self.assertEqual(_kinds(matrix('${{ matrix.os }}', '    strategy:\n      matrix:\n        os: [ubuntu-latest, windows-2025]\n')), [])
+        witnesses = {
+            'F4 witness D2': '    strategy:\n      matrix:\n        os: [self-hosted, ubuntu-latest]\n',
+            'include leg': '    strategy:\n      matrix:\n        os: [ubuntu-latest]\n        include:\n          - os: self-hosted\n',
+            'unknown key': '    strategy:\n      matrix:\n        other: [ubuntu-latest]\n',
+            'no matrix': '',
+            'expression matrix, no producer': '    strategy:\n      matrix: ${{ fromJson(inputs.m) }}\n',
+        }
+        for label, strategy in witnesses.items():
+            with self.subTest(witness=label):
+                self.assertIn('runner', _kinds(matrix('${{ matrix.os }}', strategy)))
+        for runs_on in ('${{ inputs.runner }}', '[self-hosted, linux]', '[ubuntu-latest, self-hosted]',
+                        '{group: big, labels: x}', '${{ matrix.os }}-extra', 'self-hosted'):
+            with self.subTest(runs_on=runs_on):
+                self.assertIn('runner', _kinds(_wf(runs_on=runs_on)))
+        self.assertIn('runner', _kinds(_wf().replace('    runs-on: ubuntu-latest\n', '')))
+
+    def test_f4_a_generated_matrix_is_read_from_the_job_that_produces_it(self):
+        def two_jobs(literals):
+            return ('name: t\non: workflow_dispatch\npermissions:\n  contents: read\njobs:\n  plan:\n    runs-on: ubuntu-latest\n'
+                    '    outputs:\n      matrix: ${{ steps.m.outputs.matrix }}\n    steps:\n      - id: m\n        run: |\n'
+                    "          echo 'matrix=" + literals + "' >> \"$GITHUB_OUTPUT\"\n"
+                    '  build:\n    needs: plan\n    runs-on: ${{ matrix.runner }}\n    strategy:\n'
+                    '      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}\n    steps:\n      - run: echo ok\n')
+        good = '{"include": [{"runner": "ubuntu-24.04"}, {"runner": "windows-2025"}]}'
+        self.assertEqual(_kinds(two_jobs(good)), [])
+        self.assertIn('runner', _kinds(two_jobs('{"include": [{"runner": "ubuntu-24.04"}, {"runner": "self-hosted"}]}')))
+        self.assertIn('runner', _kinds(two_jobs('{"include": []}')))
+
+    def test_f4_a_remote_reusable_workflow_or_inherited_secrets_are_refused(self):
+        def caller(uses, extra=''):
+            return ('name: t\non: workflow_dispatch\npermissions:\n  contents: read\njobs:\n  call:\n    uses: ' + uses + '\n' + extra)
+        self.assertIn('reusable workflow', _kinds(caller('someone/elsewhere/.github/workflows/build.yml@main', '    secrets: inherit\n')))
+        self.assertIn('reusable workflow', _kinds(caller('someone/elsewhere/.github/workflows/build.yml@main')))
+        self.assertIn('reusable workflow', _kinds(caller('./.github/workflows/ci.yml', '    secrets: inherit\n')))
+        self.assertIn('secret', _kinds(caller('./.github/workflows/ci.yml', '    secrets: inherit\n')))
+        self.assertEqual(_kinds(caller('./.github/workflows/ci.yml')), [])
+
+    def test_secrets_and_variables_by_any_spelling_and_other_model_tools_are_refused(self):
+        for step in ('env:\n          K: ${{ secrets[\'OTHER\'] }}', 'env:\n          K: ${{ toJSON(secrets) }}',
+                     'env:\n          K: ${{ vars.SOME_KEY }}'):
+            with self.subTest(step=step):
+                self.assertIn('secret', _kinds(_wf().replace('- run: |', '- ' + step + '\n        run: |')))
+        for token in ('GEMINI_API_KEY', 'google-github-actions/run-gemini-cli', 'OPENROUTER_API_KEY', 'DEEPSEEK_API_KEY'):
+            with self.subTest(token=token):
+                self.assertIn('model credential', _kinds(_wf('echo ' + token)))
+
+    def test_every_real_workflow_still_passes_and_the_real_admissions_are_what_the_tree_holds(self):
+        held = {}
+        for path in sorted(WORKFLOWS.glob('*.y*ml')):
+            self.assertEqual(writer_guard_violations(path.name, path.read_text()), [], path.name)
+            for job, scopes in _written_scopes(yaml.safe_load(path.read_text())).items():
+                held[(path.name, job)] = scopes
+        self.assertEqual(held, ADMITTED_WRITES)
+        for scopes in ADMITTED_WRITES.values():
+            self.assertFalse({'contents', 'id-token', '*'} & scopes)
+
 
 # The linux job runs this file by path, not every tools/test_*.py. Importing
 # the class makes that invocation collect the pinned-checkout regression.

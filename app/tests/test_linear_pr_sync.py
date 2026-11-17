@@ -5,6 +5,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / ".github" / "scripts" / "linear_pr_sync.py"
 WORKFLOW = ROOT / ".github" / "workflows" / "linear-pr-sync.yml"
@@ -222,14 +224,15 @@ def test_retries_until_mergeable_is_known():
     assert slept == [2.0, 2.0]
 
 
+def test_workflow_is_dispatch_only():
+    # CSL-862 commented the automatic triggers out. Read the parsed `on:` (YAML 1.1 reads the key as True),
+    # not the text, so a trigger that lives only in a comment neither satisfies nor fails this test.
+    doc = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    assert doc.get("on", doc.get(True)) == {"workflow_dispatch": None}
+
+
 def test_workflow_structure():
     text = WORKFLOW.read_text(encoding="utf-8")
-    assert "pull_request_target:" in text
-    assert "opened" in text
-    assert "synchronize" in text
-    assert "ready_for_review" in text
-    assert "closed" in text
-    assert "branches: [main]" in text
     assert "runs-on: ubuntu-latest" in text
     assert "timeout-minutes: 5" in text
     assert "cancel-in-progress: true" in text

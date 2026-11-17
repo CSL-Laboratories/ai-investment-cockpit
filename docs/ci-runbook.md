@@ -65,7 +65,8 @@ adds `ci:full` / `enhancement` (AGENTS.md:156-157, 168-172). Escalate on the Lin
 
 ## 5. Stop or roll back automation
 
-No repository workflow writes to a PR any more: the Claude fixer, the `@claude` path, the
+No repository workflow reviews or fixes a PR any more (the one comment still posted is the informational
+`benchmarks` job of `ci.yml`): the Claude fixer, the `@claude` path, the
 conflict writer and the stuck-thread watch were retired in CSL-238 (Lucas, Nov 16, 2026; the Linear PR sync, dispatch-only, was kept on his word),
 and with them the `claude:pause` label and the `CLAUDE_FIXER_PAUSE` variable. A collision is now
 between people or hand-driven agents: stop competing authoring, read the work issue's owner and

@@ -169,9 +169,9 @@ Read-only API queries are fine.
 **How.** Ask on the work issue: one Linear comment @mentioning the issue owner with
 the question, two or three options, your recommendation, and what you will do
 meanwhile ("paused" or other proceed-list work, never the option you are asking
-about or work that presupposes one). A stuck review thread instead goes in the
-PR's roll-up, found only by its `<!-- stuck-pr-threads:owner/repo#N -->` marker,
-in your own block; if the PR has no roll-up, ask on the work issue as above. Product and architecture questions stay on the work issue.
+about or work that presupposes one). A stuck review thread is asked on the
+work issue as above: the stuck-thread watch that wrote the PR roll-up is retired (CSL-238), so a roll-up
+exists only if a person keeps one (found by its `<!-- stuck-pr-threads:owner/repo#N -->` marker, in your own block). Product and architecture questions stay on the work issue.
 For a decision or direction issue you are assigned or have claimed, the research requirement in
 [Linear-first workflow](#linear-first-workflow) still comes first. A Grok Bot coordinator may
 research and recommend on a decision or direction issue. Attribute the brief explicitly as
@@ -423,7 +423,7 @@ Hosted split (PR #102):
 ## Review roles
 
 - **Devin Review** is the only automated reviewer: the `devin-ai-integration` GitHub App, run from Devin's side. No workflow in this repository starts it, and nothing in this repository answers it; people, and agents working by hand for a person, read and answer its threads.
-- **Retired** (CSL-238, Lucas, Nov 16, 2026): the Codex CI/fixer gate, the Claude Code Action fixer and `@claude` path (`claude.yml`), the Claude conflict scan and writer, the CSL-474 probe workflow and the stuck-thread watch. The Linear PR sync (`linear-pr-sync.yml`) is kept on Lucas's word of Nov 16, 2026: it is dispatch-only and writes nothing to Linear. No automated reviewer verdict gates CI, a candidate or a merge, and no workflow writes to a PR or a label.
+- **Retired** (CSL-238, Lucas, Nov 16, 2026): the Codex CI/fixer gate, the Claude Code Action fixer and `@claude` path (`claude.yml`), the Claude conflict scan and writer, the CSL-474 probe workflow and the stuck-thread watch. The Linear PR sync (`linear-pr-sync.yml`) is kept on Lucas's word of Nov 16, 2026: it is dispatch-only and writes nothing to Linear. No automated reviewer verdict gates CI, a candidate or a merge. No workflow writes a label or repository contents, and only two hold a write above read, admitted by name in `NoAutomatedWriterTests`: `ci-label-retrigger.yml` dispatches CI (`actions`), and the `benchmarks` job of `ci.yml` posts its informational comment on a pull request (`issues`, `pull-requests`).
 - **GitHub-hosted runners** host the test matrix. That is the GitHub test-CI path, not a revival of this cockpit's retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired from this cockpit's research/dev swarm dispatch" still apply to cockpit research/dev swarm jobs. Devin may still post research briefs, which, like all research, land in csl-research.
 - Cursor, Codex (as a coding agent), Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs. A founder may have their own bot post reviews under their account when they direct it. The author agent may fix CI failures on its own PR.
 

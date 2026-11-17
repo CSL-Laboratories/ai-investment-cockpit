@@ -110,10 +110,10 @@ Meanwhile: paused (or: <other work from the proceed list>)
 "Meanwhile" is never the option you are asking about, nor work that presupposes
 any option.
 
-A stuck review thread is different: it goes in the PR's `Stuck PR threads:` roll-up,
-which you find only by its `<!-- stuck-pr-threads:owner/repo#N -->` marker (never by
-title), writing inside your own block. If the PR has no roll-up, ask on the work issue
-as above. Product and architecture questions stay on the work issue.
+A stuck review thread is asked on the work issue as above. The stuck-thread watch that wrote the PR's
+`Stuck PR threads:` roll-up is retired (CSL-238); a roll-up exists only if a person keeps one, found by its
+`<!-- stuck-pr-threads:owner/repo#N -->` marker (never by title), written inside your own block.
+Product and architecture questions stay on the work issue.
 
 If you are the assignee or the claimant of a decision or direction issue, the research
 requirement in AGENTS.md "Linear-first workflow" still comes first. A Grok Bot
