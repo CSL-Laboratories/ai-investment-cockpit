@@ -13,7 +13,7 @@ from filings.edgar.fetch import SecFairAccessHalt
 
 
 class HaltSweepS6Item01(unittest.TestCase):
-    def test_01_companyfacts_halt_revokes_all_completion_grants(self):
+    def test_01_companyfacts_halt_withholds_all_completion_grants(self):
         from ingest import edgar_pipeline as pipeline
         from filings import delta as delta_module
         from filings.edgar import submissions_poll
