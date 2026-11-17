@@ -17,7 +17,9 @@ from bridge.anchor import InMemoryAnchorStore, post_head_anchor
 from config.settings import Mode, Settings
 from core.clock import FrozenClock
 from orchestrator import scheduler as sch
-from orchestrator.gate import GateResult, compute_gate
+from orchestrator.gate import (
+    GateResult, _arm_bound, _credited_auto_time, _weeks_in_modes, compute_gate,
+)
 from orchestrator.killswitch import killswitch
 from orchestrator.market_calendar import is_trading_day, to_eastern
 from orchestrator.mode_ladder import ModeLadder
@@ -69,10 +71,14 @@ def _mode_rows(st):
         return [dict(r.payload or {}) for r in rows]
 
 
-def _auto_full_gate(st):
+def _gate(st, target):
     st.anchor_store = InMemoryAnchorStore()
     post_head_anchor(st, record=False)
-    return compute_gate(st, Mode.auto_full)
+    return compute_gate(st, target)
+
+
+def _auto_full_gate(st):
+    return _gate(st, Mode.auto_full)
 
 
 def _live_weeks(row):
@@ -218,3 +224,83 @@ def test_two_concurrent_scheduled_disarms_write_one_row(state):
         assert len(_mode_rows(state)) == before + 1
         assert lad.current() is Mode.review_live
         state.clock._at = row.armed_until + timedelta(hours=18)
+
+
+# ---- OWNER'S POINT 2, pinned as built: the tail of an expired arm is review_live time -----
+def test_op2_tail_of_an_expired_arm_counts_toward_the_lower_gate(state):
+    """Three weeks of paper, a two-hour arm, then a week with no disarm row (the process was
+    down). The mode oracle reads the tail as review_live, so it counts toward ``weeks_in_lower``:
+    4.00 weeks, enough to unlock auto_veto (main reads 3.00 and stays locked, because main counts
+    that week as auto). The stricter alternative, crediting the tail to no bucket, is a change in
+    ``_credited_auto_time`` and would turn this test red."""
+    lad = ModeLadder(state)
+    lad.set_mode(Mode.paper, actor="test")
+    for i in range(30):
+        state.audit.append(EVENT_ADJUDICATION, actor="test",
+                           payload={"proposal_id": f"synthetic-{i}", "decision": "approve"})
+    state.clock._at += timedelta(weeks=3)
+    lad.set_mode(Mode.review_live, actor="test")
+    row = _arm(lad)
+    assert row.armed_until - row.armed_at == timedelta(hours=2)
+    state.clock._at = row.armed_until + timedelta(weeks=1)
+    assert lad.current() is Mode.review_live
+    gate = _gate(state, Mode.auto_veto)
+    assert gate.metrics["weeks_in_lower"] == pytest.approx(4.0)
+    assert gate.metrics["weeks_in_auto_veto"] == pytest.approx(2 / 168)
+    assert gate.unlockable, gate.reasons
+
+
+# ---- the bound as the oracle reads it -------------------------------------------------
+def test_arm_bound_without_a_zone_is_no_bound():
+    """The oracle reads a naive ``armed_until`` as read_only, so the gate gives it no credit."""
+    assert _arm_bound({"armed_until": "2026-06-02T20:00:00"}) is None
+    assert _arm_bound({"armed_until": "2026-06-02T20:00:00+00:00"}) == datetime(2026, 6, 2, 20)
+    assert _arm_bound({"armed_until": "2026-06-02T16:00:00-04:00"}) == datetime(2026, 6, 2, 20)
+
+
+@pytest.mark.parametrize("until", ["not-a-date", 12345, ["2026-06-02T20:00:00+00:00"], True, ""],
+                         ids=["text", "number", "list", "bool", "empty"])
+def test_arm_bound_that_does_not_parse_is_no_bound(until):
+    assert _arm_bound({"armed_until": until}) is None
+    assert _arm_bound({}) is None
+
+
+# ---- the credited times are never negative ---------------------------------------------
+def test_credited_auto_time_is_never_negative():
+    t0 = datetime(2026, 6, 2, 14)
+    hour = timedelta(hours=1)
+    # bound before the start: nothing is auto, everything is the tail
+    assert _credited_auto_time(t0, t0 + 2 * hour, t0 - hour) == (0.0, 7200.0)
+    # bound after the end: everything is auto, the tail is empty
+    assert _credited_auto_time(t0, t0 + 2 * hour, t0 + 5 * hour) == (7200.0, 0.0)
+    # the clock went back inside the entry
+    assert _credited_auto_time(t0, t0 - hour, t0 + hour) == (0.0, 0.0)
+    assert _credited_auto_time(t0, t0 + 2 * hour, None) == (0.0, 0.0)
+
+
+def test_weeks_in_modes_clamps_a_clock_that_went_back():
+    t0 = datetime(2026, 6, 2, 14)
+    hour = timedelta(hours=1)
+    events = [(t0 + hour, "paper", None), (t0, "paper", None)]      # second row is EARLIER
+    assert _weeks_in_modes(events, t0 + 2 * hour, {"paper"}) == pytest.approx(2 * 3600 / WEEK_S)
+
+
+# ---- the two guards of the scheduled disarm's read of the signed row --------------------
+def test_latest_signed_mode_ignores_a_row_that_fails_its_signature(state):
+    lad = _qualifying_history(state)
+    assert lad._latest_signed_mode() is Mode.review_live
+    state.audit.append(EVENT_MODE_CHANGE, actor="test",
+                       payload={"kind": "arm", "from": "review_live", "to": "paper"})
+    assert lad._latest_signed_mode() is Mode.paper
+    with state.session_factory() as s:
+        entry = lad._latest_entry(s)
+        entry.payload = {**entry.payload, "to": "auto_veto"}          # edited after signing
+        s.commit()
+    assert lad._latest_signed_mode() is None
+
+
+def test_latest_signed_mode_ignores_a_mode_name_it_does_not_know(state):
+    lad = _qualifying_history(state)
+    state.audit.append(EVENT_MODE_CHANGE, actor="test",
+                       payload={"kind": "arm", "from": "review_live", "to": "not_a_mode"})
+    assert lad._latest_signed_mode() is None
