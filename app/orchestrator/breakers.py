@@ -239,8 +239,10 @@ class BreakerEngine:
                 row, EVENT_BREAKER_TRIP, actor=actor, payload={"breaker": name, "reason": reason}
             )
         except BaseException:   # noqa: BLE001 - SEC-04 fail closed: drop FIRST, then re-raise
-            # A trip whose record failed must still disarm: a breaker that fired never leaves
-            # an auto mode armed. A drop that also raises chains this failure as its context.
+            # A trip whose record failed must still ATTEMPT the disarm, then re-raise. A drop that
+            # also raises propagates (chaining this failure as its context) and the auto mode can
+            # stay armed: once a trip's record is in the ledger, evaluate_and_trip skips that
+            # breaker, so nothing retries a failed drop.
             self._ladder.drop_to_review_live(
                 f"breaker {name}: {reason}", clock=clock, actor=actor, kind="breaker_drop"
             )

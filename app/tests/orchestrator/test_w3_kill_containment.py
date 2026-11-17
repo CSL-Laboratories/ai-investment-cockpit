@@ -3,6 +3,7 @@ earlier one raises, and must surface the failure after it. Synthetic state; no n
 from __future__ import annotations
 
 import importlib
+import json
 from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace as NS
@@ -147,3 +148,130 @@ def test_w3_kill_audit_failure_surfaces_and_denies(state, tmp_path, monkeypatch)
         module.killswitch(state, actor="test", halt_path=tmp_path / "HALT-a")
     assert (tmp_path / "HALT-a").exists() and ladder.current() is Mode.review_live
     assert state.effective_watch_only_reason() is not None
+
+
+# ---- answer to the DeepSeek read: pin the contracts the docstrings promise -------------
+class _Crisis(BaseException):
+    """A BaseException that is not an Exception (the R2-S3 class: CancelledError, SystemExit)."""
+
+
+@pytest.mark.parametrize("step", ["halt", "disarm", "audit"])
+def test_w3_base_exception_at_a_new_step_still_completes_every_step(step, state, tmp_path,
+                                                                    monkeypatch):
+    module = importlib.import_module("orchestrator.killswitch")
+    ladder = _arm(state)
+    calls = []
+
+    def boom(*args, **kwargs):
+        raise _Crisis("synthetic")
+
+    if step == "halt":
+        monkeypatch.setattr(module, "set_halt", boom)
+    elif step == "disarm":
+        monkeypatch.setattr(module, "ModeLadder", lambda st: NS(drop_to_review_live=boom))
+    else:
+        real = state.audit.append
+
+        def append(event_type, *args, **kwargs):
+            if event_type == EVENT_KILLSWITCH:
+                raise _Crisis("synthetic")
+            return real(event_type, *args, **kwargs)
+
+        monkeypatch.setattr(state.audit, "append", append)
+    with pytest.raises(_Crisis):
+        module.killswitch(
+            state, actor="test", halt_path=tmp_path / "HALT-b",
+            cancel_hook=lambda: (calls.append("cancel") or 0),
+            disconnect_hook=lambda: calls.append("disconnect"),
+        )
+    assert calls == ["cancel", "disconnect"]
+    assert state.effective_watch_only_reason() is not None
+    if step != "audit":
+        rows = _kill_rows(state)
+        assert len(rows) == 1 and rows[0]["failed_steps"] == [step]
+    if step != "disarm":
+        assert ladder.current() is Mode.review_live
+    if step != "halt":
+        assert (tmp_path / "HALT-b").exists()
+
+
+def test_w3_kill_row_holds_type_names_only_and_the_error_names_every_failure(state, tmp_path,
+                                                                            monkeypatch):
+    module = importlib.import_module("orchestrator.killswitch")
+    _arm(state)
+    secret = "postgres://user:pw@host/db /home/user/.ssh/id_rsa"
+
+    def fail_write(*args, **kwargs):
+        raise PermissionError(secret)
+
+    def drop(*args, **kwargs):
+        raise RuntimeError(secret)
+
+    monkeypatch.setattr(module, "set_halt", fail_write)
+    monkeypatch.setattr(module, "ModeLadder", lambda st: NS(drop_to_review_live=drop))
+    with pytest.raises(PermissionError) as info:
+        module.killswitch(state, actor="test", halt_path=tmp_path / "HALT-c")
+    rows = _kill_rows(state)
+    assert len(rows) == 1
+    assert rows[0]["errors"] == {"halt": "PermissionError", "disarm": "RuntimeError"}
+    assert "pw@host" not in json.dumps(rows[0]) and ".ssh" not in json.dumps(rows[0])
+    notes = getattr(info.value, "__notes__", [])
+    assert len(notes) == 1 and "disarm (RuntimeError)" in notes[0]
+
+
+def test_w3_failed_denial_install_is_recorded_and_the_kill_still_finishes(state, tmp_path,
+                                                                         monkeypatch):
+    module = importlib.import_module("orchestrator.killswitch")
+    ladder = _arm(state)
+
+    def fail_write(*args, **kwargs):
+        raise PermissionError("synthetic unwritable sentinel parent")
+
+    def deny(reason):
+        raise MemoryError("synthetic denial failure")
+
+    monkeypatch.setattr(module, "set_halt", fail_write)
+    monkeypatch.setattr(state, "admit_integrity_failure", deny)
+    with pytest.raises(PermissionError):
+        module.killswitch(state, actor="test", halt_path=tmp_path / "HALT-d")
+    assert ladder.current() is Mode.review_live
+    rows = _kill_rows(state)
+    assert len(rows) == 1
+    assert rows[0]["failed_steps"] == ["halt", "deny"]
+    assert rows[0]["errors"] == {"halt": "PermissionError", "deny": "MemoryError"}
+
+
+def test_w3_trip_record_base_exception_still_drops(state, monkeypatch):
+    ladder = _arm(state)
+    real = state.audit.record_state_change
+
+    def record(row, event_type, *args, **kwargs):
+        if event_type == EVENT_BREAKER_TRIP:
+            raise _Crisis("synthetic")
+        return real(row, event_type, *args, **kwargs)
+
+    monkeypatch.setattr(state.audit, "record_state_change", record)
+    with pytest.raises(_Crisis):
+        BreakerEngine(state).trip("daily_drawdown", "synthetic breach", actor="test")
+    assert ladder.current() is Mode.review_live, "breaker fired but auto stayed armed"
+
+
+def test_w3_evaluate_and_trip_base_exception_continues_and_names_the_later_failure(state,
+                                                                                  monkeypatch):
+    engine = BreakerEngine(state)
+    watch = []
+
+    def trip(*args, **kwargs):
+        raise _Crisis("synthetic")
+
+    monkeypatch.setattr(engine, "trip", trip)
+    monkeypatch.setattr(engine, "needs_watch_only_transition", lambda vendor: True)
+    monkeypatch.setattr(engine, "enter_watch_only",
+                        lambda vendor, reason, **kw: watch.append(vendor) or NS())
+    signals = BreakerSignals(equity_drawdown_today=Decimal("10000"), consecutive_losses=1000,
+                             max_data_age_s=10_000.0)
+    with pytest.raises(_Crisis) as info:
+        engine.evaluate_and_trip(signals)
+    assert watch == ["market_data"], "a failed trip skipped the stale-data watch-only"
+    notes = getattr(info.value, "__notes__", [])
+    assert notes == ["breaker consecutive_losses also failed: _Crisis"]
