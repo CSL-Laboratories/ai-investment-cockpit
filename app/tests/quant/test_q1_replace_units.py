@@ -205,3 +205,60 @@ class QuantWitnesses(unittest.TestCase):
         self.assertTrue(guards.check(request, oms=runner.oms).allowed)
         runner._replace(request, Event(**_stamps()))
         self.assertEqual(runner.book_for('S').get('a').qty, runner.oms.get('a').remaining_qty)
+
+
+# ---- S6: the venue's fills-before-entry memory (answer to review 1, F1) -------------------
+def _venue_with_partial_fill(qty=200, filled=50):
+    venue = SimVenue(symbol="S", latency=LatencyModel.instant())
+    venue.accept_order(NewOrder(client_id="a", symbol="S", side=Side.BUY, qty=qty,
+                                price_ticks=100), owner="t", ts=0)
+    venue.advance(0)
+    match(venue.book, AggressiveOrder(order_id="m", side=Side.SELL, qty=filled, price_ticks=100,
+                                      tif=TimeInForce.IOC))
+    return venue
+
+
+def test_q1_s6_venue_second_replace_to_the_same_total_rests_the_same_remainder():
+    venue = _venue_with_partial_fill()
+    assert venue.replace_order("a", new_qty=300, ts=1) is True
+    assert venue.book.get("a").qty == 250
+    assert venue.replace_order("a", new_qty=300, ts=2) is True
+    assert venue.book.get("a").qty == 250       # the 50 filled before the first replace still count
+
+
+def test_q1_s6_venue_fill_on_arrival_is_remembered_by_a_later_replace():
+    venue = SimVenue(symbol="S", latency=LatencyModel.instant())
+    venue.book.add(order_id="liq", owner="x", side=Side.SELL, price_ticks=100, qty=4)
+    venue.accept_order(NewOrder(client_id="a", symbol="S", side=Side.BUY, qty=10,
+                                price_ticks=100), owner="t", ts=0)
+    venue.advance(0)
+    assert venue.book.get("a").qty == 6         # 4 traded on arrival, 6 rest
+    assert venue.replace_order("a", new_qty=10, ts=1) is True
+    assert venue.book.get("a").qty == 6         # a total of 10 with 4 filled is 6, not 10
+
+
+def test_q1_s6_venue_cancel_forgets_the_fills_before_entry():
+    venue = _venue_with_partial_fill()
+    assert venue.replace_order("a", new_qty=300, ts=1) is True
+    assert venue._filled_before_entry == {"a": 50}
+    assert venue.cancel_order("a") is True
+    assert "a" not in venue._filled_before_entry
+
+
+def test_q1_s6_venue_fill_record_is_pruned_to_resting_orders_and_stays_bounded():
+    venue = _venue_with_partial_fill()
+    assert venue.replace_order("a", new_qty=300, ts=1) is True      # "a" rests with a record
+    for index in range(1100):                                        # ids that traded out
+        venue._note_filled(f"gone-{index}", 1)
+    assert "a" in venue._filled_before_entry                         # a resting order is kept
+    assert len(venue._filled_before_entry) < 1100                    # the others are dropped
+    assert all(key == "a" or key.startswith("gone-") for key in venue._filled_before_entry)
+    assert len(venue._filled_before_entry) <= 1025
+
+
+# ---- S7 (answer to review 1, F2): the runner never rests more than the total less the OMS fills
+def test_q1_s7_runner_book_above_the_oms_does_not_inflate_the_replace():
+    runner = _seeded_runner(200)
+    runner.book_for("S").replace("a", new_qty=400)      # desync: the book holds more than the OMS
+    runner._replace(ReplaceOrder(client_id="a", new_qty=300), Event(**_stamps()))
+    assert runner.book_for("S").get("a").qty == 300     # what the guard judged, never 500

@@ -284,6 +284,8 @@ class SimVenue:
                     return False
                 if new_price_ticks is not None and new_price_ticks <= 0:
                     return False
+                # An order still in flight has traded nothing, so its total IS what will
+                # rest: resting_after_replace(new_qty, filled=0) is the identity here.
                 pending.intent = replace(
                     pending.intent,
                     qty=new_qty if new_qty is not None else pending.intent.qty,
