@@ -18,6 +18,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_FLOOR
 
+from core.numeric import is_int_value
 from quant.book.lob import BookSnapshot
 from quant.costs import FeeSchedule, holding_seconds
 from quant.events import PriceScale, Side
@@ -347,8 +348,16 @@ def _validate_params(params: VerifyParams) -> str | None:
         _ok_decimal(params.min_net_cost_multiple),
         _ok_decimal(params.marginal_cost_bps),
         _ok_decimal(params.uneconomic_cost_bps),
+        _ok_decimal(params.max_borrow_rate),
+        _ok_decimal(params.max_expected_gross_return_bps),
     )):
         return "execution-verification thresholds must be finite decimals"
+    # NF/Q25: the age limits are compared raw. NaN read every age as fresh, +inf removed
+    # the bound and True read as 1; only a whole int is a limit.
+    if not all(is_int_value(limit) for limit in (
+            params.max_staleness_ns, params.max_edge_age_ns,
+            params.max_borrow_age_ns, params.max_metrics_age_days)):
+        return "execution-verification age limits must be whole ints"
     checks = (
         (params.max_adv_participation > 0
          and params.max_adv_participation <= Decimal("0.10"),
@@ -584,6 +593,12 @@ def verify_proposal(proposal: dict, book: BookSnapshot, params: VerifyParams, *,
             reason="evaluation clock (now_ns) is required; refusing to price a book "
                    "with no staleness bound",
         )
+    if not is_int_value(now_ns):
+        return _empty_verdict(
+            symbol=symbol, side=side_raw, effect=_effect_for(proposal, position_effect),
+            qty=0, book_seq=book.seq, ts=book.ts,
+            reason="evaluation clock (now_ns) must be int nanoseconds",
+        )
     ts = now_ns
     effect = _effect_for(proposal, position_effect)
     if side_raw not in {"buy", "sell"} or effect is None:
@@ -616,6 +631,11 @@ def verify_proposal(proposal: dict, book: BookSnapshot, params: VerifyParams, *,
         return _empty_verdict(
             symbol=symbol, side=side_raw, effect=effect, qty=0,
             book_seq=book.seq, ts=ts, reason="one-sided or empty L1 book",
+        )
+    if not is_int_value(book.ts):
+        return _empty_verdict(
+            symbol=symbol, side=side_raw, effect=effect, qty=0,
+            book_seq=book.seq, ts=ts, reason="book snapshot time is not int nanoseconds",
         )
     if book.ts > now_ns:
         return _empty_verdict(
