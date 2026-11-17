@@ -234,9 +234,17 @@ class BreakerEngine:
             id=new_id("brk"), breaker_name=name, tripped=True, tripped_at=now,
             reason=reason, created_at=now,
         )
-        self.st.audit.record_state_change(
-            row, EVENT_BREAKER_TRIP, actor=actor, payload={"breaker": name, "reason": reason}
-        )
+        try:
+            self.st.audit.record_state_change(
+                row, EVENT_BREAKER_TRIP, actor=actor, payload={"breaker": name, "reason": reason}
+            )
+        except BaseException:   # noqa: BLE001 - SEC-04 fail closed: drop FIRST, then re-raise
+            # A trip whose record failed must still disarm: a breaker that fired never leaves
+            # an auto mode armed. A drop that also raises chains this failure as its context.
+            self._ladder.drop_to_review_live(
+                f"breaker {name}: {reason}", clock=clock, actor=actor, kind="breaker_drop"
+            )
+            raise
         mode_after = self._ladder.drop_to_review_live(
             f"breaker {name}: {reason}", clock=clock, actor=actor, kind="breaker_drop"
         )
@@ -258,18 +266,31 @@ class BreakerEngine:
 
     def evaluate_and_trip(self, signals: BreakerSignals, th: BreakerThresholds | None = None,
                           *, clock=None, actor="system") -> list[SystemEvent]:
-        """Route stale data to L8 watch-only; trip every other threshold through L6."""
+        """Route stale data to L8 watch-only; trip every other threshold through L6.
+
+        Every breached breaker is attempted even when an earlier one raises; the FIRST failure
+        is re-raised after the loop (SEC-04 fail closed: one failed trip never skips another)."""
         events = []
+        first_failure = None
         for name in evaluate(signals, th):
-            if name == BRK_STALE_DATA:
-                if self.needs_watch_only_transition("market_data"):
-                    events.append(self.enter_watch_only(
-                        "market_data", "stale market-data threshold breached",
-                        clock=clock, actor=actor,
-                    ))
-            else:
-                if name not in self.active_trips():
-                    events.append(self.trip(name, "threshold breached", clock=clock, actor=actor))
+            try:
+                if name == BRK_STALE_DATA:
+                    if self.needs_watch_only_transition("market_data"):
+                        events.append(self.enter_watch_only(
+                            "market_data", "stale market-data threshold breached",
+                            clock=clock, actor=actor,
+                        ))
+                else:
+                    if name not in self.active_trips():
+                        events.append(self.trip(name, "threshold breached", clock=clock,
+                                                actor=actor))
+            except BaseException as exc:   # noqa: BLE001 - later breakers still run
+                if first_failure is None:
+                    first_failure = exc
+                else:
+                    first_failure.add_note(f"breaker {name} also failed: {type(exc).__name__}")
+        if first_failure is not None:
+            raise first_failure
         return events
 
     # ---- SEC-01 synchronous injection/anomaly breaker in the order path ----------------
