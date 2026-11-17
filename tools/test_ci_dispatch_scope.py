@@ -633,11 +633,11 @@ HOSTED = {'ubuntu-latest', 'ubuntu-24.04', 'ubuntu-22.04', 'windows-2025', 'wind
 # workflow reads any.
 ADMITTED_SECRETS = {'linear-pr-sync.yml': {'LINEAR_API_KEY'}}
 # Token permissions above read, admitted by workflow file, by job (None = the workflow-level block) and by
-# scope. These are the only two in the tree today: ci-label-retrigger.yml dispatches CI (actions), and the
-# `benchmarks` job of ci.yml posts its informational comment (issues, pull-requests). `contents` and
-# `id-token` are never admissible, whatever this table says.
-ADMITTED_WRITES = {('ci-label-retrigger.yml', None): {'actions'},
-                   ('ci.yml', 'benchmarks'): {'issues', 'pull-requests'}}
+# scope. Exactly one is in the tree: ci-label-retrigger.yml dispatches CI (actions). The `benchmarks` job
+# of ci.yml no longer posts a pull request comment (the owner's decision, Nov 16, 2026), so no workflow
+# holds issues or pull-requests write, and a comment posted through gh, the API or github-script is
+# refused in every workflow. `contents` and `id-token` are never admissible, whatever this table says.
+ADMITTED_WRITES = {('ci-label-retrigger.yml', None): {'actions'}}
 
 # WHAT THIS GUARD CANNOT SEE (it reads workflow TEXT only, never runs anything):
 # - a script or action fetched or built at run time (curl | sh, a downloaded or generated file, an
@@ -658,6 +658,8 @@ _NOT_SHELL = {'name', 'if', 'description', 'group'}
 _CONTENT_ENDPOINT = re.compile(r'/(?:contents|git/(?:refs|commits|trees|blobs|tags)|merges?|releases)(?:/|$|\?)'
                                r'|/pulls/[^/]+/merge|/branches/[^/]+/(?:protection|rename)')
 _LABEL_ENDPOINT = re.compile(r'/labels(?:/|$|\?)')
+_COMMENT_ENDPOINT = re.compile(r'/(?:issues|pulls)/[^/]+/comments(?:/|$|\?)|/issues/comments/|/pulls/comments/')
+_COMMENT_API = re.compile(r'createComment|updateComment|deleteComment|createReview\b')
 _CONTENT_API = re.compile(r'createOrUpdateFileContents|deleteFile|git\.(?:createRef|updateRef|deleteRef|'
                           r'createCommit|createTree|createBlob|createTag)|pulls\.merge|repos\.merge|'
                           r'createRelease|uploadReleaseAsset')
@@ -685,6 +687,8 @@ def _command_violations(text):
         out.add('api writes contents')
     if _LABEL_API.search(text):
         out.add('label write')
+    if _COMMENT_API.search(text):
+        out.add('pull request comment')
     for segment in _SEG.split(text):
         words = [w.strip('"\',[]{}') for w in segment.split()]
         base = [w.rsplit('/', 1)[-1].lower() for w in words]
@@ -707,6 +711,8 @@ def _command_violations(text):
                            ['repo', 'delete'], ['release', 'create'], ['release', 'upload'],
                            ['release', 'delete'], ['release', 'edit']):
                 out.add('gh writes contents')
+            if pos[:2] in (['pr', 'comment'], ['issue', 'comment']):
+                out.add('pull request comment')
             if pos[:2] in (['pr', 'ready'], ['pr', 'close'], ['pr', 'reopen'], ['pr', 'review'], ['pr', 'edit']):
                 out.add('gh writes a pull request')
             if pos[:2] in (['label', 'create'], ['label', 'edit'], ['label', 'delete'], ['label', 'clone']) or                     any(w.startswith(('--add-label', '--remove-label')) for w in rest):
@@ -724,6 +730,8 @@ def _command_violations(text):
                         out.add('gh writes contents')
                     if _LABEL_ENDPOINT.search(pos[1]):
                         out.add('label write')
+                    if _COMMENT_ENDPOINT.search(pos[1]):
+                        out.add('pull request comment')
     return out
 
 
@@ -967,10 +975,13 @@ class WriterGuardWitnessTests(unittest.TestCase):
         self.assertIn('no permissions block', _kinds(text))
 
     def test_f2_the_admitted_writes_are_exact_for_the_real_files(self):
-        # The two workflows that hold a write today keep exactly that write; a different or an extra one is red.
+        # The one workflow that holds a write keeps exactly that write; a different or an extra one is red, and
+        # so is the benchmarks job's old comment permission.
+        bench = '    name: benchmarks\n    permissions:\n      contents: read\n'
         for name, anchor, extra in (('ci-label-retrigger.yml', '  actions: write\n', '  statuses: write\n'),
-                                    ('ci.yml', '      issues: write\n', '      statuses: write\n'),
-                                    ('ci.yml', '      issues: write\n', '      actions: write\n')):
+                                    ('ci.yml', bench, '      pull-requests: write\n'),
+                                    ('ci.yml', bench, '      issues: write\n      pull-requests: write\n'),
+                                    ('ci.yml', bench, '      actions: write\n')):
             text = (WORKFLOWS / name).read_text()
             self.assertEqual(writer_guard_violations(name, text), [])
             with self.subTest(name=name, extra=extra.strip()):
@@ -999,12 +1010,39 @@ class WriterGuardWitnessTests(unittest.TestCase):
                 with self.subTest(kind=kind, line=line):
                     text = _wf(line, top='permissions:\n  contents: read\n  pull-requests: write\n')
                     self.assertIn(kind, _kinds(text))
-        # Reads, and a comment by the admitted benchmarks job, are not a contents or a label write.
+        # Reads are not a write of any kind.
         ok = _wf('gh api --paginate repos/o/r/pulls/1/files --jq .[].filename\n'
-                 'gh api --method POST repos/o/r/issues/1/comments --raw-field body=x\n'
-                 'gh api repos/o/r/contents/x',
-                 top='permissions:\n  contents: read\n  pull-requests: write\n')
-        self.assertEqual(sorted(set(_kinds(ok)) - {'permission write'}), [])
+                 'gh api --paginate repos/o/r/issues/1/comments --jq .[].id\n'
+                 'gh api repos/o/r/contents/x')
+        self.assertEqual(_kinds(ok), [])
+
+    def test_the_benchmarks_job_no_longer_posts_a_pull_request_comment(self):
+        # CSL-238, Lucas, Nov 16, 2026: "The benchmarks job should not keep posting". The removed step, as it was.
+        step = ('gh api "repos/${REPO}/issues/${PR}/comments" --paginate --jq ".[].id"\n'
+                'gh api --method PATCH "repos/${REPO}/issues/comments/${existing}" --raw-field body="$(cat f)"\n'
+                'gh api --method POST "repos/${REPO}/issues/${PR}/comments" --raw-field body="$(cat f)"\n')
+        for line in step.splitlines()[1:]:
+            with self.subTest(line=line[:60]):
+                self.assertIn('pull request comment', _kinds(_wf(line)))
+        for line in ('gh pr comment 1 --body x', 'gh issue comment 1 --body x', 'github.rest.issues.createComment({})',
+                     'github.rest.pulls.createReview({})'):
+            with self.subTest(line=line):
+                self.assertIn('pull request comment', _kinds(_wf(line)))
+        real = (WORKFLOWS / 'ci.yml').read_text()
+        self.assertEqual(writer_guard_violations('ci.yml', real), [])
+        self.assertEqual(_written_scopes(yaml.safe_load(real)), {})
+        self.assertNotIn('csl-perf-bench', real)
+        self.assertNotIn('Flag regressions on the pull request', real)
+        # The job still runs the comparison, and putting the old comment step and permissions back is red.
+        self.assertIn('benchmarks.compare', real)
+        old = real.replace('    name: benchmarks\n    permissions:\n      contents: read\n',
+                           '    name: benchmarks\n    permissions:\n      contents: read\n      issues: write\n'
+                           '      pull-requests: write\n', 1)
+        old = old.rstrip('\n') + '\n      - name: Flag regressions on the pull request\n        run: |\n' + \
+            ''.join('          ' + line + '\n' for line in step.splitlines())
+        kinds = writer_guard_violations('ci.yml', old)
+        self.assertIn('permission write', kinds)
+        self.assertIn('pull request comment', kinds)
 
     def test_f3_quoted_and_flow_forms_of_a_write_are_refused(self):
         for top in ('permissions:\n  contents: "write"\n', "permissions:\n  contents: 'write'\n",
