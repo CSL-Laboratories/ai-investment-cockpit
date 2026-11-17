@@ -12,6 +12,8 @@ import subprocess
 import unittest
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "workflow-checks.yml"
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
@@ -277,6 +279,100 @@ class WorkflowStructureTests(unittest.TestCase):
                 self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", text)
                 self.assertNotIn("scripts/ci/codex_gate.py", text)
         self.assertFalse((ROOT / ".github" / "workflows" / "codex-gate.yml").exists())
+
+
+def _workflow_files() -> list[Path]:
+    return sorted((ROOT / ".github" / "workflows").glob("*.y*ml"))
+
+
+def _all_steps():
+    """(file name, job, index, step) for every step of every workflow and of the composite actions."""
+    for path in _workflow_files():
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        for job_name, job in (data.get("jobs") or {}).items():
+            for index, step in enumerate(job.get("steps") or []):
+                yield path.name, job_name, index, step
+    for path in sorted((ROOT / ".github" / "actions").glob("*/action.y*ml")):
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        for index, step in enumerate((data.get("runs") or {}).get("steps") or []):
+            yield path.parent.name + "/" + path.name, "composite", index, step
+
+
+def _has_pip_module_install(run: str) -> bool:
+    return bool(re.search(r"-m\s+pip\b", run) or re.search(r"""['"]-m['"],\s*['"]pip['"]""", run))
+
+
+def _pip_uses_safe_path_flag(run: str) -> bool:
+    """True when every pip module invocation opts out of cwd-on-sys.path (`-P`)."""
+    for pattern in (r"-m\s+pip\b", r"""['"]-m['"],\s*['"]pip['"]"""):
+        for match in re.finditer(pattern, run):
+            if "-P" not in run[max(0, match.start() - 80):match.start()]:
+                return False
+    return True
+
+
+class SurvivingWorkflowGuardTests(unittest.TestCase):
+    """Workflow-wide guards that lived in the deleted tools/test_claude_fixer_publish.py (CSL-238) and
+    still make sense for the workflows that remain (Fable round 1, R6)."""
+
+    def test_no_pip_call_runs_with_checkout_cwd(self) -> None:
+        # CSL-471: `python -m pip` from a checkout cwd can run app/pip/__main__.py as the runner.
+        found = 0
+        for name, job, index, step in _all_steps():
+            run = re.sub(r"<<'([A-Z0-9_]+)'\n.*?\n[ \t]*\1(?:\n|$)", "<<heredoc\n", step.get("run") or "",
+                         flags=re.DOTALL)
+            if not _has_pip_module_install(run):
+                continue
+            found += 1
+            wd = "".join(str(step.get("working-directory") or "").split())
+            with self.subTest(workflow=name, job=job, step=index):
+                self.assertTrue(_pip_uses_safe_path_flag(run), run)
+                self.assertNotIn(wd, {"app", "rust", ".", "${{github.workspace}}"})
+                self.assertTrue(wd == "${{runner.temp}}" or "cwd=os.environ['RUNNER_TEMP']" in run
+                                or 'cwd=os.environ["RUNNER_TEMP"]' in run, run)
+        self.assertGreater(found, 0)
+
+    def test_benchmarks_requirements_come_from_the_base_tree(self) -> None:
+        # CSL-471 / REVIEW-D7 I5: a PR-controlled requirements file must not choose the packages.
+        jobs = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+        install = next(s for s in jobs["benchmarks"]["steps"] if s.get("name") == "Install benchmark dependencies")
+        run = install["run"]
+        self.assertEqual(install["working-directory"], "${{ runner.temp }}")
+        self.assertIn("_bench_base/app/benchmarks/requirements.txt", run)
+        self.assertIn("${RUNNER_TEMP}/bench-requirements.txt", run)
+        self.assertIn("python -P -m pip install -r", run)
+        self.assertNotIn("${{ github.workspace }}/app/benchmarks/requirements.txt", run)
+
+    def test_no_job_enables_the_setup_python_pip_cache(self) -> None:
+        # CSL-471 REVIEW-D8 J3: setup-python's post step would save a PR-poisoned ~/.cache/pip into the
+        # default-branch cache scope.
+        pip_cache_line = re.compile(r"^[ \t]*cache:[ \t]*pip[ \t]*$", re.MULTILINE)
+        paths = _workflow_files() + sorted((ROOT / ".github" / "actions").glob("*/action.y*ml"))
+        for path in paths:
+            with self.subTest(file=path.name):
+                self.assertIsNone(pip_cache_line.search(path.read_text(encoding="utf-8")))
+        checked = 0
+        for name, job, index, step in _all_steps():
+            if str(step.get("uses") or "").startswith("actions/setup-python@"):
+                checked += 1
+                with self.subTest(workflow=name, job=job, step=index):
+                    self.assertNotEqual((step.get("with") or {}).get("cache"), "pip")
+        self.assertGreater(checked, 0)
+
+    def test_every_run_script_stays_below_actionlints_pipe_limit(self) -> None:
+        # actionlint 1.7.7 hangs (and the event-paths job times out) on a run script of 64 KiB or more.
+        for name, job, index, step in _all_steps():
+            with self.subTest(workflow=name, job=job, step=index):
+                self.assertLess(len((step.get("run") or "").encode("utf-8")), 60_000)
+
+    def test_no_workflow_pipes_a_downloaded_installer_into_a_shell(self) -> None:
+        for path in _workflow_files():
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(workflow=path.name):
+                self.assertNotIn("claude.ai/install", text)
+                self.assertNotRegex(text, r"https?://\S*bootstrap\.sh")
+                self.assertNotRegex(text, r"install\.sh\s*\|\s*(?:ba|z)?sh")
+                self.assertNotRegex(text, r"(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z)?sh\b")
 
 
 class ActionlintTests(unittest.TestCase):

@@ -327,8 +327,8 @@ provisioned.
    runs the full matrix (Windows, macOS, and the Rust Windows and macOS cells
    when the Rust path list matches) when it is marked ready and on every later
    push, with no label; drafts run no test matrix. `ci:full` still requests the
-   full matrix for a draft or fork PR, and adding it dispatches a full rerun
-   through `ci-label-retrigger.yml`. No workflow adds or clears `ci:full` any
+   full matrix for a fork PR (a draft runs none until it is ready), and adding it to a
+   non-draft same-repository PR dispatches a full rerun through `ci-label-retrigger.yml`. No workflow adds or clears `ci:full` any
    more: the Codex gate that did so on READY was removed with its reviewer.
 7. Any order-path change needs an adversarial-review round.
 8. The release-blocking local matrix is **native Windows plus Ubuntu under WSL2**, each on
@@ -431,7 +431,7 @@ Hosted split (PR #102):
 
 Devin Review posts findings → people, or agents working by hand for a person, read and
 answer the threads and push any change themselves → the author resolves the threads.
-Nothing answers or writes automatically (CSL-238, Lucas, Nov 16, 2026). Humans decide.
+No workflow in this repository answers or writes automatically (CSL-238, Lucas, Nov 16, 2026); automations named elsewhere in this file as Devin's run from Devin's side. Humans decide.
 
 ### Review convergence (CSL-381)
 

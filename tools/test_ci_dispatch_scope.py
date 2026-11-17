@@ -152,8 +152,11 @@ class DispatchScopeTests(unittest.TestCase):
     def test_platform_conditions_and_actual_rust_matrix(self):
         rust_step = next(step for step in self.rust['jobs']['filter']['steps']
                          if step.get('id') == 'gate')
+        queue_env = next(step for step in self.ci['jobs']['queue-gates']['steps']
+                         if step.get('name') == 'Require all mandatory platform cells')['env']
         # CSL-238: a non-draft same-repository PR runs every cell without a label;
-        # a draft or a fork PR still needs ci:full, as before.
+        # a draft runs no matrix at all (filter is skipped, whatever the labels) and a fork PR still needs
+        # ci:full; the rows below evaluate the platform conditions only, as before.
         for event, scope, labels, draft, repo, win, mac, rust_win, rust_mac in [
             ('workflow_dispatch', '', [], False, 'owner/repo', True, True, True, True),
             ('workflow_dispatch', 'full', [], False, 'owner/repo', True, True, True, True),
@@ -178,6 +181,8 @@ class DispatchScopeTests(unittest.TestCase):
                            'github.event.pull_request.head.repo.full_name': repo,
                            'github.event.pull_request.labels.*.name': labels}
                 self.assertEqual(bool(evaluate(self.ci['jobs']['windows']['if'], **context)), win)
+                # R5 (Fable round 1): queue-gates must expect Windows exactly when the windows job runs.
+                self.assertEqual(bool(evaluate(queue_env['WINDOWS_REQUIRED'], **context)), win)
                 self.assertEqual(bool(evaluate(self.ci['jobs']['macos']['if'], **context)), mac)
                 self.assertEqual(bool(evaluate(self.ci['jobs']['linux']['if'], **context)), True)
                 env = {key: str(bool(evaluate(expr, **context))).lower()
@@ -197,6 +202,14 @@ class DispatchScopeTests(unittest.TestCase):
                 self.assertEqual([c['os-name'] for c in matrix],
                                      ['linux', 'linux'] + ['windows'] * (2 * rust_win)
                                      + ['macos'] * rust_mac)
+        # Dropping the same-repository clause (a mutant) must differ from the windows job on a fork pull request.
+        mutant = queue_env['WINDOWS_REQUIRED'].replace(
+            " && github.event.pull_request.head.repo.full_name == github.repository", '')
+        self.assertNotEqual(mutant, queue_env['WINDOWS_REQUIRED'])
+        fork = {'github.event_name': 'pull_request', 'github.event.pull_request.draft': False,
+                'github.event.pull_request.head.repo.full_name': 'fork/repo',
+                'github.event.pull_request.labels.*.name': []}
+        self.assertNotEqual(bool(evaluate(mutant, **fork)), bool(evaluate(queue_env['WINDOWS_REQUIRED'], **fork)))
         self.assertFalse(evaluate(self.ci['jobs']['macos']['if'], **{
             'github.event_name': 'schedule', 'needs.filter.outputs.run-macos': 'false'}))
         rust_step = next(step for step in self.rust['jobs']['filter']['steps']
@@ -627,34 +640,44 @@ class DispatchScopeTests(unittest.TestCase):
 # guard protected: no workflow holds model credentials, runs a model, or can push.
 MODEL_ACCESS = re.compile(r'ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN|anthropics/claude-code|'
                           r'CODEX_TRIGGER_PAT|OPENAI_API_KEY|GEMINI_API_KEY|GOOGLE_API_KEY|gemini-cli|run-gemini|'
-                          r'OPENROUTER|DEEPSEEK|XAI_API_KEY|MISTRAL_API_KEY', re.IGNORECASE)
+                          r'OPENROUTER|DEEPSEEK|XAI_API_KEY|MISTRAL_API_KEY|actions/ai-inference|gh-models',
+                          re.IGNORECASE)
 HOSTED = {'ubuntu-latest', 'ubuntu-24.04', 'ubuntu-22.04', 'windows-2025', 'windows-latest', 'macos-latest'}
 # The Linear PR sync (kept on the owner's word, Nov 16, 2026) reads exactly one secret, by name; no other
-# workflow reads any.
+# workflow reads any. Names are upper case (GitHub reads them case-insensitively). Variables: none anywhere.
 ADMITTED_SECRETS = {'linear-pr-sync.yml': {'LINEAR_API_KEY'}}
+ADMITTED_VARS = {}
 # Token permissions above read, admitted by workflow file, by job (None = the workflow-level block) and by
 # scope. Exactly one is in the tree: ci-label-retrigger.yml dispatches CI (actions). The `benchmarks` job
 # of ci.yml no longer posts a pull request comment (the owner's decision, Nov 16, 2026), so no workflow
 # holds issues or pull-requests write, and a comment posted through gh, the API or github-script is
-# refused in every workflow. `contents` and `id-token` are never admissible, whatever this table says.
+# refused in every workflow. `models` counts as above read at ANY level (read is enough to call a model).
+# `contents` and `id-token` are never admissible, whatever this table says.
 ADMITTED_WRITES = {('ci-label-retrigger.yml', None): {'actions'}}
 
-# WHAT THIS GUARD CANNOT SEE (it reads workflow TEXT only, never runs anything):
-# - a script or action fetched or built at run time (curl | sh, a downloaded or generated file, an
-#   action pinned to a ref that changes), and any script committed in the repository that a `run:` step
-#   calls (`bash scripts/push.sh`): the guard looks at the step's own words, not at the file's contents;
-# - a command assembled at run time (`cmd=push; git $cmd`, an alias, `eval "$(...)"`, base64, a variable
-#   holding the word `git`);
-# - which runner a `fromJson` matrix really yields at run time: the guard only reads the runner literals
-#   in the job that produces the matrix;
-# - the token's real rights: org or repository defaults are not in the file, and an App or a PAT used
-#   outside this repository's secrets is out of sight.
-# It is deliberately over-strict in one place: any `git` command word followed, in the same shell
-# segment, by the word `push` is refused, even inside an echo or a commit message.
-_SEG = re.compile(r'&&|\|\||\$\(|[;|&\n`()<>]')
+# WHAT HOLDS, AND WHAT DOES NOT (the guard reads workflow TEXT; it never runs anything):
+# Held by what is PARSED, not by spelling: (a) every reference to the `secrets` or `vars` context inside any
+# expression (any case, dot, bracket, wildcard, whole-object, `secrets: inherit`, and the bare expression of
+# an `if:`) must be in ADMITTED_SECRETS / ADMITTED_VARS for that workflow file; (b) every token permission
+# above read, `models` at any level included, must be in ADMITTED_WRITES by file, job and scope; (c) every
+# job runs on a GitHub-hosted runner and calls no remote reusable workflow. A workflow that cannot reach a
+# secret (a) or a write scope (b) cannot push to this repository, post to a pull request or call a model
+# with the repository token, whatever it writes in a script.
+# A SECOND LINE, not a proof: the push, `gh`, API and label scan below reads each string as shell text,
+# removes quotes and backslashes inside words, ignores separators inside quotes (and reads the quoted text
+# again as a command), and refuses a `git` word followed by `push` or `send-pack` in the same segment, even
+# inside an `echo`. It is as good as that normalisation and no better.
+# WHAT NO SCAN OF TEXT CAN SEE: a script or action fetched or built at run time (curl | sh, a downloaded
+# file, an action whose ref moves), a script committed in the repository that a step calls
+# (`bash scripts/push.sh`), a command assembled at run time (`cmd=push; git $cmd`, an alias, `eval`,
+# base64, ANSI-C quoting), what a `fromJson` matrix yields at run time (only the producer's runner
+# literals are read), the rights an organization default or a token held outside this repository gives,
+# and what a step may do with the one admitted write (`gh workflow disable`, `gh run cancel`): the table
+# admits a scope for a file by name, not a use of it. No trigger is checked here: a `pull_request_target`
+# workflow with a read token passes this guard (`test_linear_pr_sync.py` pins the sync's trigger set).
+_NOT_SHELL = {'name', 'if', 'description', 'group'}
 _GH_VALUE_OPTIONS = {'-R', '--repo', '-X', '--method', '-f', '-F', '--field', '--raw-field', '-H', '--header',
                      '-q', '--jq', '--input', '-t', '--template', '--hostname', '-b', '--body', '--title'}
-_NOT_SHELL = {'name', 'if', 'description', 'group'}
 _CONTENT_ENDPOINT = re.compile(r'/(?:contents|git/(?:refs|commits|trees|blobs|tags)|merges?|releases)(?:/|$|\?)'
                                r'|/pulls/[^/]+/merge|/branches/[^/]+/(?:protection|rename)')
 _LABEL_ENDPOINT = re.compile(r'/labels(?:/|$|\?)')
@@ -664,7 +687,9 @@ _CONTENT_API = re.compile(r'createOrUpdateFileContents|deleteFile|git\.(?:create
                           r'createCommit|createTree|createBlob|createTag)|pulls\.merge|repos\.merge|'
                           r'createRelease|uploadReleaseAsset')
 _LABEL_API = re.compile(r'addLabels|setLabels|removeLabel|removeAllLabels|createLabel|updateLabel|deleteLabel')
-_SECRET_FORMS = re.compile(r'secrets\s*\[|(?i:tojson)\(\s*secrets|secrets:\s*inherit|\bvars\.[A-Za-z_]')
+_EXPR = re.compile(r'\$\{\{(.*?)\}\}', re.DOTALL)
+_CONTEXT = re.compile(r'(?<![\w.-])(secrets|vars)(?![\w-])\s*(?:\.\s*([A-Za-z0-9_*-]+)|\[\s*([\'"])(.*?)\3\s*\])?',
+                      re.IGNORECASE | re.DOTALL)
 
 
 def _scalars(node, key=None):
@@ -679,18 +704,96 @@ def _scalars(node, key=None):
         yield node
 
 
+def _context_refs(node, key=None):
+    """{('secrets'|'vars', NAME)} for every use of either context in any expression; '*' for a wildcard,
+    a dynamic index, the whole object or `secrets: inherit`."""
+    refs = set()
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if str(k).lower() == 'secrets' and isinstance(v, str) and not _EXPR.search(v):
+                refs.add(('secrets', '*'))
+            refs |= _context_refs(v, str(k))
+    elif isinstance(node, list):
+        for v in node:
+            refs |= _context_refs(v, key)
+    elif isinstance(node, str):
+        for body in _EXPR.findall(node) or ([node] if key == 'if' else []):
+            for m in _CONTEXT.finditer(body):
+                refs.add((m.group(1).lower(), (m.group(2) or m.group(4) or '*').upper()))
+    return refs
+
+
+def _shell_segments(text, depth=0):
+    """Split shell-ish text into segments of normalised words. Separators (&& || ; | & newline) count only
+    outside quotes; quotes and backslashes are removed inside words (`pu""sh`, `p\\ush`); `, [ ] { } ( ) ` < >`
+    and blanks end a word; a quoted string that holds blanks is read again as a command (bash -c '...')."""
+    segs, words, word, inner = [], [], [], []
+    quote, i, n = None, 0, len(text)
+
+    def end_word():
+        if word:
+            words.append(''.join(word))
+            word.clear()
+
+    def end_segment():
+        end_word()
+        if words:
+            segs.append(list(words))
+            words.clear()
+
+    while i < n:
+        c = text[i]
+        if quote:
+            if c == quote:
+                quote, said = None, ''.join(inner)
+                inner.clear()
+                if depth < 3 and re.search(r'[\s;&|]', said):
+                    segs.extend(_shell_segments(said, depth + 1))
+            elif c == '\\' and quote == '"' and i + 1 < n:
+                i += 1
+                inner.append(text[i])
+                word.append(text[i])
+            else:
+                inner.append(c)
+                word.append(c)
+        elif c in '"\'':
+            quote = c
+        elif c == '\\' and i + 1 < n:
+            i += 1
+            if text[i] == '\n':
+                end_word()
+            else:
+                word.append(text[i])
+        elif c in ' \t\r,[]{}()`<>':
+            end_word()
+        elif c in '\n;|':
+            end_segment()
+        elif c == '&':
+            if (i and text[i - 1] in '<>') or text[i + 1:i + 2] == '>':
+                end_word()
+            else:
+                end_segment()
+        else:
+            word.append(c)
+        i += 1
+    if quote and depth < 3 and inner:
+        segs.extend(_shell_segments(''.join(inner), depth + 1))
+    end_segment()
+    return segs
+
+
 def _command_violations(text):
-    """Refuse a push, a write to repository contents or a label write, wherever the words stand."""
+    """Second line: refuse a push, a write to repository contents, a label write, a pull request comment or
+    a model call wherever the words stand (see the comment above for what this is and is not)."""
     out = set()
-    text = re.sub(r'\\\r?\n', ' ', text).replace('${IFS}', ' ').replace('$IFS', ' ')
+    text = text.replace('${IFS}', ' ').replace('$IFS', ' ')
     if _CONTENT_API.search(text):
         out.add('api writes contents')
     if _LABEL_API.search(text):
         out.add('label write')
     if _COMMENT_API.search(text):
         out.add('pull request comment')
-    for segment in _SEG.split(text):
-        words = [w.strip('"\',[]{}') for w in segment.split()]
+    for words in _shell_segments(text):
         base = [w.rsplit('/', 1)[-1].lower() for w in words]
         if 'git-push' in base or 'git-send-pack' in base:
             out.add('git push')
@@ -707,6 +810,8 @@ def _command_violations(text):
                     skip = True
                 elif not w.startswith('-'):
                     pos.append(w)
+            if pos[:1] in (['models'], ['copilot']):
+                out.add('model call')
             if pos[:2] in (['pr', 'merge'], ['pr', 'create'], ['repo', 'sync'], ['repo', 'create'],
                            ['repo', 'delete'], ['release', 'create'], ['release', 'upload'],
                            ['release', 'delete'], ['release', 'edit']):
@@ -715,7 +820,8 @@ def _command_violations(text):
                 out.add('pull request comment')
             if pos[:2] in (['pr', 'ready'], ['pr', 'close'], ['pr', 'reopen'], ['pr', 'review'], ['pr', 'edit']):
                 out.add('gh writes a pull request')
-            if pos[:2] in (['label', 'create'], ['label', 'edit'], ['label', 'delete'], ['label', 'clone']) or                     any(w.startswith(('--add-label', '--remove-label')) for w in rest):
+            if pos[:2] in (['label', 'create'], ['label', 'edit'], ['label', 'delete'], ['label', 'clone']) or \
+                    any(w.startswith(('--add-label', '--remove-label')) for w in rest):
                 out.add('label write')
             if pos[:1] == ['api'] and len(pos) > 1:
                 method = ''
@@ -736,15 +842,15 @@ def _command_violations(text):
 
 
 def _written_scopes(doc):
-    """{job or None: set of token scopes granted above read}; '*' for a whole-token string."""
+    """{job or None: set of token scopes above read}; '*' for a whole-token string; `models` at any level."""
     found = {}
     blocks = [(None, doc.get('permissions'))] + [(n, j.get('permissions')) for n, j in (doc.get('jobs') or {}).items()]
     for job, block in blocks:
         if isinstance(block, str):
             block = {'*': block}
         for scope, level in (block or {}).items():
-            if str(level).strip().lower() not in ('read', 'none', 'read-all'):
-                found.setdefault(job, set()).add(str(scope))
+            if str(level).strip().lower() not in ('read', 'none', 'read-all') or str(scope).strip().lower() == 'models':
+                found.setdefault(job, set()).add(str(scope).strip().lower())
     return found
 
 
@@ -793,14 +899,11 @@ def _runner_violations(doc):
 
 def writer_guard_violations(name, text):
     out = []
-    if set(re.findall(r'secrets\.([A-Za-z0-9_]+)', text)) != ADMITTED_SECRETS.get(name, set()) or \
-            _SECRET_FORMS.search(text):
-        out.append('secret')
     if MODEL_ACCESS.search(text):
         out.append('model credential')
-    if re.search(r'contents:\s*[\'"]?write|permissions:\s*[\'"]?write-all', text):
+    if re.search(r'(?i)contents:\s*[\'"]?write|permissions:\s*[\'"]?write-all', text):
         out.append('contents write')
-    if re.search(r'id-token:\s*[\'"]?write', text):
+    if re.search(r'(?i)id-token:\s*[\'"]?write', text):
         out.append('id-token')
     try:
         doc = yaml.safe_load(text) or {}
@@ -808,17 +911,24 @@ def writer_guard_violations(name, text):
         return out + ['unparseable']
     if not isinstance(doc, dict):
         return out + ['unparseable']
+    refs = _context_refs(doc)
+    if {n for c, n in refs if c == 'secrets'} != ADMITTED_SECRETS.get(name, set()):
+        out.append('secret')
+    if {n for c, n in refs if c == 'vars'} != ADMITTED_VARS.get(name, set()):
+        out.append('variable')
     scopes = _written_scopes(doc)
-    if 'contents' in {s for v in scopes.values() for s in v} and 'contents write' not in out:
+    granted = {s for v in scopes.values() for s in v}
+    if 'contents' in granted and 'contents write' not in out:
         out.append('contents write')
-    if 'id-token' in {s for v in scopes.values() for s in v} and 'id-token' not in out:
+    if 'id-token' in granted and 'id-token' not in out:
         out.append('id-token')
     if scopes != {job: s for (file, job), s in ADMITTED_WRITES.items() if file == name}:
         out.append('permission write')
     if doc.get('permissions') is None:
         out.append('no permissions block')
-    out += sorted(_command_violations('\n'.join(_scalars(doc))))
-    out += ['runner' if why == 'runner' else why for _, why in _runner_violations(doc)]
+    for scalar in _scalars(doc):
+        out += sorted(_command_violations(scalar) - set(out))
+    out += [why for _, why in _runner_violations(doc)]
     return out
 
 
@@ -1097,12 +1207,104 @@ class WriterGuardWitnessTests(unittest.TestCase):
 
     def test_secrets_and_variables_by_any_spelling_and_other_model_tools_are_refused(self):
         for step in ('env:\n          K: ${{ secrets[\'OTHER\'] }}', 'env:\n          K: ${{ toJSON(secrets) }}',
-                     'env:\n          K: ${{ vars.SOME_KEY }}'):
+                     'env:\n          K: ${{ secrets.OTHER_KEY }}'):
             with self.subTest(step=step):
                 self.assertIn('secret', _kinds(_wf().replace('- run: |', '- ' + step + '\n        run: |')))
+        self.assertIn('variable', _kinds(_wf().replace('- run: |', '- env:\n          K: ${{ vars.SOME_KEY }}\n        run: |')))
         for token in ('GEMINI_API_KEY', 'google-github-actions/run-gemini-cli', 'OPENROUTER_API_KEY', 'DEEPSEEK_API_KEY'):
             with self.subTest(token=token):
                 self.assertIn('model credential', _kinds(_wf('echo ' + token)))
+
+    def test_r2_every_reference_to_the_secrets_or_vars_context_must_be_admitted_by_name(self):
+        # Fable round 1, R2: the witnesses, in every spelling GitHub reads; each is red unless admitted.
+        secret_forms = [
+            "${{ SECRETS.OTHER_KEY }}", "${{ Secrets.OTHER_KEY }}", "${{ SECRETS['OTHER'] }}",
+            "${{ secrets[\"OTHER\"] }}", "${{ TOJSON(SECRETS) }}", "${{ toJSON(secrets) }}",
+            "${{ join(secrets.*, ',') }}", "${{ secrets.* }}", "${{ secrets .OTHER }}",
+            "${{ secrets[format('{0}', 'x')] }}", "${{ fromJSON('1') && secrets.OTHER }}",
+            "${{ secrets.GITHUB_TOKEN }}"]
+        for form in secret_forms:
+            with self.subTest(form=form):
+                text = _wf().replace('- run: |', '- env:\n          K: ' + form + '\n        run: |')
+                self.assertIn('secret', _kinds(text))
+        for form in ("${{ VARS.X }}", "${{ vars['X'] }}", "${{ vars.X }}", "${{ toJSON(vars) }}", "${{ Vars .X }}"):
+            with self.subTest(form=form):
+                text = _wf().replace('- run: |', '- env:\n          K: ' + form + '\n        run: |')
+                self.assertIn('variable', _kinds(text))
+        # An `if:` is an expression without delimiters, and a job-level env or with block is read too.
+        self.assertIn('secret', _kinds(_wf().replace('- run: |', "- if: secrets.OTHER != ''\n        run: |")))
+        self.assertIn('secret', _kinds(_wf().replace('- run: |', "- if: ${{ SECRETS.OTHER }}\n        run: |")))
+        self.assertIn('secret', _kinds(_wf(job='    env:\n      K: ${{ SECRETS.OTHER }}\n')))
+        self.assertIn('variable', _kinds(_wf(job="    if: vars.X == '1'\n")))
+        # The admitted workflow: its one name, in any case, is fine; a second one, in any spelling, is not.
+        name = 'linear-pr-sync.yml'
+        text = (WORKFLOWS / name).read_text()
+        anchor = '          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}\n'
+        self.assertIn(anchor, text)
+        self.assertEqual(writer_guard_violations(name, text), [])
+        self.assertEqual(writer_guard_violations(name, text.replace(anchor, anchor.replace('secrets.LINEAR_API_KEY', 'SECRETS.linear_api_key'))), [])
+        for form in ("${{ SECRETS.OTHER_KEY }}", "${{ toJSON(SECRETS) }}", "${{ secrets['OTHER'] }}", '${{ secrets.* }}'):
+            with self.subTest(admitted_plus=form):
+                self.assertIn('secret', writer_guard_violations(name, text.replace(anchor, anchor + '          OTHER: ' + form + '\n')))
+        self.assertIn('secret', writer_guard_violations(name, text.replace(anchor, '')))
+        # Not a reference: another context that merely holds the word, a plain word in text.
+        quiet = _wf().replace('- run: |', "- env:\n          K: ${{ needs.a.outputs.secrets }} ${{ github.event.vars.x }}\n        run: |")
+        self.assertEqual(_kinds(quiet), [])
+
+    def test_r3_the_push_scan_reads_options_quotes_and_separators_inside_quotes(self):
+        forms = [
+            'git -C "$(pwd)" push origin HEAD',
+            'git -C $(pwd) push origin HEAD',
+            'git -c http.extraheader="AUTHORIZATION: basic $(printf x | base64)" push origin HEAD',
+            'git -c "alias.z=status;x" push',
+            "git -c 'a=b&&c' push",
+            'git 2>/dev/null push',
+            'git >/dev/null push',
+            'git 2>&1 push',
+            'git pu""sh',
+            "git p''ush",
+            'git p\\ush',
+            '"git" "pu""sh"',
+            'python3 -c "import subprocess;subprocess.run([\'git\',\'push\'])"',
+            "node -e \"require('child_process').execFileSync('git', ['push'])\"",
+            'bash -c "git -C \\"$(pwd)\\" push"',
+        ]
+        for form in forms:
+            with self.subTest(form=form):
+                self.assertIn('git push', _kinds(_wf(form)))
+        # M3 of the read: a new workflow that reads a PAT and pushes is refused twice over.
+        pat = _wf('git -C "$(pwd)" push origin HEAD').replace('- run: |', '- env:\n          T: ${{ SECRETS.DEPLOY_PAT }}\n        run: |')
+        kinds = _kinds(pat)
+        self.assertIn('git push', kinds)
+        self.assertIn('secret', kinds)
+        # Quoted words that merely hold the word are not a push.
+        for form in ('git commit -m "no push here"', 'echo "git status"', "git log --grep='push'"):
+            with self.subTest(benign=form):
+                self.assertNotIn('git push', _kinds(_wf(form)))
+
+    def test_r4_a_models_permission_or_a_model_call_is_refused(self):
+        for top in ('permissions:\n  contents: read\n  models: read\n', 'permissions:\n  contents: read\n  models: write\n',
+                    'permissions:\n  contents: read\n  Models: READ\n'):
+            with self.subTest(top=top):
+                self.assertIn('permission write', _kinds(_wf(top=top)))
+        self.assertIn('permission write', _kinds(_wf(job='    permissions:\n      contents: read\n      models: read\n')))
+        self.assertIn('model call', _kinds(_wf('gh models run openai/gpt-4o-mini "hello"')))
+        self.assertIn('model call', _kinds(_wf('gh copilot suggest "x"')))
+        self.assertIn('model credential', _kinds(_wf().replace('- run: |', '- uses: actions/ai-inference@v1\n        run: |')))
+        witness = ('name: t\non: workflow_dispatch\npermissions:\n  contents: read\n  models: read\njobs:\n  j:\n'
+                   '    runs-on: ubuntu-latest\n    steps:\n      - run: gh models run x "y"\n        env:\n'
+                   '          GH_TOKEN: ${{ github.token }}\n')
+        kinds = _kinds(witness)
+        self.assertIn('permission write', kinds)
+        self.assertIn('model call', kinds)
+
+    def test_r2_to_r4_nothing_in_the_tree_holds_what_the_tables_would_admit_twice(self):
+        # The tables are exact: every admitted name is used, every admitted write is held.
+        used = set()
+        for path in sorted(WORKFLOWS.glob('*.y*ml')):
+            used |= {(path.name, n) for c, n in _context_refs(yaml.safe_load(path.read_text())) if c == 'secrets'}
+        self.assertEqual(used, {(f, n) for f, names in ADMITTED_SECRETS.items() for n in names})
+        self.assertEqual(ADMITTED_VARS, {})
 
     def test_every_real_workflow_still_passes_and_the_real_admissions_are_what_the_tree_holds(self):
         held = {}
