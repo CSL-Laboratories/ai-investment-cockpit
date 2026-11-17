@@ -357,6 +357,7 @@ class SurvivingWorkflowGuardTests(unittest.TestCase):
                 checked += 1
                 with self.subTest(workflow=name, job=job, step=index):
                     self.assertNotEqual((step.get("with") or {}).get("cache"), "pip")
+                    self.assertNotIn("cache-dependency-path", step.get("with") or {})
         self.assertGreater(checked, 0)
 
     def test_every_run_script_stays_below_actionlints_pipe_limit(self) -> None:

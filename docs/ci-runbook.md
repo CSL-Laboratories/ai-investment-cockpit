@@ -98,12 +98,15 @@ and records it on Linear; to roll back a workflow change, revert its PR (a found
   becomes a repository rule):** a PR that changes a workflow, `scripts/ci/**`, a required check or
   the rulesets also updates [ci-event-contract.md](ci-event-contract.md) in the same PR, including
   re-pinned `file:line` citations when lines move, or says "no contract row changes" and why.
-- `NoAutomatedWriterTests` (`tools/test_ci_dispatch_scope.py`) holds, for every workflow: no secret or
-  variable that is not admitted by name (one secret, `LINEAR_API_KEY`, for `linear-pr-sync.yml`), no token
-  permission above read except the admitted `actions: write` of `ci-label-retrigger.yml`, no `models`
-  permission, no model credential or model action, GitHub-hosted runners only. Its scan of `git push`, label,
-  contents and comment commands is a second line, not a proof; the test file says what a scan of text
-  cannot see. Adding an automated writer back is a founder decision.
+- `NoAutomatedWriterTests` (`tools/test_ci_dispatch_scope.py`) fails closed, for every workflow: the word
+  `secrets` or `vars` may stand in the text (outside comments) only as an admitted exact spelling (one:
+  `secrets.LINEAR_API_KEY` in `linear-pr-sync.yml`), and an expression it cannot read to its end is refused;
+  no token permission above read except the admitted `actions: write` of `ci-label-retrigger.yml` (`models`
+  at any level, `read-all` and `write-all` are refused); no model credential or model action; GitHub-hosted
+  runners only; and the word `push` may not appear in a run script unless that exact line is admitted by name
+  (two lines are: an error message and a shell comment). A script fetched or assembled at run time, an
+  encoded command and a reusable workflow elsewhere cannot be seen by any scan of text; the test file says so.
+  Adding an automated writer back is a founder decision.
 
 ## 8. Owners
 

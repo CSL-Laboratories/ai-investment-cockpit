@@ -647,35 +647,64 @@ HOSTED = {'ubuntu-latest', 'ubuntu-24.04', 'ubuntu-22.04', 'windows-2025', 'wind
 # workflow reads any. Names are upper case (GitHub reads them case-insensitively). Variables: none anywhere.
 ADMITTED_SECRETS = {'linear-pr-sync.yml': {'LINEAR_API_KEY'}}
 ADMITTED_VARS = {}
+# The only spellings of the secrets or vars context that may stand anywhere in a workflow's text, outside
+# YAML comments, per file. Everything else that contains the word `secrets` or `vars` (any case) is refused,
+# whether or not the expression parser understood it.
+ADMITTED_REFS = {name: {'secrets.' + n for n in names} for name, names in ADMITTED_SECRETS.items()}
 # Token permissions above read, admitted by workflow file, by job (None = the workflow-level block) and by
 # scope. Exactly one is in the tree: ci-label-retrigger.yml dispatches CI (actions). The `benchmarks` job
 # of ci.yml no longer posts a pull request comment (the owner's decision, Nov 16, 2026), so no workflow
 # holds issues or pull-requests write, and a comment posted through gh, the API or github-script is
-# refused in every workflow. `models` counts as above read at ANY level (read is enough to call a model).
+# refused in every workflow. `models` counts as above read at ANY level (read is enough to call a model),
+# and `read-all` / `write-all` are refused outright: every workflow names its scopes.
 # `contents` and `id-token` are never admissible, whatever this table says.
 ADMITTED_WRITES = {('ci-label-retrigger.yml', None): {'actions'}}
+# Lines of a run script that may contain the token `push` (see below), by workflow file; each with its reason.
+# The key is the line after the normalisation described below, stripped.
+ADMITTED_PUSH_LINES = {
+    ('ci.yml', ('echo ::error::Cannot fetch the pinned Recursion route contract commit $pin '
+               '(successor/route_consumer/contract/PIN.json, source.head_sha). The pin must be reachable from '
+               'CSL-Laboratories/recursion master or a protected tag; a draft PR head can disappear after a push, '
+               'rebase or squash-merge. Re-pin PIN.json to a commit on recursion master.')):
+        'an error message that explains why a pinned commit can vanish; it runs no git command',
+    ('rust.yml', '# Push and queue events retain their explicit before/base -> head range.'):
+        'a shell comment about the push event trigger, not a command',
+}
 
-# WHAT HOLDS, AND WHAT DOES NOT (the guard reads workflow TEXT; it never runs anything):
-# Held by what is PARSED, not by spelling: (a) every reference to the `secrets` or `vars` context inside any
-# expression (any case, dot, bracket, wildcard, whole-object, `secrets: inherit`, and the bare expression of
-# an `if:`) must be in ADMITTED_SECRETS / ADMITTED_VARS for that workflow file; (b) every token permission
-# above read, `models` at any level included, must be in ADMITTED_WRITES by file, job and scope; (c) every
-# job runs on a GitHub-hosted runner and calls no remote reusable workflow. A workflow that cannot reach a
-# secret (a) or a write scope (b) cannot push to this repository, post to a pull request or call a model
-# with the repository token, whatever it writes in a script.
-# A SECOND LINE, not a proof: the push, `gh`, API and label scan below reads each string as shell text,
-# removes quotes and backslashes inside words, ignores separators inside quotes (and reads the quoted text
-# again as a command), and refuses a `git` word followed by `push` or `send-pack` in the same segment, even
-# inside an `echo`. It is as good as that normalisation and no better.
-# WHAT NO SCAN OF TEXT CAN SEE: a script or action fetched or built at run time (curl | sh, a downloaded
+# THE SHAPE OF THIS GUARD (it reads workflow TEXT; it never runs anything), from the strongest line to the
+# weakest, each failing CLOSED (a text it cannot read to the end with certainty is refused):
+# 1. RAW TEXT, no expression parsing: every occurrence of the word `secrets` or `vars` (any case) in the
+#    text of any YAML scalar (comments excluded; the decoded value of every string is checked as well) must
+#    start one of the exact spellings in ADMITTED_REFS for that file, else the workflow is refused.
+# 2. PARSED: an expression ends at the first `}}` outside a single-quoted string, as GitHub's runner reads it
+#    (a doubled quote is an escaped quote); an expression that does not end is refused; every reference to
+#    the secrets or vars context inside it must be in ADMITTED_SECRETS / ADMITTED_VARS. Every token
+#    permission above read (`models` at any level, `read-all`, `write-all` included) must be in
+#    ADMITTED_WRITES by file, job and scope; every job runs on a GitHub-hosted runner and calls no remote
+#    reusable workflow. A workflow that cannot reach a secret or a write scope cannot push to this
+#    repository, post to a pull request or call a model with the repository token, whatever its scripts say.
+# 3. THE WORD `push`: in every run script (and github-script `script`, `args`, `entrypoint`, `command`), after
+#    joining backslash-newline pairs and deleting quote characters, backslashes, backticks and carets, the
+#    token `push` (any case, not part of a longer word) may not appear at all, unless that exact line is in
+#    ADMITTED_PUSH_LINES. A harmless line that merely mentions the word (`echo "no push here"`, a commit
+#    message, a shell comment) is refused too, on purpose: it must be admitted by name or reworded.
+# 4. A command scan (git push, gh writes, label, comment and contents API calls) as a last line.
+# WHAT NO SCAN OF TEXT CAN SEE: a script or action fetched or assembled at run time (curl | sh, a downloaded
 # file, an action whose ref moves), a script committed in the repository that a step calls
-# (`bash scripts/push.sh`), a command assembled at run time (`cmd=push; git $cmd`, an alias, `eval`,
-# base64, ANSI-C quoting), what a `fromJson` matrix yields at run time (only the producer's runner
-# literals are read), the rights an organization default or a token held outside this repository gives,
-# and what a step may do with the one admitted write (`gh workflow disable`, `gh run cancel`): the table
-# admits a scope for a file by name, not a use of it. No trigger is checked here: a `pull_request_target`
-# workflow with a read token passes this guard (`test_linear_pr_sync.py` pins the sync's trigger set).
+# (`bash scripts/push.sh`: the word `push` in a file name is refused, a script's body is not read), an encoded
+# or built command (`base64 -d | sh`, `cmd=pu; git ${cmd}sh`, `git pu{sh,}`, `$'push'`, an alias made from
+# parts, `eval`), a reusable workflow elsewhere (refused when named, but its content is not read), what a
+# `fromJson` matrix yields at run time (only the producer's runner literals are read), the rights an
+# organization default or a token held outside this repository gives, and what a step may do with the one
+# admitted write (`gh workflow disable`, `gh run cancel`): the table admits a scope for a file by name, not a
+# use of it. No trigger is checked here: a `pull_request_target` workflow with a read token passes this guard
+# (`test_linear_pr_sync.py` pins the sync's trigger set). GitHub's own reading of expressions (where `${{`
+# ends, whether `read-all` carries `models`) was read from the runner's public source and its documentation,
+# not observed in a run.
 _NOT_SHELL = {'name', 'if', 'description', 'group'}
+_RUN_KEYS = {'run', 'script', 'args', 'entrypoint', 'command', 'cmd'}
+_PUSH_WORD = re.compile(r'(?<![A-Za-z0-9_])push(?![A-Za-z0-9_])', re.IGNORECASE)
+_CONTEXT_WORD = re.compile(r'(?<![A-Za-z0-9_])(secrets|vars)(?![A-Za-z0-9_])', re.IGNORECASE)
 _GH_VALUE_OPTIONS = {'-R', '--repo', '-X', '--method', '-f', '-F', '--field', '--raw-field', '-H', '--header',
                      '-q', '--jq', '--input', '-t', '--template', '--hostname', '-b', '--body', '--title'}
 _CONTENT_ENDPOINT = re.compile(r'/(?:contents|git/(?:refs|commits|trees|blobs|tags)|merges?|releases)(?:/|$|\?)'
@@ -687,7 +716,6 @@ _CONTENT_API = re.compile(r'createOrUpdateFileContents|deleteFile|git\.(?:create
                           r'createCommit|createTree|createBlob|createTag)|pulls\.merge|repos\.merge|'
                           r'createRelease|uploadReleaseAsset')
 _LABEL_API = re.compile(r'addLabels|setLabels|removeLabel|removeAllLabels|createLabel|updateLabel|deleteLabel')
-_EXPR = re.compile(r'\$\{\{(.*?)\}\}', re.DOTALL)
 _CONTEXT = re.compile(r'(?<![\w.-])(secrets|vars)(?![\w-])\s*(?:\.\s*([A-Za-z0-9_*-]+)|\[\s*([\'"])(.*?)\3\s*\])?',
                       re.IGNORECASE | re.DOTALL)
 
@@ -704,29 +732,104 @@ def _scalars(node, key=None):
         yield node
 
 
+def _all_strings(node):
+    """Every string of the parsed workflow, keys and values, nothing left out."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            yield str(k)
+            yield from _all_strings(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _all_strings(v)
+    elif isinstance(node, str):
+        yield node
+
+
+def _scalar_texts(text):
+    """The raw text of every YAML scalar (comments are not scalars), from the scanner's own marks."""
+    return [text[t.start_mark.index:t.end_mark.index] for t in yaml.scan(text) if isinstance(t, yaml.ScalarToken)]
+
+
+def _context_word_refused(name, texts):
+    """True when a text holds the word secrets or vars (any case) outside the admitted exact spellings."""
+    allowed = ADMITTED_REFS.get(name, set())
+    for t in texts:
+        for m in _CONTEXT_WORD.finditer(t):
+            if not any(t.startswith(ref, m.start()) and not re.match(r'[A-Za-z0-9_]', t[m.start() + len(ref):][:1] or ' ')
+                       for ref in allowed):
+                return True
+    return False
+
+
+def _expressions(text):
+    """Bodies of every ${{ }} in a string, each ended at the first `}}` outside a single-quoted string (a
+    doubled quote is an escaped quote); None when one does not end, which is refused."""
+    bodies, i = [], 0
+    while True:
+        i = text.find('${{', i)
+        if i < 0:
+            return bodies
+        j, quoted = i + 3, False
+        while j < len(text):
+            if text[j] == "'":
+                quoted = not quoted
+            elif not quoted and text.startswith('}}', j):
+                break
+            j += 1
+        else:
+            return None
+        bodies.append(text[i + 3:j])
+        i = j + 2
+
+
 def _context_refs(node, key=None):
     """{('secrets'|'vars', NAME)} for every use of either context in any expression; '*' for a wildcard,
-    a dynamic index, the whole object or `secrets: inherit`."""
+    a dynamic index, the whole object or `secrets: inherit`; ('unreadable', '*') for an expression that does
+    not end."""
     refs = set()
     if isinstance(node, dict):
         for k, v in node.items():
-            if str(k).lower() == 'secrets' and isinstance(v, str) and not _EXPR.search(v):
+            if str(k).lower() == 'secrets' and isinstance(v, str) and '${{' not in v:
                 refs.add(('secrets', '*'))
             refs |= _context_refs(v, str(k))
     elif isinstance(node, list):
         for v in node:
             refs |= _context_refs(v, key)
     elif isinstance(node, str):
-        for body in _EXPR.findall(node) or ([node] if key == 'if' else []):
+        bodies = _expressions(node)
+        if bodies is None:
+            refs.add(('unreadable', '*'))
+            bodies = []
+        if key == 'if' and not bodies and '${{' not in node:
+            bodies = [node]
+        for body in bodies:
             for m in _CONTEXT.finditer(body):
                 refs.add((m.group(1).lower(), (m.group(2) or m.group(4) or '*').upper()))
     return refs
 
 
+def _run_scripts(node, key=None):
+    if isinstance(node, dict):
+        for k, v in node.items():
+            yield from _run_scripts(v, str(k))
+    elif isinstance(node, list):
+        for v in node:
+            yield from _run_scripts(v, key)
+    elif isinstance(node, str) and key in _RUN_KEYS:
+        yield node
+
+
+def _push_lines(script):
+    """Lines of a script that hold the token `push` once quotes, backslashes, backticks and carets are gone."""
+    flat = re.sub(r'[\"\'\\`^]', '', re.sub(r'\\\r?\n', '', script))
+    return [line.strip() for line in flat.split('\n') if _PUSH_WORD.search(line)]
+
+
 def _shell_segments(text, depth=0):
     """Split shell-ish text into segments of normalised words. Separators (&& || ; | & newline) count only
-    outside quotes; quotes and backslashes are removed inside words (`pu""sh`, `p\\ush`); `, [ ] { } ( ) ` < >`
-    and blanks end a word; a quoted string that holds blanks is read again as a command (bash -c '...')."""
+    outside quotes; quotes and backslashes are removed inside words (`pu""sh`, `p\\ush`, a backslash-newline
+    pair joins the word); `, [ ] { } ( ) ` < >` and blanks end a word; a quoted string that holds blanks is
+    read again as a command (bash -c '...')."""
     segs, words, word, inner = [], [], [], []
     quote, i, n = None, 0, len(text)
 
@@ -760,9 +863,9 @@ def _shell_segments(text, depth=0):
             quote = c
         elif c == '\\' and i + 1 < n:
             i += 1
-            if text[i] == '\n':
-                end_word()
-            else:
+            if text[i] == '\r' and text[i + 1:i + 2] == '\n':
+                i += 1
+            elif text[i] != '\n':
                 word.append(text[i])
         elif c in ' \t\r,[]{}()`<>':
             end_word()
@@ -783,7 +886,7 @@ def _shell_segments(text, depth=0):
 
 
 def _command_violations(text):
-    """Second line: refuse a push, a write to repository contents, a label write, a pull request comment or
+    """Last line: refuse a push, a write to repository contents, a label write, a pull request comment or
     a model call wherever the words stand (see the comment above for what this is and is not)."""
     out = set()
     text = text.replace('${IFS}', ' ').replace('$IFS', ' ')
@@ -842,14 +945,16 @@ def _command_violations(text):
 
 
 def _written_scopes(doc):
-    """{job or None: set of token scopes above read}; '*' for a whole-token string; `models` at any level."""
+    """{job or None: set of token scopes above read}; '*' for any whole-token string (`read-all`, `write-all`);
+    `models` at any level."""
     found = {}
     blocks = [(None, doc.get('permissions'))] + [(n, j.get('permissions')) for n, j in (doc.get('jobs') or {}).items()]
     for job, block in blocks:
         if isinstance(block, str):
-            block = {'*': block}
+            found.setdefault(job, set()).add('*')
+            continue
         for scope, level in (block or {}).items():
-            if str(level).strip().lower() not in ('read', 'none', 'read-all') or str(scope).strip().lower() == 'models':
+            if str(level).strip().lower() not in ('read', 'none') or str(scope).strip().lower() == 'models':
                 found.setdefault(job, set()).add(str(scope).strip().lower())
     return found
 
@@ -907,12 +1012,19 @@ def writer_guard_violations(name, text):
         out.append('id-token')
     try:
         doc = yaml.safe_load(text) or {}
+        raw = _scalar_texts(text)
     except yaml.YAMLError:
         return out + ['unparseable']
     if not isinstance(doc, dict):
         return out + ['unparseable']
+    # 1. raw text, no expression parsing
+    if _context_word_refused(name, raw + list(_all_strings(doc))):
+        out.append('secret')
+    # 2. parsed
     refs = _context_refs(doc)
-    if {n for c, n in refs if c == 'secrets'} != ADMITTED_SECRETS.get(name, set()):
+    if ('unreadable', '*') in refs:
+        out.append('unreadable expression')
+    if {n for c, n in refs if c == 'secrets'} != ADMITTED_SECRETS.get(name, set()) and 'secret' not in out:
         out.append('secret')
     if {n for c, n in refs if c == 'vars'} != ADMITTED_VARS.get(name, set()):
         out.append('variable')
@@ -926,9 +1038,15 @@ def writer_guard_violations(name, text):
         out.append('permission write')
     if doc.get('permissions') is None:
         out.append('no permissions block')
+    out += [why for _, why in _runner_violations(doc)]
+    # 3. the word push
+    for script in _run_scripts(doc):
+        if any((name, line) not in ADMITTED_PUSH_LINES for line in _push_lines(script)):
+            out.append('push word')
+            break
+    # 4. command scan
     for scalar in _scalars(doc):
         out += sorted(_command_violations(scalar) - set(out))
-    out += [why for _, why in _runner_violations(doc)]
     return out
 
 
@@ -1242,14 +1360,15 @@ class WriterGuardWitnessTests(unittest.TestCase):
         anchor = '          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}\n'
         self.assertIn(anchor, text)
         self.assertEqual(writer_guard_violations(name, text), [])
-        self.assertEqual(writer_guard_violations(name, text.replace(anchor, anchor.replace('secrets.LINEAR_API_KEY', 'SECRETS.linear_api_key'))), [])
+        # The admitted spelling is exact (round 2): another case is refused by the raw-text line.
+        self.assertIn('secret', writer_guard_violations(name, text.replace(anchor, anchor.replace('secrets.LINEAR_API_KEY', 'SECRETS.linear_api_key'))))
         for form in ("${{ SECRETS.OTHER_KEY }}", "${{ toJSON(SECRETS) }}", "${{ secrets['OTHER'] }}", '${{ secrets.* }}'):
             with self.subTest(admitted_plus=form):
                 self.assertIn('secret', writer_guard_violations(name, text.replace(anchor, anchor + '          OTHER: ' + form + '\n')))
         self.assertIn('secret', writer_guard_violations(name, text.replace(anchor, '')))
-        # Not a reference: another context that merely holds the word, a plain word in text.
+        # Fail closed (round 2): another context that merely holds the word is refused too, on purpose.
         quiet = _wf().replace('- run: |', "- env:\n          K: ${{ needs.a.outputs.secrets }} ${{ github.event.vars.x }}\n        run: |")
-        self.assertEqual(_kinds(quiet), [])
+        self.assertIn('secret', _kinds(quiet))
 
     def test_r3_the_push_scan_reads_options_quotes_and_separators_inside_quotes(self):
         forms = [
@@ -1277,10 +1396,12 @@ class WriterGuardWitnessTests(unittest.TestCase):
         kinds = _kinds(pat)
         self.assertIn('git push', kinds)
         self.assertIn('secret', kinds)
-        # Quoted words that merely hold the word are not a push.
-        for form in ('git commit -m "no push here"', 'echo "git status"', "git log --grep='push'"):
-            with self.subTest(benign=form):
-                self.assertNotIn('git push', _kinds(_wf(form)))
+        # Round 2 (R9): a line that merely mentions the word is refused too, on purpose; a quoted word that is
+        # not push is not.
+        for form in ('git commit -m "no push here"', "git log --grep='push'"):
+            with self.subTest(refused_on_purpose=form):
+                self.assertIn('push word', _kinds(_wf(form)))
+        self.assertNotIn('git push', _kinds(_wf('echo "git status"')))
 
     def test_r4_a_models_permission_or_a_model_call_is_refused(self):
         for top in ('permissions:\n  contents: read\n  models: read\n', 'permissions:\n  contents: read\n  models: write\n',
@@ -1305,6 +1426,111 @@ class WriterGuardWitnessTests(unittest.TestCase):
             used |= {(path.name, n) for c, n in _context_refs(yaml.safe_load(path.read_text())) if c == 'secrets'}
         self.assertEqual(used, {(f, n) for f, names in ADMITTED_SECRETS.items() for n in names})
         self.assertEqual(ADMITTED_VARS, {})
+
+    def test_r8_a_closing_brace_pair_inside_a_string_literal_hides_nothing(self):
+        # Fable round 2, R8: GitHub ends an expression at the first `}}` outside a single-quoted string.
+        secret_forms = [
+            "${{ '}}' && secrets.OTHER }}",
+            "${{ '}}' != '' && SECRETS.DEPLOY_PAT }}",
+            "${{ format('}}{0}', SECRETS['OTHER']) }}",
+            "${{ format('a}}b') && SECRETS['OTHER'] }}",
+            "${{ '}}' && toJSON(secrets) }}",
+            "${{ 'it''s }}' && secrets.OTHER }}",
+        ]
+        for form in secret_forms:
+            with self.subTest(form=form):
+                self.assertIn('secret', _kinds(_wf().replace('- run: |', '- env:\n          K: ' + form + '\n        run: |')))
+        self.assertIn('variable', _kinds(_wf().replace('- run: |', "- env:\n          K: ${{ '}}' && vars.X }}\n        run: |")))
+        self.assertIn('secret', _kinds(_wf().replace('- run: |', "- if: ${{ '}}' != '' && secrets.OTHER != '' }}\n        run: |")))
+        self.assertIn('secret', _kinds(_wf("echo ${{ '}}' && secrets.OTHER }}")))
+        # M3c of the read: a workflow that reads a PAT behind '}}' and pushes is refused twice over.
+        pat = _wf('git pu\\\nsh "https://x:${K}@github.com/o/r" HEAD:main').replace(
+            '- run: |', "- env:\n          K: ${{ '}}' != '' && SECRETS.DEPLOY_PAT }}\n        run: |")
+        kinds = _kinds(pat)
+        self.assertIn('secret', kinds)
+        self.assertIn('push word', kinds)
+        # M3g: the admitted workflow plus a second secret hidden the same way (a key name the test does not use).
+        name = 'linear-pr-sync.yml'
+        text = (WORKFLOWS / name).read_text()
+        anchor = '          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}\n'
+        self.assertIn('secret', writer_guard_violations(
+            name, text.replace(anchor, anchor + "          SECOND_KEY: ${{ '}}' != '' && SECRETS.OTHER_KEY }}\n")))
+
+    def test_r8_an_expression_that_does_not_end_is_refused_and_the_word_alone_is_enough(self):
+        for form in ("${{ 'abc }}", "${{ secrets.X", "${{ 'a' && 'b }}"):
+            with self.subTest(form=form):
+                text = _wf().replace('- run: |', '- env:\n          K: "' + form + '"\n        run: |')
+                self.assertIn('unreadable expression', _kinds(text))
+        # Raw text, no parsing at all: the word anywhere in a scalar is enough, in any case and any place.
+        for step in ("- run: echo secrets", "- name: Use the Secrets here\n        run: echo ok", "- run: echo VARS",
+                     '- env:\n          K: "${{ \\x73ecrets.OTHER }}"\n        run: echo ok'):
+            with self.subTest(step=step):
+                self.assertIn('secret', _kinds(_wf().replace('- run: |', step + '\n      - run: |')))
+        # A comment is not a scalar and does not count; a longer word does not count.
+        quiet = _wf().replace('- run: |', '# the secrets are not used here\n      - env:\n          K: my_secrets_dir\n        run: |')
+        self.assertEqual(_kinds(quiet), [])
+        # Admission is by exact spelling and the whole name.
+        name = 'linear-pr-sync.yml'
+        text = (WORKFLOWS / name).read_text()
+        for variant in ('SECRETS.LINEAR_API_KEY', 'secrets.linear_api_key', 'secrets.LINEAR_API_KEY_2'):
+            with self.subTest(variant=variant):
+                self.assertIn('secret', writer_guard_violations(name, text.replace('secrets.LINEAR_API_KEY', variant, 1)))
+
+    def test_r9_the_word_push_may_not_appear_in_a_run_script_unless_the_exact_line_is_admitted(self):
+        forms = [
+            'git -c "alias.z=!git push" z',                       # R9 witnesses, refused at e5a640ed
+            'git config alias.p "push origin HEAD"\ngit p',
+            'git "push origin"',
+            'git commit -m "no push here"',                        # refused on purpose: it mentions the word
+            'git pu\\\nsh origin HEAD',                            # bash joins the pair
+            'git pu""sh', "git p''ush", 'git p\\ush', "git p'u's\"h\"",
+            'git PUSH', 'Git Push origin', 'echo "$(git push)"',
+            'make && git push origin HEAD', 'git -C "$(pwd)" push origin HEAD',
+            'git 2>/dev/null push', 'git "pu"\'sh\'', 'sh -c "git push"', 'echo push',
+            '# push is mentioned in a shell comment',
+        ]
+        for form in forms:
+            with self.subTest(form=form):
+                self.assertIn('push word', _kinds(_wf(form)))
+        # Not the word: longer words and file names with underscores stay allowed.
+        for form in ('echo pushed && make pushes', 'python3 push_tool.py', 'git status', 'git log --oneline -3'):
+            with self.subTest(form=form):
+                self.assertNotIn('push word', _kinds(_wf(form)))
+        # github-script and other executing keys are read the same way.
+        script = ("name: t\non: workflow_dispatch\npermissions:\n  contents: read\njobs:\n  j:\n    runs-on: ubuntu-latest\n"
+                  "    steps:\n      - uses: actions/github-script@v7\n        with:\n          script: |\n"
+                  "            await exec.exec('git', ['pu' + 'sh'])\n            await exec.exec('git push')\n")
+        self.assertIn('push word', _kinds(script))
+        # A backslash-newline pair joins words in the command scan too.
+        self.assertIn('pull request comment', _kinds(_wf('gh pr com\\\nment 1 --body x')))
+
+    def test_r9_admitted_push_lines_are_exact_by_file_and_none_is_stale(self):
+        held = set()
+        for path in sorted(WORKFLOWS.glob('*.y*ml')):
+            doc = yaml.safe_load(path.read_text())
+            for script in _run_scripts(doc):
+                held |= {(path.name, line) for line in _push_lines(script)}
+        self.assertEqual(held, set(ADMITTED_PUSH_LINES))
+        for (name, line), reason in ADMITTED_PUSH_LINES.items():
+            self.assertTrue(reason)
+            self.assertEqual(writer_guard_violations(name, (WORKFLOWS / name).read_text()), [])
+            # the line itself is fine under its own name; under another name, or grown by one word, it is refused
+            self.assertNotIn('push word', writer_guard_violations(name, _wf(line)))
+            self.assertIn('push word', writer_guard_violations(name, _wf(line + ' now')))
+            self.assertIn('push word', writer_guard_violations('other.yml', _wf(line)))
+
+    def test_read_all_and_write_all_are_refused_outright(self):
+        for top in ('permissions: read-all\n', 'permissions: write-all\n', 'permissions: "read-all"\n'):
+            with self.subTest(top=top):
+                self.assertIn('permission write', _kinds(_wf(top=top)))
+        self.assertIn('permission write', _kinds(_wf(job='    permissions: read-all\n')))
+        witness = ('name: t\non: workflow_dispatch\npermissions: read-all\njobs:\n  j:\n    runs-on: ubuntu-latest\n'
+                   '    steps:\n      - run: gh models run x "y"\n')
+        kinds = _kinds(witness)
+        self.assertIn('permission write', kinds)
+        self.assertIn('model call', kinds)
+        for path in sorted(WORKFLOWS.glob('*.y*ml')):
+            self.assertNotIn('*', {s for v in _written_scopes(yaml.safe_load(path.read_text())).values() for s in v}, path.name)
 
     def test_every_real_workflow_still_passes_and_the_real_admissions_are_what_the_tree_holds(self):
         held = {}
