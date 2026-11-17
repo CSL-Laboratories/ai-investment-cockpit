@@ -116,3 +116,33 @@ def test_w2_confirmed_loosening_not_in_force_when_disarm_fails(state, monkeypatc
     assert api._current_limits(state)["max_notional"] == "1000", (
         "a confirmed loosening is in force although its disarm failed; mode is "
         f"{ModeLadder(state).current().value}")
+
+
+def test_w2_put_limits_waits_on_the_shared_state_lock(state):
+    """Which lock: the ladder's state.lock, the one arm, /mode, the killswitch, the daily
+    disarm and the gateway also take. A private lock would still serialize two PUTs (the
+    tests above stay green) but would let a loosening read the limits, an arm take
+    state.lock, and the loosening append with no disarm. While another thread holds
+    state.lock the handler must not complete; once it is released it must."""
+    from orchestrator import app as api
+
+    handler = _put_limits_handler(api, state)
+    done = threading.Event()
+    out: dict = {}
+
+    def call():
+        try:
+            out["r"] = handler(api.LimitsUpdate(actor="w2", max_notional=Decimal("100")))
+        except BaseException as exc:  # noqa: BLE001 - reported below
+            out["r"] = exc
+        finally:
+            done.set()
+
+    worker = threading.Thread(target=call, daemon=True)
+    with state.lock:
+        worker.start()
+        assert not done.wait(0.5), "PUT /limits completed while state.lock was held elsewhere"
+    assert done.wait(10), "PUT /limits did not complete after state.lock was released"
+    worker.join(10)
+    assert not isinstance(out["r"], BaseException), out["r"]
+    assert out["r"]["limits"]["max_notional"] == "100"
