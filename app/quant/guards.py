@@ -29,8 +29,10 @@ which is precisely the capability an autonomous high-frequency loop has and a hu
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Callable
+from core.numeric import finite_decimal, is_int_value
 
 from quant.oms import CancelOrder, NewOrder, ReplaceOrder
 
@@ -121,6 +123,14 @@ class Guards:
             return self._blocked("HALT is set")
         if self.watch_only_fn is not None and self.watch_only_fn():
             return self._blocked("system is watch_only")
+
+        # NF/Q11: a NaN or an infinity compares False against every bound below and bool is
+        # an int, so a malformed size, price, limit or clock passed each comparison and
+        # reached the book (a resting NaN order then made exposure_ticks() NaN, disabling
+        # the position and gross caps for every later intent). Refused before any compare.
+        malformed = self._malformed(intent, ts)
+        if malformed is not None:
+            return self._blocked(malformed)
 
         # A replace is NOT waved through. It used to be, and that made every limit below
         # bypassable: an intent blocked as a NewOrder was allowed as a resize of a one-lot.
@@ -252,9 +262,45 @@ class Guards:
         self._recent_orders.append(ts)
         return True
 
+    def _malformed(self, intent, ts) -> str | None:
+        """Why a limit, ``ts`` or the intent's size/price is not a whole int; else None.
+
+        Every comparison in ``check`` reads False for NaN and treats ``True`` as 1, so a
+        value that is not an int is refused here, never compared (NF/Q11).
+        """
+        limits = self.limits
+        if not (is_int_value(limits.max_position) and is_int_value(limits.max_order_qty)
+                and is_int_value(limits.max_gross_exposure_ticks)
+                and is_int_value(limits.max_orders_per_window)
+                and is_int_value(limits.order_rate_window_ns)):
+            return "guard limits must be whole ints"
+        if not is_int_value(ts):
+            return f"intent timestamp {ts!r} is not int nanoseconds"
+        if isinstance(intent, NewOrder):
+            if not is_int_value(intent.qty):
+                return f"order qty {intent.qty!r} is not a whole int"
+            price = intent.price_ticks
+        elif isinstance(intent, ReplaceOrder):
+            if intent.new_qty is not None and not is_int_value(intent.new_qty):
+                return f"replace qty {intent.new_qty!r} is not a whole int"
+            price = intent.new_price_ticks
+        else:
+            return None
+        if price is not None and not is_int_value(price):
+            return f"price_ticks {price!r} is not a whole int"
+        return None
+
     def observe_pnl(self, total: float) -> None:
         """Feed session PnL so the loss stop can latch. Called by the loop, not the strategy."""
         if self.limits.max_loss_dollars is None:
+            return
+        if finite_decimal(self.limits.max_loss_dollars) is None or not math.isfinite(total):
+            # NF/Q11, the breakers' BUG-130 rule: a loss stop that cannot read its limit or
+            # the PnL cannot prove the loss is within bounds, so it latches.
+            self.trip(
+                f"loss stop cannot compare session PnL {total!r} with max_loss_dollars "
+                f"{self.limits.max_loss_dollars!r}"
+            )
             return
         if total <= -abs(self.limits.max_loss_dollars):
             self.trip(
