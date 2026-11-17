@@ -24,7 +24,7 @@ DEFAULT_TABLE = ROOT / "docs" / "evidence" / "x1-cockpit-legacy-test-inventory-2
 # edits these in the same reviewed change as the table row it affects.
 X1_MIN_ROWS = 226
 X1_MIN_KEEP_ROWS = 136
-X1_MIN_PORT_ROWS = 77
+X1_MIN_PORT_ROWS = 79
 X1_MIN_ORACLE_TESTS = 2724
 
 X1_TAG = "pre-x1-cockpit-20261026"

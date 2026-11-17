@@ -73,7 +73,7 @@ The oracle column of every row must name one of these. A `port` oracle names the
 |---|---|
 | Rows (one per legacy test file) | 226 |
 | `keep` rows | 136 |
-| `port` rows | 77 |
+| `port` rows | 79 |
 | Test functions across `keep` and `port` rows | 2724 |
 
 Red conditions, each covered by a negative control in the wrapper test: a legacy test file with no row; a row with no file (deleting a file before the rehearsal); a duplicate row; an unknown disposition or oracle; a disposition that conflicts with its oracle's class; an empty reason; a `keep` or `port` file collecting fewer test functions than its row; any floor above; a non-`drop` file importing a `drop` file; a `keep` file importing a `port` file that is not acknowledged in the coupling block (section 7); a stale or non-keep-to-port acknowledgement; a malformed table. Import detection covers absolute (`from tests.x import y`, `import tests.x`) and relative (`from .x import y`, `from . import x`, `from ..pkg import x`) forms.
