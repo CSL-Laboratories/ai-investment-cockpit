@@ -32,7 +32,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
-from quant.oms import CancelOrder, NewOrder, ReplaceOrder
+from quant.oms import CancelOrder, NewOrder, ReplaceOrder, resting_after_replace
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,7 +211,14 @@ class Guards:
                 # replace: filled shares live in position, remaining lives here, once each.
                 filled = order.qty - order.remaining_qty
                 new_total = intent.new_qty if intent.new_qty is not None else order.qty
-                remaining_after = max(new_total - filled, 0)
+                remaining_after = resting_after_replace(new_total, filled=filled)
+                if remaining_after <= 0:
+                    # OMS.on_replaced refuses a total below the filled size; one AT it would
+                    # leave a live order with nothing to rest. Neither may reach the book.
+                    return self._blocked(
+                        f"replace qty {new_total} leaves nothing to rest: "
+                        f"{filled} already filled"
+                    )
                 price = (intent.new_price_ticks if intent.new_price_ticks is not None
                          else order.price_ticks)
                 if price is None:

@@ -46,7 +46,7 @@ from quant.book.lob import LimitOrderBook, OrderNotFound
 from quant.book.matching import AggressiveOrder, TimeInForce, match
 from quant.events import BookAction, BookUpdate, Event, Fill, PriceScale, Side, Trade
 from quant.costs import FeeSchedule
-from quant.oms import OMS, CancelOrder, Intent, NewOrder, ReplaceOrder
+from quant.oms import OMS, CancelOrder, Intent, NewOrder, ReplaceOrder, resting_after_replace
 from quant.pnl import PnLTracker
 from quant.strategies.base import Strategy, StrategyContext
 
@@ -380,10 +380,19 @@ class Runner:
         if order is None or not order.is_live:
             return
         book = self.book_for(order.symbol)
-        if intent.client_id not in book:
+        resting = book.get(intent.client_id)
+        if resting is None:
             return
+        rest = None
+        if intent.new_qty is not None:
+            # new_qty is a TOTAL; the book rests what is left of it. Filled is counted from
+            # the book (order total minus what still rests), so fills of this match that the
+            # OMS has not absorbed yet are counted too.
+            rest = resting_after_replace(intent.new_qty, filled=order.qty - resting.qty)
+            if rest <= 0:
+                return                      # nothing to rest: refused before any mutation
         book.replace(intent.client_id, new_price_ticks=intent.new_price_ticks,
-                     new_qty=intent.new_qty, seq=event.seq, ts=event.exchange_ts)
+                     new_qty=rest, seq=event.seq, ts=event.exchange_ts)
         # The book now holds different terms than the OMS does. Told only the book, the OMS
         # keeps sizing and pricing the ORIGINAL order: the next fill trips the overfill guard,
         # and exposure_ticks() reports a number describing an order that no longer exists.
