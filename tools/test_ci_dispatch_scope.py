@@ -11,6 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import yaml
 
@@ -671,8 +672,37 @@ ADMITTED_PUSH_LINES = {
         'a shell comment about the push event trigger, not a command',
 }
 
-# THE SHAPE OF THIS GUARD (it reads workflow TEXT; it never runs anything), from the strongest line to the
-# weakest, each failing CLOSED (a text it cannot read to the end with certainty is refused):
+# THE CAPABILITY LAYER'S ALLOWLISTS (CSL-238, the answer to DeepSeek's third read). Every entry is a decision of
+# the owner (Lucas), with one line of reason. The tables pin today's tree: a new entry is a decision, not an edit.
+# 1. Jobs whose EFFECTIVE token permissions (the job's own block, else the workflow's, else UNSPECIFIED) hold a
+#    scope above read (`models` at any level; any whole-token string such as `write-all`) or are UNSPECIFIED.
+#    (file, job) -> (the exact scopes, or UNSPECIFIED; the reason). Both jobs of ci-label-retrigger.yml inherit
+#    the workflow-level `actions: write`. No job has unspecified permissions today.
+UNSPECIFIED = 'UNSPECIFIED'
+ADMITTED_JOB_POWER = {
+    ('ci-label-retrigger.yml', 'retrigger'): (
+        frozenset({'actions'}), 'dispatches ci.yml and rust.yml for a labelled pull request (gh workflow run)'),
+    ('ci-label-retrigger.yml', 'cancel-ancestors'): (
+        frozenset({'actions'}), 'cancels verified obsolete pull request CI runs (scripts/ci/ci_cancel_controller.py)'),
+}
+# 2. Secrets (other than GITHUB_TOKEN) that a workflow or a local composite action may name: (file, name) -> reason.
+#    Files are the workflow's name under .github/workflows, or an action's path from the repository root.
+ADMITTED_SECRET_USE = {
+    ('linear-pr-sync.yml', 'LINEAR_API_KEY'):
+        'the Linear pull request sync, kept on the owner\'s word; it runs on manual dispatch only today',
+}
+# 3. Triggers that run with the base repository's rights on a pull request's behalf: (file, event) -> reason.
+DANGEROUS_TRIGGERS = ('pull_request_target', 'workflow_run')
+ADMITTED_TRIGGERS = {
+    ('ci-label-retrigger.yml', 'workflow_run'):
+        'job cancel-ancestors cancels obsolete pull request CI runs; its policy script is read from the default branch',
+}
+
+# THE SHAPE OF THIS GUARD. Two layers. The CAPABILITY LAYER (`guard_tree_violations`, below `writer_guard_violations`)
+# checks what the tree lets a job DO: the shape of .github, the token permissions, the secrets, the triggers and the
+# local composite actions. The TEXT LAYER reads workflow TEXT (it never runs anything), from the strongest line to the
+# weakest, each failing CLOSED (a text it cannot read to the end with certainty is refused). A command assembled at
+# run time has no fixed spelling and is outside any text scan: the capability layer is what bounds it.
 # 1. RAW TEXT, no expression parsing: every occurrence of the word `secrets` or `vars` (any case) in the
 #    text of any YAML scalar (comments excluded; the decoded value of every string is checked as well) must
 #    start one of the exact spellings in ADMITTED_REFS for that file, else the workflow is refused.
@@ -688,7 +718,8 @@ ADMITTED_PUSH_LINES = {
 #    token `push` (any case, not part of a longer word) may not appear at all, unless that exact line is in
 #    ADMITTED_PUSH_LINES. A harmless line that merely mentions the word (`echo "no push here"`, a commit
 #    message, a shell comment) is refused too, on purpose: it must be admitted by name or reworded.
-# 4. A command scan (git push, gh writes, label, comment and contents API calls) as a last line.
+# 4. A command scan (git push, gh writes, an HTTP client with a write method against GitHub, label, comment and
+#    contents API calls) as a last line.
 # WHAT NO SCAN OF TEXT CAN SEE: a script or action fetched or assembled at run time (curl | sh, a downloaded
 # file, an action whose ref moves), a script committed in the repository that a step calls
 # (`bash scripts/push.sh`: the word `push` in a file name is refused, a script's body is not read), an encoded
@@ -697,8 +728,9 @@ ADMITTED_PUSH_LINES = {
 # `fromJson` matrix yields at run time (only the producer's runner literals are read), the rights an
 # organization default or a token held outside this repository gives, and what a step may do with the one
 # admitted write (`gh workflow disable`, `gh run cancel`): the table admits a scope for a file by name, not a
-# use of it. No trigger is checked here: a `pull_request_target` workflow with a read token passes this guard
-# (`test_linear_pr_sync.py` pins the sync's trigger set). GitHub's own reading of expressions (where `${{`
+# use of it. Triggers are checked for `pull_request_target` and `workflow_run` only (the capability layer); the
+# other events that run with the base repository's rights (`issue_comment`, `pull_request_review`, `issues`,
+# `repository_dispatch`) are not. GitHub's own reading of expressions (where `${{`
 # ends, whether `read-all` carries `models`) was read from the runner's public source and its documentation,
 # not observed in a run.
 _NOT_SHELL = {'name', 'if', 'description', 'group'}
@@ -885,9 +917,69 @@ def _shell_segments(text, depth=0):
     return segs
 
 
+_HTTP_CLIENTS = {'curl', 'curl.exe', 'wget', 'wget.exe', 'invoke-webrequest', 'invoke-restmethod', 'iwr', 'irm',
+                 'http', 'https', 'xh'}
+_HTTP_WRITE = {'PUT', 'POST', 'PATCH', 'DELETE'}
+_GITHUB_WORD = re.compile(r'github|gh_token', re.IGNORECASE)
+_CURL_ARG_SHORT = set('AbcCdDeEFHKmoPQrtTuUwxXyYz')
+_CURL_BODY_LONG = {'--data', '--data-raw', '--data-binary', '--data-ascii', '--data-urlencode', '--form',
+                   '--form-string', '--upload-file', '--json'}
+
+
+def _http_write(client, rest):
+    """True when one call of an HTTP client (curl, wget, Invoke-WebRequest, Invoke-RestMethod, httpie) carries a
+    write method (PUT, POST, PATCH, DELETE): by an explicit method option, or by sending a body, which makes the
+    client POST. A literal form only; a method or an address assembled at run time is not seen."""
+    method, body, query = '', False, False
+    if client in ('curl', 'curl.exe'):
+        for k, w in enumerate(rest):
+            nxt = rest[k + 1] if k + 1 < len(rest) else ''
+            if w.startswith('--'):
+                opt, _, val = w.partition('=')
+                if opt == '--request':
+                    method = (val or nxt).upper()
+                elif opt in _CURL_BODY_LONG:
+                    body = True
+                elif opt == '--get':
+                    query = True
+            elif w.startswith('-') and len(w) > 1:
+                for at, ch in enumerate(w[1:], 1):
+                    if ch in _CURL_ARG_SHORT:  # the rest of the word, or the next word, is this option's value
+                        if ch == 'X':
+                            method = (w[at + 1:] or nxt).upper()
+                        elif ch in 'dFT':
+                            body = True
+                        break
+                    if ch == 'G':
+                        query = True
+        return method in _HTTP_WRITE or (not method and body and not query)
+    if client in ('wget', 'wget.exe'):
+        for k, w in enumerate(rest):
+            opt, _, val = w.partition('=')
+            if opt == '--method':
+                method = (val or (rest[k + 1] if k + 1 < len(rest) else '')).upper()
+            elif opt in ('--post-data', '--post-file', '--body-data', '--body-file'):
+                body = True
+        return method in _HTTP_WRITE or (not method and body)
+    if client in ('invoke-webrequest', 'invoke-restmethod', 'iwr', 'irm'):
+        for k, w in enumerate(rest):
+            if w.startswith('-') and len(w) > 1:
+                param, _, val = w[1:].partition(':')
+                param = param.lower()
+                if len(param) >= 2 and 'method'.startswith(param):
+                    method = (val or (rest[k + 1] if k + 1 < len(rest) else '')).upper()
+                elif param and 'body'.startswith(param) or len(param) >= 4 and 'infile'.startswith(param):
+                    body = True
+        return method in _HTTP_WRITE or (not method and body)
+    positional = [w for w in rest if not w.startswith('-')]  # httpie: a method word, or key=value items
+    return bool(positional) and (positional[0].upper() in _HTTP_WRITE or
+                                 any(re.match(r'[A-Za-z0-9_.\[\]-]+:?=[^=]', w) for w in positional))
+
+
 def _command_violations(text):
-    """Last line: refuse a push, a write to repository contents, a label write, a pull request comment or
-    a model call wherever the words stand (see the comment above for what this is and is not)."""
+    """Last line: refuse a push, a write to repository contents, a write through an HTTP client or `gh api`, a
+    label write, a pull request comment or a model call wherever the words stand (see the comment above for what
+    this is and is not)."""
     out = set()
     text = text.replace('${IFS}', ' ').replace('$IFS', ' ')
     if _CONTENT_API.search(text):
@@ -898,7 +990,7 @@ def _command_violations(text):
         out.add('pull request comment')
     for words in _shell_segments(text):
         base = [w.rsplit('/', 1)[-1].lower() for w in words]
-        if 'git-push' in base or 'git-send-pack' in base:
+        if 'git-push' in base or 'git-send-pack' in base or 'git-receive-pack' in base:
             out.add('git push')
         git_at = next((i for i, b in enumerate(base) if b in ('git', 'git.exe')), None)
         if git_at is not None and {'push', 'send-pack'} & set(words[git_at + 1:]):
@@ -935,12 +1027,17 @@ def _command_violations(text):
                         method = w.split('=', 1)[1].upper()
                 fields = any(w in ('-f', '-F', '--field', '--raw-field', '--input') for w in rest)
                 if method in ('PUT', 'POST', 'PATCH', 'DELETE') or (not method and fields):
+                    if pos[1].lower() != 'graphql' or 'mutation' in ' '.join(rest).lower():
+                        out.add('github api write')
                     if _CONTENT_ENDPOINT.search(pos[1]):
                         out.add('gh writes contents')
                     if _LABEL_ENDPOINT.search(pos[1]):
                         out.add('label write')
                     if _COMMENT_ENDPOINT.search(pos[1]):
                         out.add('pull request comment')
+        for at, client in enumerate(base):  # an HTTP client call with a write method, with GitHub named in it
+            if client in _HTTP_CLIENTS and _http_write(client, words[at + 1:]) and any(_GITHUB_WORD.search(w) for w in words):
+                out.add('github api write')
     return out
 
 
@@ -1047,6 +1144,229 @@ def writer_guard_violations(name, text):
     # 4. command scan
     for scalar in _scalars(doc):
         out += sorted(_command_violations(scalar) - set(out))
+    return out
+
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# THE CAPABILITY LAYER (CSL-238, DeepSeek round 3). It does not read what a job SAYS; it checks what a job is ABLE
+# to do. A scan of shell text can never be complete (a command assembled at run time has no fixed spelling), so
+# these checks are made on the parsed tree, whatever the scripts contain:
+#   a. THE TREE. Every workflow lies directly under .github/workflows. A .yml or .yaml file in a subfolder of it
+#      is refused. GitHub runs no workflow from a subfolder (its documentation says so; not observed in a run
+#      here), so nothing there can write, and refusing the shape means nothing can hide there either. A symlink
+#      under .github/workflows or .github/actions is refused too.
+#   b. PERMISSIONS. Each job's effective `permissions` (its own block, else the workflow's, else UNSPECIFIED): a
+#      job that holds a scope above read, or is UNSPECIFIED, must be in ADMITTED_JOB_POWER by file and job, with
+#      exactly those scopes. A new job with write power, or one that drops its block, is refused.
+#   c. SECRETS. Every `secrets.<NAME>` other than GITHUB_TOKEN that a workflow or a local composite action names
+#      (the bare word `secrets` counts as `*`) must be in ADMITTED_SECRET_USE.
+#   d. TRIGGERS. `pull_request_target` and `workflow_run` must be in ADMITTED_TRIGGERS.
+#   e. LOCAL COMPOSITE ACTIONS (`uses: ./...`, and every action.yml under .github/actions). They run with the
+#      job's token, so (b) bounds their power. Each is read for (c); it must lie under .github/actions and be a
+#      composite (a JavaScript or Docker action's code is not read, so it is refused); its `run:` steps go to the
+#      text scan as well.
+# The text scan above (the word `push`, the command scan) stays as the second layer. THE LIMITS, stated: a command
+# assembled at run time is outside any text scan; layers (b) to (d) are what bound it. A job whose token holds no
+# write scope and which names no secret can still run what it likes inside the runner (read the repository,
+# call a network host without a credential, spend minutes); a script that a step calls is not read; a third-party
+# action (`uses: owner/name@ref`) is not read and runs with the job's token; the use made of an admitted write
+# (`actions: write` can disable or cancel workflows) is not checked; the repository's and the organization's
+# default token permission, and what a ruleset or a branch protection allows, are not visible from the tree.
+
+def _read_text(path):
+    try:
+        return path.read_text(encoding='utf-8')
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _block_power(block):
+    """The scopes above read of one `permissions` value; `*` for any whole-token string (or any shape that is
+    not a mapping); `models` counts at any level."""
+    if not isinstance(block, dict):
+        return {'*'}
+    power = set()
+    for scope, level in block.items():
+        name = str(scope).strip().lower()
+        if str(level).strip().lower() not in ('read', 'none') or name == 'models':
+            power.add(name)
+    return power
+
+
+def _job_power(doc, job):
+    """The token power a job ends up with: a set of scopes above read (empty = read only), or UNSPECIFIED."""
+    if isinstance(job, dict) and job.get('permissions') is not None:
+        return _block_power(job['permissions'])
+    if doc.get('permissions') is not None:
+        return _block_power(doc['permissions'])
+    return UNSPECIFIED
+
+
+def _jobs_with_power(doc):
+    """{job: frozenset of scopes | UNSPECIFIED} for every job that holds a write scope or is unspecified."""
+    jobs = doc.get('jobs')
+    held = {}
+    for name, job in (jobs.items() if isinstance(jobs, dict) else []):
+        power = _job_power(doc, job)
+        if power == UNSPECIFIED or power:
+            held[str(name)] = power if power == UNSPECIFIED else frozenset(power)
+    return held
+
+
+def _events(doc):
+    """The lower-case event names a workflow is triggered by. `on` is the key `True` under safe_load."""
+    found = set()
+    for key in ('on', True):
+        value = doc.get(key)
+        if isinstance(value, str):
+            found.add(value.strip().lower())
+        elif isinstance(value, (list, dict)):
+            found |= {str(event).strip().lower() for event in value}
+    return found
+
+
+_SECRET_NAME = re.compile(r'(?<![A-Za-z0-9_])secrets(?![A-Za-z0-9_])\s*(?:\.\s*([A-Za-z0-9_-]+)|\[\s*([\'"])(.*?)\2\s*\])?',
+                          re.IGNORECASE | re.DOTALL)
+
+
+def _secret_names(texts):
+    """Upper-case names after the word `secrets` in any text; `*` when the word stands without a name."""
+    return {(m.group(1) or m.group(3) or '*').upper() for t in texts for m in _SECRET_NAME.finditer(t)}
+
+
+def _local_action_refs(node):
+    """Every `uses: ./...` of a parsed workflow or action (a step, or a job's reusable workflow)."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if str(key) == 'uses' and isinstance(value, str):
+                if value.strip().startswith('./'):
+                    yield value.strip()
+            else:
+                yield from _local_action_refs(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _local_action_refs(value)
+
+
+def action_guard_violations(key, text):
+    """The text layer for a local composite action: no model access, no mention of `secrets` or `vars`, the word
+    `push` only on an admitted line, and the command scan over every scalar. `key` is its path from the root."""
+    out = []
+    if MODEL_ACCESS.search(text):
+        out.append('model credential')
+    try:
+        doc = yaml.safe_load(text) or {}
+        raw = _scalar_texts(text)
+    except yaml.YAMLError:
+        return out + ['unparseable']
+    if not isinstance(doc, dict):
+        return out + ['unparseable']
+    if _context_word_refused(key, raw + list(_all_strings(doc))):
+        out.append('secret')
+    for script in _run_scripts(doc):
+        if any((key, line) not in ADMITTED_PUSH_LINES for line in _push_lines(script)):
+            out.append('push word')
+            break
+    for scalar in _scalars(doc):
+        out += sorted(_command_violations(scalar) - set(out))
+    return out
+
+
+def guard_tree_violations(root):
+    """The whole guard over one repository tree: [(path, layer, what)], layers `tree`, `permissions`, `secrets`,
+    `triggers`, `composite` and `text`. Empty when the tree passes."""
+    root = Path(root)
+    workflows, actions = root / '.github' / 'workflows', root / '.github' / 'actions'
+    out, top, queue, seen = [], [], [], set()
+
+    def rel(path):
+        return path.relative_to(root).as_posix()
+
+    def secrets_layer(key, texts):
+        for name in sorted(_secret_names(texts) - {'GITHUB_TOKEN'}):
+            if (key, name) not in ADMITTED_SECRET_USE:
+                out.append((key, 'secrets', 'names secrets.' + name + ', which is not admitted'))
+
+    def want(owner, ref):
+        target = Path(os.path.normpath(root / ref[2:]))
+        if target.suffix.lower() in ('.yml', '.yaml'):
+            return  # a reusable workflow: it is a workflow file and is read as one
+        if target != root and root not in target.parents:
+            out.append((owner, 'composite', 'local action ' + ref + ' lies outside the repository'))
+            return
+        files = [target / n for n in ('action.yml', 'action.yaml') if (target / n).is_file()]
+        if not files:
+            out.append((owner, 'composite', 'local action ' + ref + ' has no action.yml: its code is not read'))
+        if actions != target and actions not in target.parents:
+            out.append((owner, 'composite', 'local action ' + ref + ' lies outside .github/actions'))
+        queue.extend(files)
+
+    # a. the tree
+    for base in (workflows, actions):
+        for path in sorted(base.rglob('*')) if base.is_dir() else []:
+            if path.is_symlink():
+                out.append((rel(path), 'tree', 'symlink under ' + rel(base)))
+            elif base == workflows and path.is_file() and path.suffix.lower() in ('.yml', '.yaml'):
+                if path.parent != workflows:
+                    out.append((rel(path), 'tree', 'workflow in a subfolder of .github/workflows (GitHub runs none)'))
+                else:
+                    top.append(path)
+            elif base == actions and path.is_file() and path.name.lower() in ('action.yml', 'action.yaml'):
+                queue.append(path)
+    # every workflow: the text layer, then permissions, secrets and triggers
+    for path in top:
+        text = _read_text(path)
+        if text is None:
+            out.append((rel(path), 'tree', 'unreadable file'))
+            continue
+        out += [(rel(path), 'text', kind) for kind in writer_guard_violations(path.name, text)]
+        try:
+            doc = yaml.safe_load(text)
+            raw = _scalar_texts(text)
+        except yaml.YAMLError:
+            continue
+        if not isinstance(doc, dict):
+            continue
+        for job, power in sorted(_jobs_with_power(doc).items()):
+            admitted = ADMITTED_JOB_POWER.get((path.name, job))
+            if admitted is None or admitted[0] != power:
+                out.append((rel(path), 'permissions', 'job ' + job + ' holds ' +
+                            (power if power == UNSPECIFIED else ' '.join(sorted(power))) + ', which is not admitted'))
+        secrets_layer(path.name, raw + list(_all_strings(doc)))
+        events = _events(doc)
+        if not events:
+            out.append((rel(path), 'triggers', 'no readable trigger'))
+        for event in sorted(events & set(DANGEROUS_TRIGGERS)):
+            if (path.name, event) not in ADMITTED_TRIGGERS:
+                out.append((rel(path), 'triggers', event + ' is not admitted'))
+        for ref in sorted(set(_local_action_refs(doc))):
+            want(rel(path), ref)
+    # e. every local composite action, once
+    while queue:
+        path = queue.pop(0)
+        key = rel(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        text = _read_text(path)
+        if text is None:
+            out.append((key, 'composite', 'unreadable file'))
+            continue
+        out += [(key, 'composite', kind) for kind in action_guard_violations(key, text)]
+        try:
+            doc = yaml.safe_load(text) or {}
+            raw = _scalar_texts(text)
+        except yaml.YAMLError:
+            continue
+        if not isinstance(doc, dict):
+            continue
+        runs = doc.get('runs')
+        if not isinstance(runs, dict) or str(runs.get('using')).strip().lower() != 'composite':
+            out.append((key, 'composite', 'not a composite action: its code is not read'))
+        secrets_layer(key, raw + list(_all_strings(doc)))
+        for ref in sorted(set(_local_action_refs(doc))):
+            want(key, ref)
     return out
 
 
@@ -1541,6 +1861,299 @@ class WriterGuardWitnessTests(unittest.TestCase):
         self.assertEqual(held, ADMITTED_WRITES)
         for scopes in ADMITTED_WRITES.values():
             self.assertFalse({'contents', 'id-token', '*'} & scopes)
+
+
+def _guard(files):
+    """guard_tree_violations over a throwaway tree built from {path from the repository root: text}."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        for rel, text in files.items():
+            path = root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding='utf-8')
+        return guard_tree_violations(root)
+
+
+def _has(found, layer, what=''):
+    """True when a violation of this layer (whose text holds `what`) was reported."""
+    return any(l == layer and what in w for _, l, w in found)
+
+
+def _action(run='echo ok', using='composite'):
+    return ('name: helper\ndescription: a local action\nruns:\n  using: ' + using + '\n  steps:\n    - shell: bash\n'
+            '      run: |\n' + ''.join('        ' + line + '\n' for line in run.split('\n')))
+
+
+def _caller(uses='./.github/actions/helper'):
+    return _wf().replace('- run: |', '- uses: ' + uses + '\n      - run: |')
+
+
+NEW = '.github/workflows/new.yml'
+HELPER = '.github/actions/helper/action.yml'
+# DeepSeek round 3, finding A (M-A) verbatim in shape: a complete push workflow with a PAT.
+EVIL = ('name: helper\non:\n  workflow_dispatch:\npermissions:\n  contents: write\njobs:\n  publish:\n    runs-on: ubuntu-latest\n'
+        '    steps:\n      - uses: actions/checkout@v4\n      - name: sync\n        env:\n          PAT: ${{ secrets.DEPLOY_PAT }}\n'
+        '        run: |\n          git config user.name bot\n          git push "https://x:${PAT}@github.com/o/r.git" HEAD:main\n')
+# What no text scan can refuse: the command is built at run time, encoded, or lives in a script nobody reads here.
+ASSEMBLED = {
+    'N10 an assembled word': 'P=pu; P=${P}sh; git $P origin HEAD',
+    'N11 ANSI-C quoting': "git $'\\x70ush' origin HEAD",
+    'N12 an empty expansion': 'git pu${EMPTY}sh origin HEAD',
+    'N15 an encoded command': 'echo Z2l0IHB1c2ggb3JpZ2luIEhFQUQ= | base64 -d | sh',
+    'N16 a committed script': 'bash scripts/sync.sh',
+    'N22 character codes': 'python3 -c "import os; os.system(chr(103)+chr(105)+chr(116)+chr(32)+chr(112)+chr(117)+chr(115)+chr(104))"',
+}
+
+
+class CapabilityLayerTests(unittest.TestCase):
+    """DeepSeek round 3 on #332: each witness as a fixture, and the layer that refuses it named in the test.
+
+    Layers: `tree` (the shape of .github), `permissions`, `secrets`, `triggers`, `composite` (a local action's
+    own checks) and `text` (the older scan, kept). A witness the text scan cannot see is shown BOUND by the
+    capability layer instead: the same script, given any write power or any secret, is refused; with neither, it
+    holds a read-only token and no credential, which is the stated limit.
+    """
+
+    def test_the_real_tree_passes_every_layer_and_every_table_is_exact(self):
+        self.assertEqual(guard_tree_violations(ROOT), [])
+        power, events, secrets, files = {}, set(), set(), sorted(WORKFLOWS.glob('*.y*ml'))
+        for path in files:
+            doc = yaml.safe_load(path.read_text())
+            power.update({(path.name, job): scopes for job, scopes in _jobs_with_power(doc).items()})
+            events |= {(path.name, event) for event in _events(doc) & set(DANGEROUS_TRIGGERS)}
+            secrets |= {(path.name, n) for n in _secret_names(_scalar_texts(path.read_text())) - {'GITHUB_TOKEN'}}
+        self.assertEqual(power, {key: value[0] for key, value in ADMITTED_JOB_POWER.items()})
+        self.assertEqual(events, set(ADMITTED_TRIGGERS))
+        self.assertEqual(secrets, set(ADMITTED_SECRET_USE))
+        # no workflow lives below the top level, and the tree is the one the old tests glob
+        self.assertEqual(sorted(WORKFLOWS.rglob('*.y*ml')), files)
+        for table in (ADMITTED_JOB_POWER, ADMITTED_SECRET_USE, ADMITTED_TRIGGERS):
+            for key, value in table.items():
+                reason = value[1] if isinstance(value, tuple) else value
+                self.assertTrue(reason and '\n' not in reason, key)
+        # the layer's tables agree with the older ones
+        self.assertEqual({(f, n) for f, names in ADMITTED_SECRETS.items() for n in names}, set(ADMITTED_SECRET_USE))
+        self.assertEqual({f: set(s) for (f, _), (s, _) in ADMITTED_JOB_POWER.items()},
+                         {f: set(s) for (f, _), s in ADMITTED_WRITES.items()})
+        self.assertEqual(ADMITTED_VARS, {})
+
+    # ---- A. a workflow in a subfolder (layer: tree) ------------------------------------------------------------
+    def test_w_a_a_workflow_in_a_subfolder_is_refused_by_the_tree_layer(self):
+        for rel, text in (('.github/workflows/sub/evil.yml', EVIL), ('.github/workflows/a/b/evil.yaml', EVIL),
+                          ('.github/workflows/SUB/Evil.YML', EVIL), ('.github/workflows/sub/clean.yml', _wf())):
+            with self.subTest(rel=rel):
+                self.assertTrue(_has(_guard({rel: text}), 'tree', 'subfolder'))
+        # the same file at the top level is refused by three other layers, so the shape rule is what is new
+        top = _guard({'.github/workflows/evil.yml': EVIL})
+        for layer, what in (('text', 'git push'), ('permissions', 'contents'), ('secrets', 'DEPLOY_PAT')):
+            self.assertTrue(_has(top, layer, what), layer)
+        self.assertFalse(_has(top, 'tree'))
+        # a symlink under the two folders is refused as well
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / '.github' / 'workflows').mkdir(parents=True)
+            (root / 'elsewhere.yml').write_text(_wf(), encoding='utf-8')
+            try:
+                (root / '.github' / 'workflows' / 'link.yml').symlink_to(root / 'elsewhere.yml')
+            except (OSError, NotImplementedError):
+                self.skipTest('no symlinks here')
+            self.assertTrue(_has(guard_tree_violations(root), 'tree', 'symlink'))
+
+    # ---- B. a composite action (layers: composite, secrets) ----------------------------------------------------
+    def test_w_b_a_composite_action_is_read_and_its_run_steps_go_to_the_text_scan(self):
+        pushing = _action('git push origin HEAD:main')
+        self.assertTrue(_has(_guard({NEW: _caller(), HELPER: pushing}), 'composite', 'git push'))
+        self.assertTrue(_has(_guard({HELPER: pushing}), 'composite', 'push word'))      # even when nothing calls it
+        self.assertTrue(_has(_guard({NEW: _caller(), HELPER: _action('make && gh pr comment 1 --body x')}),
+                             'composite', 'pull request comment'))
+        self.assertTrue(_has(_guard({NEW: _caller(), HELPER: _action('echo secrets')}), 'composite', 'secret'))
+        self.assertTrue(_has(_guard({NEW: _caller(), HELPER: _action('echo ${{ secrets.DEPLOY_PAT }}')}), 'secrets', 'DEPLOY_PAT'))
+        self.assertTrue(_has(_guard({NEW: _caller(), HELPER: _action('echo ANTHROPIC_API_KEY')}), 'composite', 'model credential'))
+        # a clean one passes, and so does the real one
+        self.assertEqual(_guard({NEW: _caller(), HELPER: _action()}), [])
+
+    def test_w_b_a_local_action_must_be_a_composite_under_dot_github_actions_and_must_exist(self):
+        outside = _guard({NEW: _caller('./scripts/act'), 'scripts/act/action.yml': _action()})
+        self.assertTrue(_has(outside, 'composite', 'outside .github/actions'))
+        pushing = _guard({NEW: _caller('./scripts/act'), 'scripts/act/action.yml': _action('git push')})
+        self.assertTrue(_has(pushing, 'composite', 'git push'))   # read wherever it is, and refused for the place
+        node = _guard({NEW: _caller(), HELPER: _action(using='node20')})
+        self.assertTrue(_has(node, 'composite', 'not a composite'))
+        docker = _guard({NEW: _caller(), HELPER: _action(using='docker')})
+        self.assertTrue(_has(docker, 'composite', 'not a composite'))
+        self.assertTrue(_has(_guard({NEW: _caller('./.github/actions/missing')}), 'composite', 'no action.yml'))
+        self.assertTrue(_has(_guard({NEW: _caller('./../elsewhere')}), 'composite', 'outside the repository'))
+        # a composite that calls another is followed
+        chain = _guard({NEW: _caller(), HELPER: _action().replace('    - shell: bash', '    - uses: ./other/deep\n    - shell: bash'),
+                        'other/deep/action.yml': _action('git push origin HEAD')})
+        self.assertTrue(_has(chain, 'composite', 'outside .github/actions'))
+        self.assertTrue(_has(chain, 'composite', 'git push'))
+        # a reusable workflow named by a job is a workflow file, read as one
+        caller = ('name: t\non: workflow_dispatch\npermissions:\n  contents: read\njobs:\n  call:\n'
+                  '    uses: ./.github/workflows/other.yml\n')
+        self.assertEqual(_guard({NEW: caller, '.github/workflows/other.yml': _wf()}), [])
+
+    # ---- C. an HTTP client with a write method (layer: text) ---------------------------------------------------
+    def test_w_c_an_http_client_with_a_write_method_against_github_is_refused(self):
+        for form in ('curl -sS -X PUT https://api.github.com/repos/o/r/contents/f -d @x',          # N19, the witness
+                     'curl -XPUT https://api.github.com/repos/o/r/contents/f -d @x',
+                     'curl -sSX PUT https://api.github.com/x', 'curl --request PUT https://api.github.com/x',
+                     'curl --request=DELETE https://api.github.com/x', 'curl -d @x https://api.github.com/repos/o/r/git/refs',
+                     'curl --data-binary @x https://api.github.com/x', 'curl -F f=@x https://uploads.github.com/x',
+                     'curl -X POST "$GITHUB_API_URL/repos/o/r/issues/1/comments" -d @x',
+                     'curl -X PATCH -H "Authorization: Bearer $GITHUB_TOKEN" https://example.com/x',
+                     'wget --method=PUT --body-file=x https://api.github.com/x', 'wget --post-data=a=b https://api.github.com/x',
+                     'Invoke-RestMethod -Method Put -Uri https://api.github.com/x -Body $b',
+                     'iwr -Method:Post https://api.github.com/x', 'irm https://api.github.com/x -Body $b',
+                     'http PUT api.github.com/repos/o/r/contents/f content=x'):
+            with self.subTest(form=form):
+                self.assertIn('github api write', _kinds(_wf(form)))
+                self.assertTrue(_has(_guard({NEW: _wf(form)}), 'text', 'github api write'))
+        for form in ('curl -fsSL -o actionlint.tgz "https://github.com/rhysd/actionlint/releases/download/v1/x.tar.gz"',
+                     'curl -sS -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/repos/o/r/pulls/1',
+                     'curl -G -d per_page=100 https://api.github.com/repos/o/r/pulls',
+                     'curl -X GET https://api.github.com/x', 'curl -X POST https://example.com/hook -d x',
+                     'wget -qO- https://api.github.com/x', 'Invoke-RestMethod -Uri https://api.github.com/x',
+                     'gh api --paginate repos/o/r/pulls/1/files --jq .[].filename'):
+            with self.subTest(read=form):
+                self.assertNotIn('github api write', _kinds(_wf(form)))
+
+    # ---- N18. an assembled gh api address, and N17 a literal receive-pack (layer: text) ------------------------
+    def test_w_n18_gh_api_with_a_write_method_is_refused_whatever_the_endpoint(self):
+        assembled = 'U=https://api.github.com/repos/o/r/cont; U=${U}ents/f; gh api -X PUT "$U" -f content=x'
+        self.assertIn('github api write', _kinds(_wf(assembled)))
+        for form in ('gh api -X PUT "$U" -f content=x', 'gh api --method POST repos/o/r/actions/runs/1/cancel',
+                     'gh api -X DELETE repos/o/r/actions/runs/1', 'gh api repos/o/r/anything -f a=b',
+                     "gh api graphql -f query='mutation { x }'"):
+            with self.subTest(form=form):
+                self.assertIn('github api write', _kinds(_wf(form)))
+        for form in ('gh api graphql -f query=\'query { viewer { login } }\'', 'gh api -X GET repos/o/r/pulls -f per_page=100',
+                     'gh api repos/o/r/pulls/1/files --paginate'):
+            with self.subTest(read=form):
+                self.assertNotIn('github api write', _kinds(_wf(form)))
+
+    def test_w_n17_a_literal_git_receive_pack_over_ssh_is_refused(self):
+        for form in ('ssh git@github.com "git-receive-pack \'o/r.git\'"', 'git-receive-pack o/r.git'):
+            with self.subTest(form=form):
+                self.assertIn('git push', _kinds(_wf(form)))
+
+    # ---- N10, N11, N12, N15, N16, N22: assembled, encoded or hidden commands (layers: permissions, secrets) -----
+    def test_w_assembled_commands_are_bound_by_the_token_and_the_secrets_not_refused_as_text(self):
+        for label, form in ASSEMBLED.items():
+            with self.subTest(witness=label):
+                # No text scan sees it: the older layer is silent (this is the stated limit)...
+                self.assertEqual(_kinds(_wf(form)), [])
+                # ...and with a read-only token and no secret it holds no power to write: nothing to refuse.
+                self.assertEqual(_guard({NEW: _wf(form)}), [])
+                # Given any power it is refused by the capability layer, whatever it says.
+                for top in ('permissions:\n  contents: write\n', 'permissions:\n  pull-requests: write\n', 'permissions: write-all\n'):
+                    self.assertTrue(_has(_guard({NEW: _wf(form, top=top)}), 'permissions', 'not admitted'), top)
+                self.assertTrue(_has(_guard({NEW: _wf(form, top='')}), 'permissions', 'UNSPECIFIED'))
+                self.assertTrue(_has(_guard({NEW: _wf(form, job='    permissions:\n      contents: write\n')}), 'permissions', 'contents'))
+                keyed = _wf(form).replace('- run: |', '- env:\n          T: ${{ secrets.DEPLOY_PAT }}\n        run: |')
+                self.assertTrue(_has(_guard({NEW: keyed}), 'secrets', 'DEPLOY_PAT'))
+                # (At the top level the older text layer refused all of these already, and still does.)
+                self.assertTrue(_has(_guard({NEW: keyed}), 'text', 'secret'))
+                self.assertTrue(_has(_guard({NEW: _wf(form, top='permissions:\n  contents: write\n')}), 'text', 'contents write'))
+                # In a subfolder the shape is refused. In a composite action the job's token is what bounds it.
+                self.assertTrue(_has(_guard({'.github/workflows/sub/x.yml': _wf(form)}), 'tree'))
+                self.assertEqual(_guard({NEW: _caller(), HELPER: _action(form)}), [])
+                writer = _caller().replace('permissions:\n  contents: read\n', 'permissions:\n  contents: write\n')
+                self.assertNotEqual(writer, _caller())
+                self.assertTrue(_has(_guard({NEW: writer, HELPER: _action(form)}), 'permissions', 'contents'))
+
+    def test_the_text_scan_misses_a_third_party_action_and_a_script_it_does_not_read(self):
+        # KNOWN LIMITS, pinned: a third-party action and a script a step calls are not read; the job's token bounds them.
+        remote = _wf().replace('- run: |', '- uses: someone/elsewhere@v1\n      - run: |')
+        self.assertEqual(_guard({NEW: remote}), [])
+        self.assertEqual(_guard({NEW: _wf('bash scripts/sync.sh'), 'scripts/sync.sh': 'git push origin HEAD\n'}), [])
+
+    # ---- the raw-text first line (layer: text, and secrets) ----------------------------------------------------
+    def test_the_raw_text_line_sees_a_secret_that_a_duplicate_key_hides(self):
+        text = _wf().replace('- run: |', '- env:\n          K: ${{ secrets.OTHER }}\n          K: ok\n        run: |')
+        self.assertEqual(yaml.safe_load(text)['jobs']['j']['steps'][0]['env'], {'K': 'ok'})   # the parse lost it
+        self.assertEqual(_context_refs(yaml.safe_load(text)), set())
+        self.assertIn('secret', _kinds(text))                                                  # the raw line has it
+        self.assertTrue(_has(_guard({NEW: text}), 'secrets', 'OTHER'))
+        name = 'linear-pr-sync.yml'
+        real = (WORKFLOWS / name).read_text()
+        anchor = '          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}\n'
+        hidden = real.replace(anchor, anchor + '          K: ${{ secrets.OTHER_KEY }}\n          K: ok\n')
+        self.assertIn('secret', writer_guard_violations(name, hidden))
+        self.assertTrue(_has(_guard({'.github/workflows/' + name: hidden}), 'secrets', 'OTHER_KEY'))
+
+    # ---- b. permissions ----------------------------------------------------------------------------------------
+    def test_permissions_a_job_that_inherits_or_drops_its_block_must_be_admitted(self):
+        name = 'ci-label-retrigger.yml'
+        real = (WORKFLOWS / name).read_text()
+        path = '.github/workflows/' + name
+        self.assertEqual(_guard({path: real}), [])
+        # A third job in the admitted file inherits `actions: write`; the older table, keyed by workflow, cannot see it.
+        extra = real.rstrip('\n') + '\n\n  extra:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n'
+        found = _guard({path: extra})
+        self.assertTrue(_has(found, 'permissions', 'job extra holds actions'))
+        self.assertEqual({layer for _, layer, _ in found}, {'permissions'})
+        # Its own read-only block takes the inherited power away, as GitHub reads it.
+        own = extra.replace('    steps:\n      - run: echo hi\n', '    permissions:\n      contents: read\n    steps:\n      - run: echo hi\n')
+        self.assertEqual(_guard({path: own}), [])
+        # A grown scope is refused (older layer too); the same text under another name is refused for both jobs.
+        grown = real.replace('  actions: write\n', '  actions: write\n  statuses: write\n', 1)
+        self.assertTrue(_has(_guard({path: grown}), 'permissions', 'job retrigger holds actions statuses'))
+        self.assertTrue(_has(_guard({path: grown}), 'text', 'permission write'))
+        other = _guard({'.github/workflows/other.yml': real})
+        self.assertTrue(_has(other, 'permissions', 'job retrigger') and _has(other, 'permissions', 'job cancel-ancestors'))
+        # A dropped block is UNSPECIFIED; a whole-token string and `models` are power; an empty block is none.
+        self.assertTrue(_has(_guard({NEW: _wf(top='')}), 'permissions', 'UNSPECIFIED'))
+        self.assertTrue(_has(_guard({NEW: _wf(top='permissions: write-all\n')}), 'permissions', '*'))
+        self.assertTrue(_has(_guard({NEW: _wf(top='permissions:\n  contents: read\n  models: read\n')}), 'permissions', 'models'))
+        self.assertFalse(_has(_guard({NEW: _wf(top='permissions:\n  contents: read\n', job='    permissions: {}\n')}), 'permissions'))
+        self.assertFalse(_has(_guard({NEW: _wf(top='', job='    permissions:\n      contents: read\n')}), 'permissions'))
+        # An admitted UNSPECIFIED job is a named decision, and only for that file and job.
+        with mock.patch.dict(ADMITTED_JOB_POWER, {('new.yml', 'j'): (UNSPECIFIED, 'unspecified today; owner\'s point')}):
+            self.assertFalse(_has(_guard({NEW: _wf(top='')}), 'permissions'))
+            self.assertTrue(_has(_guard({'.github/workflows/o.yml': _wf(top='')}), 'permissions'))
+
+    # ---- c. secrets --------------------------------------------------------------------------------------------
+    def test_secrets_every_name_but_the_github_token_must_be_admitted_for_the_file(self):
+        self.assertTrue(_has(_guard({NEW: _wf().replace('- run: |', '- env:\n          K: ${{ secrets.OTHER }}\n        run: |')}),
+                             'secrets', 'OTHER'))
+        for form in ("${{ secrets['OTHER'] }}", '${{ toJSON(secrets) }}', '${{ secrets.* }}', '${{ SECRETS.other }}'):
+            with self.subTest(form=form):
+                self.assertTrue(_has(_guard({NEW: _wf().replace('- run: |', '- env:\n          K: ' + form + '\n        run: |')}), 'secrets'))
+        self.assertTrue(_has(_guard({NEW: _wf().replace('- run: |', '- name: all the secrets\n        run: |')}), 'secrets', '*'))
+        inherit = _wf().replace('    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          echo ok\n',
+                                '    uses: ./.github/workflows/other.yml\n    secrets: inherit\n')
+        self.assertTrue(_has(_guard({NEW: inherit, '.github/workflows/other.yml': _wf()}), 'secrets', '*'))
+        # The admitted name is admitted for its own file only; a second one in that file is refused.
+        name = 'linear-pr-sync.yml'
+        real = (WORKFLOWS / name).read_text()
+        anchor = '          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}\n'
+        self.assertEqual([x for x in _guard({'.github/workflows/' + name: real}) if x[1] == 'secrets'], [])
+        self.assertTrue(_has(_guard({'.github/workflows/other.yml': real}), 'secrets', 'LINEAR_API_KEY'))
+        second = _guard({'.github/workflows/' + name: real.replace(anchor, anchor + '          K: ${{ secrets.OTHER_KEY }}\n')})
+        self.assertTrue(_has(second, 'secrets', 'OTHER_KEY'))
+        self.assertFalse(_has(second, 'secrets', 'LINEAR_API_KEY'))
+        # GITHUB_TOKEN is not this layer's concern (the older text scan still refuses it).
+        token = _guard({NEW: _wf().replace('- run: |', '- env:\n          K: ${{ secrets.GITHUB_TOKEN }}\n        run: |')})
+        self.assertFalse(_has(token, 'secrets'))
+        self.assertTrue(_has(token, 'text', 'secret'))
+
+    # ---- d. triggers -------------------------------------------------------------------------------------------
+    def test_triggers_pull_request_target_and_workflow_run_must_be_admitted(self):
+        for on in ('on: pull_request_target\n', 'on: [pull_request_target]\n', 'on: [push, WORKFLOW_RUN]\n',
+                   'on:\n  pull_request_target:\n    types: [opened]\n',
+                   'on:\n  workflow_dispatch:\n  workflow_run:\n    workflows: [ci]\n'):
+            with self.subTest(on=on):
+                text = _wf().replace('on: workflow_dispatch\n', on)
+                self.assertNotEqual(text, _wf())
+                self.assertTrue(_has(_guard({NEW: text}), 'triggers', 'not admitted'))
+        self.assertFalse(_has(_guard({NEW: _wf()}), 'triggers'))
+        real = (WORKFLOWS / 'ci-label-retrigger.yml').read_text()
+        self.assertFalse(_has(_guard({'.github/workflows/ci-label-retrigger.yml': real}), 'triggers'))
+        self.assertTrue(_has(_guard({'.github/workflows/other.yml': real}), 'triggers', 'workflow_run'))
+        self.assertTrue(_has(_guard({NEW: _wf().replace('on: workflow_dispatch\n', 'on: {}\n')}), 'triggers', 'no readable trigger'))
+        # an unreadable workflow is refused by the older layer; the capability layer does not guess
+        self.assertTrue(_has(_guard({NEW: 'name: [unclosed\n'}), 'text', 'unparseable'))
 
 
 # The linux job runs this file by path, not every tools/test_*.py. Importing

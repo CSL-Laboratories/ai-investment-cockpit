@@ -98,15 +98,26 @@ and records it on Linear; to roll back a workflow change, revert its PR (a found
   becomes a repository rule):** a PR that changes a workflow, `scripts/ci/**`, a required check or
   the rulesets also updates [ci-event-contract.md](ci-event-contract.md) in the same PR, including
   re-pinned `file:line` citations when lines move, or says "no contract row changes" and why.
-- `NoAutomatedWriterTests` (`tools/test_ci_dispatch_scope.py`) fails closed, for every workflow: the word
-  `secrets` or `vars` may stand in the text (outside comments) only as an admitted exact spelling (one:
-  `secrets.LINEAR_API_KEY` in `linear-pr-sync.yml`), and an expression it cannot read to its end is refused;
-  no token permission above read except the admitted `actions: write` of `ci-label-retrigger.yml` (`models`
-  at any level, `read-all` and `write-all` are refused); no model credential or model action; GitHub-hosted
-  runners only; and the word `push` may not appear in a run script unless that exact line is admitted by name
-  (two lines are: an error message and a shell comment). A script fetched or assembled at run time, an
-  encoded command and a reusable workflow elsewhere cannot be seen by any scan of text; the test file says so.
-  Adding an automated writer back is a founder decision.
+- `NoAutomatedWriterTests` and `CapabilityLayerTests` (`tools/test_ci_dispatch_scope.py`) guard against an
+  automated writer in two layers. The CAPABILITY layer checks what a job is able to do, whatever its scripts
+  say: every workflow lies directly under `.github/workflows` (a `.yml` file in a subfolder is refused; GitHub
+  runs none); each job's effective `permissions` (its own block, else the workflow's, else unspecified) must
+  hold no scope above read, and must not be unspecified, unless the job is on the allowlist in the test (today:
+  the two jobs of `ci-label-retrigger.yml`, `actions: write`; no job is unspecified); every secret other than
+  `GITHUB_TOKEN` that a workflow or a local composite action names must be on the allowlist (one:
+  `LINEAR_API_KEY` in `linear-pr-sync.yml`); `pull_request_target` and `workflow_run` must be on the allowlist
+  (one: `workflow_run` in `ci-label-retrigger.yml`); every local composite action is read, must lie under
+  `.github/actions` and be a composite. The TEXT layer stays as a second line: the word `secrets` or `vars` may
+  stand in the text (outside comments) only as an admitted exact spelling, an expression it cannot read to its
+  end is refused, no model credential or model action, GitHub-hosted runners only, the word `push` may not
+  appear in a run script unless that exact line is admitted by name (two lines are: an error message and a
+  shell comment), and a push or a write to contents, labels or comments through git, `gh`, an HTTP client
+  (curl, wget, Invoke-WebRequest) or the API is refused. A command assembled at run time, an encoded command,
+  a script that a step calls, a third-party action and a reusable workflow elsewhere cannot be seen by any scan
+  of text; what bounds them is the capability layer: a job whose token holds no write scope and which names no
+  secret cannot write to the repository, whatever it runs (it can still read and use the network inside the
+  runner); the use made of the admitted `actions: write` is not checked. Every allowlist entry is a decision of
+  the owner. Adding an automated writer back is a founder decision.
 
 ## 8. Owners
 
