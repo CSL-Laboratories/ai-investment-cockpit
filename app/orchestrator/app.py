@@ -439,57 +439,65 @@ def create_app(state, *, auth: ApiKeyAuth | None = None,
 
     @app.put("/limits")
     def put_limits(body: LimitsUpdate):
-        current = _current_limits(state)
-        bounds = _hard_bounds(state.settings)
-        requested = {
-            k: getattr(body, k) for k in _LIMIT_LOOSEN_DIR
-            if getattr(body, k) is not None
-        }
-        if not requested:
-            raise HTTPException(status_code=422, detail="no limit fields supplied")
+        # W2: read -> classify -> disarm -> append is ONE step under the mode ladder's
+        # read-modify-write lock (state.py:350-353; reentrant for drop_to_review_live).
+        # Unlocked, two requests that read one snapshot each append a whole dictionary
+        # built from it, and the later one restores the other's field: a loosening with
+        # no confirmation and no disarm. In-process only; this API is one process (serve).
+        with state.lock:
+            current = _current_limits(state)
+            bounds = _hard_bounds(state.settings)
+            requested = {
+                k: getattr(body, k) for k in _LIMIT_LOOSEN_DIR
+                if getattr(body, k) is not None
+            }
+            if not requested:
+                raise HTTPException(status_code=422, detail="no limit fields supplied")
 
-        loosened = [k for k, v in requested.items() if _is_loosening(k, v, current[k])]
-        over = [k for k in loosened if _exceeds_bound(k, requested[k], bounds)]
-        if over:
-            # SEC-15: cannot loosen beyond the hard config ceiling from the funded balance.
-            # The security-hardening backlog is explicit that a ceiling-breach ATTEMPT is
-            # itself a privileged-change signal: it is REJECTED **and disarms auto modes** to
-            # review_live. Drop FIRST (audited via the ladder), so the 4xx never leaves
-            # autonomy armed.
-            mode_after = ModeLadder(state).drop_to_review_live(
-                f"limits ceiling-breach attempt: {over}", actor=body.actor,
-                kind="limits_ceiling_breach",
-            ).value
-            return JSONResponse(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                content={"rejected": "ceiling_exceeded", "fields": over,
-                         "hard_ceilings": {k: str(bounds[k]) for k in over},
-                         "mode_after": mode_after},
+            loosened = [k for k, v in requested.items() if _is_loosening(k, v, current[k])]
+            over = [k for k in loosened if _exceeds_bound(k, requested[k], bounds)]
+            if over:
+                # SEC-15: cannot loosen beyond the hard config ceiling from the funded balance.
+                # The security-hardening backlog is explicit that a ceiling-breach ATTEMPT is
+                # itself a privileged-change signal: it is REJECTED **and disarms auto modes** to
+                # review_live. Drop FIRST (audited via the ladder), so the 4xx never leaves
+                # autonomy armed.
+                mode_after = ModeLadder(state).drop_to_review_live(
+                    f"limits ceiling-breach attempt: {over}", actor=body.actor,
+                    kind="limits_ceiling_breach",
+                ).value
+                return JSONResponse(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    content={"rejected": "ceiling_exceeded", "fields": over,
+                             "hard_ceilings": {k: str(bounds[k]) for k in over},
+                             "mode_after": mode_after},
+                )
+            if loosened and not body.confirm:
+                return JSONResponse(
+                    status_code=status.HTTP_409_CONFLICT,
+                    content={"rejected": "confirmation_required", "loosening": loosened,
+                             "hint": "resend with confirm=true (SEC-15 privileged change)"},
+                )
+
+            new_limits = dict(current)
+            for k, v in requested.items():
+                new_limits[k] = str(v) if isinstance(v, Decimal) else v
+
+            mode_after = None
+            if loosened:
+                # SEC-15: any loosening drops auto modes to review_live (never a re-arm).
+                # Disarm FIRST, as the ceiling branch does: a failed disarm leaves the looser
+                # limit unwritten instead of in force while auto is still armed.
+                mode_after = ModeLadder(state).drop_to_review_live(
+                    f"limits loosened: {loosened}", actor=body.actor, kind="limits_loosened"
+                ).value
+            # Audit the change (append; the mode-drop above is the load-bearing state mutation).
+            state.audit.append(
+                EVENT_LIMITS_CHANGE, actor=body.actor,
+                payload={"limits": new_limits, "loosened": loosened,
+                         "reason": body.reason or "limits change"},
             )
-        if loosened and not body.confirm:
-            return JSONResponse(
-                status_code=status.HTTP_409_CONFLICT,
-                content={"rejected": "confirmation_required", "loosening": loosened,
-                         "hint": "resend with confirm=true (SEC-15 privileged change)"},
-            )
-
-        new_limits = dict(current)
-        for k, v in requested.items():
-            new_limits[k] = str(v) if isinstance(v, Decimal) else v
-
-        # Audit the change (append; the mode-drop below is the load-bearing state mutation).
-        state.audit.append(
-            EVENT_LIMITS_CHANGE, actor=body.actor,
-            payload={"limits": new_limits, "loosened": loosened,
-                     "reason": body.reason or "limits change"},
-        )
-        mode_after = None
-        if loosened:
-            # SEC-15: any loosening drops auto modes to review_live (never a re-arm).
-            mode_after = ModeLadder(state).drop_to_review_live(
-                f"limits loosened: {loosened}", actor=body.actor, kind="limits_loosened"
-            ).value
-        return {"limits": new_limits, "loosened": loosened, "mode_after": mode_after}
+            return {"limits": new_limits, "loosened": loosened, "mode_after": mode_after}
 
     # ---- killswitch (L7 / SEC-04) ------------------------------------------------------
     @app.post("/killswitch")
