@@ -114,7 +114,7 @@ and records it on Linear; to roll back a workflow change, revert its PR (a found
   shell comment), and, for the literal spellings it can read, a push or a write to contents, labels or comments
   through git, `gh` (named exactly `gh`, with the method as `-X PUT` or `--method PUT`) or an HTTP client (curl,
   wget, Invoke-WebRequest, Invoke-RestMethod, http, https, xh, with GitHub named in the same shell command) is
-  refused (so is the text of a contents, label or comment API path). Four spellings pass this layer: `gh.exe`, `gh api -XPUT` (method attached to the option), a `curl`
+  refused (so are the Octokit method names for those writes, as text; a bare `gh api` path is not read). Four spellings pass this layer: `gh.exe`, `gh api -XPUT` (method attached to the option), a `curl`
   whose GitHub URL stands in a variable set on an earlier line, and an HTTP PUT made from `python` or `node`;
   the capability layer above is what bounds them. A command assembled at run time, an encoded command,
   a script that a step calls, a third-party action and a reusable workflow elsewhere cannot be seen by any scan
