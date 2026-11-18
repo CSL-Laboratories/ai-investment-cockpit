@@ -57,11 +57,13 @@ class RoutePort(Protocol):
 def is_strict_json(value: object) -> bool:
     """True when ``value`` serializes as strict JSON: no NaN, no infinity.
 
-    A schema's ``number`` accepts NaN and infinity, which are not JSON.
+    A schema's ``number`` accepts NaN and infinity, which are not JSON. The
+    text must also encode as UTF-8, as the canonical digest needs: a lone
+    surrogate passes the schema and is not a value this boundary can carry.
     """
 
     try:
-        json.dumps(value, allow_nan=False)
+        json.dumps(value, allow_nan=False, ensure_ascii=False).encode("utf-8")
     except (TypeError, ValueError, RecursionError):
         return False
     return True

@@ -269,7 +269,11 @@ def _entry_digest(entry: dict[str, Any]) -> str:
 
 
 def _read_source(root: Path, relative: str) -> bytes:
-    candidate = (root / relative).resolve()
+    try:
+        candidate = (root / relative).resolve()
+    except (OSError, RuntimeError, ValueError):
+        # A NUL in the path, or (before Python 3.13) a symlink loop.
+        raise ProjectionError(f"{relative}: unreadable") from None
     try:
         candidate.relative_to(root.resolve())
     except ValueError:

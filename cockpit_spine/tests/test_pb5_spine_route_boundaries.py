@@ -12,6 +12,7 @@ import copy
 import hashlib
 import io
 import json
+import os
 import shutil
 from pathlib import Path
 import tempfile
@@ -21,7 +22,7 @@ from unittest import mock
 from cockpit_spine import audit, cli, projections, session
 from cockpit_spine.fake_source import FakeProposalSource, inline_payload
 from successor.route_consumer import pin
-from successor.route_consumer.consumer import DecisionOutcome, RouteConsumer
+from successor.route_consumer.consumer import DecisionOutcome, RouteConsumer, is_strict_json
 from successor.route_consumer.profile import DECISION_PROFILE, canonical_digest
 from successor.route_consumer.records import RouteBinding, prompt_digest
 
@@ -317,6 +318,12 @@ class Pb5Regressions(unittest.TestCase):
             'entry-without-sha256': (altered(lambda d: d['vendored'][pin.SCHEMA_KEY].pop('sha256')), None,
                                      lambda: pin.read_vendored(pin.SCHEMA_KEY)),
             'no-head-sha': (altered(lambda d: d['source'].pop('head_sha')), None, pin.pinned_head),
+            'repository-not-text': (altered(lambda d: d['source'].__setitem__('repository', 7)), None,
+                                    pin.pinned_head),
+            'pull-request-is-text': (altered(lambda d: d['source'].__setitem__('pull_request', '341')), None,
+                                     pin.pinned_head),
+            'pull-request-is-bool': (altered(lambda d: d['source'].__setitem__('pull_request', True)), None,
+                                     pin.pinned_head),
             'schema-without-defs': (altered(schema_without_defs[0]), schema_without_defs[1], pin.schema_defs),
             'schema-unparseable': (altered(schema_unparseable[0]), schema_unparseable[1], pin.schema_defs),
         }
@@ -340,6 +347,86 @@ class Pb5Regressions(unittest.TestCase):
                         self.assertEqual(0, port.submissions)
                 finally:
                     clear_contract_caches()
+
+    # Answer to the first read: the identities are compared as they are.
+    def test_s2_request_record_for_another_request_id_is_refused(self):
+        outcome = correlated(inline_payload('x'))
+        outcome = DecisionOutcome(outcome.disposition, outcome.reason, outcome.payload,
+            {'id': 'req-old', 'prompt_digest': prompt_digest('synthetic')}, outcome.reply_record, None)
+        s = opened(FixedSource(outcome))
+        self.assert_refused_to_watch_only(s, s.request_proposal(request_id='req-new', prompt='synthetic'))
+
+    def test_s2_ids_and_digests_are_compared_exactly_not_loosely(self):
+        right = prompt_digest('synthetic')
+        cases = {
+            'digest-in-upper-case': ('req-new', {'id': 'req-new', 'prompt_digest': right.upper()},
+                                     {'request_id': 'req-new', 'output_digest': DIGEST}),
+            'request-record-id-an-int': ('123', {'id': 123, 'prompt_digest': right},
+                                         {'request_id': '123', 'output_digest': DIGEST}),
+            'reply-request-id-an-int': ('123', {'id': '123', 'prompt_digest': right},
+                                        {'request_id': 123, 'output_digest': DIGEST}),
+        }
+        for name, (request_id, request_record, reply_record) in cases.items():
+            with self.subTest(case=name):
+                outcome = DecisionOutcome('accepted', 'ok', inline_payload('x'), request_record, reply_record, None)
+                s = opened(FixedSource(outcome))
+                self.assert_refused_to_watch_only(
+                    s, s.request_proposal(request_id=request_id, prompt='synthetic'))
+
+    # S3: a string JSON can write but UTF-8 cannot is not strict JSON either.
+    def test_s3_a_lone_surrogate_is_quarantined_not_a_source_error(self):
+        payload = inline_payload('size')
+        payload['thesis'] = 'broken \ud800 text'
+        self.assertFalse(is_strict_json(payload))
+        result, _ = decide(copy.deepcopy(payload))
+        self.assertEqual('needs_human_review', result.disposition)
+        self.assertEqual('consumer_revalidation_failed', result.reason)
+        s = opened(FixedSource(correlated(payload)))
+        result = s.request_proposal(request_id='req-new', prompt='synthetic')
+        self.assertFalse(result.ok)
+        self.assertEqual(session.PAYLOAD_INVALID, result.code)
+        self.assertEqual([], s.proposals())
+        self.assertTrue(s.records()[-1]['data']['quarantined'])
+
+    # S1: the public readers and the loader's mapping.
+    def test_s1_read_cited_bytes_refuses_a_nul_path_with_a_projection_error(self):
+        with tempfile.TemporaryDirectory(prefix='pb5-cited-') as d:
+            for repository in ('owner/repo', projections.VAULT_REPOSITORY):
+                with self.subTest(repository=repository), self.assertRaises(projections.ProjectionError):
+                    projections.read_cited_bytes(repository, 'a\x00b.json', root=Path(d), vault_root=Path(d))
+
+    def test_s1_a_symlink_loop_in_a_source_path_is_a_projection_error(self):
+        with tempfile.TemporaryDirectory(prefix='pb5-loop-') as d:
+            root = Path(d)
+            try:
+                os.symlink('loop-b', root / 'loop-a')
+                os.symlink('loop-a', root / 'loop-b')
+            except OSError:
+                self.skipTest('symlinks are not available')
+            with self.assertRaises(projections.ProjectionError):
+                projections.read_cited_bytes('owner/repo', 'loop-a', root=root)
+
+    def test_s1_a_value_utf8_cannot_encode_is_a_projection_error(self):
+        entry = projections.make_entry(projection_id='sample', label='Sample', value=1, unit='cells',
+            repository=projections.VAULT_REPOSITORY, commit='a' * 40, path='source.json',
+            sha256='0' * 64, derivation={'kind': 'value_at', 'pointer': ''})
+        document = projections.registry_document([entry])
+        document['projections'][0]['label'] = 'broken \ud800'
+        with tempfile.TemporaryDirectory(prefix='pb5-utf8-') as d:
+            registry = Path(d) / 'registry.json'
+            registry.write_text(json.dumps(document), encoding='utf-8')
+            with self.assertRaises(projections.ProjectionError):
+                projections.load_registry(registry, root=Path(d), vault_root=Path(d))
+
+    def test_s1_a_root_that_is_not_a_path_is_a_projection_error(self):
+        entry = projections.make_entry(projection_id='sample', label='Sample', value=1, unit='cells',
+            repository=projections.VAULT_REPOSITORY, commit='a' * 40, path='source.json',
+            sha256='0' * 64, derivation={'kind': 'value_at', 'pointer': ''})
+        with tempfile.TemporaryDirectory(prefix='pb5-root-') as d:
+            registry = Path(d) / 'registry.json'
+            registry.write_text(json.dumps(projections.registry_document([entry])), encoding='utf-8')
+            with self.assertRaises(projections.ProjectionError):
+                projections.load_registry(registry, root=5, vault_root=Path(d))
 
 
 if __name__ == '__main__':
