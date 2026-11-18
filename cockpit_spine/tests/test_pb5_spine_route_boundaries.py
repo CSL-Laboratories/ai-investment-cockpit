@@ -17,6 +17,7 @@ import shutil
 from pathlib import Path
 import tempfile
 import unittest
+from decimal import Decimal
 from unittest import mock
 
 from cockpit_spine import audit, cli, projections, session
@@ -90,7 +91,8 @@ def clear_contract_caches():
     pin._validator.cache_clear()
 
 
-def stop_with_registry(root, *, source_bytes, path='source.json', derivation=None, value=1):
+def stop_with_registry(root, *, source_bytes, path='source.json', derivation=None, value=1,
+                       vault=None, registry_text=None):
     """Run ``stop`` against a one-entry registry over ``source_bytes``; return (exit code, stopped)."""
 
     if source_bytes is not None:
@@ -102,10 +104,11 @@ def stop_with_registry(root, *, source_bytes, path='source.json', derivation=Non
         unit='cells', repository=projections.VAULT_REPOSITORY, commit='a' * 40,
         path=path, sha256=sha, derivation=derivation or {'kind': 'value_at', 'pointer': ''})
     registry = root / 'registry.json'
-    registry.write_text(json.dumps(projections.registry_document([entry])), encoding='utf-8')
+    registry.write_text(registry_text if registry_text is not None
+                        else json.dumps(projections.registry_document([entry])), encoding='utf-8')
     log = root / 'transcript.jsonl'
     cli.write_log(log, opened().records())
-    code = cli.main(['--log', str(log), '--vault-root', str(root),
+    code = cli.main(['--log', str(log), '--vault-root', str(vault or root),
                      'stop', '--operator', 'operator-a', '--reason', 'done'],
                     registry_path=registry, out=io.StringIO(), clock=lambda: STAMP)
     restored = session.OperatorSession.replay(cli.read_log(log), source=FakeProposalSource())
@@ -311,10 +314,17 @@ class Pb5Regressions(unittest.TestCase):
 
         schema_without_defs = own_schema('{}')
         schema_unparseable = own_schema('not json')
+        schema_a_list = own_schema('[]')
+        schema_deep = own_schema('[' * 100000 + ']' * 100000)
         cases = {
             'pin-absent': (None, None, pin.pinned_head),
-            'vendored-is-a-list': (altered(lambda d: d.__setitem__('vendored', [])), None,
+            'vendored-is-a-list': (altered(lambda d: d.__setitem__('vendored', [{'sha256': 'x'}])), None,
                                    lambda: pin.read_vendored(pin.SCHEMA_KEY)),
+            'pin-is-a-list': ('[]', None, pin.pinned_head),
+            'cut-pin': ('{', None, pin.pinned_head),
+            'deep-pin': ('[' * 100000 + ']' * 100000, None, pin.pinned_head),
+            'entry-not-an-object': (altered(lambda d: d['vendored'].__setitem__(pin.SCHEMA_KEY, 5)), None,
+                                    lambda: pin.read_vendored(pin.SCHEMA_KEY)),
             'entry-without-sha256': (altered(lambda d: d['vendored'][pin.SCHEMA_KEY].pop('sha256')), None,
                                      lambda: pin.read_vendored(pin.SCHEMA_KEY)),
             'no-head-sha': (altered(lambda d: d['source'].pop('head_sha')), None, pin.pinned_head),
@@ -326,6 +336,8 @@ class Pb5Regressions(unittest.TestCase):
                                      pin.pinned_head),
             'schema-without-defs': (altered(schema_without_defs[0]), schema_without_defs[1], pin.schema_defs),
             'schema-unparseable': (altered(schema_unparseable[0]), schema_unparseable[1], pin.schema_defs),
+            'schema-a-list': (altered(schema_a_list[0]), schema_a_list[1], pin.schema_defs),
+            'schema-deep': (altered(schema_deep[0]), schema_deep[1], pin.schema_defs),
         }
         for name, (pin_text, schema_text, probe) in cases.items():
             with self.subTest(defect=name), tempfile.TemporaryDirectory(prefix='pb5-pin-') as directory:
@@ -427,6 +439,46 @@ class Pb5Regressions(unittest.TestCase):
             registry.write_text(json.dumps(projections.registry_document([entry])), encoding='utf-8')
             with self.assertRaises(projections.ProjectionError):
                 projections.load_registry(registry, root=5, vault_root=Path(d))
+
+    # Answer to the second read: the loader's OSError arm, the registry's
+    # RecursionError arm and the TypeError arm of is_strict_json.
+    def test_s1_stop_survives_a_vault_root_under_an_unreadable_folder(self):
+        # On Python 3.12 Path.is_dir() re-raises a PermissionError for a path
+        # below a folder that cannot be searched; require_vault_checkout calls it
+        # outside _read_source, so only the loader's OSError arm keeps the stop.
+        # Python 3.13+ answers False there and the result is the same (green).
+        if os.name == 'nt' or (hasattr(os, 'geteuid') and os.geteuid() == 0):
+            self.skipTest('a folder mode does not stop this user')
+        with tempfile.TemporaryDirectory(prefix='pb5-locked-') as d:
+            root = Path(d)
+            locked = root / 'locked'
+            vault = locked / 'vault'
+            vault.mkdir(parents=True)
+            (vault / 'source.json').write_bytes(b'{"value": 1}')
+            os.chmod(locked, 0)
+            try:
+                code, restored = stop_with_registry(root, source_bytes=None, vault=vault)
+            finally:
+                os.chmod(locked, 0o700)
+        self.assertEqual(cli.EXIT_OK, code)
+        self.assertTrue(restored.stopped)
+        self.assertEqual('session_stopped', restored.records()[-1]['kind'])
+
+    def test_s1_stop_survives_a_deeply_nested_registry(self):
+        deep = '[' * 100000 + ']' * 100000
+        with tempfile.TemporaryDirectory(prefix='pb5-deepreg-') as d:
+            code, restored = stop_with_registry(Path(d), source_bytes=b'{"value": 1}', registry_text=deep)
+            self.assertEqual(cli.EXIT_OK, code)
+            self.assertTrue(restored.stopped)
+            self.assertEqual('session_stopped', restored.records()[-1]['kind'])
+
+    def test_s3_a_value_json_cannot_write_is_not_strict_json(self):
+        self.assertFalse(is_strict_json({'quantity': Decimal('1')}))
+        payload = inline_payload('size')
+        payload['quantity'] = Decimal('1')
+        result, _ = decide(payload)
+        self.assertFalse(result.usable)
+        self.assertIsNone(result.payload)
 
 
 if __name__ == '__main__':
