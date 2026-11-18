@@ -133,6 +133,7 @@ class PaperExecutionService:
             performance = reconstruct_paper_performance(self.state)
         self.state.paper_performance = performance
         events = []
+        failure = None
         if not performance.ok:
             if engine.needs_watch_only_transition("paper_performance"):
                 events.append(engine.enter_watch_only(
@@ -154,14 +155,18 @@ class PaperExecutionService:
                     current_limits(self.state)["daily_loss_limit"]
                 ))
             )
-            events.extend(engine.evaluate_and_trip(
-                BreakerSignals(
-                    equity_drawdown_today=performance.equity_drawdown_today,
-                    consecutive_losses=performance.consecutive_losses,
-                ),
-                thresholds,
-                actor="paper_performance",
-            ))
+            try:
+                events.extend(engine.evaluate_and_trip(
+                    BreakerSignals(
+                        equity_drawdown_today=performance.equity_drawdown_today,
+                        consecutive_losses=performance.consecutive_losses,
+                    ),
+                    thresholds,
+                    actor="paper_performance",
+                ))
+            except Exception as exc:  # a trip saved before the failure still gets its alert
+                events.extend(getattr(exc, "system_events", []))
+                failure = exc
         delivered = [
             self._notify(event.channel, {
                 "kind": event.kind,
@@ -172,6 +177,8 @@ class PaperExecutionService:
             })
             for event in events
         ]
+        if failure is not None:
+            raise failure
         result = performance.as_dict()
         result["system_events"] = len(events)
         result["events_delivered"] = delivered
