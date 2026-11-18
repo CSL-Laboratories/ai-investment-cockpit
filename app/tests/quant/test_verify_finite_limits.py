@@ -5,7 +5,8 @@ removes the bound), and two Decimal bounds are outside ``_validate_params``.
 """
 from __future__ import annotations
 
-from dataclasses import replace
+import json
+from dataclasses import asdict, replace
 from datetime import date
 from decimal import Decimal
 
@@ -121,6 +122,57 @@ def test_malformed_clock_is_insufficient_data(now):
 def test_malformed_book_time_is_insufficient_data(ts):
     verdict = _verify(SELL, VerifyParams(PENNY), book=replace(_book(), ts=ts))
     assert verdict.verdict.value == "insufficient_data"
+
+
+# ---- answer to the first reads: a refusal never echoes a malformed book time ----
+
+class _Int(int):
+    """An int subclass: ``isinstance(x, int)`` reads it as an int, ``is_int_value`` does not."""
+
+
+@pytest.mark.parametrize("now", [None, NAN, INF, True, float(NOW), "1"])
+@pytest.mark.parametrize("ts", [NAN, INF, float(NOW), True, "1"])
+def test_a_refusal_serializes_with_a_malformed_book_time(now, ts):
+    verdict = _verify(SELL, VerifyParams(PENNY), now_ns=now, book=replace(_book(), ts=ts))
+    assert verdict.verdict.value == "insufficient_data" and not verdict.is_actionable
+    assert verdict.computed_at_ns == 0
+    json.dumps(asdict(verdict), allow_nan=False, default=str)
+
+
+@pytest.mark.parametrize("now", [None, NAN, True])
+def test_a_refusal_keeps_a_whole_int_book_time(now):
+    verdict = _verify(SELL, VerifyParams(PENNY), now_ns=now)
+    assert verdict.verdict.value == "insufficient_data"
+    assert verdict.computed_at_ns == NOW - 10_000_000_000
+
+
+@pytest.mark.parametrize("age", [True, False, _Int(1)])
+def test_a_bool_or_int_subclass_metrics_age_is_refused(age):
+    verdict = _verify(SELL, VerifyParams(PENNY, max_staleness_ns=FRESH_ENOUGH),
+                      metrics=replace(METRICS, age_days=age))
+    assert verdict.verdict.value == "insufficient_data" and not verdict.is_actionable
+    assert verdict.reasons == ("market metrics date is future or invalid",)
+
+
+@pytest.mark.parametrize("count", [True, _Int(20)])
+def test_a_bool_or_int_subclass_observation_count_is_refused(count):
+    verdict = _verify(SELL, VerifyParams(PENNY, max_staleness_ns=FRESH_ENOUGH),
+                      metrics=replace(METRICS, observations=count))
+    assert verdict.verdict.value == "insufficient_data" and not verdict.is_actionable
+
+
+def test_an_int_subclass_borrow_time_is_refused():
+    quote = replace(_borrow(0), computed_at_ns=_Int(NOW))
+    verdict = _verify(SELL, VerifyParams(PENNY, max_staleness_ns=FRESH_ENOUGH),
+                      position_effect=PositionEffect.OPEN_SHORT, expected_edge=_edge(0),
+                      borrow_quote=quote)
+    assert verdict.borrow_state != "verified" and not verdict.is_actionable
+
+
+def test_an_int_subclass_edge_time_is_refused():
+    edge = replace(_edge(0), computed_at_ns=_Int(NOW))
+    verdict = _verify(BUY, VerifyParams(PENNY, max_staleness_ns=FRESH_ENOUGH), expected_edge=edge)
+    assert verdict.net_edge_state != "sufficient" and not verdict.is_actionable
 
 
 # ---- controls ----
