@@ -347,16 +347,39 @@ class ModeLadder:
             self._persist(src, target, kind, actor, reason, clock)
             return target
 
+    def _latest_signed_mode(self) -> Mode | None:
+        """The ``to`` of the latest HMAC-valid mode_change entry WITHOUT the oracle's expiry
+        reading (None when absent, unverifiable or unknown). Used only to close an expired
+        arm on the chain; the live mode is ``current()``."""
+        with self.st.session_factory() as s:
+            entry = self._latest_entry(s)
+            if entry is None or not self.st.audit.verify_entry(entry):
+                return None
+            to = (entry.payload or {}).get("to")
+        try:
+            return _as_mode(to) if to else None
+        except ValueError:
+            return None
+
     def daily_disarm(self, clock=None, *, actor="scheduler") -> Mode:
         """Disarm auto modes at market close (deliberate friction: a one-tap re-arm is
-        required next morning). No-op outside the auto modes."""
+        required next morning). No-op outside the auto modes. An arm already past its signed
+        ``armed_until`` reads as ``review_live`` (BUG-061) while its signed entry still names
+        the auto rung; the close then writes the same ``daily_disarm`` row a live disarm
+        writes, so every arm ends on the chain."""
         clock = clock or self.st.clock
         with self.st.lock:
-            if self.current() not in _AUTO_MODES:
-                return self.current()
-            return self.drop_to_review_live(
-                "daily disarm at market close", clock=clock, actor=actor, kind="daily_disarm"
-            )
+            src = self.current()
+            if src in _AUTO_MODES:
+                return self.drop_to_review_live(
+                    "daily disarm at market close", clock=clock, actor=actor, kind="daily_disarm"
+                )
+            if src is Mode.review_live:
+                signed = self._latest_signed_mode()
+                if signed in _AUTO_MODES:
+                    self._persist(signed, Mode.review_live, "daily_disarm", actor,
+                                  "daily disarm at market close", clock)
+            return src
 
     def recover(self, prev_state, clock=None, *, actor="system") -> Mode:
         """SEC-23 — recovery from ANY degradation (breaker / usage exhaustion / killswitch)
