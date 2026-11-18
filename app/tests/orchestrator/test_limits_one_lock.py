@@ -146,3 +146,104 @@ def test_w2_put_limits_waits_on_the_shared_state_lock(state):
     worker.join(10)
     assert not isinstance(out["r"], BaseException), out["r"]
     assert out["r"]["limits"]["max_notional"] == "100"
+
+
+def _lock_is_held_elsewhere(state) -> bool:
+    """True when ANOTHER thread cannot take state.lock right now. The lock is reentrant, so
+    the probe has to run on a thread of its own (the caller would simply re-enter it)."""
+    got: list = []
+
+    def probe():
+        taken = state.lock.acquire(blocking=False)
+        if taken:
+            state.lock.release()
+        got.append(taken)
+
+    thread = threading.Thread(target=probe, daemon=True)
+    thread.start()
+    thread.join(10)
+    assert got, "the lock probe did not finish"
+    return not got[0]
+
+
+def test_w2_state_lock_is_held_from_the_read_to_the_append(state, monkeypatch):
+    """The lock's EXTENT, pinned with events and no timing: from inside the handler, at each
+    step between the read and the append, a probe thread tries state.lock without waiting.
+    Every probe must find it taken. A handler that releases the lock after the read, after
+    the classification, before the disarm or before the append (or takes it late) leaves
+    one probe free, so a second PUT or an arm could run in that gap. Three paths: a
+    confirmed loosening (disarm, then append), a tightening (append only) and a ceiling
+    breach (disarm, no append). After each call the lock must be free again (the control
+    that shows the probe can tell the two apart)."""
+    from orchestrator import app as api
+    from orchestrator.gate import GateResult
+
+    lad = ModeLadder(state)
+    lad.set_mode(Mode.paper, actor="w2")
+    lad.set_mode(Mode.review_live, actor="w2")
+    probes: list = []
+
+    def note(tag):
+        probes.append((tag, _lock_is_held_elsewhere(state)))
+
+    read, is_loosening, exceeds = api._current_limits, api._is_loosening, api._exceeds_bound
+    drop, append = api.ModeLadder.drop_to_review_live, state.audit.append
+
+    def spy_read(st):
+        note("read:before")
+        snapshot = read(st)
+        note("read:after")
+        return snapshot
+
+    def spy_is_loosening(*args):
+        note("classify")
+        return is_loosening(*args)
+
+    def spy_exceeds(*args):
+        note("ceiling")
+        return exceeds(*args)
+
+    def spy_drop(self, *args, **kwargs):
+        note("disarm:before")
+        result = drop(self, *args, **kwargs)
+        note("disarm:after")
+        return result
+
+    def spy_append(event_type, *args, **kwargs):
+        if event_type != EVENT_LIMITS_CHANGE:
+            return append(event_type, *args, **kwargs)
+        note("append:before")
+        entry = append(event_type, *args, **kwargs)
+        note("append:after")
+        return entry
+
+    monkeypatch.setattr(api, "_current_limits", spy_read)
+    monkeypatch.setattr(api, "_is_loosening", spy_is_loosening)
+    monkeypatch.setattr(api, "_exceeds_bound", spy_exceeds)
+    monkeypatch.setattr(api.ModeLadder, "drop_to_review_live", spy_drop)
+    monkeypatch.setattr(state.audit, "append", spy_append)
+    handler = _put_limits_handler(api, state)
+
+    scenarios = (
+        ("loosening", {"max_notional": Decimal("5000"), "confirm": True},
+         {"read:before", "read:after", "classify", "disarm:before", "disarm:after",
+          "append:before", "append:after"}),
+        ("tightening", {"max_notional": Decimal("100")},
+         {"read:before", "read:after", "classify", "append:before", "append:after"}),
+        ("ceiling breach", {"max_notional": Decimal("100000000"), "confirm": True},
+         {"read:before", "read:after", "classify", "ceiling", "disarm:before",
+          "disarm:after"}),
+    )
+    for name, fields, expected in scenarios:
+        if lad.current() != Mode.auto_veto:
+            res = lad.arm_auto_mode(
+                Mode.auto_veto, decision_stage_runtimes=["claude", "claude"],
+                gate_result=GateResult(unlockable=True, target="auto_veto"), operator="w2")
+            assert res.armed, res.reasons
+        probes.clear()
+        handler(api.LimitsUpdate(actor="w2", **fields))
+        seen = {tag for tag, _ in probes}
+        assert expected <= seen, (name, "steps not reached", sorted(expected - seen))
+        free = [tag for tag, held in probes if not held]
+        assert not free, f"{name}: state.lock was free (another thread could enter) at {free}"
+        assert not _lock_is_held_elsewhere(state), f"{name}: the lock was left held"
