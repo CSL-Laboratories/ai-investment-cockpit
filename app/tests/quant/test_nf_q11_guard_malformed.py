@@ -5,6 +5,8 @@ Red on main 7fb17b6: every comparison in ``Guards.check`` reads False for NaN an
 """
 from __future__ import annotations
 
+import enum
+
 import pytest
 
 from quant.events import Side
@@ -125,3 +127,142 @@ def test_disabled_and_finite_loss_stops_are_unchanged():
     assert not on.tripped
     on.observe_pnl(-150.0)
     assert on.tripped and "max_loss_dollars $100.0" in on.trip_reason
+
+
+# ---- answer to the first reads (DeepSeek and Hy4, head d64f1d0): OMS-derived values,
+# ---- unreadable loss-stop inputs, and a malformed value whose repr raises ----
+
+
+class _Lot(enum.IntEnum):
+    ONE = 1
+
+
+class _BadRepr:
+    def __repr__(self):
+        raise RuntimeError("repr refuses")
+
+
+class _SickOms(OMS):
+    """An OMS whose derived reads return a chosen value (a stub: what a poisoned book would say)."""
+
+    def __init__(self, **reads):
+        super().__init__()
+        self._reads = reads
+
+    def position(self, symbol):
+        return self._reads.get("position", super().position(symbol))
+
+    def open_side_qty(self, symbol, side):
+        return self._reads.get("open_side_qty", super().open_side_qty(symbol, side))
+
+    def exposure_ticks(self, symbol=None):
+        return self._reads.get("exposure_ticks", super().exposure_ticks(symbol))
+
+
+def _sick(**reads):
+    oms = _SickOms(**reads)
+    oms.register(_new(qty=1, cid="a"), strategy="t")
+    oms.on_acknowledged("a")
+    return oms
+
+
+@pytest.mark.parametrize("read", ["position", "open_side_qty", "exposure_ticks"])
+@pytest.mark.parametrize("value", [NAN, INF, 2.5, True])
+def test_a_non_int_oms_read_blocks_a_new_order(read, value):
+    # A loose cap is used so only the poisoned read can decide: on d64f1d0 NaN, a float and a
+    # bool are compared (False) or summed and the order is allowed.
+    guards = Guards()
+    verdict = guards.check(_new(qty=1, price=1), oms=_sick(**{read: value}))
+    assert not verdict.allowed
+    assert "OMS" in verdict.reason
+
+
+@pytest.mark.parametrize("read", ["position", "open_side_qty", "exposure_ticks"])
+@pytest.mark.parametrize("value", [NAN, INF, 2.5, True])
+def test_a_non_int_oms_read_blocks_a_replace(read, value):
+    verdict = Guards().check(ReplaceOrder(client_id="a", new_price_ticks=101),
+                             oms=_sick(**{read: value}))
+    assert not verdict.allowed
+    assert "OMS" in verdict.reason
+
+
+@pytest.mark.parametrize("field,value", [("qty", NAN), ("qty", True), ("price_ticks", NAN),
+                                         ("price_ticks", 2.5)])
+def test_a_resting_order_with_a_non_int_term_blocks_a_replace_and_a_new_order(field, value):
+    oms = _oms_with_live(qty=5)
+    setattr(oms.get("a"), field, value)           # what a poisoned fill or replace report would leave
+    assert not Guards().check(ReplaceOrder(client_id="a", new_price_ticks=101), oms=oms).allowed
+    if value is not True:        # True - 0 is the int 1, so a bool qty is already whole by then
+        assert not Guards().check(_new(qty=1, cid="b"), oms=oms).allowed
+
+
+def test_whole_int_oms_reads_still_pass():
+    assert Guards().check(_new(qty=1), oms=_sick(position=3, open_side_qty=2,
+                                                 exposure_ticks=500)).allowed
+    assert Guards().check(ReplaceOrder(client_id="a", new_price_ticks=101),
+                          oms=_sick(position=3, exposure_ticks=500)).allowed
+
+
+@pytest.mark.parametrize("total", ["5", b"5", None, True, False, _Lot.ONE, [5]])
+def test_a_total_the_loss_stop_cannot_read_latches_and_never_raises(total):
+    guards = Guards(limits=GuardLimits(max_loss_dollars=100.0))
+    guards.observe_pnl(total)
+    assert guards.tripped
+    assert "loss stop cannot compare" in guards.trip_reason
+
+
+@pytest.mark.parametrize("limit", ["5", "5.0", " 5", b"5", False, _Lot.ONE, [5]])
+def test_a_loss_limit_the_stop_cannot_read_latches_and_never_raises(limit):
+    guards = Guards(limits=GuardLimits(max_loss_dollars=limit))
+    guards.observe_pnl(-1.0)
+    assert guards.tripped
+    assert "loss stop cannot compare" in guards.trip_reason
+
+
+def test_a_none_limit_stays_off_whatever_the_total():
+    guards = Guards(limits=GuardLimits(max_loss_dollars=None))
+    for total in (NAN, "5", None, True):
+        guards.observe_pnl(total)
+    assert not guards.tripped
+
+
+def test_ints_floats_and_decimals_still_feed_the_loss_stop():
+    from decimal import Decimal
+    for limit, total in ((100, -150), (100.0, -150.0), (Decimal("100"), -150.0),
+                         (100.0, Decimal("-150"))):
+        guards = Guards(limits=GuardLimits(max_loss_dollars=limit))
+        guards.observe_pnl(total)
+        assert guards.tripped and "breached" in guards.trip_reason
+        calm = Guards(limits=GuardLimits(max_loss_dollars=limit))
+        calm.observe_pnl(-50)
+        assert not calm.tripped
+
+
+@pytest.mark.parametrize("make", [
+    lambda b: _new(qty=b),
+    lambda b: _new(qty=1, price=b),
+    lambda b: ReplaceOrder(client_id="a", new_qty=b),
+    lambda b: ReplaceOrder(client_id="a", new_price_ticks=b),
+])
+def test_a_value_whose_repr_raises_is_refused_not_raised(make):
+    verdict = Guards().check(make(_BadRepr()), oms=_oms_with_live())
+    assert not verdict.allowed
+    assert "_BadRepr" in verdict.reason
+
+
+def test_a_clock_whose_repr_raises_is_refused_not_raised():
+    verdict = Guards().check(_new(), oms=OMS(), ts=_BadRepr())
+    assert not verdict.allowed and "_BadRepr" in verdict.reason
+
+
+def test_an_oms_read_whose_repr_raises_is_refused_not_raised():
+    verdict = Guards().check(_new(qty=1), oms=_sick(position=_BadRepr()))
+    assert not verdict.allowed and "_BadRepr" in verdict.reason
+
+
+@pytest.mark.parametrize("where", ["total", "limit"])
+def test_a_loss_stop_input_whose_repr_raises_latches_not_raises(where):
+    bad = _BadRepr()
+    guards = Guards(limits=GuardLimits(max_loss_dollars=bad if where == "limit" else 100.0))
+    guards.observe_pnl(bad if where == "total" else -1.0)
+    assert guards.tripped and "_BadRepr" in guards.trip_reason
