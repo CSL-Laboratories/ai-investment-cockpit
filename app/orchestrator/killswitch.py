@@ -1,7 +1,9 @@
 """WP5 — the global kill switch (sec-arch §4 L7; SEC-04; Inv 1).
 
 ``killswitch`` performs instant containment in a fixed, fail-closed order, HELD UNDER the
-shared state lock so a concurrent ``arm_auto_mode`` cannot interleave between the HALT flag
+shared state lock from step 2 on (step 1 runs BEFORE it, so a holder stalled in SQLite cannot
+delay the HALT flag); ``arm_auto_mode`` re-checks HALT under that lock, so a concurrent arm
+cannot leave an auto mode armed after the HALT flag
 and the mode drop (SEC-04 race fix):
   1. **set the filesystem HALT sentinel** (SEC-04) — a durable flag at a CONFIGURABLE path
      (``default_halt_path`` / injectable) that the future WP7 ``OrderGateway`` checks
@@ -61,8 +63,10 @@ def killswitch(st: OrchestratorState, *, actor: str, reason: str = "manual kills
                cancel_hook: Callable[[], int] | None = None,
                disconnect_hook: Callable[[], None] | None = None) -> KillResult:
     """Instant containment. Ordering is load-bearing: set-flag -> cancel-in-flight ->
-    MCP-disconnect -> disarm (SEC-04). The whole sequence runs under ``st.lock`` so an
-    in-flight arm cannot land an auto mode at a higher audit seq than this drop.
+    MCP-disconnect -> disarm (SEC-04). The flag is set before ``st.lock`` is taken, so a
+    holder stalled in SQLite cannot delay it; the rest runs under ``st.lock``, where an arm
+    re-checks HALT, so an in-flight arm cannot land an auto mode at a higher audit seq
+    than this drop.
 
     ``disconnect_hook`` (W12 SEAM 4) is the INJECTED MCP/broker disconnect — called AFTER
     cancel and BEFORE disarm. It is optional (``None`` -> no live connection to drop, e.g. the
@@ -74,10 +78,10 @@ def killswitch(st: OrchestratorState, *, actor: str, reason: str = "manual kills
     now = clock.now()
     path = Path(halt_path) if halt_path is not None else default_halt_path()
 
+    # 1. durable HALT flag FIRST, before st.lock — the gateway refuses to submit + arm refuses
+    #    to arm once it is set, and a lock holder stalled in SQLite must not delay it.
+    set_halt(path, reason=reason)
     with st.lock:
-        # 1. durable HALT flag FIRST — the gateway refuses to submit + arm refuses to arm
-        #    once it is set.
-        set_halt(path, reason=reason)
         # 2. cancel unapproved / in-flight proposals (WP7 supplies the real hook). A raise here
         #    (the WP7 order-store DB hook is the likeliest to throw mid-crisis) must NOT abort the
         #    kill: catch, record cancelled=-1 + cancel_failed=True, and STILL disconnect, disarm and
