@@ -1,0 +1,21 @@
+{
+  "schema": "cockpit.research_case/1",
+  "case_id": "case-0001-made-up",
+  "question": "Made-up question: is the made-up instrument FAKE-001 more likely to rise than fall over one week?",
+  "instrument": "FAKE-001",
+  "evidence_refs": [
+    {
+      "ref_id": "ev-1",
+      "sha256": "19ebcce2202c980b8d97a61fa1f7d699b3a05d0dd7dd7f9a7629df692beb6382"
+    },
+    {
+      "ref_id": "ev-2",
+      "sha256": "4976dd71c8e415ad13cc6206a290daf2194ca8463ba9bb5fcb4f9d0e261a1e8b"
+    }
+  ],
+  "route": "claude-code/made-up-route",
+  "budget": {
+    "max_turns": 8,
+    "max_output_bytes": 65536
+  }
+}

@@ -1,0 +1,117 @@
+{
+  "form": "csl-cj/v0",
+  "note": "Made-up values. canonical is the exact ASCII text of the canonical bytes; sha256 is over those bytes. Generated with an independent encoder (json.dumps sort_keys, no whitespace, ensure_ascii).",
+  "vectors": [
+    {
+      "name": "empty_object",
+      "value": {},
+      "canonical": "{}",
+      "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "name": "nested_sorted",
+      "value": {
+        "b": [
+          1,
+          {
+            "d": null,
+            "c": true
+          }
+        ],
+        "a": "x"
+      },
+      "canonical": "{\"a\":\"x\",\"b\":[1,{\"c\":true,\"d\":null}]}",
+      "sha256": "063f1587acec8e6af9d1e89abbbc89ea9c84f056a2ababeaa3fa03417c7f7e9a"
+    },
+    {
+      "name": "max_int",
+      "value": {
+        "n": 9007199254740991,
+        "m": -9007199254740991
+      },
+      "canonical": "{\"m\":-9007199254740991,\"n\":9007199254740991}",
+      "sha256": "3f54c80abdfbc38f08ed5654622eea6e7d7e58cbac36cf5a0670c8aeb054703d"
+    },
+    {
+      "name": "escapes",
+      "value": {
+        "s": "quote \" backslash \\ newline \n tab \t"
+      },
+      "canonical": "{\"s\":\"quote \\\" backslash \\\\ newline \\n tab \\t\"}",
+      "sha256": "7a475e86b9a0007817692d7e8a99d392c802c5dc79e02aca62f655502e50ce14"
+    },
+    {
+      "name": "key_order_code_point",
+      "value": {
+        "a": 1,
+        "B": 2,
+        "_": 3,
+        "0": 4
+      },
+      "canonical": "{\"0\":4,\"B\":2,\"_\":3,\"a\":1}",
+      "sha256": "900568b10451a3e2088be929cacd82f5be4385f0f16503b42892b5d45eca42c0"
+    },
+    {
+      "name": "case_valid",
+      "value": {
+        "schema": "cockpit.research_case/1",
+        "case_id": "case-0001-made-up",
+        "question": "Made-up question: is the made-up instrument FAKE-001 more likely to rise than fall over one week?",
+        "instrument": "FAKE-001",
+        "evidence_refs": [
+          {
+            "ref_id": "ev-1",
+            "sha256": "19ebcce2202c980b8d97a61fa1f7d699b3a05d0dd7dd7f9a7629df692beb6382"
+          },
+          {
+            "ref_id": "ev-2",
+            "sha256": "4976dd71c8e415ad13cc6206a290daf2194ca8463ba9bb5fcb4f9d0e261a1e8b"
+          }
+        ],
+        "route": "claude-code/made-up-route",
+        "budget": {
+          "max_turns": 8,
+          "max_output_bytes": 65536
+        }
+      },
+      "canonical": "{\"budget\":{\"max_output_bytes\":65536,\"max_turns\":8},\"case_id\":\"case-0001-made-up\",\"evidence_refs\":[{\"ref_id\":\"ev-1\",\"sha256\":\"19ebcce2202c980b8d97a61fa1f7d699b3a05d0dd7dd7f9a7629df692beb6382\"},{\"ref_id\":\"ev-2\",\"sha256\":\"4976dd71c8e415ad13cc6206a290daf2194ca8463ba9bb5fcb4f9d0e261a1e8b\"}],\"instrument\":\"FAKE-001\",\"question\":\"Made-up question: is the made-up instrument FAKE-001 more likely to rise than fall over one week?\",\"route\":\"claude-code/made-up-route\",\"schema\":\"cockpit.research_case/1\"}",
+      "sha256": "ba81542429d77864c54dd1e5a223fdfee02092259cbf7e1d2db89efe5869c9fe"
+    },
+    {
+      "name": "proposal_valid",
+      "value": {
+        "schema": "cockpit.proposal/1",
+        "instrument": "FAKE-001",
+        "side": "buy",
+        "conviction_bps": 2500,
+        "horizon": "P1W",
+        "rationale": "Made-up rationale: the two made-up evidence items point the same way.",
+        "citations": [
+          "ev-1",
+          "ev-2"
+        ]
+      },
+      "canonical": "{\"citations\":[\"ev-1\",\"ev-2\"],\"conviction_bps\":2500,\"horizon\":\"P1W\",\"instrument\":\"FAKE-001\",\"rationale\":\"Made-up rationale: the two made-up evidence items point the same way.\",\"schema\":\"cockpit.proposal/1\",\"side\":\"buy\"}",
+      "sha256": "7806efa3b1df008d1d1cef0b000ed507cc4539f74755cc34e40f301518e50f73"
+    }
+  ],
+  "refused_bytes": [
+    "{\"a\":1,\"a\":2}",
+    "{\"a\": 1}",
+    "{\"b\":1,\"a\":2}",
+    "1.0",
+    "1e3",
+    "NaN",
+    "Infinity",
+    "-0",
+    "01",
+    "{\"a\":9007199254740992}",
+    "\"caf\\u00e9\"",
+    "\"\\ud800\"",
+    "[1,]",
+    "{\"a\":1}\n",
+    " {}",
+    "\ufeff{}",
+    "{\"s\":\"\\u0041\"}"
+  ]
+}
