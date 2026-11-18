@@ -941,6 +941,8 @@ def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/r
     )
     app.state.ingest = build_ingest_runner(state, parquet_root=parquet_root, fetchers=fetchers,
                                            settings=settings, clock=clock)
+    from core.owner_keys import OwnerKeys  # item 5 (#319): owner-only keys (PRODUCT.md A44, 3.8, 5.4)
+    app.state.owner_keys = OwnerKeys.for_host()
     return state, app, services
 
 
