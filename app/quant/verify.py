@@ -18,6 +18,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_FLOOR
 
+from core.numeric import is_int_value
 from quant.book.lob import BookSnapshot
 from quant.costs import FeeSchedule, holding_seconds
 from quant.events import PriceScale, Side
@@ -312,6 +313,12 @@ def proposal_quantity(proposal: dict, reference_price: Decimal) -> int | None:
     return shares if shares > 0 else None
 
 
+def _book_time(book: BookSnapshot) -> int:
+    # A refusal echoes the book time only when it is a whole int; NaN, inf, a float or a
+    # bool would otherwise reach ``computed_at_ns`` and break strict JSON.
+    return book.ts if is_int_value(book.ts) else 0
+
+
 def _empty_verdict(*, symbol: str, side: str, effect: PositionEffect | None, qty: int,
                    book_seq: int, ts: int, reason: str) -> QuantVerdict:
     zero = Decimal("0")
@@ -347,8 +354,16 @@ def _validate_params(params: VerifyParams) -> str | None:
         _ok_decimal(params.min_net_cost_multiple),
         _ok_decimal(params.marginal_cost_bps),
         _ok_decimal(params.uneconomic_cost_bps),
+        _ok_decimal(params.max_borrow_rate),
+        _ok_decimal(params.max_expected_gross_return_bps),
     )):
         return "execution-verification thresholds must be finite decimals"
+    # NF/Q25: the age limits are compared raw. NaN read every age as fresh, +inf removed
+    # the bound and True read as 1; only a whole int is a limit.
+    if not all(is_int_value(limit) for limit in (
+            params.max_staleness_ns, params.max_edge_age_ns,
+            params.max_borrow_age_ns, params.max_metrics_age_days)):
+        return "execution-verification age limits must be whole ints"
     checks = (
         (params.max_adv_participation > 0
          and params.max_adv_participation <= Decimal("0.10"),
@@ -380,9 +395,9 @@ def _validate_metrics(metrics: MarketImpactInputs | None, *, symbol: str,
         return adv, annual_vol, "median daily dollar volume is missing or invalid"
     if not annual_vol.is_finite() or annual_vol <= 0:
         return adv, annual_vol, "realized volatility is missing or invalid"
-    if not isinstance(metrics.observations, int) or metrics.observations < 3:
+    if not is_int_value(metrics.observations) or metrics.observations < 3:
         return adv, annual_vol, "market metrics have fewer than three observations"
-    if not isinstance(metrics.age_days, int) or metrics.age_days < 0:
+    if not is_int_value(metrics.age_days) or metrics.age_days < 0:
         return adv, annual_vol, "market metrics date is future or invalid"
     if metrics.age_days > params.max_metrics_age_days:
         return adv, annual_vol, (
@@ -402,7 +417,7 @@ def _validate_borrow(quote: BorrowQuote | None, *, params: VerifyParams,
         return None, "borrow data does not match borrow_quote.v1"
     if quote.verified is not True or not str(quote.source_id).strip():
         return None, "borrow data is unverified or lacks provenance"
-    if (not isinstance(quote.computed_at_ns, int) or quote.computed_at_ns > now_ns
+    if (not is_int_value(quote.computed_at_ns) or quote.computed_at_ns > now_ns
             or now_ns - quote.computed_at_ns > params.max_borrow_age_ns):
         return None, "borrow data is stale or future-dated"
     if not rate.is_finite() or rate < 0 or rate > params.max_borrow_rate:
@@ -424,7 +439,7 @@ def _validate_edge(estimate: EdgeEstimate | None, *, proposal: dict, params: Ver
         return None, "expected edge is unverified or lacks provenance"
     if str(estimate.time_horizon) != str(proposal.get("time_horizon", "")):
         return None, "expected edge horizon does not match the proposal"
-    if (not isinstance(estimate.computed_at_ns, int) or estimate.computed_at_ns > now_ns
+    if (not is_int_value(estimate.computed_at_ns) or estimate.computed_at_ns > now_ns
             or now_ns - estimate.computed_at_ns > params.max_edge_age_ns):
         return None, "expected edge is stale or future-dated"
     if (not gross.is_finite() or gross > params.max_expected_gross_return_bps
@@ -580,9 +595,15 @@ def verify_proposal(proposal: dict, book: BookSnapshot, params: VerifyParams, *,
     if now_ns is None:
         return _empty_verdict(
             symbol=symbol, side=side_raw, effect=_effect_for(proposal, position_effect),
-            qty=0, book_seq=book.seq, ts=book.ts,
+            qty=0, book_seq=book.seq, ts=_book_time(book),
             reason="evaluation clock (now_ns) is required; refusing to price a book "
                    "with no staleness bound",
+        )
+    if not is_int_value(now_ns):
+        return _empty_verdict(
+            symbol=symbol, side=side_raw, effect=_effect_for(proposal, position_effect),
+            qty=0, book_seq=book.seq, ts=_book_time(book),
+            reason="evaluation clock (now_ns) must be int nanoseconds",
         )
     ts = now_ns
     effect = _effect_for(proposal, position_effect)
@@ -616,6 +637,11 @@ def verify_proposal(proposal: dict, book: BookSnapshot, params: VerifyParams, *,
         return _empty_verdict(
             symbol=symbol, side=side_raw, effect=effect, qty=0,
             book_seq=book.seq, ts=ts, reason="one-sided or empty L1 book",
+        )
+    if not is_int_value(book.ts):
+        return _empty_verdict(
+            symbol=symbol, side=side_raw, effect=effect, qty=0,
+            book_seq=book.seq, ts=ts, reason="book snapshot time is not int nanoseconds",
         )
     if book.ts > now_ns:
         return _empty_verdict(
