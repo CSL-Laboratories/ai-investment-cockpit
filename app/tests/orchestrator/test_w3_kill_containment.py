@@ -216,7 +216,8 @@ def test_w3_kill_row_holds_type_names_only_and_the_error_names_every_failure(sta
     assert rows[0]["errors"] == {"halt": "PermissionError", "disarm": "RuntimeError"}
     assert "pw@host" not in json.dumps(rows[0]) and ".ssh" not in json.dumps(rows[0])
     notes = getattr(info.value, "__notes__", [])
-    assert len(notes) == 1 and "disarm (RuntimeError)" in notes[0]
+    assert notes == ["killswitch attempted every step; failed: "
+                     "halt (PermissionError), disarm (RuntimeError)"]
 
 
 def test_w3_failed_denial_install_is_recorded_and_the_kill_still_finishes(state, tmp_path,
@@ -239,6 +240,34 @@ def test_w3_failed_denial_install_is_recorded_and_the_kill_still_finishes(state,
     assert len(rows) == 1
     assert rows[0]["failed_steps"] == ["halt", "deny"]
     assert rows[0]["errors"] == {"halt": "PermissionError", "deny": "MemoryError"}
+
+
+def test_w3_denial_install_raising_a_base_exception_does_not_abort_the_kill(state, tmp_path,
+                                                                           monkeypatch):
+    module = importlib.import_module("orchestrator.killswitch")
+    ladder = _arm(state)
+    calls = []
+
+    def fail_write(*args, **kwargs):
+        raise PermissionError("synthetic unwritable sentinel parent")
+
+    def deny(reason):
+        raise _Crisis("synthetic denial failure")
+
+    monkeypatch.setattr(module, "set_halt", fail_write)
+    monkeypatch.setattr(state, "admit_integrity_failure", deny)
+    with pytest.raises(PermissionError):
+        module.killswitch(
+            state, actor="test", halt_path=tmp_path / "HALT-e",
+            cancel_hook=lambda: (calls.append("cancel") or 0),
+            disconnect_hook=lambda: calls.append("disconnect"),
+        )
+    assert calls == ["cancel", "disconnect"]
+    assert ladder.current() is Mode.review_live
+    rows = _kill_rows(state)
+    assert len(rows) == 1
+    assert rows[0]["failed_steps"] == ["halt", "deny"]
+    assert rows[0]["errors"] == {"halt": "PermissionError", "deny": "_Crisis"}
 
 
 def test_w3_trip_record_base_exception_still_drops(state, monkeypatch):
