@@ -95,6 +95,7 @@ def test_w3_sibling_disarm_failure_still_audits_the_kill(state, tmp_path, monkey
     rows = _kill_rows(state)
     assert len(rows) == 1, "a failed disarm skipped the EVENT_KILLSWITCH audit"
     assert rows[0]["failed_steps"] == ["disarm"] and rows[0]["mode_after"] is None
+    assert rows[0]["halt_set"] is True
     assert state.effective_watch_only_reason() is not None
 
 
