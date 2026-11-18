@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "o4.envelope.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "outcome",
+    "linear_issue",
+    "maturity",
+    "not_claimed",
+    "empirical_pass_claimed",
+    "contract_frozen_claimed",
+    "qualification_claimed",
+    "live_authority_granted",
+    "credentials_present",
+    "data_acquisition_authorized",
+    "registry_source_commit",
+    "accepted_contract_digests",
+    "dependencies",
+    "unresolved_decisions",
+    "strategy_contract",
+    "experiment",
+    "metric_registry",
+    "promotion_protocol",
+    "candidate_queue",
+    "recorded_empty_outcome",
+    "research"
+  ],
+  "properties": {
+    "schema_version": {"const": "o4.candidate-packet.v1"},
+    "outcome": {"const": "O4"},
+    "linear_issue": {"const": "CSL-216"},
+    "maturity": {"const": "researched"},
+    "not_claimed": {
+      "type": "array",
+      "minItems": 9,
+      "maxItems": 9,
+      "items": {"type": "string"}
+    },
+    "empirical_pass_claimed": {"const": false},
+    "contract_frozen_claimed": {"const": false},
+    "qualification_claimed": {"const": false},
+    "live_authority_granted": {"const": false},
+    "credentials_present": {"const": false},
+    "data_acquisition_authorized": {"const": false},
+    "registry_source_commit": {
+      "const": "73ab78d9d69494c757cec875855121b1d29320a4"
+    },
+    "accepted_contract_digests": {"type": "object"},
+    "dependencies": {"type": "array", "minItems": 3, "maxItems": 3},
+    "unresolved_decisions": {"type": "array", "minItems": 7, "maxItems": 7},
+    "strategy_contract": {"type": "object"},
+    "experiment": {"type": "object"},
+    "metric_registry": {"type": "object"},
+    "promotion_protocol": {"type": "object"},
+    "candidate_queue": {"type": "object"},
+    "recorded_empty_outcome": {"type": "object"},
+    "research": {"type": "object"}
+  }
+}

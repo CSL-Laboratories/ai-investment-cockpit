@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "o4.candidate-queue.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "qualify_count", "entries"],
+  "properties": {
+    "schema_version": {"const": "o4.candidate-queue.v1"},
+    "qualify_count": {"const": 0},
+    "entries": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "strategy_id",
+          "source",
+          "verdict",
+          "blocking_rule",
+          "activation_authorized",
+          "qualified"
+        ],
+        "properties": {
+          "strategy_id": {"type": "string", "minLength": 1},
+          "source": {"enum": ["rw28_evaluation", "o4_design"]},
+          "verdict": {"type": "string", "minLength": 1},
+          "blocking_rule": {"type": "string", "minLength": 1},
+          "activation_authorized": {"const": false},
+          "qualified": {"const": false}
+        }
+      }
+    }
+  }
+}
