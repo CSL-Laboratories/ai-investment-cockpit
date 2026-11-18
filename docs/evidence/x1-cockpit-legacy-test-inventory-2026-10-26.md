@@ -71,10 +71,10 @@ The oracle column of every row must name one of these. A `port` oracle names the
 
 | Floor | Value |
 |---|---|
-| Rows (one per legacy test file) | 226 |
-| `keep` rows | 136 |
+| Rows (one per legacy test file) | 228 |
+| `keep` rows | 138 |
 | `port` rows | 79 |
-| Test functions across `keep` and `port` rows | 2728 |
+| Test functions across `keep` and `port` rows | 2737 |
 
 Red conditions, each covered by a negative control in the wrapper test: a legacy test file with no row; a row with no file (deleting a file before the rehearsal); a duplicate row; an unknown disposition or oracle; a disposition that conflicts with its oracle's class; an empty reason; a `keep` or `port` file collecting fewer test functions than its row; any floor above; a non-`drop` file importing a `drop` file; a `keep` file importing a `port` file that is not acknowledged in the coupling block (section 7); a stale or non-keep-to-port acknowledgement; a malformed table. Import detection covers absolute (`from tests.x import y`, `import tests.x`) and relative (`from .x import y`, `from . import x`, `from ..pkg import x`) forms.
 
@@ -255,6 +255,7 @@ Columns: path, static test-function count, disposition, oracle, reason, and the 
 | `app/tests/orchestrator/test_quant_api.py` | 14 | port | `P-SURFACE` | Loopback quant routes are a current operator view, not order authority. | QT-09 — the /quant routes over real HTTP, through the real key gate. |
 | `app/tests/orchestrator/test_quant_ws.py` | 16 | port | `P-SURFACE` | Read-only quant WebSocket is a current operator view. | QT-08 — the read-only quant WebSocket. |
 | `app/tests/orchestrator/test_reconcile.py` | 16 | keep | `K-AUDIT` | Audit chain is a core engine under AGENTS.md; SEC-11 is the chief pre-live gate. | W12 G12 SEC-13 CLOSURE REGRESSION — the two-phase atomic-audit + completeness invariant. |
+| `app/tests/orchestrator/test_reconcile_finite_qty.py` | 5 | keep | `K-AUDIT` | Audit chain is a core engine under AGENTS.md; SEC-11 is the chief pre-live gate. | NF/W6: a fill quantity that is not a finite number is never broker evidence of landing. |
 | `app/tests/orchestrator/test_rw20_restart_pressure.py` | 3 | keep | `K-GATE` | These are the escalate-list control paths; fail-closed behaviour must stay proven in place. | Restart pressure against isolated DB/HALT paths; no production recovery or ledger repair. |
 | `app/tests/orchestrator/test_rw23_stream_health.py` | 10 | keep | `K-GATE` | These are the escalate-list control paths; fail-closed behaviour must stay proven in place. | BUG-151: live delivery health cannot confuse a failed write with a quiet feed. |
 | `app/tests/orchestrator/test_scheduler.py` | 20 | port | `P-DECISION` | Scheduler wiring is named Recursion-owned runtime surface (A2). | WP5 builder smoke tests for the scheduler wiring — the job callables are exercised |
@@ -333,6 +334,7 @@ Columns: path, static test-function count, disposition, oracle, reason, and the 
 | `app/tests/test_invariants.py` | 12 | keep | `K-INV` | The nine invariants stay binding until a separately reviewed amendment; these files are their executable gates. | Invariant gates, wired from WP0 so every later WP lands behind them. |
 | `app/tests/test_linear_pr_sync.py` | 13 | port | `P-REHOME` | Guards .github/scripts/linear_pr_sync.py and its workflow wiring. | Unit tests for Linear PR-sync comments. |
 | `app/tests/test_numeric.py` | 5 | keep | `K-RISK` | Shared fail-closed Decimal parse contract used on the risk path. | CSL-327 — pin the shared fail-closed Decimal parse contract. |
+| `app/tests/test_numeric_finite.py` | 4 | keep | `K-RISK` | Shared fail-closed Decimal parse contract used on the risk path. | NF: the shared predicates behind the guard, verifier and reconcile boundaries. |
 | `app/tests/test_o7_operator_contract.py` | 69 | keep | `K-REGISTRY` | WP4 (PR #283) pins this file at its current path with a floor. | Provider-free checks for the CSL-219 O7 candidate. |
 | `app/tests/test_replacement_program_registry.py` | 8 | keep | `K-REGISTRY` | WP4 (PR #283) pins this file at its current path with a floor; deleting it must turn linux-gates red. | (no module docstring) |
 | `app/tests/test_rw22_autoloop.py` | 3 | keep | `K-QUANT` | Auto-loop fill-evidence and accounting refusal (escalate-list path). | RW-22: full venue sequences must preserve fill evidence and refuse invalid accounting. |
