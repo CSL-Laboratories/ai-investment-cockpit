@@ -74,7 +74,7 @@ The oracle column of every row must name one of these. A `port` oracle names the
 | Rows (one per legacy test file) | 226 |
 | `keep` rows | 136 |
 | `port` rows | 79 |
-| Test functions across `keep` and `port` rows | 2726 |
+| Test functions across `keep` and `port` rows | 2728 |
 
 Red conditions, each covered by a negative control in the wrapper test: a legacy test file with no row; a row with no file (deleting a file before the rehearsal); a duplicate row; an unknown disposition or oracle; a disposition that conflicts with its oracle's class; an empty reason; a `keep` or `port` file collecting fewer test functions than its row; any floor above; a non-`drop` file importing a `drop` file; a `keep` file importing a `port` file that is not acknowledged in the coupling block (section 7); a stale or non-keep-to-port acknowledgement; a malformed table. Import detection covers absolute (`from tests.x import y`, `import tests.x`) and relative (`from .x import y`, `from . import x`, `from ..pkg import x`) forms.
 
@@ -233,7 +233,7 @@ Columns: path, static test-function count, disposition, oracle, reason, and the 
 | `app/tests/ingest/test_edgar_brew.py` | 111 | port | `P-EVIDENCE` | SCOPE-AUDIT: strong reusable test oracles, stock-centric implementation; the oracle ports to the generalized envelope. | W20 — EDGAR-via-brew feed: one event per accession, canonical "filing", untrusted-text |
 | `app/tests/ingest/test_edgar_pipeline.py` | 36 | port | `P-EVIDENCE` | SCOPE-AUDIT: strong reusable test oracles, stock-centric implementation; the oracle ports to the generalized envelope. | RW-10 — the in-process EDGAR pipeline, driven end-to-end over recorded SEC fixtures. |
 | `app/tests/ingest/test_edgar_wiring.py` | 12 | port | `P-EVIDENCE` | SCOPE-AUDIT: strong reusable test oracles, stock-centric implementation; the oracle ports to the generalized envelope. | RW-11 production reachability for the in-process EDGAR extraction path. |
-| `app/tests/ingest/test_f1_halt_grants.py` | 5 | port | `P-EVIDENCE` | SCOPE-AUDIT: strong reusable test oracles, stock-centric implementation; the oracle ports to the generalized envelope. | EDGAR pipeline: an SEC halt during a run counts as a failure and grants no completion. |
+| `app/tests/ingest/test_f1_halt_grants.py` | 7 | port | `P-EVIDENCE` | SCOPE-AUDIT: strong reusable test oracles, stock-centric implementation; the oracle ports to the generalized envelope. | EDGAR pipeline: an SEC halt during a run counts as a failure and grants no completion. |
 | `app/tests/ingest/test_finnhub_poll.py` | 7 | port | `P-EVIDENCE` | SCOPE-AUDIT: strong reusable test oracles, stock-centric implementation; the oracle ports to the generalized envelope. | WP3 — Finnhub poller: rate-limit never exceeded, minId cursor advances, dedup. |
 | `app/tests/ingest/test_finra_short_interest.py` | 57 | port | `P-EVIDENCE` | SCOPE-AUDIT: strong reusable test oracles, stock-centric implementation; the oracle ports to the generalized envelope. | W20 — FINRA short-interest / Reg SHO threshold connector tests. |
 | `app/tests/ingest/test_halt_sweep_s6_01.py` | 2 | port | `P-EVIDENCE` | SCOPE-AUDIT: strong reusable test oracles, stock-centric implementation; the oracle ports to the generalized envelope. | EDGAR pipeline: an SEC halt during a run is a counted failure and revokes every grant. |

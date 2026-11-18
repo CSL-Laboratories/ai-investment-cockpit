@@ -19,6 +19,7 @@ from filings.raw_store import RawStore
 from ingest.edgar_pipeline import run_edgar_pipeline
 from schemas.models.audit_entry import AuditEntry
 from schemas.models.filing import Filing, FormType
+from schemas.models.filing_extraction_state import FilingExtractionState
 from storage.audit import AuditLog
 from storage.engine import create_all, make_engine, make_session_factory
 from tests.filings._sec_replay import FixtureTransport, VirtualTime
@@ -26,9 +27,12 @@ from tests.filings._sec_replay import FixtureTransport, VirtualTime
 UA = "CSL Laboratories test contact@example.invalid"
 NVDA = "0001045810"
 AAPL = "0000320193"
+AAPL_Q = "0000320193-26-900001"
+NVDA_Q = "0001045810-26-900001"
 CLOCK = FrozenClock(datetime(2026, 7, 8, 9, 30, tzinfo=UTC))
 PROD_CAP = Settings(sec_user_agent=UA, sec_rate_limit_per_sec=2.0,
                     sec_max_new_filings_per_poll=25)
+COMPANYFACTS = {companyfacts_url(AAPL), companyfacts_url(NVDA)}
 
 
 @pytest.fixture(autouse=True)
@@ -90,6 +94,27 @@ def _grants(sf):
             select(func.count()).select_from(AuditEntry)
             .where(AuditEntry.event_type == "edgar_poll_completed")
         ).scalar_one()
+
+
+def _grants_by_cik(sf):
+    with sf() as session:
+        rows = session.execute(
+            select(AuditEntry).where(AuditEntry.event_type == "edgar_poll_completed")
+        ).scalars().all()
+    out: dict[str, int] = {}
+    for row in rows:
+        out[row.payload["cik"]] = out.get(row.payload["cik"], 0) + 1
+    return out
+
+
+def _ledger(sf):
+    with sf() as session:
+        rows = session.execute(select(FilingExtractionState)).scalars().all()
+        return {r.accession_no: (r.status, r.attempts) for r in rows}
+
+
+def _companyfacts_requests(transport):
+    return [url for _m, url, _h in transport.requests if url in COMPANYFACTS]
 
 
 def _pending_10q(sf, cik, accession, filed):
@@ -191,4 +216,43 @@ def test_poll_fan_out_halt_is_a_counted_failure_and_grants_nobody(
     assert result.ok is False
     assert result.quiet is False
     assert _grants(sf) == 2, "a halted poll fan-out recorded an edgar_poll_completed grant"
+    assert audit.verify_chain().ok
+
+
+@pytest.mark.parametrize("halt", [429, 403, "resource"])
+def test_late_halt_then_clean_run_resumes_regrants_and_repeats_nothing(sf, store, halt):
+    audit = _baselined_with_pending_extraction(sf, store)
+    # LATE halt: AAPL's extraction commits, THEN NVDA's companyfacts halts.
+    halted = _run(sf, store, audit, HaltingTransport(companyfacts_url(NVDA), halt))
+    assert halted.ok is False
+    assert [label for label, _r in halted.poll_errors] == [NVDA]
+    assert halted.baselines == 1
+    assert _ledger(sf) == {AAPL_Q: ("baseline", 1)}, "the halted CIK got a ledger row"
+    assert _grants(sf) == 2, "the halted run granted"
+
+    clean = FixtureTransport()
+    after = _run(sf, store, audit, clean)
+    assert after.ok, after.summary()
+    assert after.baselines == 1, "the clean run did not resume exactly NVDA's pending filing"
+    assert _companyfacts_requests(clean) == [companyfacts_url(NVDA)],         "completed work was fetched again"
+    assert _ledger(sf) == {AAPL_Q: ("baseline", 1), NVDA_Q: ("baseline", 1)}
+    assert _grants_by_cik(sf) == {AAPL: 2, NVDA: 2}, "the clean run did not re-grant both"
+    assert audit.verify_chain().ok
+
+
+@pytest.mark.parametrize("halt", [429, 403, "resource"])
+def test_early_halt_then_clean_run_resumes_both_and_regrants(sf, store, halt):
+    audit = _baselined_with_pending_extraction(sf, store)
+    # EARLY halt: AAPL's companyfacts halts before anything commits.
+    halted = _run(sf, store, audit, HaltingTransport(companyfacts_url(AAPL), halt))
+    assert halted.ok is False and halted.baselines == 0
+    assert _ledger(sf) == {} and _grants(sf) == 2
+
+    clean = FixtureTransport()
+    after = _run(sf, store, audit, clean)
+    assert after.ok, after.summary()
+    assert after.baselines == 2
+    assert _companyfacts_requests(clean) == [companyfacts_url(AAPL), companyfacts_url(NVDA)]
+    assert _ledger(sf) == {AAPL_Q: ("baseline", 1), NVDA_Q: ("baseline", 1)}
+    assert _grants_by_cik(sf) == {AAPL: 2, NVDA: 2}
     assert audit.verify_chain().ok
