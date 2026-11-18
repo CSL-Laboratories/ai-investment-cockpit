@@ -62,9 +62,13 @@ def test_malformed_replace_terms_are_blocked(field, value, with_oms):
 @pytest.mark.parametrize("value", [NAN, INF, True, 10.5])
 def test_malformed_limit_blocks_every_new_intent(name, value):
     guards = Guards(limits=GuardLimits(**{name: value}))
-    assert not guards.check(_new(), oms=OMS()).allowed
-    assert not guards.check(ReplaceOrder(client_id="a", new_price_ticks=101),
-                            oms=_oms_with_live()).allowed
+    verdict = guards.check(_new(), oms=OMS())
+    assert not verdict.allowed
+    assert verdict.reason == "guard limits must be whole ints"   # not the cap deciding by luck
+    verdict = guards.check(ReplaceOrder(client_id="a", new_price_ticks=101),
+                           oms=_oms_with_live())
+    assert not verdict.allowed
+    assert verdict.reason == "guard limits must be whole ints"
 
 
 def test_nan_rate_window_cannot_lift_the_message_rate_ceiling():
@@ -73,9 +77,10 @@ def test_nan_rate_window_cannot_lift_the_message_rate_ceiling():
     assert allowed == 0          # main: 600/600 (default ceiling is 500)
 
 
-def test_nan_clock_cannot_reset_the_rate_window():
+@pytest.mark.parametrize("ts", [NAN, True, 2.5])
+def test_nan_clock_cannot_reset_the_rate_window(ts):
     guards = Guards(limits=GuardLimits(max_orders_per_window=2))
-    allowed = sum(guards.check(_new(), oms=OMS(), ts=NAN).allowed for _ in range(10))
+    allowed = sum(guards.check(_new(), oms=OMS(), ts=ts).allowed for _ in range(10))
     assert allowed == 0          # main: 10/10 with a ceiling of 2
 
 
@@ -285,6 +290,7 @@ def _terminal_order_with(**terms):
 @pytest.mark.parametrize("field,value", [
     ("filled_qty", NAN), ("filled_qty", INF), ("filled_qty", 2.5), ("filled_qty", True),
     ("price_ticks", NAN), ("price_ticks", INF), ("price_ticks", 2.5), ("price_ticks", True),
+    ("qty", NAN), ("qty", 2.5),
 ])
 def test_a_terminal_order_with_a_non_int_term_blocks_a_replace(field, value):
     # Removing the filled_qty check, or the price_ticks check, from the replace path leaves
