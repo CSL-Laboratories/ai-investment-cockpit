@@ -1272,8 +1272,10 @@ def run_edgar_pipeline(
         for cik in cik_list:
             try:
                 poller.baseline(cik)
-            except (SecFairAccessHalt, SecResourceLimitHalt):
-                # Fair access wins over first contact, same as the poll fan-out.
+            except (SecFairAccessHalt, SecResourceLimitHalt) as exc:
+                # Fair access wins over first contact, same as the poll fan-out. The halt is
+                # COUNTED (EdgarPipelineResult: never silent), so the run is not ok.
+                result.poll_errors.append((cik, type(exc).__name__))
                 log.warning("SEC fair-access halt during first-contact baselining: "
                             "run stopped before polling")
                 return result
@@ -1318,6 +1320,7 @@ def run_edgar_pipeline(
         except (SecFairAccessHalt, SecResourceLimitHalt) as exc:
             result.poll_errors.append((cik, type(exc).__name__))
             delta_failed_ciks.add(cik)
+            halted = True                     # global: no CIK from this run is granted
             log.warning("SEC halt during companyfacts enrichment; extraction fan-out stopped")
             break
         for filing in filings:
