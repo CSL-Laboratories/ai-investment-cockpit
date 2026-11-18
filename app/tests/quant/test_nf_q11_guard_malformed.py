@@ -11,7 +11,7 @@ import pytest
 
 from quant.events import Side
 from quant.guards import GuardLimits, Guards
-from quant.oms import OMS, CancelOrder, NewOrder, ReplaceOrder
+from quant.oms import OMS, CancelOrder, NewOrder, OrderState, ReplaceOrder
 
 NAN, INF = float("nan"), float("inf")
 
@@ -266,3 +266,35 @@ def test_a_loss_stop_input_whose_repr_raises_latches_not_raises(where):
     guards = Guards(limits=GuardLimits(max_loss_dollars=bad if where == "limit" else 100.0))
     guards.observe_pnl(bad if where == "total" else -1.0)
     assert guards.tripped and "_BadRepr" in guards.trip_reason
+
+
+# ---- answer to read 2 (DeepSeek, head 906c9c19): the resting order's own terms ----
+
+
+def _terminal_order_with(**terms):
+    """An order that is no longer live, so open_side_qty() and exposure_ticks() do not count
+    it: only the term checks in the replace path can see a bad value on it."""
+    oms = _oms_with_live(qty=5)
+    order = oms.get("a")
+    order.state = OrderState.CANCELLED
+    for name, value in terms.items():
+        setattr(order, name, value)
+    return oms
+
+
+@pytest.mark.parametrize("field,value", [
+    ("filled_qty", NAN), ("filled_qty", INF), ("filled_qty", 2.5), ("filled_qty", True),
+    ("price_ticks", NAN), ("price_ticks", INF), ("price_ticks", 2.5), ("price_ticks", True),
+])
+def test_a_terminal_order_with_a_non_int_term_blocks_a_replace(field, value):
+    # Removing the filled_qty check, or the price_ticks check, from the replace path leaves
+    # every other test green: this one is what names them.
+    oms = _terminal_order_with(**{field: value})
+    verdict = Guards().check(ReplaceOrder(client_id="a", new_price_ticks=101), oms=oms)
+    assert not verdict.allowed
+    assert f"order_{field}" in verdict.reason
+
+
+def test_a_terminal_order_with_whole_int_terms_is_not_blocked_by_the_term_checks():
+    oms = _terminal_order_with(filled_qty=2, price_ticks=100)
+    assert Guards().check(ReplaceOrder(client_id="a", new_price_ticks=101), oms=oms).allowed
