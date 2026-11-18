@@ -387,8 +387,8 @@ class Runner:
         if intent.new_qty is not None:
             # new_qty is a TOTAL; the book rests what is left of it. Filled is counted from
             # the book (order total minus what still rests), so fills of this match that the
-            # OMS has not absorbed yet are counted too. A book above the OMS total (a desync)
-            # counts as nothing filled, so it never rests more than the total the guard judged.
+            # OMS has not absorbed yet are counted too; at least the OMS's fills are counted, so a
+            # book above the OMS total (a desync) rests the total less those, as the guard judged.
             rest = resting_after_replace(intent.new_qty, filled=max(order.qty - resting.qty, order.filled_qty))
             if rest <= 0:
                 return                      # nothing to rest: refused before any mutation
