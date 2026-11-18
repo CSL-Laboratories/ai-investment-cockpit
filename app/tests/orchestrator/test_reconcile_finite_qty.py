@@ -37,6 +37,18 @@ def test_zero_or_negative_fill_is_not_evidence(zero):
     assert not _order_landed({"order_id": "o", "status": "unknown", "filled_qty": zero}, "o")
 
 
-def test_infinite_fill_beside_a_negative_status_still_vetoes():
-    history = [{"order_id": "o", "filled_qty": "Infinity"}, {"order_id": "o", "status": "rejected"}]
+_INF = {"order_id": "o", "filled_qty": "Infinity"}
+_FILLED = {"order_id": "o", "filled_qty": "5"}
+_REJECTED = {"order_id": "o", "status": "rejected"}
+
+
+@pytest.mark.parametrize("history", [
+    [_INF, _REJECTED],
+    [_INF, _FILLED, _REJECTED],
+    [_REJECTED, _FILLED, _INF],
+    [_FILLED, _INF, _REJECTED],
+])
+def test_infinite_fill_beside_a_negative_status_still_vetoes(history):
+    # The finite fill would heal on its own: only the global negative veto refuses these.
     assert not _order_landed(history, "o")
+    assert _order_landed([_FILLED, _INF], "o")
