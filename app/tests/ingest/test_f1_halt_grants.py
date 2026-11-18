@@ -152,29 +152,42 @@ def test_first_contact_halt_is_a_counted_failure_with_no_grant(sf, store, halt):
     assert audit.verify_chain().ok
 
 
-def test_first_contact_halt_label_is_the_raw_cik_and_the_halt_class_name(sf, store):
-    audit = AuditLog(sf, hmac_key=b"f1-key", clock=CLOCK)
-    # An UNPADDED cik: the pipeline records the cik as given (as _poll_isolated does), not
-    # padded to ten digits as the per-issuer baseline error does.
-    transport = HaltingTransport(submissions_url(NVDA), 429)
-    result = _run(sf, store, audit, transport, ciks=(AAPL, "1045810"))
+HALTS = [(429, "SecFairAccessHalt"), ("resource", "SecRunByteBudgetExceeded")]
+# The cik exactly as the caller gave it: unpadded, and already ten digits with leading zeros.
+CIK_FORMS = ["1045810", NVDA]
 
-    assert result.poll_errors == [("1045810", "SecFairAccessHalt")]
+
+@pytest.mark.parametrize("halt,halt_class", HALTS)
+@pytest.mark.parametrize("cik", CIK_FORMS)
+def test_first_contact_halt_label_is_the_raw_cik_and_the_halt_class_name(
+        sf, store, cik, halt, halt_class):
+    audit = AuditLog(sf, hmac_key=b"f1-key", clock=CLOCK)
+    # The pipeline records the cik as given (as _poll_isolated does), not padded to ten
+    # digits as the per-issuer baseline error does, and not stripped of leading zeros;
+    # the second element is the class of the halt that was raised, not a constant.
+    transport = HaltingTransport(submissions_url(NVDA), halt)
+    result = _run(sf, store, audit, transport, ciks=(AAPL, cik))
+
+    assert result.poll_errors == [(cik, halt_class)]
     assert _grants(sf) == 0
 
 
-def test_poll_fan_out_halt_is_a_counted_failure_and_grants_nobody(sf, store):
+@pytest.mark.parametrize("halt,halt_class", HALTS)
+@pytest.mark.parametrize("cik", CIK_FORMS)
+def test_poll_fan_out_halt_is_a_counted_failure_and_grants_nobody(
+        sf, store, cik, halt, halt_class):
     audit = AuditLog(sf, hmac_key=b"f1-key", clock=CLOCK)
-    first = _run(sf, store, audit, FixtureTransport())
+    first = _run(sf, store, audit, FixtureTransport(), ciks=(AAPL, cik))
     assert first.ok and _grants(sf) == 2
     # Both CIKs are baselined now, so the halt falls in the poll fan-out (_poll_isolated),
     # not in first-contact baselining: AAPL polls cleanly, then NVDA's submissions halt.
-    transport = HaltingTransport(submissions_url(NVDA), 429)
-    result = _run(sf, store, audit, transport)
+    transport = HaltingTransport(submissions_url(NVDA), halt)
+    result = _run(sf, store, audit, transport, ciks=(AAPL, cik))
 
     assert transport.requests[-1][1] == submissions_url(NVDA), "fetched after the halt"
     assert result.ciks_polled == 1, "the halt did not fall in the poll fan-out"
-    assert result.poll_errors == [(NVDA, "SecFairAccessHalt")]
+    # The label is the cik as given (not padded, not stripped) and the raised halt's class.
+    assert result.poll_errors == [(cik, halt_class)]
     assert result.ok is False
     assert result.quiet is False
     assert _grants(sf) == 2, "a halted poll fan-out recorded an edgar_poll_completed grant"
