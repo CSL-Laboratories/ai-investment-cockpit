@@ -1,0 +1,428 @@
+{
+  "api_version": "o1.product.v0",
+  "outcome": "O1",
+  "maturity": "researched",
+  "qualification_claimed": false,
+  "one_cell_does_not_unlock_another": true,
+  "r1_decision_id": "D11",
+  "r1_status_vocabulary": ["undecided", "in_r1", "unmet", "blocked", "no_claim"],
+  "r1_status_used_in_this_packet": "undecided",
+  "implementation_observed": false,
+  "evidence_class_for_implementation": "unmeasured claim or unknown",
+  "live_carry_over_decision_id": "D13",
+  "rows": [
+    {
+      "journey_id": "stock.evidence.point_in_time",
+      "title": "Retained point-in-time stock evidence",
+      "capability_cell": "stock",
+      "owner_outcome": "O2",
+      "scope_status": "first_slice_candidate",
+      "month_slice_role": "named_by_accepted_month_target",
+      "month_target_is_release_evidence": false,
+      "r1_status": "undecided",
+      "historical_feature_promoted": false,
+      "qualification_claimed": false,
+      "live_carry_over": {
+        "decision_id": "D13",
+        "required": true,
+        "paper_marked_interim": true,
+        "authorizes_live_or_credentials": false,
+        "authority_design_owner": "O6",
+        "route": ["risk_pass", "mode", "approval", "OrderGateway"],
+        "statement": "A future order on this journey would reach bounded-direct authority only through risk-pass, then mode, then approval, then OrderGateway. Paper is interim. This field authorizes nothing."
+      },
+      "source": {
+        "kind": "accepted_csl212_receipt",
+        "comment_id": "25c50b43-6de4-4f6d-9652-47a649ccc5ae",
+        "document": "docs/replacement/SUCCESSOR-PRODUCT.md",
+        "clause": "One-month target: retained market evidence",
+        "attribution": "Inherited month target. Not an R1 mark and not a measurement."
+      }
+    },
+    {
+      "journey_id": "stock.accounting",
+      "title": "Explicit stock accounting and reconciliation",
+      "capability_cell": "stock",
+      "owner_outcome": "O3",
+      "scope_status": "first_slice_candidate",
+      "month_slice_role": "named_by_accepted_month_target",
+      "month_target_is_release_evidence": false,
+      "r1_status": "undecided",
+      "historical_feature_promoted": false,
+      "qualification_claimed": false,
+      "live_carry_over": {
+        "decision_id": "D13",
+        "required": true,
+        "paper_marked_interim": true,
+        "authorizes_live_or_credentials": false,
+        "authority_design_owner": "O6",
+        "route": ["risk_pass", "mode", "approval", "OrderGateway"],
+        "statement": "A future order on this journey would reach bounded-direct authority only through risk-pass, then mode, then approval, then OrderGateway. Paper is interim. This field authorizes nothing."
+      },
+      "source": {
+        "kind": "accepted_csl212_receipt",
+        "comment_id": "25c50b43-6de4-4f6d-9652-47a649ccc5ae",
+        "document": "docs/replacement/SUCCESSOR-PRODUCT.md",
+        "clause": "One-month target: explicit accounting",
+        "attribution": "Inherited month target. O3 semantics are not frozen by this packet."
+      }
+    },
+    {
+      "journey_id": "stock.strategy.evaluation",
+      "title": "Replayable stock strategy evaluation against matched cash and an unnamed index",
+      "capability_cell": "stock",
+      "owner_outcome": "O4",
+      "scope_status": "first_slice_candidate",
+      "month_slice_role": "named_by_accepted_month_target",
+      "month_target_is_release_evidence": false,
+      "r1_status": "undecided",
+      "benchmarks": ["matched_cash", "passive_equity_index_total_return"],
+      "index_decision_id": "D2-index",
+      "historical_feature_promoted": false,
+      "qualification_claimed": false,
+      "live_carry_over": {
+        "decision_id": "D13",
+        "required": true,
+        "paper_marked_interim": true,
+        "authorizes_live_or_credentials": false,
+        "authority_design_owner": "O6",
+        "route": ["risk_pass", "mode", "approval", "OrderGateway"],
+        "statement": "A future order on this journey would reach bounded-direct authority only through risk-pass, then mode, then approval, then OrderGateway. Paper is interim. This field authorizes nothing."
+      },
+      "source": {
+        "kind": "human_linear_comment",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "author_name": "Samir",
+        "decision_ids": ["D1", "D2", "D3"],
+        "also": "Accepted month target names replayable strategy evaluation.",
+        "attribution": "Samir selected the metric and benchmarks. The index name stays open."
+      }
+    },
+    {
+      "journey_id": "stock.paper.long_only",
+      "title": "Cash-funded long-only paper path for US-listed equities and ETFs",
+      "capability_cell": "stock",
+      "owner_outcome": "O3",
+      "execution_semantics_owner": "O6",
+      "scope_status": "first_slice_candidate",
+      "month_slice_role": "named_by_owner_decision",
+      "month_target_is_release_evidence": false,
+      "r1_status": "undecided",
+      "funding": "cash",
+      "direction": "long_only",
+      "instruments": ["us_listed_equity", "us_listed_etf"],
+      "broker_selected": false,
+      "production_venue_selected": false,
+      "historical_feature_promoted": false,
+      "qualification_claimed": false,
+      "live_carry_over": {
+        "decision_id": "D13",
+        "required": true,
+        "paper_marked_interim": true,
+        "authorizes_live_or_credentials": false,
+        "authority_design_owner": "O6",
+        "route": ["risk_pass", "mode", "approval", "OrderGateway"],
+        "statement": "A future order on this journey would reach bounded-direct authority only through risk-pass, then mode, then approval, then OrderGateway. Paper is interim. This field authorizes nothing."
+      },
+      "source": {
+        "kind": "human_linear_comment",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "author_name": "Samir",
+        "decision_id": "D9",
+        "attribution": "Samir selected the first stock slice. It is not a live path."
+      }
+    },
+    {
+      "journey_id": "kalshi_demo.evidence.point_in_time",
+      "title": "Retained point-in-time Kalshi demo evidence",
+      "capability_cell": "kalshi_demo",
+      "owner_outcome": "O2",
+      "scope_status": "first_slice_candidate",
+      "month_slice_role": "named_by_accepted_month_target",
+      "month_target_is_release_evidence": false,
+      "r1_status": "undecided",
+      "historical_feature_promoted": false,
+      "qualification_claimed": false,
+      "live_carry_over": {
+        "decision_id": "D13",
+        "required": true,
+        "paper_marked_interim": true,
+        "authorizes_live_or_credentials": false,
+        "authority_design_owner": "O6",
+        "route": ["risk_pass", "mode", "approval", "OrderGateway"],
+        "statement": "A future order on this journey would reach bounded-direct authority only through risk-pass, then mode, then approval, then OrderGateway. Paper is interim. This field authorizes nothing."
+      },
+      "source": {
+        "kind": "accepted_csl212_receipt",
+        "comment_id": "25c50b43-6de4-4f6d-9652-47a649ccc5ae",
+        "document": "docs/replacement/SUCCESSOR-PRODUCT.md",
+        "clause": "First coherent event-market slice is Kalshi demo",
+        "attribution": "Inherited. D10 still chooses credentials versus replay or fixtures."
+      }
+    },
+    {
+      "journey_id": "kalshi_demo.accounting",
+      "title": "Explicit Kalshi demo accounting, collateral, and resolution",
+      "capability_cell": "kalshi_demo",
+      "owner_outcome": "O3",
+      "scope_status": "first_slice_candidate",
+      "month_slice_role": "named_by_accepted_month_target",
+      "month_target_is_release_evidence": false,
+      "r1_status": "undecided",
+      "historical_feature_promoted": false,
+      "qualification_claimed": false,
+      "live_carry_over": {
+        "decision_id": "D13",
+        "required": true,
+        "paper_marked_interim": true,
+        "authorizes_live_or_credentials": false,
+        "authority_design_owner": "O6",
+        "route": ["risk_pass", "mode", "approval", "OrderGateway"],
+        "statement": "A future order on this journey would reach bounded-direct authority only through risk-pass, then mode, then approval, then OrderGateway. Paper is interim. This field authorizes nothing."
+      },
+      "source": {
+        "kind": "accepted_csl212_receipt",
+        "comment_id": "25c50b43-6de4-4f6d-9652-47a649ccc5ae",
+        "document": "docs/replacement/MONTH-PROGRAM.md",
+        "clause": "O3 freezes stocks and event contracts",
+        "attribution": "Inherited O3 clause. This packet does not freeze those semantics."
+      }
+    },
+    {
+      "journey_id": "kalshi_demo.strategy.evaluation",
+      "title": "Replayable Kalshi demo evaluation against matched cash",
+      "capability_cell": "kalshi_demo",
+      "owner_outcome": "O4",
+      "scope_status": "first_slice_candidate",
+      "month_slice_role": "named_by_accepted_month_target",
+      "month_target_is_release_evidence": false,
+      "r1_status": "undecided",
+      "benchmarks": ["matched_cash"],
+      "historical_feature_promoted": false,
+      "qualification_claimed": false,
+      "live_carry_over": {
+        "decision_id": "D13",
+        "required": true,
+        "paper_marked_interim": true,
+        "authorizes_live_or_credentials": false,
+        "authority_design_owner": "O6",
+        "route": ["risk_pass", "mode", "approval", "OrderGateway"],
+        "statement": "A future order on this journey would reach bounded-direct authority only through risk-pass, then mode, then approval, then OrderGateway. Paper is interim. This field authorizes nothing."
+      },
+      "source": {
+        "kind": "human_linear_comment",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "author_name": "Samir",
+        "decision_id": "D2",
+        "attribution": "Samir limited event-market legs to matched cash. No index is applied."
+      }
+    },
+    {
+      "journey_id": "kalshi_demo.interaction",
+      "title": "Kalshi demo interaction through current-safe boundaries",
+      "capability_cell": "kalshi_demo",
+      "owner_outcome": "O6",
+      "scope_status": "first_slice_candidate",
+      "month_slice_role": "named_by_accepted_month_target",
+      "month_target_is_release_evidence": false,
+      "r1_status": "undecided",
+      "credential_path": "open",
+      "credential_decision_id": "D10",
+      "credentials_selected": false,
+      "historical_feature_promoted": false,
+      "qualification_claimed": false,
+      "live_carry_over": {
+        "decision_id": "D13",
+        "required": true,
+        "paper_marked_interim": true,
+        "authorizes_live_or_credentials": false,
+        "authority_design_owner": "O6",
+        "route": ["risk_pass", "mode", "approval", "OrderGateway"],
+        "statement": "A future order on this journey would reach bounded-direct authority only through risk-pass, then mode, then approval, then OrderGateway. Paper is interim. This field authorizes nothing."
+      },
+      "source": {
+        "kind": "left_open",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "decision_id": "D10",
+        "also": "SUCCESSOR-PRODUCT names Kalshi demo interaction through current-safe boundaries.",
+        "attribution": "The month target names the journey. Lucas has not chosen a credential path or a replay rescope."
+      }
+    },
+    {
+      "journey_id": "polymarket_us_retail.second_adapter",
+      "title": "Polymarket US Retail as a second adapter after Kalshi demo is stable",
+      "capability_cell": "polymarket_us_retail",
+      "owner_outcome": "O2",
+      "scope_status": "deferred_until_first_slice_stable",
+      "month_slice_role": "inherited_later_adapter",
+      "month_target_is_release_evidence": false,
+      "r1_status": "undecided",
+      "stability_measured": false,
+      "historical_feature_promoted": false,
+      "qualification_claimed": false,
+      "live_carry_over": {
+        "decision_id": "D13",
+        "required": true,
+        "paper_marked_interim": true,
+        "authorizes_live_or_credentials": false,
+        "authority_design_owner": "O6",
+        "route": ["risk_pass", "mode", "approval", "OrderGateway"],
+        "statement": "A future order on this journey would reach bounded-direct authority only through risk-pass, then mode, then approval, then OrderGateway. Paper is interim. This field authorizes nothing."
+      },
+      "source": {
+        "kind": "accepted_csl212_receipt",
+        "comment_id": "25c50b43-6de4-4f6d-9652-47a649ccc5ae",
+        "document": "docs/replacement/SUCCESSOR-PRODUCT.md",
+        "clause": "Polymarket US Retail is a second adapter only after the first slice is stable",
+        "attribution": "Inherited condition. Stability is not claimed."
+      }
+    },
+    {
+      "journey_id": "provider.route_comparison",
+      "title": "One provider-neutral decision-route comparison with no order authority",
+      "capability_cell": "provider",
+      "owner_outcome": "O5",
+      "scope_status": "first_slice_candidate",
+      "month_slice_role": "named_by_accepted_month_target",
+      "month_target_is_release_evidence": false,
+      "r1_status": "undecided",
+      "provider_selected": false,
+      "order_authority": false,
+      "historical_feature_promoted": false,
+      "qualification_claimed": false,
+      "live_carry_over": {
+        "decision_id": "D13",
+        "required": true,
+        "paper_marked_interim": true,
+        "authorizes_live_or_credentials": false,
+        "authority_design_owner": "O6",
+        "route": ["risk_pass", "mode", "approval", "OrderGateway"],
+        "statement": "This journey grants no order authority. Any future order still reaches a broker only through risk-pass, then mode, then approval, then OrderGateway. Paper is interim. This field authorizes nothing."
+      },
+      "source": {
+        "kind": "accepted_csl212_receipt",
+        "comment_id": "25c50b43-6de4-4f6d-9652-47a649ccc5ae",
+        "document": "docs/replacement/MONTH-PROGRAM.md",
+        "clause": "O5 compares installed decision routes without granting order authority",
+        "attribution": "Inherited. No provider is selected."
+      }
+    },
+    {
+      "journey_id": "interface.gui_cli.inspect",
+      "title": "GUI and scriptable CLI inspection of evidence, strategies, positions, refusals, and uncertainty",
+      "capability_cell": "interface",
+      "owner_outcome": "O7",
+      "scope_status": "first_slice_candidate",
+      "month_slice_role": "named_by_accepted_month_target",
+      "month_target_is_release_evidence": false,
+      "r1_status": "undecided",
+      "order_path": "none",
+      "framework_selected": false,
+      "historical_feature_promoted": false,
+      "qualification_claimed": false,
+      "live_carry_over": {
+        "decision_id": "D13",
+        "required": true,
+        "paper_marked_interim": true,
+        "authorizes_live_or_credentials": false,
+        "authority_design_owner": "O6",
+        "route": ["risk_pass", "mode", "approval", "OrderGateway"],
+        "statement": "Neither surface submits an order. Any future order still uses risk-pass, then mode, then approval, then OrderGateway. Paper is interim. This field authorizes nothing."
+      },
+      "source": {
+        "kind": "accepted_csl212_receipt",
+        "comment_id": "25c50b43-6de4-4f6d-9652-47a649ccc5ae",
+        "document": "docs/replacement/SUCCESSOR-PRODUCT.md",
+        "clause": "GUI and scriptable CLI share one API and no privileged order path",
+        "attribution": "Inherited. The merged O7 candidate is informative and is not an accepted O1 input."
+      }
+    },
+    {
+      "journey_id": "interface.tui",
+      "title": "Optional TUI, not selected",
+      "capability_cell": "interface",
+      "owner_outcome": "O7",
+      "scope_status": "optional_not_selected",
+      "month_slice_role": "optional_not_selected",
+      "month_target_is_release_evidence": false,
+      "r1_status": "undecided",
+      "build_authorized": false,
+      "historical_feature_promoted": false,
+      "qualification_claimed": false,
+      "live_carry_over": {
+        "decision_id": "D13",
+        "required": true,
+        "paper_marked_interim": true,
+        "authorizes_live_or_credentials": false,
+        "authority_design_owner": "O6",
+        "route": ["risk_pass", "mode", "approval", "OrderGateway"],
+        "statement": "A TUI would not own an order path. Any future order still uses risk-pass, then mode, then approval, then OrderGateway. Paper is interim. This field authorizes nothing."
+      },
+      "source": {
+        "kind": "accepted_csl212_receipt",
+        "comment_id": "25c50b43-6de4-4f6d-9652-47a649ccc5ae",
+        "document": "docs/replacement/SUCCESSOR-PRODUCT.md",
+        "clause": "A TUI is optional and must be justified by measured operator value",
+        "attribution": "Inherited. This packet does not justify or reject a later TUI."
+      }
+    },
+    {
+      "journey_id": "platform.qualification",
+      "title": "Capability-scoped qualification evidence",
+      "capability_cell": "platform",
+      "owner_outcome": "O9",
+      "scope_status": "supporting_cell",
+      "month_slice_role": "supporting_not_a_release_claim",
+      "month_target_is_release_evidence": false,
+      "r1_status": "undecided",
+      "historical_feature_promoted": false,
+      "qualification_claimed": false,
+      "live_carry_over": {
+        "decision_id": "D13",
+        "required": true,
+        "paper_marked_interim": true,
+        "authorizes_live_or_credentials": false,
+        "authority_design_owner": "O6",
+        "route": ["risk_pass", "mode", "approval", "OrderGateway"],
+        "statement": "Qualification evidence does not move capital. Any future order still uses risk-pass, then mode, then approval, then OrderGateway. Paper is interim. This field authorizes nothing."
+      },
+      "source": {
+        "kind": "human_linear_comment",
+        "comment_id": "cda1f329-b9d2-4fcc-823e-a12aa33d4237",
+        "author_name": "Samir",
+        "decision_id": "D12",
+        "also": "SUCCESSOR-PRODUCT says qualification is capability-scoped.",
+        "attribution": "Samir adopted the existing evidence vocabulary per cell. Release scope stays D11."
+      }
+    },
+    {
+      "journey_id": "platform.matched_benchmark",
+      "title": "Matched benchmark workload list for later migration measurement",
+      "capability_cell": "platform",
+      "owner_outcome": "O8",
+      "scope_status": "supporting_cell",
+      "month_slice_role": "supporting_not_a_release_claim",
+      "month_target_is_release_evidence": false,
+      "r1_status": "undecided",
+      "language_selected": false,
+      "historical_feature_promoted": false,
+      "qualification_claimed": false,
+      "live_carry_over": {
+        "decision_id": "D13",
+        "required": true,
+        "paper_marked_interim": true,
+        "authorizes_live_or_credentials": false,
+        "authority_design_owner": "O6",
+        "route": ["risk_pass", "mode", "approval", "OrderGateway"],
+        "statement": "A benchmark does not submit an order. Any future order still uses risk-pass, then mode, then approval, then OrderGateway. Paper is interim. This field authorizes nothing."
+      },
+      "source": {
+        "kind": "accepted_csl212_receipt",
+        "comment_id": "25c50b43-6de4-4f6d-9652-47a649ccc5ae",
+        "document": "docs/replacement/MONTH-PROGRAM.md",
+        "clause": "O8 measures matched end-to-end candidates before selecting language, storage, or topology",
+        "attribution": "Inherited. No language, store, or topology is selected."
+      }
+    }
+  ]
+}
