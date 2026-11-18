@@ -25,6 +25,7 @@ from orchestrator.market_calendar import is_trading_day, to_eastern
 from orchestrator.mode_ladder import ModeLadder
 from orchestrator.state import EVENT_ADJUDICATION, EVENT_MODE_CHANGE, OrchestratorState
 from schemas.models.audit_entry import AuditEntry
+from schemas.models.mode_state import ModeState
 from sqlalchemy import select
 from storage.engine import create_all, make_engine, make_session_factory
 
@@ -304,3 +305,48 @@ def test_latest_signed_mode_ignores_a_mode_name_it_does_not_know(state):
     state.audit.append(EVENT_MODE_CHANGE, actor="test",
                        payload={"kind": "arm", "from": "review_live", "to": "not_a_mode"})
     assert lad._latest_signed_mode() is None
+
+
+# ---- the scheduled disarm leaves a fail-closed reading alone (the outer guard of daily_disarm) ----
+def _cause_no_bound(st):
+    st.audit.append(EVENT_MODE_CHANGE, actor="test",
+                    payload={"kind": "arm", "from": "review_live", "to": "auto_veto"})
+
+
+def _cause_malformed_bound(st):
+    st.audit.append(EVENT_MODE_CHANGE, actor="test",
+                    payload={"kind": "arm", "from": "review_live", "to": "auto_veto",
+                             "armed_until": "not-a-date"})
+
+
+def _cause_anchor_ahead(st):
+    _arm(ModeLadder(st))                            # a live arm: the bound is 16:00 ET, now is 14:00 ET
+    st.anchor_store = InMemoryAnchorStore()
+    st.anchor_store.append(10**6, "f" * 64)        # a witness the chain no longer covers
+
+
+def _cause_row_diverged(st):
+    row = _arm(ModeLadder(st))
+    with st.session_factory() as s:
+        s.get(ModeState, row.id).mode = "review_live"   # a keyless edit of the mutable row
+        s.commit()
+
+
+_READ_ONLY_CAUSES = {"no_bound": _cause_no_bound, "malformed_bound": _cause_malformed_bound,
+                     "anchor_ahead": _cause_anchor_ahead, "row_diverged": _cause_row_diverged}
+
+
+@pytest.mark.parametrize("cause", list(_READ_ONLY_CAUSES))
+def test_scheduled_disarm_leaves_a_read_only_reading_alone(state, cause):
+    # The signed entry still names an auto rung but the oracle reads read_only (a signed auto
+    # entry with no usable bound, an anchor ahead of the chain, a mutable row edited away from
+    # the signed record). Only the reading review_live may earn the expired-arm row: without the
+    # outer guard the close would sign a fresh to=review_live row and lift read_only to live.
+    _qualifying_history(state)
+    _READ_ONLY_CAUSES[cause](state)
+    lad = ModeLadder(state)
+    assert lad.current() is Mode.read_only
+    before = len(_mode_rows(state))
+    sch.run_daily_disarm(state)
+    assert len(_mode_rows(state)) == before
+    assert lad.current() is Mode.read_only
