@@ -1,0 +1,79 @@
+{
+  "kind": "measure_report",
+  "schema_version": "o5.candidate.v1",
+  "issue": "CSL-217",
+  "claimed_maturity": "researched",
+  "not_claimed": [
+    "human_decided",
+    "contract_frozen",
+    "prototyped",
+    "implemented",
+    "provider_free_verified",
+    "demo_or_paper_qualified",
+    "shadow_qualified",
+    "limited_live_qualified",
+    "release_qualified"
+  ],
+  "qualification_claimed": false,
+  "empirical_pass_claimed": false,
+  "contract_frozen_claimed": false,
+  "measured": false,
+  "measures": [
+    {
+      "id": "schema_compliance",
+      "status": "defined_not_measured",
+      "may_offset_correctness": false,
+      "note": "Syntactic adherence to the task schema. Not value correctness."
+    },
+    {
+      "id": "value_correctness",
+      "status": "defined_not_measured",
+      "may_offset_correctness": false,
+      "note": "Exact leaf match to the frozen ground truth. Unmeasured on installed routes."
+    },
+    {
+      "id": "grounding",
+      "status": "defined_not_measured",
+      "may_offset_correctness": false,
+      "note": "Cited refs must belong to the dispatched packet and claims must match structured source fields.",
+      "clearing_authority": false
+    },
+    {
+      "id": "calibration_ece",
+      "status": "unmeasured",
+      "may_offset_correctness": false,
+      "note": "Expected calibration error. Higher is worse. Unmeasured here.",
+      "higher_is_worse": true
+    },
+    {
+      "id": "cost_usd",
+      "status": "ledger_only",
+      "may_offset_correctness": false,
+      "note": "Recorded beside correctness. Cannot offset a worse floor."
+    },
+    {
+      "id": "latency_ms_p95",
+      "status": "ledger_only",
+      "may_offset_correctness": false,
+      "note": "Recorded beside correctness. Cannot offset a worse floor."
+    },
+    {
+      "id": "reliability",
+      "status": "defined_not_measured",
+      "may_offset_correctness": false,
+      "note": "Schema failure, timeout, limit, and empty output stay visible."
+    },
+    {
+      "id": "refusal",
+      "status": "defined_not_measured",
+      "may_offset_correctness": false,
+      "note": "Refusal is reported separately from reliability. Unmeasured here."
+    },
+    {
+      "id": "preference_or_model_agreement",
+      "status": "not_correctness",
+      "may_offset_correctness": false,
+      "note": "User preference and model agreement are not financial or factual correctness."
+    }
+  ]
+}

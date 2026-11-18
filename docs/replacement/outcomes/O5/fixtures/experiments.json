@@ -1,0 +1,148 @@
+{
+  "kind": "experiment_list",
+  "schema_version": "o5.candidate.v1",
+  "issue": "CSL-217",
+  "claimed_maturity": "researched",
+  "not_claimed": [
+    "human_decided",
+    "contract_frozen",
+    "prototyped",
+    "implemented",
+    "provider_free_verified",
+    "demo_or_paper_qualified",
+    "shadow_qualified",
+    "limited_live_qualified",
+    "release_qualified"
+  ],
+  "qualification_claimed": false,
+  "empirical_pass_claimed": false,
+  "contract_frozen_claimed": false,
+  "any_executed": false,
+  "experiments": [
+    {
+      "id": "exp.current_decision_schema_versus_value",
+      "route_id": "current.decision",
+      "status": "listed_not_run",
+      "executed": false,
+      "uses_credentials": false,
+      "paid_call": false,
+      "uses_network": false,
+      "blocked_on": [
+        "spend",
+        "credentials",
+        "privacy"
+      ],
+      "would_measure": [
+        "schema_compliance",
+        "value_correctness",
+        "grounding",
+        "refusal"
+      ],
+      "note": "Listed only. A live call on the current choke point needs operator authorization and is not run here."
+    },
+    {
+      "id": "exp.system_one_installed_route",
+      "route_id": "candidate.system_one",
+      "status": "listed_not_run",
+      "executed": false,
+      "uses_credentials": false,
+      "paid_call": false,
+      "uses_network": false,
+      "blocked_on": [
+        "spend",
+        "credentials",
+        "privacy",
+        "tax_legal",
+        "architecture"
+      ],
+      "would_measure": [
+        "schema_compliance",
+        "value_correctness",
+        "refusal",
+        "reliability"
+      ],
+      "note": "Listed only. No System One credential or adapter is installed."
+    },
+    {
+      "id": "exp.openai_decisions_installed_route",
+      "route_id": "candidate.openai_decisions",
+      "status": "listed_not_run",
+      "executed": false,
+      "uses_credentials": false,
+      "paid_call": false,
+      "uses_network": false,
+      "blocked_on": [
+        "spend",
+        "credentials",
+        "privacy",
+        "tax_legal",
+        "architecture"
+      ],
+      "would_measure": [
+        "schema_compliance",
+        "value_correctness",
+        "refusal",
+        "reliability"
+      ],
+      "note": "Listed only. OpenAI financial-use permission, retention and geography remain unresolved."
+    },
+    {
+      "id": "exp.jev_installed_route",
+      "route_id": "candidate.jev",
+      "status": "listed_not_run",
+      "executed": false,
+      "uses_credentials": false,
+      "paid_call": false,
+      "uses_network": false,
+      "blocked_on": [
+        "spend",
+        "credentials",
+        "privacy",
+        "architecture"
+      ],
+      "would_measure": [
+        "schema_compliance",
+        "value_correctness",
+        "refusal"
+      ],
+      "note": "Listed only. No Jev runtime is present."
+    },
+    {
+      "id": "exp.calibration_holdout",
+      "route_id": "current.decision",
+      "status": "listed_not_run",
+      "executed": false,
+      "uses_credentials": false,
+      "paid_call": false,
+      "uses_network": false,
+      "blocked_on": [
+        "o4_artifact",
+        "spend",
+        "privacy"
+      ],
+      "would_measure": [
+        "calibration_ece",
+        "value_correctness"
+      ],
+      "note": "Listed only. Needs an accepted O4 population before any calibration fit."
+    },
+    {
+      "id": "exp.conformal_abstention_gate",
+      "route_id": "current.decision",
+      "status": "listed_not_run",
+      "executed": false,
+      "uses_credentials": false,
+      "paid_call": false,
+      "uses_network": false,
+      "blocked_on": [
+        "o4_artifact",
+        "architecture"
+      ],
+      "would_measure": [
+        "refusal",
+        "value_correctness"
+      ],
+      "note": "Listed research input from the conformal routing paper. Not selected and not run."
+    }
+  ]
+}

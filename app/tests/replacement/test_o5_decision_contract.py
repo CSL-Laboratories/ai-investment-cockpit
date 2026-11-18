@@ -1,0 +1,485 @@
+"""Provider-free CSL-217 O5 contract validator.
+
+Positives must be admitted at maturity researched. Negative controls must be
+refused with their designed codes. The test prints those refusals so CI logs
+show them failing as designed. It does not call a provider or the network.
+"""
+
+from __future__ import annotations
+
+import ast
+import importlib.util
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[3]
+TOOL = ROOT / "tools" / "o5_decision_contract.py"
+SCHEMA = ROOT / "docs/replacement/outcomes/O5/schemas/o5-wire.schema.json"
+SUITE = ROOT / "docs/replacement/outcomes/O5/fixtures/task-suite.json"
+
+REQUIRED_NEGATIVES = {
+    "mock_reported_as_installed": "mock_is_not_installed_route",
+    "fallback_widens_authority": "fallback_widens_authority",
+    "fallback_widens_budget": "fallback_widens_budget",
+    "fallback_widens_disclosure": "fallback_widens_disclosure",
+    "cheaper_despite_worse_correctness": "worse_correctness_accepted",
+    "faster_despite_worse_grounding": "worse_grounding_accepted",
+    "cheaper_despite_worse_calibration": "worse_calibration_accepted",
+    "provider_rewrites_protocol": "provider_result_rewrites_protocol",
+    "budget_unknown_route": "unknown_route",
+    "budget_undecided_ceiling": "spend_authorized",
+}
+
+FORBIDDEN_IMPORTS = frozenset({
+    "httpx",
+    "urllib",
+    "socket",
+    "requests",
+    "openai",
+    "anthropic",
+    "subprocess",
+    "boto3",
+    "websockets",
+    "discord",
+})
+
+
+def _load():
+    spec = importlib.util.spec_from_file_location("o5_decision_contract", TOOL)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # @dataclass resolves string annotations through sys.modules[cls.__module__].
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_candidate_command_fails_negative_controls_as_designed(capfd) -> None:
+    result = subprocess.run(
+        [sys.executable, "-X", "utf8", "-B", "tools/o5_decision_contract.py"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    with capfd.disabled():
+        print(result.stdout, end="")
+    assert result.returncode == 0, result.stderr
+    assert "maturity_claimed: researched" in result.stdout
+    assert "qualification_claimed: false" in result.stdout
+    assert "empirical_pass_claimed: false" in result.stdout
+    assert "contract_frozen_claimed: false" in result.stdout
+    assert "O5 candidate: FAIL" not in result.stdout
+    assert "UNEXPECTEDLY admitted" not in result.stdout
+    for negative_id, code in REQUIRED_NEGATIVES.items():
+        line = f"O5 negative control failed as designed: {negative_id} — {code}:"
+        assert line in result.stdout
+    module = _load()
+    report = module.evaluate(ROOT)
+    assert report.ok
+    assert report.maturity == "researched"
+    assert report.qualification_claimed is False
+    assert report.empirical_pass_claimed is False
+    assert report.contract_frozen_claimed is False
+    seen = {item.id: item for item in report.negatives}
+    for negative_id, code in REQUIRED_NEGATIVES.items():
+        item = seen[negative_id]
+        assert item.admitted is False
+        assert item.code == code
+        assert item.expected_code == code
+
+
+def test_relabeling_a_frozen_task_fails_closed() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    suite["cases"][0]["expected"]["value_correctness"] = True
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]["task_suite"]
+    context = module.Context(
+        root=ROOT,
+        suite_digest="relabel",
+        suite=suite,
+        cases={},
+        route_ids=set(),
+        negative_ids=set(suite["required_negative_ids"]),
+    )
+    admission = module._admit_document(suite, schema, context)
+    assert admission.admitted is False
+    assert admission.code == "suite_oracle_mismatch"
+
+
+def _bind(context, document: dict) -> None:
+    context.requests[document["request_id"]] = {
+        "task_id": document["task_id"],
+        "route_id": document["route_id"],
+        "suite_digest": document["suite_digest"],
+    }
+
+
+def _context(module, suite: dict) -> object:
+    return module.Context(
+        root=ROOT,
+        suite_digest="relabel",
+        suite=suite,
+        cases={case["id"]: case for case in suite["cases"]},
+        route_ids={"current.decision"},
+        negative_ids=set(suite["required_negative_ids"]),
+    )
+
+
+def test_json_equality_keeps_containers_and_bools() -> None:
+    module = _load()
+    assert module._json_equal({}, {"x": {}}) is False
+    assert module._json_equal({"x": {}}, {"x": {}}) is True
+    assert module._json_equal({"x": 1}, {"x": True}) is False
+    assert module._json_equal({"x": 1}, {"x": 1}) is True
+    assert module._json_equal([], {}) is False
+
+
+def test_grounding_rejects_bool_and_number_aliases() -> None:
+    module = _load()
+    case = {
+        "dispatched_refs": ["ref-1"],
+        "sources": {"ref-1": {"fields": {"n": 1, "box": {}}}},
+        "output": {"source_refs": ["ref-1"], "claims": {"n": True}},
+    }
+    assert module._score_grounding(case) is False
+    case["output"]["claims"] = {"box": {"x": {}}}
+    assert module._score_grounding(case) is False
+    case["output"]["claims"] = {"n": 1}
+    assert module._score_grounding(case) is True
+
+
+def test_conflicting_citations_are_not_grounded() -> None:
+    module = _load()
+    case = {
+        "dispatched_refs": ["a", "b"],
+        "sources": {
+            "a": {"fields": {"name": "composer"}},
+            "b": {"fields": {"name": "conductor"}},
+        },
+        "output": {"source_refs": ["a", "b"], "claims": {"name": "conductor"}},
+    }
+    assert module._score_grounding(case) is False
+    case["output"]["source_refs"] = ["b", "a"]
+    assert module._score_grounding(case) is False
+    case["sources"]["b"]["fields"]["name"] = "composer"
+    case["output"]["claims"] = {"name": "composer"}
+    assert module._score_grounding(case) is True
+    case["output"]["source_refs"] = ["a", "b"]
+    assert module._score_grounding(case) is True
+
+
+def test_higher_tier_evidence_is_not_admitted() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]["qualification_record"]
+    document = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/positive/qualification-current-decision.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    context = _context(module, suite)
+    admitted = module._admit_document(document, schema, context)
+    assert admitted.admitted is True
+    for evidence_class in ("demo_or_paper", "shadow", "limited_live"):
+        higher = dict(document)
+        higher["evidence_class"] = evidence_class
+        refused = module._admit_document(higher, schema, context)
+        assert refused.admitted is False
+        assert refused.code == "installed_route_not_qualified"
+
+
+def test_result_rejects_unsupported_evidence() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]["decision_result"]
+    document = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/positive/decision-result.json").read_text(encoding="utf-8")
+    )
+    context = _context(module, suite)
+    context.suite_digest = document["suite_digest"]
+    _bind(context, document)
+    admitted = module._admit_document(document, schema, context)
+    assert admitted.admitted is True
+    for evidence_class in ("demo_or_paper", "shadow", "limited_live", "independently_verified"):
+        higher = dict(document)
+        higher["evidence_class"] = evidence_class
+        refused = module._admit_document(higher, schema, context)
+        assert refused.admitted is False
+        assert refused.code == "installed_route_not_qualified"
+
+
+def test_route_manifest_rejects_unsupported_evidence() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]["route_manifest"]
+    document = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/route-manifest.json").read_text(encoding="utf-8")
+    )
+    context = _context(module, suite)
+    context.route_ids = set()
+    admitted = module._admit_document(document, schema, context)
+    assert admitted.admitted is True
+    for evidence_class in ("demo_or_paper", "shadow", "limited_live", "independently_verified"):
+        higher = json.loads(json.dumps(document))
+        higher["routes"][0]["evidence_class"] = evidence_class
+        context.route_ids = set()
+        refused = module._admit_document(higher, schema, context)
+        assert refused.admitted is False
+        assert refused.code == "installed_route_not_qualified"
+
+
+def test_budget_entry_route_must_be_known() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]["budget_ledger"]
+    routes = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/route-manifest.json").read_text(encoding="utf-8")
+    )
+    document = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/budget-ledger.json").read_text(encoding="utf-8")
+    )
+    context = _context(module, suite)
+    context.route_ids = {route["id"] for route in routes["routes"]}
+    admitted = module._admit_document(document, schema, context)
+    assert admitted.admitted is True
+    unknown = json.loads(json.dumps(document))
+    unknown["entries"][0]["route_id"] = "missing.route"
+    refused = module._admit_document(unknown, schema, context)
+    assert refused.admitted is False
+    assert refused.code == "unknown_route"
+
+
+def test_undecided_successor_spend_ceiling_stays_null() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]["budget_ledger"]
+    routes = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/route-manifest.json").read_text(encoding="utf-8")
+    )
+    document = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/budget-ledger.json").read_text(encoding="utf-8")
+    )
+    context = _context(module, suite)
+    context.route_ids = {route["id"] for route in routes["routes"]}
+    admitted = module._admit_document(document, schema, context)
+    assert admitted.admitted is True
+    claimed = json.loads(json.dumps(document))
+    successor = next(entry for entry in claimed["entries"] if entry["id"] == "successor_comparison_spend")
+    assert successor["owner_decision"] == "undecided"
+    assert successor["ceiling"] is None
+    successor["ceiling"] = "25"
+    refused = module._admit_document(claimed, schema, context)
+    assert refused.admitted is False
+    assert refused.code == "spend_authorized"
+
+
+def test_experiment_route_must_be_known() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]["experiment_list"]
+    routes = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/route-manifest.json").read_text(encoding="utf-8")
+    )
+    document = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/experiments.json").read_text(encoding="utf-8")
+    )
+    context = _context(module, suite)
+    context.route_ids = {route["id"] for route in routes["routes"]}
+    admitted = module._admit_document(document, schema, context)
+    assert admitted.admitted is True
+    unknown = json.loads(json.dumps(document))
+    unknown["experiments"][0]["route_id"] = "missing.route"
+    refused = module._admit_document(unknown, schema, context)
+    assert refused.admitted is False
+    assert refused.code == "unknown_route"
+
+
+def test_privacy_matrix_requires_forbidden_classes() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]["privacy_disclosure"]
+    document = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/privacy-disclosure.json").read_text(encoding="utf-8")
+    )
+    context = _context(module, suite)
+    admitted = module._admit_document(document, schema, context)
+    assert admitted.admitted is True
+    dropped = json.loads(json.dumps(document))
+    dropped["classes"] = [item for item in dropped["classes"] if item["id"] != "credentials"]
+    missing = module._admit_document(dropped, schema, context)
+    assert missing.admitted is False
+    assert missing.code == "disclosure_forbidden"
+    duplicated = json.loads(json.dumps(document))
+    duplicated["classes"].append(duplicated["classes"][-1])
+    repeat = module._admit_document(duplicated, schema, context)
+    assert repeat.admitted is False
+    assert repeat.code == "disclosure_forbidden"
+
+
+def test_calibration_status_stays_unmeasured() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]["decision_result"]
+    document = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/positive/decision-result.json").read_text(encoding="utf-8")
+    )
+    context = _context(module, suite)
+    context.suite_digest = document["suite_digest"]
+    _bind(context, document)
+    admitted = module._admit_document(document, schema, context)
+    assert admitted.admitted is True
+    for status in ("observed", "passed"):
+        claimed = dict(document)
+        claimed["calibration_status"] = status
+        refused = module._admit_document(claimed, schema, context)
+        assert refused.admitted is False
+        assert refused.code == "measures_not_observed"
+
+
+def test_request_and_refusal_reject_unsupported_evidence() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    schemas = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]
+    fixtures = {
+        "decision_request": ROOT / "docs/replacement/outcomes/O5/fixtures/positive/decision-request.json",
+        "decision_refusal": ROOT / "docs/replacement/outcomes/O5/fixtures/positive/decision-refusal.json",
+    }
+    for kind, path in fixtures.items():
+        document = json.loads(path.read_text(encoding="utf-8"))
+        context = _context(module, suite)
+        context.suite_digest = document["suite_digest"]
+        if kind == "decision_refusal":
+            _bind(context, document)
+        admitted = module._admit_document(document, schemas[kind], context)
+        assert admitted.admitted is True
+        for evidence_class in ("demo_or_paper", "shadow", "limited_live", "independently_verified"):
+            higher = dict(document)
+            higher["evidence_class"] = evidence_class
+            refused = module._admit_document(higher, schemas[kind], context)
+            assert refused.admitted is False
+            assert refused.code == "installed_route_not_qualified"
+
+
+def test_outcome_must_match_an_admitted_request() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    schemas = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]
+    result = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/positive/decision-result.json").read_text(encoding="utf-8")
+    )
+    context = _context(module, suite)
+    context.suite_digest = result["suite_digest"]
+    missing = module._admit_document(result, schemas["decision_result"], context)
+    assert missing.admitted is False
+    assert missing.code == "suite_digest_mismatch"
+    mismatched = dict(result)
+    _bind(context, result)
+    mismatched["task_id"] = "task.ungrounded_claim"
+    refused = module._admit_document(mismatched, schemas["decision_result"], context)
+    assert refused.admitted is False
+    assert refused.code == "suite_digest_mismatch"
+    request = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/positive/decision-request-refuse-order.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    refusal = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/positive/decision-refusal.json").read_text(encoding="utf-8")
+    )
+    unbound = module._admit_document(refusal, schemas["decision_refusal"], context)
+    assert unbound.admitted is False
+    admitted_request = module._admit_document(request, schemas["decision_request"], context)
+    assert admitted_request.admitted is True
+    admitted_refusal = module._admit_document(refusal, schemas["decision_refusal"], context)
+    assert admitted_refusal.admitted is True
+
+
+def test_primary_disclosure_is_not_saved_by_fallback() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]["fallback_policy"]
+    document = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/positive/fallback-withhold.json").read_text(encoding="utf-8")
+    )
+    context = _context(module, suite)
+    admitted = module._admit_document(document, schema, context)
+    assert admitted.admitted is True
+    for name in ("credentials", "public_market_text"):
+        leaked = json.loads(json.dumps(document))
+        leaked["primary"]["disclosure_classes"] = [name]
+        refused = module._admit_document(leaked, schema, context)
+        assert refused.admitted is False
+        assert refused.code == "disclosure_forbidden"
+
+
+def test_grounding_and_refusal_results_fail_closed() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]["decision_result"]
+    base = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/positive/decision-result.json").read_text(encoding="utf-8")
+    )
+    context = _context(module, suite)
+    context.suite_digest = base["suite_digest"]
+    matched = dict(base)
+    matched["task_id"] = "task.ungrounded_claim"
+    matched["grounding_ok"] = False
+    _bind(context, matched)
+    admitted = module._admit_document(matched, schema, context)
+    assert admitted.admitted is True
+    flipped = dict(base)
+    flipped["task_id"] = "task.ungrounded_claim"
+    flipped["grounding_ok"] = True
+    refused = module._admit_document(flipped, schema, context)
+    assert refused.admitted is False
+    assert refused.code == "result_contradicts_suite"
+    order = dict(base)
+    order["task_id"] = "task.refuse_order"
+    _bind(context, order)
+    order_result = module._admit_document(order, schema, context)
+    assert order_result.admitted is False
+    assert order_result.code == "result_contradicts_suite"
+
+
+def test_refusal_code_must_follow_the_requested_action() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    for case in suite["cases"]:
+        if case["id"] == "task.refuse_order":
+            case["refusal_code"] = "credential_refused"
+            case["expected"]["refusal_code"] = "credential_refused"
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]["task_suite"]
+    admission = module._admit_document(suite, schema, _context(module, suite))
+    assert admission.admitted is False
+    assert admission.code == "suite_oracle_mismatch"
+
+
+def test_measure_report_requires_refusal() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]["measure_report"]
+    document = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/measures.json").read_text(encoding="utf-8")
+    )
+    admitted = module._admit_document(document, schema, _context(module, suite))
+    assert admitted.admitted is True
+    dropped = dict(document)
+    dropped["measures"] = [item for item in document["measures"] if item["id"] != "refusal"]
+    refused = module._admit_document(dropped, schema, _context(module, suite))
+    assert refused.admitted is False
+    assert refused.code == "protocol_pin_mismatch"
+
+
+def test_validator_imports_no_provider_or_network() -> None:
+    tree = ast.parse(TOOL.read_text(encoding="utf-8"))
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name.split(".", 1)[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module.split(".", 1)[0])
+    assert imported.isdisjoint(FORBIDDEN_IMPORTS)

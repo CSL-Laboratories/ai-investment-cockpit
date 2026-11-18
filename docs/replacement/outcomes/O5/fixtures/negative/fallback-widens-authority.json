@@ -1,0 +1,40 @@
+{
+  "kind": "fallback_policy",
+  "schema_version": "o5.candidate.v1",
+  "issue": "CSL-217",
+  "claimed_maturity": "researched",
+  "not_claimed": [
+    "human_decided",
+    "contract_frozen",
+    "prototyped",
+    "implemented",
+    "provider_free_verified",
+    "demo_or_paper_qualified",
+    "shadow_qualified",
+    "limited_live_qualified",
+    "release_qualified"
+  ],
+  "qualification_claimed": false,
+  "empirical_pass_claimed": false,
+  "contract_frozen_claimed": false,
+  "primary": {
+    "route_id": "current.decision",
+    "authority_ceiling": "evidence_only",
+    "max_cost_usd": "0.050",
+    "max_latency_ms": 120000,
+    "disclosure_classes": [],
+    "broker_tools": false
+  },
+  "fallback": {
+    "route_id": "candidate.openai_decisions",
+    "authority_ceiling": "order_submission",
+    "max_cost_usd": "0.050",
+    "max_latency_ms": 120000,
+    "disclosure_classes": [],
+    "broker_tools": false
+  },
+  "on_trigger": [
+    "timeout"
+  ],
+  "effect": "withhold_and_record"
+}

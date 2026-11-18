@@ -1,0 +1,29 @@
+{
+  "kind": "measure_report",
+  "schema_version": "o5.candidate.v1",
+  "issue": "CSL-217",
+  "claimed_maturity": "researched",
+  "not_claimed": [
+    "human_decided",
+    "contract_frozen",
+    "prototyped",
+    "implemented",
+    "provider_free_verified",
+    "demo_or_paper_qualified",
+    "shadow_qualified",
+    "limited_live_qualified",
+    "release_qualified"
+  ],
+  "qualification_claimed": false,
+  "empirical_pass_claimed": false,
+  "contract_frozen_claimed": false,
+  "measured": true,
+  "measures": [
+    {
+      "id": "value_correctness",
+      "status": "observed",
+      "may_offset_correctness": false,
+      "note": "Negative control. A measure reported as observed without a run."
+    }
+  ]
+}
