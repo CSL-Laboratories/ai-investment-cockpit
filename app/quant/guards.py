@@ -30,7 +30,9 @@ which is precisely the capability an autonomous high-frequency loop has and a hu
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Callable
+from core.numeric import finite_decimal, is_int_value
 
 from quant.oms import CancelOrder, NewOrder, ReplaceOrder
 
@@ -122,6 +124,14 @@ class Guards:
         if self.watch_only_fn is not None and self.watch_only_fn():
             return self._blocked("system is watch_only")
 
+        # NF/Q11: a NaN or an infinity compares False against every bound below and bool is
+        # an int, so a malformed size, price, limit or clock passed each comparison and
+        # reached the book (a resting NaN order then made exposure_ticks() NaN, disabling
+        # the position and gross caps for every later intent). Refused before any compare.
+        malformed = self._malformed(intent, ts)
+        if malformed is not None:
+            return self._blocked(malformed)
+
         # A replace is NOT waved through. It used to be, and that made every limit below
         # bypassable: an intent blocked as a NewOrder was allowed as a resize of a one-lot.
         # Worst of all it exempted the requote loop that ``order_rate_window_ns`` documents
@@ -160,6 +170,14 @@ class Guards:
             # counted in-flight, the position check did not.
             position = oms.position(intent.symbol)
             open_same_side = oms.open_side_qty(intent.symbol, intent.side)
+            oms_exposure = oms.exposure_ticks()
+            # Answer to the first reads: these three come from the OMS, not from the intent, so
+            # the checks above never saw them. A NaN here compares False and disables the cap.
+            if not (is_int_value(position) and is_int_value(open_same_side)
+                    and is_int_value(oms_exposure)):
+                return self._blocked(_oms_unreadable(
+                    position=position, open_side_qty=open_same_side,
+                    exposure_ticks=oms_exposure))
             projected = position + intent.side.sign * (open_same_side + intent.qty)
             if abs(projected) > limits.max_position:
                 return self._blocked(
@@ -167,7 +185,7 @@ class Guards:
                     f"same-side) exceeds max_position {limits.max_position}"
                 )
 
-            exposure = oms.exposure_ticks() + abs(intent.price_ticks * intent.qty)
+            exposure = oms_exposure + abs(intent.price_ticks * intent.qty)
             if exposure > limits.max_gross_exposure_ticks:
                 return self._blocked(
                     f"gross exposure {exposure} exceeds "
@@ -203,6 +221,22 @@ class Guards:
         if oms is not None:
             order = oms.get(intent.client_id)
             if order is not None:
+                # Answer to the first reads: the order's own terms and the OMS's derived reads
+                # are compared below and were never validated; refuse any that is not a whole
+                # int (a missing price is None and is handled further down).
+                oms_position = oms.position(order.symbol)
+                oms_side_qty = oms.open_side_qty(order.symbol, order.side)
+                oms_exposure = oms.exposure_ticks()
+                if not (is_int_value(order.qty) and is_int_value(order.filled_qty)
+                        and (order.price_ticks is None or is_int_value(order.price_ticks))
+                        and is_int_value(oms_position) and is_int_value(oms_side_qty)
+                        and is_int_value(oms_exposure)):
+                    return self._blocked(_oms_unreadable(
+                        order_qty=order.qty, order_filled_qty=order.filled_qty,
+                        order_price_ticks=(0 if order.price_ticks is None
+                                           else order.price_ticks),
+                        position=oms_position, open_side_qty=oms_side_qty,
+                        exposure_ticks=oms_exposure))
                 # BUG-075: ``new_qty`` is a NEW TOTAL (OMS sets ``order.qty = new_qty``)
                 # while position is derived from fills — so ``position + sign*new_qty``
                 # counted this order's own filled shares TWICE, and a legitimate resize
@@ -219,9 +253,9 @@ class Guards:
                         "replace: no price for exposure accounting"      # BUG-074, same hole
                     )
 
-                other_same_side = (oms.open_side_qty(order.symbol, order.side)
+                other_same_side = (oms_side_qty
                                    - order.remaining_qty)                # BUG-091 parity
-                projected = (oms.position(order.symbol)
+                projected = (oms_position
                              + order.side.sign * (other_same_side + remaining_after))
                 if abs(projected) > limits.max_position:
                     return self._blocked(
@@ -230,7 +264,7 @@ class Guards:
                     )
 
                 current = abs((order.price_ticks or 0) * order.remaining_qty)
-                exposure = oms.exposure_ticks() - current + abs(price * remaining_after)
+                exposure = oms_exposure - current + abs(price * remaining_after)
                 if exposure > limits.max_gross_exposure_ticks:
                     return self._blocked(
                         f"gross exposure {exposure} exceeds "
@@ -252,9 +286,47 @@ class Guards:
         self._recent_orders.append(ts)
         return True
 
+    def _malformed(self, intent, ts) -> str | None:
+        """Why a limit, ``ts`` or the intent's size/price is not a whole int; else None.
+
+        Every comparison in ``check`` reads False for NaN and treats ``True`` as 1, so a
+        value that is not an int is refused here, never compared (NF/Q11).
+        """
+        limits = self.limits
+        if not (is_int_value(limits.max_position) and is_int_value(limits.max_order_qty)
+                and is_int_value(limits.max_gross_exposure_ticks)
+                and is_int_value(limits.max_orders_per_window)
+                and is_int_value(limits.order_rate_window_ns)):
+            return "guard limits must be whole ints"
+        if not is_int_value(ts):
+            return f"intent timestamp {_shown(ts)} is not int nanoseconds"
+        if isinstance(intent, NewOrder):
+            if not is_int_value(intent.qty):
+                return f"order qty {_shown(intent.qty)} is not a whole int"
+            price = intent.price_ticks
+        elif isinstance(intent, ReplaceOrder):
+            if intent.new_qty is not None and not is_int_value(intent.new_qty):
+                return f"replace qty {_shown(intent.new_qty)} is not a whole int"
+            price = intent.new_price_ticks
+        else:
+            return None
+        if price is not None and not is_int_value(price):
+            return f"price_ticks {_shown(price)} is not a whole int"
+        return None
+
     def observe_pnl(self, total: float) -> None:
         """Feed session PnL so the loss stop can latch. Called by the loop, not the strategy."""
         if self.limits.max_loss_dollars is None:
+            return
+        if not (_readable_number(self.limits.max_loss_dollars) and _readable_number(total)):
+            # NF/Q11, the breakers' BUG-130 rule: a loss stop that cannot read its limit or
+            # the PnL cannot prove the loss is within bounds, so it latches. Readable means
+            # an exact int, float or Decimal the helper finds finite: a str, bytes, bool,
+            # int subclass, None, NaN or infinity is never compared (it raised or passed).
+            self.trip(
+                f"loss stop cannot compare session PnL {_shown(total)} with max_loss_dollars "
+                f"{_shown(self.limits.max_loss_dollars)}"
+            )
             return
         if total <= -abs(self.limits.max_loss_dollars):
             self.trip(
@@ -265,3 +337,28 @@ class Guards:
     def _blocked(self, reason: str) -> GuardVerdict:
         self.blocked += 1
         return GuardVerdict.block(reason)
+
+
+def _shown(value) -> str:
+    """``repr(value)`` for a refusal text; a repr that raises falls back to the type name."""
+    try:
+        return repr(value)
+    except Exception:
+        return f"<{type(value).__name__}>"
+
+
+def _readable_number(value) -> bool:
+    """An exact int, float or Decimal that is finite: the only values the loss stop compares."""
+    return type(value) in (int, float, Decimal) and finite_decimal(value) is not None
+
+
+def _oms_unreadable(**reads) -> str:
+    """Why a value read from the OMS is not a whole int (the first one that is not).
+
+    Called only after the inline whole-int test failed, so the loop is off the hot path. If
+    none is found (cannot happen) it still names the OMS: it fails closed, never a pass.
+    """
+    for name, value in reads.items():
+        if not is_int_value(value):
+            return f"OMS {name} {_shown(value)} is not a whole int"
+    return "OMS read is not a whole int"
