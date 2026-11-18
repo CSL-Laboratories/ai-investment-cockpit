@@ -25,6 +25,7 @@ METRICS = MarketImpactInputs("S", date(2027, 1, 14), Decimal("1000000000"), Deci
 SELL = {"symbol": "S", "side": "sell", "quantity": 1, "time_horizon": "intraday"}
 BUY = {"symbol": "S", "side": "buy", "quantity": 1, "time_horizon": "intraday"}
 FRESH_ENOUGH = 20 * 10**9          # lets a 10s-old book through so the OTHER limit is tested
+AGE_LIMIT_REASON = "execution-verification age limits must be whole ints"
 
 
 def _book(age_ns=10_000_000_000, mid=10000):
@@ -185,3 +186,41 @@ def test_a_fresh_book_with_default_limits_is_still_priced_ok():
 def test_a_stale_book_with_default_limits_is_still_refused_as_stale():
     verdict = _verify(SELL, VerifyParams(PENNY))
     assert verdict.reasons == ("book snapshot is 10.0s stale",)
+
+
+# ---- a finite age limit that is not a whole int (float, Decimal, bool) is refused ----
+# On a FRESH fixture (inside the limit's value) only the whole-int rule refuses it.
+
+def _say(verdict):
+    return (verdict.verdict.value, verdict.is_actionable, verdict.net_edge_state,
+            verdict.borrow_state, verdict.reasons)
+
+
+# a 1 s old book is inside 5 s; True reads as 1 ns, so its book is 0 s old
+@pytest.mark.parametrize("limit, age", [(5e9, 10**9), (Decimal("5000000000"), 10**9), (True, 0)])
+def test_finite_non_int_staleness_limit_on_a_fresh_book_is_refused(limit, age):
+    verdict = _verify(SELL, VerifyParams(PENNY, max_staleness_ns=limit), book=_book(age))
+    assert verdict.reasons == (AGE_LIMIT_REASON,) and not verdict.is_actionable, _say(verdict)
+
+
+# 1 day old metrics are inside 7.5 days, inside True (== 1) and inside Decimal 7
+@pytest.mark.parametrize("limit", [7.5, True, Decimal("7")])
+def test_finite_non_int_metrics_age_limit_on_fresh_metrics_is_refused(limit):
+    verdict = _verify(SELL, VerifyParams(PENNY, max_staleness_ns=FRESH_ENOUGH,
+                                         max_metrics_age_days=limit))
+    assert verdict.reasons == (AGE_LIMIT_REASON,) and not verdict.is_actionable, _say(verdict)
+
+
+@pytest.mark.parametrize("limit", [float(DAY), Decimal(DAY)])
+def test_finite_non_int_edge_age_limit_on_a_fresh_edge_is_refused(limit):
+    verdict = _verify(BUY, VerifyParams(PENNY, max_staleness_ns=FRESH_ENOUGH, max_edge_age_ns=limit),
+                      expected_edge=_edge(0))
+    assert verdict.reasons == (AGE_LIMIT_REASON,) and not verdict.is_actionable, _say(verdict)
+
+
+@pytest.mark.parametrize("limit", [float(DAY), Decimal(DAY)])
+def test_finite_non_int_borrow_age_limit_on_a_fresh_borrow_is_refused(limit):
+    verdict = _verify(SELL, VerifyParams(PENNY, max_staleness_ns=FRESH_ENOUGH, max_borrow_age_ns=limit),
+                      position_effect=PositionEffect.OPEN_SHORT, expected_edge=_edge(0),
+                      borrow_quote=_borrow(0))
+    assert verdict.reasons == (AGE_LIMIT_REASON,) and not verdict.is_actionable, _say(verdict)
