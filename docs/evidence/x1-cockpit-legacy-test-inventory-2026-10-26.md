@@ -71,10 +71,10 @@ The oracle column of every row must name one of these. A `port` oracle names the
 
 | Floor | Value |
 |---|---|
-| Rows (one per legacy test file) | 226 |
-| `keep` rows | 138 |
+| Rows (one per legacy test file) | 227 |
+| `keep` rows | 139 |
 | `port` rows | 77 |
-| Test functions across `keep` and `port` rows | 2728 |
+| Test functions across `keep` and `port` rows | 2730 |
 
 Red conditions, each covered by a negative control in the wrapper test: a legacy test file with no row; a row with no file (deleting a file before the rehearsal); a duplicate row; an unknown disposition or oracle; a disposition that conflicts with its oracle's class; an empty reason; a `keep` or `port` file collecting fewer test functions than its row; any floor above; a non-`drop` file importing a `drop` file; a `keep` file importing a `port` file that is not acknowledged in the coupling block (section 7); a stale or non-keep-to-port acknowledgement; a malformed table. Import detection covers absolute (`from tests.x import y`, `import tests.x`) and relative (`from .x import y`, `from . import x`, `from ..pkg import x`) forms.
 
@@ -254,6 +254,7 @@ Columns: path, static test-function count, disposition, oracle, reason, and the 
 | `app/tests/orchestrator/test_quant_ws.py` | 16 | port | `P-SURFACE` | Read-only quant WebSocket is a current operator view. | QT-08 — the read-only quant WebSocket. |
 | `app/tests/orchestrator/test_reconcile.py` | 16 | keep | `K-AUDIT` | Audit chain is a core engine under AGENTS.md; SEC-11 is the chief pre-live gate. | W12 G12 SEC-13 CLOSURE REGRESSION — the two-phase atomic-audit + completeness invariant. |
 | `app/tests/orchestrator/test_reconcile_finite_qty.py` | 5 | keep | `K-AUDIT` | Audit chain is a core engine under AGENTS.md; SEC-11 is the chief pre-live gate. | NF/W6: a fill quantity that is not a finite number is never broker evidence of landing. |
+| `app/tests/orchestrator/test_reconcile_ledger_qty.py` | 2 | keep | `K-AUDIT` | Audit chain is a core engine under AGENTS.md; SEC-11 is the chief pre-live gate. | NF/W6: with a quantity-only broker record, reconcile_startup alerts and leaves the intent unresolved unless the quantity is finite and positive. |
 | `app/tests/orchestrator/test_rw20_restart_pressure.py` | 3 | keep | `K-GATE` | These are the escalate-list control paths; fail-closed behaviour must stay proven in place. | Restart pressure against isolated DB/HALT paths; no production recovery or ledger repair. |
 | `app/tests/orchestrator/test_rw23_stream_health.py` | 10 | keep | `K-GATE` | These are the escalate-list control paths; fail-closed behaviour must stay proven in place. | BUG-151: live delivery health cannot confuse a failed write with a quiet feed. |
 | `app/tests/orchestrator/test_scheduler.py` | 20 | port | `P-DECISION` | Scheduler wiring is named Recursion-owned runtime surface (A2). | WP5 builder smoke tests for the scheduler wiring — the job callables are exercised |
