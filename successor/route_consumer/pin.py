@@ -159,7 +159,11 @@ def _validator(name: str) -> jsonschema.Draft202012Validator:
 
 
 def validation_errors(name: str, record: object) -> list[str]:
-    errors = sorted(_validator(name).iter_errors(record), key=lambda e: list(e.path))
+    try:
+        errors = sorted(_validator(name).iter_errors(record), key=lambda e: list(e.path))
+    except RecursionError:
+        # A pinned schema whose references loop back on themselves never ends.
+        raise PinError(f"{SCHEMA_KEY}: a reference loops back on itself") from None
     return [error.message for error in errors]
 
 
