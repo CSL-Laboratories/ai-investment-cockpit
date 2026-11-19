@@ -147,7 +147,12 @@ class CancelOrder:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ReplaceOrder:
-    """Reprice/resize. ALWAYS loses queue priority at the book — see ``lob.replace``."""
+    """Reprice/resize. ALWAYS loses queue priority at the book — see ``lob.replace``.
+
+    ``new_qty`` is the order's NEW TOTAL — shares already filled plus shares left to work —
+    the unit ``OMS.on_replaced`` stores and ``Guards`` projects. It is NOT the size the book
+    rests; ``resting_after_replace`` is the one conversion between the two.
+    """
 
     client_id: str
     new_price_ticks: int | None = None
@@ -155,6 +160,25 @@ class ReplaceOrder:
 
 
 Intent = NewOrder | CancelOrder | ReplaceOrder
+
+
+def resting_after_replace(new_total: int, *, filled: int) -> int:
+    """Shares a replace to ``new_total`` leaves RESTING, given ``filled`` already traded.
+
+    THE ONE PLACE the two units meet. ``ReplaceOrder.new_qty`` is a total (filled +
+    remaining); ``LimitOrderBook.replace(new_qty=...)`` rests a REMAINING size. Forwarding the
+    total unchanged rested the order's filled shares a second time: 200 bought, 50 filled,
+    resize to 300 rested 300 while the OMS and the guard counted 250, so the venue could
+    deliver 350 against a cap of 300.
+
+    ``filled`` must be counted by whoever APPLIES the replace, at the moment it applies it:
+    the book's own count at the venue (fills still travelling to the OMS have happened there),
+    the OMS's count at the guard. The venue's count is never smaller, so the book never rests
+    more than the guard judged. A result <= 0 leaves nothing to rest and every caller refuses
+    the replace (the guard blocks; the runner and the venue apply nothing) — it is never
+    rested and never treated as a cancel.
+    """
+    return new_total - filled
 
 
 class OMS:

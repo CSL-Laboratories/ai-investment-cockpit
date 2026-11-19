@@ -71,10 +71,10 @@ The oracle column of every row must name one of these. A `port` oracle names the
 
 | Floor | Value |
 |---|---|
-| Rows (one per legacy test file) | 230 |
-| `keep` rows | 140 |
+| Rows (one per legacy test file) | 233 |
+| `keep` rows | 143 |
 | `port` rows | 79 |
-| Test functions across `keep` and `port` rows | 2749 |
+| Test functions across `keep` and `port` rows | 2767 |
 
 Red conditions, each covered by a negative control in the wrapper test: a legacy test file with no row; a row with no file (deleting a file before the rehearsal); a duplicate row; an unknown disposition or oracle; a disposition that conflicts with its oracle's class; an empty reason; a `keep` or `port` file collecting fewer test functions than its row; any floor above; a non-`drop` file importing a `drop` file; a `keep` file importing a `port` file that is not acknowledged in the coupling block (section 7); a stale or non-keep-to-port acknowledgement; a malformed table. Import detection covers absolute (`from tests.x import y`, `import tests.x`) and relative (`from .x import y`, `from . import x`, `from ..pkg import x`) forms.
 
@@ -250,6 +250,8 @@ Columns: path, static test-function count, disposition, oracle, reason, and the 
 | `app/tests/orchestrator/test_g5_acceptance.py` | 36 | keep | `K-GATE` | These are the escalate-list control paths; fail-closed behaviour must stay proven in place. | G5 ACCEPTANCE SUITE — the mode-ladder guard (playbook §5 G5; Inv 1/2/7). |
 | `app/tests/orchestrator/test_g5_api_acceptance.py` | 12 | keep | `K-GATE` | These are the escalate-list control paths; fail-closed behaviour must stay proven in place. | G5 ACCEPTANCE SUITE — the control-plane API contract (criterion 8; §6 auth + SEC-15). |
 | `app/tests/orchestrator/test_ingest_runner.py` | 13 | port | `P-EVIDENCE` | Poller-to-persist runner is runtime surface (A2) feeding the evidence store. | RW-01 — the ingest runner: WP3 pollers -> ``workflows.events.persist_events``. |
+| `app/tests/orchestrator/test_limits_one_lock.py` | 4 | keep | `K-GATE` | These are the escalate-list control paths; fail-closed behaviour must stay proven in place. | PUT /limits reads, classifies, disarms and appends under one lock: two writers never restore a looser limit, and a failed disarm leaves a confirmed loosening unwritten. |
+| `app/tests/orchestrator/test_limits_sweep_f02.py` | 1 | keep | `K-GATE` | These are the escalate-list control paths; fail-closed behaviour must stay proven in place. | Sweep regression F02: concurrent tightenings of different limits keep both. |
 | `app/tests/orchestrator/test_mode_ladder_boot_and_expiry.py` | 4 | keep | `K-GATE` | These are the escalate-list control paths; fail-closed behaviour must stay proven in place. | BUG-059 / BUG-061 — the mode oracle's two unguarded edges. |
 | `app/tests/orchestrator/test_oob_kill.py` | 18 | keep | `K-GATE` | These are the escalate-list control paths; fail-closed behaviour must stay proven in place. | W12 / SEC-04 — the OUT-OF-BAND, fail-closed kill switch (G12 repro regressions). |
 | `app/tests/orchestrator/test_quant_api.py` | 14 | port | `P-SURFACE` | Loopback quant routes are a current operator view, not order authority. | QT-09 — the /quant routes over real HTTP, through the real key gate. |
@@ -278,6 +280,7 @@ Columns: path, static test-function count, disposition, oracle, reason, and the 
 | `app/tests/quant/test_execution.py` | 31 | keep | `K-QUANT` | SCOPE-AUDIT classes it a useful experiment surface; PnL, costs and autoloop are escalate-list paths, so keep until a founder-reviewed decision. | QT-07 — Tier C: the autonomous loop, its latency model, and its containment. |
 | `app/tests/quant/test_oms.py` | 22 | keep | `K-QUANT` | SCOPE-AUDIT classes it a useful experiment surface; PnL, costs and autoloop are escalate-list paths, so keep until a founder-reviewed decision. | QT-02 — order management gates. |
 | `app/tests/quant/test_pnl.py` | 22 | keep | `K-QUANT` | SCOPE-AUDIT classes it a useful experiment surface; PnL, costs and autoloop are escalate-list paths, so keep until a founder-reviewed decision. | QT-04 — PnL attribution and cost-model gates. |
+| `app/tests/quant/test_q1_replace_units.py` | 13 | keep | `K-QUANT` | SCOPE-AUDIT classes it a useful experiment surface; PnL, costs and autoloop are escalate-list paths, so keep until a founder-reviewed decision. | Q1: a replace's size is a NEW TOTAL; the book rests REMAINING size. |
 | `app/tests/quant/test_runner.py` | 20 | keep | `K-QUANT` | SCOPE-AUDIT classes it a useful experiment surface; PnL, costs and autoloop are escalate-list paths, so keep until a founder-reviewed decision. | QT-03 — the event loop, including the one result that justifies the whole engine. |
 | `app/tests/quant/test_rw23_chronology.py` | 11 | keep | `K-QUANT` | SCOPE-AUDIT classes it a useful experiment surface; PnL, costs and autoloop are escalate-list paths, so keep until a founder-reviewed decision. | BUG-155/156: exchange mutations and observer notifications have separate clocks. |
 | `app/tests/quant/test_signals.py` | 21 | keep | `K-QUANT` | SCOPE-AUDIT classes it a useful experiment surface; PnL, costs and autoloop are escalate-list paths, so keep until a founder-reviewed decision. | QT-02 — online estimator gates. |
