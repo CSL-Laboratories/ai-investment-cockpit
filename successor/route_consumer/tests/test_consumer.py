@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import json
 import shutil
 import tempfile
 import unittest
@@ -178,6 +179,83 @@ class ContractDriftTests(unittest.TestCase):
         self.assertFalse(outcome.usable)
         self.assertNotIn("sha256", repr(outcome))
         self.assertEqual([], port.calls)
+        self.assertEqual(ACCEPTED, decide(FixedPort(result())).disposition)
+
+
+def _vendored_schema() -> Any:
+    return json.loads((pin.PACKAGE_DIR / pin.SCHEMA_KEY).read_bytes().decode("utf-8"))
+
+
+def _with_support(value: object) -> Any:
+    schema = _vendored_schema()
+    schema["$defs"]["AdapterSupport"] = value
+    return schema
+
+
+def _invalid_schemas() -> list[tuple[str, object]]:
+    no_defs = _vendored_schema()
+    del no_defs["$defs"]
+    defs_not_object = _vendored_schema()
+    defs_not_object["$defs"] = []
+    bad_keyword = _vendored_schema()
+    bad_keyword["required"] = 5
+    return [
+        ("a schema that is not an object", []),
+        ("no $defs", no_defs),
+        ("$defs that is not an object", defs_not_object),
+        ("a definition that is a number", _with_support(7)),
+        ("an unknown type name", _with_support({"type": "bogus"})),
+        ("a pattern that is not a regular expression", _with_support(
+            {"type": "object", "properties": {"engine_id": {"type": "string", "pattern": "["}}})),
+        ("a reference to a missing definition", _with_support({"$ref": "#/$defs/NoSuchDefinition"})),
+        ("a reference outside the document", _with_support({"$ref": "urn:example:not-in-this-document"})),
+        ("a keyword of the wrong shape", bad_keyword),
+    ]
+
+
+class InvalidPinnedSchemaTests(unittest.TestCase):
+    """A pinned schema whose bytes match the pin but which is not a valid schema."""
+
+    def _decide_with_pinned_schema(self, schema: object) -> tuple[FixedPort, Any]:
+        data = json.dumps(schema).encode("utf-8")
+        pinned = copy.deepcopy(pin.load_pin())
+        pinned["vendored"][pin.SCHEMA_KEY]["sha256"] = pin.sha256_hex(data)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shutil.copytree(pin.PACKAGE_DIR / "contract", root / "contract")
+            (root / pin.SCHEMA_KEY).write_bytes(data)
+            pin.load_schema.cache_clear()
+            pin._validator.cache_clear()
+            try:
+                with (mock.patch.object(pin, "PACKAGE_DIR", root),
+                      mock.patch.object(pin, "load_pin", return_value=pinned)):
+                    self.assertEqual(data, pin.read_vendored(pin.SCHEMA_KEY), "hash check passes")
+                    port = FixedPort(result())
+                    outcome = decide(port)
+            finally:
+                pin.load_schema.cache_clear()
+                pin._validator.cache_clear()
+        return port, outcome
+
+    def _assert_drift(self, port: FixedPort, outcome: Any) -> None:
+        self.assertEqual((FAIL_CLOSED, "contract_drift", FAIL_CLOSED_TO, None),
+                         (outcome.disposition, outcome.reason, outcome.fail_closed_to,
+                          outcome.payload))
+        self.assertFalse(outcome.usable)
+        self.assertEqual([], port.calls)
+
+    def test_a_definition_that_is_not_a_schema_fails_closed_as_drift(self) -> None:
+        # An object with a $defs object passed the shape check; the library then
+        # raised an error that is not PinError from inside decide().
+        port, outcome = self._decide_with_pinned_schema(_with_support(7))
+        self._assert_drift(port, outcome)
+        self.assertEqual(ACCEPTED, decide(FixedPort(result())).disposition)
+
+    def test_a_pinned_schema_invalid_in_any_shape_fails_closed_as_drift(self) -> None:
+        for label, schema in _invalid_schemas():
+            with self.subTest(label):
+                port, outcome = self._decide_with_pinned_schema(schema)
+                self._assert_drift(port, outcome)
         self.assertEqual(ACCEPTED, decide(FixedPort(result())).disposition)
 
 

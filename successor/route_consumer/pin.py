@@ -88,6 +88,46 @@ def verify_vendored() -> None:
         read_vendored(key)
 
 
+# Keywords whose values are instance data, not subschemas: a "$ref" key in them is data.
+_DATA_KEYWORDS = frozenset({"const", "default", "enum", "examples"})
+
+
+def _points_inside(schema: dict[str, Any], ref: str) -> bool:
+    if ref == "#":
+        return True
+    if not ref.startswith("#/"):
+        return False
+    node: object = schema
+    for part in ref[2:].split("/"):
+        name = part.replace("~1", "/").replace("~0", "~")
+        if isinstance(node, dict) and name in node:
+            node = node[name]
+        elif isinstance(node, list) and name.isdigit() and int(name) < len(node):
+            node = node[int(name)]
+        else:
+            return False
+    return True
+
+
+def _check_references(schema: dict[str, Any]) -> None:
+    """Every ``$ref`` must point inside the pinned document.
+
+    The library's schema check does not follow references; one that points
+    nowhere would raise from inside validation instead of failing the pin.
+    """
+
+    pending: list[object] = [schema]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, list):
+            pending.extend(node)
+        elif isinstance(node, dict):
+            ref = node.get("$ref")
+            if isinstance(ref, str) and not _points_inside(schema, ref):
+                raise PinError(f"{SCHEMA_KEY}: $ref {ref!r} points outside the document")
+            pending.extend(value for key, value in node.items() if key not in _DATA_KEYWORDS)
+
+
 @cache
 def load_schema() -> dict[str, Any]:
     try:
@@ -96,6 +136,11 @@ def load_schema() -> dict[str, Any]:
         raise PinError(f"{SCHEMA_KEY}: not parseable JSON") from None
     if not isinstance(schema, dict) or not isinstance(schema.get("$defs"), dict):
         raise PinError(f"{SCHEMA_KEY}: has no $defs")
+    try:
+        jsonschema.Draft202012Validator.check_schema(schema)
+    except (jsonschema.exceptions.SchemaError, RecursionError):
+        raise PinError(f"{SCHEMA_KEY}: not a valid JSON schema") from None
+    _check_references(schema)
     return schema
 
 
