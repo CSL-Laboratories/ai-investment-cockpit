@@ -69,15 +69,38 @@ def killswitch(st: OrchestratorState, *, actor: str, reason: str = "manual kills
     paper/in-process path). A hook that RAISES is caught: ``mcp_disconnected`` is recorded
     ``False`` and the drop to ``review_live`` STILL runs (fail closed — a botched disconnect
     never leaves an auto mode armed). No ``brokers/`` import here: the live hook is wired by
-    the composition root (Inv 1 boundary)."""
+    the composition root (Inv 1 boundary).
+
+    EVERY STEP RUNS even when an earlier one fails (SEC-04 fail closed). A HALT write, disarm or
+    audit that raises (``BaseException``) is recorded and does NOT skip the later steps; each
+    such failure also installs the sticky in-process denial
+    (``st.admit_integrity_failure``) so this process's gateway refuses every submit. The audit
+    row records ``halt_set`` and ``failed_steps``. After every step was attempted, the FIRST such
+    failure is re-raised to the caller (notes name the others); the hooks keep their
+    record-and-continue contract above."""
     clock = clock or st.clock
     now = clock.now()
     path = Path(halt_path) if halt_path is not None else default_halt_path()
+    failures: list[tuple[str, BaseException]] = []
+
+    def _record(step: str, exc: BaseException, *, deny: bool) -> None:
+        failures.append((step, exc))
+        if deny:
+            try:
+                st.admit_integrity_failure(f"killswitch {step} failed: {type(exc).__name__}")
+            except BaseException as deny_exc:   # noqa: BLE001 - the kill must still finish
+                failures.append(("deny", deny_exc))
 
     with st.lock:
         # 1. durable HALT flag FIRST — the gateway refuses to submit + arm refuses to arm
-        #    once it is set.
-        set_halt(path, reason=reason)
+        #    once it is set. A write that raises (unwritable parent, full disk) must NOT skip
+        #    cancel/disconnect/disarm/audit: record it, deny in-process, continue, re-raise below.
+        halt_set = False
+        try:
+            set_halt(path, reason=reason)
+            halt_set = True
+        except BaseException as exc:   # noqa: BLE001 - containment continues; re-raised below
+            _record("halt", exc, deny=True)
         # 2. cancel unapproved / in-flight proposals (WP7 supplies the real hook). A raise here
         #    (the WP7 order-store DB hook is the likeliest to throw mid-crisis) must NOT abort the
         #    kill: catch, record cancelled=-1 + cancel_failed=True, and STILL disconnect, disarm and
@@ -109,16 +132,36 @@ def killswitch(st: OrchestratorState, *, actor: str, reason: str = "manual kills
                 # leaving auto armed + the kill unaudited. Fail closed: record not-disconnected and
                 # proceed to disarm regardless; do NOT re-raise (the kill must complete).
                 mcp_disconnected = False
-        # 4. disarm auto modes -> review_live (never a re-arm).
-        mode_after = ModeLadder(st).drop_to_review_live(
-            f"killswitch: {reason}", clock=clock, actor=actor, kind="killswitch"
-        )
-        st.audit.append(
-            EVENT_KILLSWITCH, actor=actor,
-            payload={"reason": reason, "halt_path": str(path), "cancelled": cancelled,
-                     "cancel_failed": cancel_failed,
-                     "mcp_disconnected": mcp_disconnected, "mode_after": mode_after.value},
-        )
+        # 4. disarm auto modes -> review_live (never a re-arm). A raise must not skip the audit.
+        mode_after = None
+        try:
+            mode_after = ModeLadder(st).drop_to_review_live(
+                f"killswitch: {reason}", clock=clock, actor=actor, kind="killswitch"
+            )
+        except BaseException as exc:   # noqa: BLE001 - the audit still runs; re-raised below
+            _record("disarm", exc, deny=True)
+        # 5. audit the kill, including every step that failed.
+        try:
+            st.audit.append(
+                EVENT_KILLSWITCH, actor=actor,
+                payload={"reason": reason, "halt_path": str(path), "cancelled": cancelled,
+                         "cancel_failed": cancel_failed,
+                         "mcp_disconnected": mcp_disconnected,
+                         "mode_after": mode_after.value if mode_after is not None else None,
+                         "halt_set": halt_set,
+                         "failed_steps": [step for step, _ in failures],
+                         # type names only: an exception's text may carry a path or a
+                         # connection string, and this row is the signed audit.
+                         "errors": {step: type(e).__name__ for step, e in failures}},
+            )
+        except BaseException as exc:   # noqa: BLE001 - re-raised below with the others
+            _record("audit", exc, deny=True)
+
+    if failures:
+        first = failures[0][1]
+        first.add_note("killswitch attempted every step; failed: "
+                       + ", ".join(f"{step} ({type(e).__name__})" for step, e in failures))
+        raise first
 
     event = SystemEvent("#system", "killswitch", None, reason, mode_after.value, now)
     return KillResult(halt_path=path, cancelled_count=cancelled, mode_after=mode_after,
