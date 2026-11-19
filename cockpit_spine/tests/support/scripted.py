@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import itertools
 from typing import Any
 
 from successor.route_consumer import ACCEPTED, FAIL_CLOSED, NEEDS_HUMAN_REVIEW, DecisionOutcome
+from successor.route_consumer.records import prompt_digest
 
 
 def proposal_payload(proposal_id: str = "prop-1", **overrides: Any) -> dict[str, Any]:
@@ -33,6 +35,19 @@ def quarantined(reason: str = "schema_invalid") -> DecisionOutcome:
     return DecisionOutcome(NEEDS_HUMAN_REVIEW, reason, None, {"id": "r"}, None, None)
 
 
+def bound_to_call(outcome: DecisionOutcome, request_id: str, prompt: str) -> DecisionOutcome:
+    """Make an outcome built with the placeholder request record answer this call."""
+
+    if outcome.request_record != {"id": "r"}:
+        return outcome
+    reply = outcome.reply_record
+    return dataclasses.replace(
+        outcome,
+        request_record={"id": request_id, "prompt_digest": prompt_digest(prompt)},
+        reply_record=None if reply is None else {**reply, "request_id": request_id},
+    )
+
+
 class ScriptedSource:
     adapter_kind = "fake"
 
@@ -42,7 +57,7 @@ class ScriptedSource:
 
     def fetch(self, *, request_id: str, mode: str, prompt: str) -> DecisionOutcome:
         self.calls.append({"request_id": request_id, "mode": mode, "prompt": prompt})
-        return self._outcomes.pop(0)
+        return bound_to_call(self._outcomes.pop(0), request_id, prompt)
 
 
 def counter_clock() -> Any:
