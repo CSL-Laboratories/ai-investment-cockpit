@@ -41,6 +41,7 @@ from cockpit_spine.audit import AuditChain, AuditError, verify_chain
 from cockpit_spine.ids import is_id
 from cockpit_spine.sources import PROPOSAL_WORKLOAD, ProposalSource
 from successor.route_consumer import ACCEPTED, DECISION_PROFILE, NEEDS_HUMAN_REVIEW
+from successor.route_consumer.consumer import is_strict_json
 from successor.route_consumer.profile import canonical_digest, load_output_schema
 from successor.route_consumer.records import prompt_digest
 
@@ -275,7 +276,7 @@ class OperatorSession:
         validator = jsonschema.Draft202012Validator(
             self._schema, format_checker=jsonschema.FormatChecker()
         )
-        if not validator.is_valid(payload):
+        if not validator.is_valid(payload) or not is_strict_json(payload):
             raise AuditError("proposal_received: payload fails the output schema")
         if data["payload_digest"] != canonical_digest(payload):
             raise AuditError("proposal_received: payload_digest is not the payload's digest")
@@ -343,8 +344,9 @@ class OperatorSession:
         request_id = cleaned_id
         if request_id in self._requests:
             return self._refused("propose", DUPLICATE_REQUEST, request_id=request_id)
+        asked_digest = prompt_digest(prompt)
         self._emit("proposal_requested", {
-            "request_id": request_id, "prompt_digest": prompt_digest(prompt),
+            "request_id": request_id, "prompt_digest": asked_digest,
         })
         try:
             outcome = self._fetch_bounded(request_id, prompt)
@@ -359,7 +361,7 @@ class OperatorSession:
             # flight is the same fail-closed refusal and starts no further thread.
             return self._refusal_record(request_id, SOURCE_TIMEOUT, quarantined=False)
         try:
-            return self._from_outcome(request_id, outcome)
+            return self._from_outcome(request_id, outcome, asked_digest)
         except Exception:  # noqa: BLE001 - a bad outcome is a source error, not a dangling request
             if request_id in self._answered:
                 raise
@@ -420,8 +422,15 @@ class OperatorSession:
             raise error
         return box.get("outcome")
 
-    def _from_outcome(self, request_id: str, outcome: object) -> CommandResult:
-        """Read a source result. Any failure here is a source error, not a dangling request."""
+    def _from_outcome(
+        self, request_id: str, outcome: object, asked_digest: str
+    ) -> CommandResult:
+        """Read a source result. Any failure here is a source error, not a dangling request.
+
+        An accepted outcome must answer this request: its request record names
+        this request id and this prompt's digest, and its reply names this
+        request id. Anything else is another request's answer.
+        """
 
         raw_reason = getattr(outcome, "reason", None)
         cleaned_reason = _clean(raw_reason)
@@ -437,11 +446,19 @@ class OperatorSession:
         reply_digest = None if reply is None else reply.get("output_digest")
         if not _is_reply_digest(reply_digest):
             return self._refusal_record(request_id, SOURCE_ERROR, quarantined=False)
+        request_record = getattr(outcome, "request_record")
+        if (
+            not isinstance(request_record, dict)
+            or request_record.get("id") != request_id
+            or request_record.get("prompt_digest") != asked_digest
+            or reply.get("request_id") != request_id
+        ):
+            return self._refusal_record(request_id, SOURCE_ERROR, quarantined=False)
         payload = copy.deepcopy(getattr(outcome, "payload"))
         validator = jsonschema.Draft202012Validator(
             self._schema, format_checker=jsonschema.FormatChecker()
         )
-        if not validator.is_valid(payload):
+        if not validator.is_valid(payload) or not is_strict_json(payload):
             return self._refusal_record(request_id, PAYLOAD_INVALID, quarantined=True)
         proposal_id = payload["proposal_id"]
         if proposal_id in self._proposals:
