@@ -262,3 +262,40 @@ def test_q1_s7_runner_book_above_the_oms_does_not_inflate_the_replace():
     runner.book_for("S").replace("a", new_qty=400)      # desync: the book holds more than the OMS
     runner._replace(ReplaceOrder(client_id="a", new_qty=300), Event(**_stamps()))
     assert runner.book_for("S").get("a").qty == 300     # what the guard judged, never 500
+
+
+# ---- S8 (review thread at runner.py:392): a desync counts the OMS's fills as a floor -------
+def test_q1_s8_runner_book_above_the_oms_counts_the_oms_fills():
+    runner = _seeded_runner(200)
+    _sell_into(runner, 50)                              # OMS: 50 filled; the book rests 150
+    runner.book_for("S").replace("a", new_qty=400)      # desync: book 400 above the OMS total 200
+    runner._replace(ReplaceOrder(client_id="a", new_qty=300), Event(**_stamps()))
+    assert runner.book_for("S").get("a").qty == 250     # the guard's remaining, not 300
+    _sell_into(runner, 250)
+    assert runner.book_for("S").get("a") is None
+    runner.feed = [_trade(2, 10)]
+    runner.run()                                        # a later trade raises nothing
+    assert runner.oms.get("a").filled_qty == 300
+
+
+# ---- S9 (review thread at :96): a delayed resize that the venue refuses at arrival ---------
+def test_q1_s9_refused_delayed_resize_clears_the_reservation_and_keeps_the_oms_terms():
+    # Fills travel 10ns. Buy 10; the trade at exchange 2 fills 3 at the venue (the OMS learns at
+    # 12); at 5 the strategy shrinks to a total of 3. The guard (0 filled seen) allows it; the
+    # venue, with 3 filled, has nothing to rest and refuses at arrival.
+    strategy = Scripted(on_book={
+        1: [NewOrder(client_id="a", symbol="S", side=Side.BUY, qty=10, price_ticks=100)],
+        5: [ReplaceOrder(client_id="a", new_qty=3)],
+    })
+    loop = AutoLoop(venue=SimVenue(symbol="S", latency=LatencyModel(
+                        order_entry_ns=0, market_data_ns=10, cancel_ns=0)),
+                    strategies=[strategy], scale=SCALE,
+                    guards=Guards(GuardLimits(max_position=10)))
+    result = loop.run([_trade(1, 1, 101), _trade(2, 3), _trade(5, 1, 101), _trade(6, 1, 101),
+                       _trade(20, 1, 101)])
+    assert result.accounting_valid and not result.halted, result.halt_reason
+    assert result.blocked_reasons.get("replace_missed") == 1     # the refusal is counted
+    assert loop._awaiting_replacements == {}                     # the reservation is cleared
+    order = loop.oms.get("a")
+    assert (order.qty, order.filled_qty, order.remaining_qty) == (10, 3, 7)   # OMS terms kept
+    assert loop.venue.book.get("a").qty == 7

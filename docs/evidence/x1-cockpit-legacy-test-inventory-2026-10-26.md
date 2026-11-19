@@ -74,7 +74,7 @@ The oracle column of every row must name one of these. A `port` oracle names the
 | Rows (one per legacy test file) | 233 |
 | `keep` rows | 143 |
 | `port` rows | 79 |
-| Test functions across `keep` and `port` rows | 2765 |
+| Test functions across `keep` and `port` rows | 2767 |
 
 Red conditions, each covered by a negative control in the wrapper test: a legacy test file with no row; a row with no file (deleting a file before the rehearsal); a duplicate row; an unknown disposition or oracle; a disposition that conflicts with its oracle's class; an empty reason; a `keep` or `port` file collecting fewer test functions than its row; any floor above; a non-`drop` file importing a `drop` file; a `keep` file importing a `port` file that is not acknowledged in the coupling block (section 7); a stale or non-keep-to-port acknowledgement; a malformed table. Import detection covers absolute (`from tests.x import y`, `import tests.x`) and relative (`from .x import y`, `from . import x`, `from ..pkg import x`) forms.
 
@@ -280,7 +280,7 @@ Columns: path, static test-function count, disposition, oracle, reason, and the 
 | `app/tests/quant/test_execution.py` | 31 | keep | `K-QUANT` | SCOPE-AUDIT classes it a useful experiment surface; PnL, costs and autoloop are escalate-list paths, so keep until a founder-reviewed decision. | QT-07 — Tier C: the autonomous loop, its latency model, and its containment. |
 | `app/tests/quant/test_oms.py` | 22 | keep | `K-QUANT` | SCOPE-AUDIT classes it a useful experiment surface; PnL, costs and autoloop are escalate-list paths, so keep until a founder-reviewed decision. | QT-02 — order management gates. |
 | `app/tests/quant/test_pnl.py` | 22 | keep | `K-QUANT` | SCOPE-AUDIT classes it a useful experiment surface; PnL, costs and autoloop are escalate-list paths, so keep until a founder-reviewed decision. | QT-04 — PnL attribution and cost-model gates. |
-| `app/tests/quant/test_q1_replace_units.py` | 13 | keep | `K-QUANT` | SCOPE-AUDIT classes it a useful experiment surface; PnL, costs and autoloop are escalate-list paths, so keep until a founder-reviewed decision. | Q1: a replace's size is a NEW TOTAL; the book rests REMAINING size. |
+| `app/tests/quant/test_q1_replace_units.py` | 15 | keep | `K-QUANT` | SCOPE-AUDIT classes it a useful experiment surface; PnL, costs and autoloop are escalate-list paths, so keep until a founder-reviewed decision. | Q1: a replace's size is a NEW TOTAL; the book rests REMAINING size. |
 | `app/tests/quant/test_runner.py` | 20 | keep | `K-QUANT` | SCOPE-AUDIT classes it a useful experiment surface; PnL, costs and autoloop are escalate-list paths, so keep until a founder-reviewed decision. | QT-03 — the event loop, including the one result that justifies the whole engine. |
 | `app/tests/quant/test_rw23_chronology.py` | 11 | keep | `K-QUANT` | SCOPE-AUDIT classes it a useful experiment surface; PnL, costs and autoloop are escalate-list paths, so keep until a founder-reviewed decision. | BUG-155/156: exchange mutations and observer notifications have separate clocks. |
 | `app/tests/quant/test_signals.py` | 21 | keep | `K-QUANT` | SCOPE-AUDIT classes it a useful experiment surface; PnL, costs and autoloop are escalate-list paths, so keep until a founder-reviewed decision. | QT-02 — online estimator gates. |
