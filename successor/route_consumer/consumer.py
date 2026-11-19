@@ -19,6 +19,7 @@ still goes risk -> mode -> approval -> ``OrderGateway`` elsewhere (Inv 1).
 from __future__ import annotations
 
 import copy
+import json
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -51,6 +52,21 @@ class RoutePort(Protocol):
         self, request: dict[str, Any], *, prompt: str, output_schema: dict[str, Any]
     ) -> dict[str, Any]:
         """Return a ``RouteExecutionResult@0`` or ``RouteRefusal@0`` record."""
+
+
+def is_strict_json(value: object) -> bool:
+    """True when ``value`` serializes as strict JSON: no NaN, no infinity.
+
+    A schema's ``number`` accepts NaN and infinity, which are not JSON. The
+    text must also encode as UTF-8, as the canonical digest needs: a lone
+    surrogate passes the schema and is not a value this boundary can carry.
+    """
+
+    try:
+        json.dumps(value, allow_nan=False, ensure_ascii=False).encode("utf-8")
+    except (TypeError, ValueError, RecursionError):
+        return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -196,7 +212,7 @@ class RouteConsumer:
         validator = jsonschema.Draft202012Validator(
             output_schema, format_checker=jsonschema.FormatChecker()
         )
-        if not validator.is_valid(payload):
+        if not validator.is_valid(payload) or not is_strict_json(payload):
             return DecisionOutcome(
                 NEEDS_HUMAN_REVIEW, "consumer_revalidation_failed", None, request, reply, None
             )
