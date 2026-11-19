@@ -114,6 +114,8 @@ def _check_references(schema: dict[str, Any]) -> None:
 
     The library's schema check does not follow references; one that points
     nowhere would raise from inside validation instead of failing the pin.
+    A ``$id`` below the root would change what a local reference inside it
+    points at, so the document may carry ``$id`` only at its root.
     """
 
     pending: list[object] = [schema]
@@ -122,6 +124,8 @@ def _check_references(schema: dict[str, Any]) -> None:
         if isinstance(node, list):
             pending.extend(node)
         elif isinstance(node, dict):
+            if node is not schema and isinstance(node.get("$id"), str):
+                raise PinError(f"{SCHEMA_KEY}: a subschema carries its own $id")
             ref = node.get("$ref")
             if isinstance(ref, str) and not _points_inside(schema, ref):
                 raise PinError(f"{SCHEMA_KEY}: $ref {ref!r} points outside the document")
