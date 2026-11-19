@@ -71,10 +71,10 @@ The oracle column of every row must name one of these. A `port` oracle names the
 
 | Floor | Value |
 |---|---|
-| Rows (one per legacy test file) | 228 |
-| `keep` rows | 138 |
+| Rows (one per legacy test file) | 230 |
+| `keep` rows | 140 |
 | `port` rows | 79 |
-| Test functions across `keep` and `port` rows | 2737 |
+| Test functions across `keep` and `port` rows | 2749 |
 
 Red conditions, each covered by a negative control in the wrapper test: a legacy test file with no row; a row with no file (deleting a file before the rehearsal); a duplicate row; an unknown disposition or oracle; a disposition that conflicts with its oracle's class; an empty reason; a `keep` or `port` file collecting fewer test functions than its row; any floor above; a non-`drop` file importing a `drop` file; a `keep` file importing a `port` file that is not acknowledged in the coupling block (section 7); a stale or non-keep-to-port acknowledgement; a malformed table. Import detection covers absolute (`from tests.x import y`, `import tests.x`) and relative (`from .x import y`, `from . import x`, `from ..pkg import x`) forms.
 
@@ -258,8 +258,10 @@ Columns: path, static test-function count, disposition, oracle, reason, and the 
 | `app/tests/orchestrator/test_reconcile_finite_qty.py` | 5 | keep | `K-AUDIT` | Audit chain is a core engine under AGENTS.md; SEC-11 is the chief pre-live gate. | NF/W6: a fill quantity that is not a finite number is never broker evidence of landing. |
 | `app/tests/orchestrator/test_rw20_restart_pressure.py` | 3 | keep | `K-GATE` | These are the escalate-list control paths; fail-closed behaviour must stay proven in place. | Restart pressure against isolated DB/HALT paths; no production recovery or ledger repair. |
 | `app/tests/orchestrator/test_rw23_stream_health.py` | 10 | keep | `K-GATE` | These are the escalate-list control paths; fail-closed behaviour must stay proven in place. | BUG-151: live delivery health cannot confuse a failed write with a quiet feed. |
+| `app/tests/orchestrator/test_s6_workflow_boundaries.py` | 1 | keep | `K-GATE` | These are the escalate-list control paths; fail-closed behaviour must stay proven in place. | S6 regression: the kill switch attempts every containment step even when the HALT write fails. |
 | `app/tests/orchestrator/test_scheduler.py` | 20 | port | `P-DECISION` | Scheduler wiring is named Recursion-owned runtime surface (A2). | WP5 builder smoke tests for the scheduler wiring — the job callables are exercised |
 | `app/tests/orchestrator/test_sec11_anchor.py` | 8 | keep | `K-AUDIT` | Audit chain is a core engine under AGENTS.md; SEC-11 is the chief pre-live gate. | WP6 SEC-11 CLOSURE REGRESSION — the replayable-watermark rollback the WP5 build deferred. |
+| `app/tests/orchestrator/test_w3_kill_containment.py` | 11 | keep | `K-GATE` | These are the escalate-list control paths; fail-closed behaviour must stay proven in place. | W3 regressions: a halt, kill or disarm path attempts every containment step and surfaces the failure after it. |
 | `app/tests/orchestrator/test_wp5_hardening.py` | 8 | keep | `K-GATE` | These are the escalate-list control paths; fail-closed behaviour must stay proven in place. | WP5 HARDENING REGRESSION SUITE — the four reproduced bypasses from the script-4c |
 | `app/tests/quant/book/test_book_batch.py` | 13 | keep | `K-RUST` | The Rust crates are not X1 scope; their parity tests guard them where they run in CI. | CSL-42 — one batch call agrees with single calls and with the Python book. |
 | `app/tests/quant/book/test_lob.py` | 31 | keep | `K-QUANT` | SCOPE-AUDIT classes it a useful experiment surface; PnL, costs and autoloop are escalate-list paths, so keep until a founder-reviewed decision. | QT-01 — limit order book, driven by hand-built sequences with known-correct answers. |
