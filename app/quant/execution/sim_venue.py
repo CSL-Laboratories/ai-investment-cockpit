@@ -40,7 +40,7 @@ from dataclasses import dataclass, field, replace
 from quant.book.lob import BookSnapshot, LimitOrderBook
 from quant.book.matching import AggressiveOrder, MatchResult, TimeInForce, match
 from quant.events import Event, Fill
-from quant.oms import NewOrder
+from quant.oms import NewOrder, resting_after_replace
 
 _TIF = {"day": TimeInForce.DAY, "gtc": TimeInForce.GTC,
         "ioc": TimeInForce.IOC, "fok": TimeInForce.FOK}
@@ -166,6 +166,11 @@ class SimVenue:
     # drains the confirmation, so a fill that lands first is a legitimate fill of a
     # live order — not a crash and not a silently dropped fill.
     _confirmed_cancels: list[str] = field(default_factory=list, init=False, repr=False)
+    # Shares of one of OUR orders that traded before its CURRENT book entry (a partial fill
+    # on arrival, or fills before a replace). The book's ``original_qty`` restarts at every
+    # entry, so without this the venue's fill count — which a total-size replace is
+    # converted with — would forget them. Only nonzero counts are kept.
+    _filled_before_entry: dict[str, int] = field(default_factory=dict, init=False, repr=False)
 
     _HISTORY_LEVELS = 10
 
@@ -220,6 +225,7 @@ class SimVenue:
     def _cancel_now(self, client_id: str) -> bool:
         if client_id in self.book:
             self.book.cancel(client_id)
+            self._filled_before_entry.pop(client_id, None)
             self.cancelled += 1
             return True
         for index, pending in enumerate(self._pending):
@@ -253,9 +259,20 @@ class SimVenue:
                 ts, self._seq, _PendingReplace(client_id, new_qty, new_price_ticks),
             ))
             return True
-        if client_id in self.book:
+        existing = self.book.get(client_id)
+        if existing is not None:
+            # ``new_qty`` is a TOTAL. The venue's own fill count decides what rests: fills
+            # still travelling to the observer have already happened here.
+            filled = (self._filled_before_entry.get(client_id, 0)
+                      + existing.original_qty - existing.qty)
+            rest = None
+            if new_qty is not None:
+                rest = resting_after_replace(new_qty, filled=filled)
+                if rest <= 0:
+                    return False            # nothing to rest: a counted miss, book untouched
             self.book.replace(client_id, new_price_ticks=new_price_ticks,
-                              new_qty=new_qty, ts=ts)
+                              new_qty=rest, ts=ts)
+            self._note_filled(client_id, filled)
             return True
         for pending in self._pending:
             if pending.intent.client_id == client_id:
@@ -267,6 +284,8 @@ class SimVenue:
                     return False
                 if new_price_ticks is not None and new_price_ticks <= 0:
                     return False
+                # An order still in flight has traded nothing, so its total IS what will
+                # rest: resting_after_replace(new_qty, filled=0) is the identity here.
                 pending.intent = replace(
                     pending.intent,
                     qty=new_qty if new_qty is not None else pending.intent.qty,
@@ -371,8 +390,22 @@ class SimVenue:
             ingest_ts=max(ts, pending.arrive_ts + self.latency.market_data_ns),
         )
         self.accepted += 1
+        if result.resting_order_id is not None and (result.filled_qty or self._filled_before_entry):
+            self._note_filled(intent.client_id, result.filled_qty)
         return VenueOutcome(client_id=intent.client_id, result=result,
                             ts=max(ts, pending.arrive_ts + self.latency.market_data_ns))
+
+    def _note_filled(self, client_id: str, filled: int) -> None:
+        """Record fills before ``client_id``'s current entry; a reused id starts at zero."""
+        record = self._filled_before_entry
+        if not filled:
+            record.pop(client_id, None)
+            return
+        record[client_id] = filled
+        if len(record) > 1024 and len(record) > 2 * len(self.book):
+            # Bounded: orders that later fully traded leave the book without telling the
+            # venue object. Drop every record whose order no longer rests.
+            self._filled_before_entry = {k: v for k, v in record.items() if k in self.book}
 
     # ---- market flow -------------------------------------------------------------------
 
