@@ -9,7 +9,7 @@ import pytest
 from quant.events import PriceScale, Side, Trade
 from quant.execution.autoloop import AutoLoop, EVENT_QUANT_SIM_BREACH, EVENT_QUANT_SIM_SESSION
 from quant.execution.sim_venue import LatencyModel, SimVenue
-from quant.oms import CancelOrder, NewOrder, ReplaceOrder
+from quant.oms import CancelOrder, NewOrder
 from quant.strategies.base import Strategy
 
 
@@ -38,14 +38,17 @@ class RecordingStrategy(Strategy):
         return {"name": self.name}
 
 
-class Resizer(RecordingStrategy):
+class Desyncer(RecordingStrategy):
+    venue = None
+
     def on_book_update(self, ctx):
         super().on_book_update(ctx)
         if ctx.ts == 1:
             return [NewOrder(client_id="a", symbol="S", side=Side.BUY,
                              qty=10, price_ticks=100)]
         if ctx.ts == 2:
-            return [ReplaceOrder(client_id="a", new_qty=10)]
+            # A venue that disagrees with the OMS: 10 rest where the OMS has 7 left.
+            self.venue.book.replace("a", new_qty=10, ts=2)
         return []
 
 
@@ -87,16 +90,19 @@ def _loop(strategies, *, latency=None):
         strategies=strategies, scale=PriceScale(tick_size=Decimal("0.01")),
         timer_interval_ns=1, audit_sink=append,
     )
+    for strategy in strategies:
+        if isinstance(strategy, Desyncer):
+            strategy.venue = loop.venue
     return loop, audit
 
 
 def test_real_partial_resize_overfill_halts_without_more_callbacks_or_pnl():
-    """The pre-existing total/remaining replace mismatch must yield an invalid run.
+    """An injected venue/OMS desync must yield an invalid run.
 
-    No illegal fill is injected: the venue itself produces the overfill from ordinary
-    strategy intents and three market Trade events. Repairing resize semantics is separate.
+    No illegal fill is injected: the venue itself produces the overfill from the desynced book
+    entry and three market Trade events.
     """
-    strategy = Resizer()
+    strategy = Desyncer()
     loop, audit = _loop([strategy])
     consumed = []
 
@@ -133,7 +139,7 @@ def test_real_partial_resize_overfill_halts_without_more_callbacks_or_pnl():
 
 
 def test_advance_overfill_preserves_later_batch_fills_without_routing_callbacks():
-    resizer, seller = Resizer(), Seller("seller")
+    resizer, seller = Desyncer(), Seller("seller")
     loop, audit = _loop([resizer, seller])
     loop.venue.book.add(order_id="external", side=Side.BUY, price_ticks=99, qty=1)
     result = loop.run([_trade(1), _trade(2, 3, 100), _trade(3), _trade(4)])
