@@ -213,6 +213,17 @@ def _invalid_schemas() -> list[tuple[str, object]]:
     ]
 
 
+def _self_referring_schemas() -> list[tuple[str, object]]:
+    two_steps = _with_support({"$ref": "#/$defs/LoopBack"})
+    two_steps["$defs"]["LoopBack"] = {"$ref": "#/$defs/AdapterSupport"}
+    return [
+        ("a definition that refers to itself", _with_support({"$ref": "#/$defs/AdapterSupport"})),
+        ("a definition that refers to itself through allOf",
+         _with_support({"allOf": [{"$ref": "#/$defs/AdapterSupport"}]})),
+        ("two definitions that refer to each other", two_steps),
+    ]
+
+
 class InvalidPinnedSchemaTests(unittest.TestCase):
     """A pinned schema whose bytes match the pin but which is not a valid schema."""
 
@@ -253,6 +264,15 @@ class InvalidPinnedSchemaTests(unittest.TestCase):
 
     def test_a_pinned_schema_invalid_in_any_shape_fails_closed_as_drift(self) -> None:
         for label, schema in _invalid_schemas():
+            with self.subTest(label):
+                port, outcome = self._decide_with_pinned_schema(schema)
+                self._assert_drift(port, outcome)
+        self.assertEqual(ACCEPTED, decide(FixedPort(result())).disposition)
+
+    def test_a_self_referring_pinned_schema_fails_closed_as_drift(self) -> None:
+        # Such a schema passes the library's schema check and the reference check;
+        # validating against it recursed until RecursionError, raised from decide().
+        for label, schema in _self_referring_schemas():
             with self.subTest(label):
                 port, outcome = self._decide_with_pinned_schema(schema)
                 self._assert_drift(port, outcome)
