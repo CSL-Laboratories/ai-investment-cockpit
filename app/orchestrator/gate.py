@@ -40,6 +40,7 @@ from .state import (
 
 _WEEK_SECONDS = 7 * 24 * 3600
 _LOWER_MODES = {Mode.paper.value, Mode.review_live.value}
+_AUTO_VALUES = {Mode.auto_veto.value, Mode.auto_full.value}
 
 
 @dataclass(frozen=True)
@@ -83,14 +84,53 @@ def _to_naive_utc(dt: datetime) -> datetime:
     return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
 
-def _weeks_in_modes(mode_events: list[tuple[datetime, str]], now: datetime, modes: set[str]) -> float:
+def _arm_bound(payload: dict) -> datetime | None:
+    """The signed ``armed_until`` of an auto entry as naive UTC; None when it is absent,
+    malformed or naive, which the mode oracle (``ModeLadder.current``, BUG-061) reads as
+    ``read_only``."""
+    until = payload.get("armed_until")
+    if not until:
+        return None
+    try:
+        bound = datetime.fromisoformat(until)
+    except (ValueError, TypeError):
+        return None
+    if bound.tzinfo is None or bound.utcoffset() is None:
+        return None
+    return _to_naive_utc(bound)
+
+
+def _credited_auto_time(start: datetime, end: datetime, bound: datetime | None) -> tuple[float, float]:
+    """The counting rule for one auto entry active from ``start`` to ``end`` (seconds, each
+    clamped at 0): ``(auto, lower)``. ``auto`` is the time up to the signed ``armed_until``
+    ``bound``; ``lower`` is the time from the bound on, which the mode oracle reads as
+    ``review_live``. An entry with no valid bound is credited with nothing (the oracle reads
+    it as ``read_only``). This is the only place that decides what an auto entry is worth."""
+    if bound is None:
+        return 0.0, 0.0
+    auto = max(0.0, (min(end, bound) - start).total_seconds())
+    lower = max(0.0, (end - max(start, bound)).total_seconds())
+    return auto, lower
+
+
+def _weeks_in_modes(mode_events: list[tuple[datetime, str, datetime | None]], now: datetime,
+                    modes: set[str]) -> float:
     """Sum wall-time (in weeks) the ladder spent in ``modes``, from the mode_change timeline
-    (each event active until the next one, the last until ``now``). Clock skew is clamped to
-    non-negative durations."""
+    (each event active until the next one, the last until ``now``), read as the mode oracle
+    reads it (BUG-061): an auto entry counts as auto only until its signed ``armed_until``;
+    from that bound on it counts as ``review_live``, the rung the disarm lands at; an auto
+    entry with no valid bound counts toward nothing (the oracle reads it as ``read_only``).
+    Clock skew is clamped to non-negative durations."""
     total = 0.0
-    for i, (start, mode) in enumerate(mode_events):
+    for i, (start, mode, bound) in enumerate(mode_events):
         end = mode_events[i + 1][0] if i + 1 < len(mode_events) else now
-        if mode in modes:
+        if mode in _AUTO_VALUES:
+            auto, lower = _credited_auto_time(start, end, bound)
+            if mode in modes:
+                total += auto
+            if Mode.review_live.value in modes:
+                total += lower
+        elif mode in modes:
             total += max(0.0, (end - start).total_seconds())
     return total / _WEEK_SECONDS
 
@@ -193,7 +233,7 @@ def compute_gate(st: OrchestratorState, target, *, now: datetime | None = None,
         drawdown_vals.append(dd)
     max_drawdown = max(drawdown_vals, default=Decimal("0"))
 
-    mode_events: list[tuple[datetime, str]] = []
+    mode_events: list[tuple[datetime, str, datetime | None]] = []
     for r in rows:
         if r.event_type != EVENT_MODE_CHANGE:
             continue
@@ -202,7 +242,8 @@ def compute_gate(st: OrchestratorState, target, *, now: datetime | None = None,
         to = p.get("to")
         if ts and to:
             try:
-                mode_events.append((datetime.fromisoformat(ts), to))
+                mode_events.append((datetime.fromisoformat(ts), to,
+                                    _arm_bound(p) if to in _AUTO_VALUES else None))
             except (ValueError, TypeError):
                 # BUG-129b: one malformed verified _ts must lock the gate, not crash it.
                 return GateResult(False, tgt,

@@ -71,10 +71,10 @@ The oracle column of every row must name one of these. A `port` oracle names the
 
 | Floor | Value |
 |---|---|
-| Rows (one per legacy test file) | 233 |
-| `keep` rows | 143 |
+| Rows (one per legacy test file) | 234 |
+| `keep` rows | 144 |
 | `port` rows | 79 |
-| Test functions across `keep` and `port` rows | 2765 |
+| Test functions across `keep` and `port` rows | 2781 |
 
 Red conditions, each covered by a negative control in the wrapper test: a legacy test file with no row; a row with no file (deleting a file before the rehearsal); a duplicate row; an unknown disposition or oracle; a disposition that conflicts with its oracle's class; an empty reason; a `keep` or `port` file collecting fewer test functions than its row; any floor above; a non-`drop` file importing a `drop` file; a `keep` file importing a `port` file that is not acknowledged in the coupling block (section 7); a stale or non-keep-to-port acknowledgement; a malformed table. Import detection covers absolute (`from tests.x import y`, `import tests.x`) and relative (`from .x import y`, `from . import x`, `from ..pkg import x`) forms.
 
@@ -249,6 +249,7 @@ Columns: path, static test-function count, disposition, oracle, reason, and the 
 | `app/tests/orchestrator/test_core.py` | 25 | keep | `K-GATE` | These are the escalate-list control paths; fail-closed behaviour must stay proven in place. | WP5 self-tests — proving the deterministic orchestrator core compiles and the happy |
 | `app/tests/orchestrator/test_g5_acceptance.py` | 36 | keep | `K-GATE` | These are the escalate-list control paths; fail-closed behaviour must stay proven in place. | G5 ACCEPTANCE SUITE — the mode-ladder guard (playbook §5 G5; Inv 1/2/7). |
 | `app/tests/orchestrator/test_g5_api_acceptance.py` | 12 | keep | `K-GATE` | These are the escalate-list control paths; fail-closed behaviour must stay proven in place. | G5 ACCEPTANCE SUITE — the control-plane API contract (criterion 8; §6 auth + SEC-15). |
+| `app/tests/orchestrator/test_gate_arm_expiry.py` | 16 | keep | `K-GATE` | These are the escalate-list control paths; fail-closed behaviour must stay proven in place. | W1 — an auto arm earns gate time only while it was live; the scheduled disarm writes its row (BUG-061). |
 | `app/tests/orchestrator/test_ingest_runner.py` | 13 | port | `P-EVIDENCE` | Poller-to-persist runner is runtime surface (A2) feeding the evidence store. | RW-01 — the ingest runner: WP3 pollers -> ``workflows.events.persist_events``. |
 | `app/tests/orchestrator/test_limits_one_lock.py` | 4 | keep | `K-GATE` | These are the escalate-list control paths; fail-closed behaviour must stay proven in place. | PUT /limits reads, classifies, disarms and appends under one lock: two writers never restore a looser limit, and a failed disarm leaves a confirmed loosening unwritten. |
 | `app/tests/orchestrator/test_limits_sweep_f02.py` | 1 | keep | `K-GATE` | These are the escalate-list control paths; fail-closed behaviour must stay proven in place. | Sweep regression F02: concurrent tightenings of different limits keep both. |
