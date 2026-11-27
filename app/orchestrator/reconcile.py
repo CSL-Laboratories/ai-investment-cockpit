@@ -47,6 +47,7 @@ import logging
 from dataclasses import dataclass
 from typing import Callable
 
+from core.numeric import finite_decimal
 from schemas.models.agent_job import AgentJob
 from schemas.models.approval_record import ApprovalRecord
 from schemas.models.audit_entry import AuditEntry
@@ -167,16 +168,16 @@ def _order_landed(history, order_id) -> bool:
             return False
     # ONLY with NO terminal-negative anywhere: positive landed evidence heals. A ``broker_order_id``
     # is assigned at SUBMIT (brokers stamp one onto rejected orders too), so it is NOT by itself
-    # fill evidence (C1'); require an explicit landed status or filled_qty > 0.
+    # fill evidence (C1'); require an explicit landed status or a FINITE filled_qty > 0.
+    # NF/W6: float() read "Infinity" as inf (> 0) and True as 1, healing on a quantity no
+    # broker reports; bool, NaN and +-Infinity are not quantities and never evidence.
     for rec in matched:
         status = str(rec.get("status", "")).strip().lower()
         if status in _LANDED_STATUSES:
             return True
-        try:
-            if float(rec.get("filled_qty") or 0) > 0:
-                return True
-        except (TypeError, ValueError):
-            pass
+        filled = finite_decimal(rec.get("filled_qty"))
+        if filled is not None and filled > 0:
+            return True
     return False
 
 

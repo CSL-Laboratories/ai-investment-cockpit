@@ -15,6 +15,7 @@ import hashlib
 from typing import Any
 
 from successor.route_consumer import ACCEPTED, FAIL_CLOSED, NEEDS_HUMAN_REVIEW, DecisionOutcome
+from successor.route_consumer.records import prompt_digest
 
 SYMBOLS = ("AAA", "BBB", "CCC")
 FAIL_PROMPT = "fail-closed"
@@ -59,12 +60,15 @@ class FakeProposalSource:
     adapter_kind = "fake-inline"
 
     def fetch(self, *, request_id: str, mode: str, prompt: str) -> DecisionOutcome:
-        request = {"id": request_id}
+        request = {"id": request_id, "prompt_digest": prompt_digest(prompt)}
         if prompt == FAIL_PROMPT:
             return DecisionOutcome(
                 FAIL_CLOSED, "fake_route_unavailable", None, request, None, "watch_only")
         if prompt == QUARANTINE_PROMPT:
             return DecisionOutcome(
                 NEEDS_HUMAN_REVIEW, "fake_schema_invalid", None, request, None, None)
-        reply = {"output_digest": "sha256:" + hashlib.sha256(request_id.encode()).hexdigest()}
+        reply = {
+            "request_id": request_id,
+            "output_digest": "sha256:" + hashlib.sha256(request_id.encode()).hexdigest(),
+        }
         return DecisionOutcome(ACCEPTED, "ok", inline_payload(request_id), request, reply, None)
