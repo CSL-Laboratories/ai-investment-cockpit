@@ -74,7 +74,7 @@ The oracle column of every row must name one of these. A `port` oracle names the
 | Rows (one per legacy test file) | 229 |
 | `keep` rows | 139 |
 | `port` rows | 79 |
-| Test functions across `keep` and `port` rows | 2753 |
+| Test functions across `keep` and `port` rows | 2757 |
 
 Red conditions, each covered by a negative control in the wrapper test: a legacy test file with no row; a row with no file (deleting a file before the rehearsal); a duplicate row; an unknown disposition or oracle; a disposition that conflicts with its oracle's class; an empty reason; a `keep` or `port` file collecting fewer test functions than its row; any floor above; a non-`drop` file importing a `drop` file; a `keep` file importing a `port` file that is not acknowledged in the coupling block (section 7); a stale or non-keep-to-port acknowledgement; a malformed table. Import detection covers absolute (`from tests.x import y`, `import tests.x`) and relative (`from .x import y`, `from . import x`, `from ..pkg import x`) forms.
 
@@ -282,7 +282,7 @@ Columns: path, static test-function count, disposition, oracle, reason, and the 
 | `app/tests/quant/test_signals_rust_parity.py` | 21 | keep | `K-RUST` | The Rust crates are not X1 scope; their parity tests guard them where they run in CI. | CSL-42 — Rust online estimators must match ``quant.signals``. |
 | `app/tests/quant/test_sweep_regressions.py` | 14 | keep | `K-QUANT` | SCOPE-AUDIT classes it a useful experiment surface; PnL, costs and autoloop are escalate-list paths, so keep until a founder-reviewed decision. | Regressions for the 2026-08-09 sweep's quant-sim fixes. |
 | `app/tests/quant/test_verify.py` | 6 | keep | `K-QUANT` | SCOPE-AUDIT classes it a useful experiment surface; PnL, costs and autoloop are escalate-list paths, so keep until a founder-reviewed decision. | Shared verifier integrity tests after W-21 retires displayed-depth economics. |
-| `app/tests/quant/test_verify_finite_limits.py` | 18 | keep | `K-QUANT` | SCOPE-AUDIT classes it a useful experiment surface; PnL, costs and autoloop are escalate-list paths, so keep until a founder-reviewed decision. | NF/Q25: a malformed age limit, clock or bound never makes an execution verdict actionable. |
+| `app/tests/quant/test_verify_finite_limits.py` | 22 | keep | `K-QUANT` | SCOPE-AUDIT classes it a useful experiment surface; PnL, costs and autoloop are escalate-list paths, so keep until a founder-reviewed decision. | NF/Q25: a malformed age limit, clock or bound never makes an execution verdict actionable. |
 | `app/tests/quant/test_w21_cost_model.py` | 18 | keep | `K-QUANT` | SCOPE-AUDIT classes it a useful experiment surface; PnL, costs and autoloop are escalate-list paths, so keep until a founder-reviewed decision. | W-21 failure proofs for the ADV/volatility transaction-cost model. |
 | `app/tests/risk/test_engine.py` | 18 | keep | `K-RISK` | app/risk/ stays pure and deterministic; its oracle must keep running where the code lives. | WP4 G4 — risk engine: clean approve, every hard check blocks, max-sizing -> human, |
 | `app/tests/risk/test_execution_gate.py` | 19 | keep | `K-RISK` | app/risk/ stays pure and deterministic; its oracle must keep running where the code lives. | QT-06 — Tier B: the execution verdict as a real pre-trade check inside risk/. |

@@ -25,7 +25,7 @@ DEFAULT_TABLE = ROOT / "docs" / "evidence" / "x1-cockpit-legacy-test-inventory-2
 X1_MIN_ROWS = 229
 X1_MIN_KEEP_ROWS = 139
 X1_MIN_PORT_ROWS = 79
-X1_MIN_ORACLE_TESTS = 2753
+X1_MIN_ORACLE_TESTS = 2757
 
 X1_TAG = "pre-x1-cockpit-20261026"
 X1_TAG_COMMIT = "3122cac4780d776cbd487dd2a671466151a465ba"
