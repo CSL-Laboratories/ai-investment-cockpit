@@ -71,10 +71,10 @@ The oracle column of every row must name one of these. A `port` oracle names the
 
 | Floor | Value |
 |---|---|
-| Rows (one per legacy test file) | 233 |
-| `keep` rows | 143 |
+| Rows (one per legacy test file) | 234 |
+| `keep` rows | 144 |
 | `port` rows | 79 |
-| Test functions across `keep` and `port` rows | 2765 |
+| Test functions across `keep` and `port` rows | 2768 |
 
 Red conditions, each covered by a negative control in the wrapper test: a legacy test file with no row; a row with no file (deleting a file before the rehearsal); a duplicate row; an unknown disposition or oracle; a disposition that conflicts with its oracle's class; an empty reason; a `keep` or `port` file collecting fewer test functions than its row; any floor above; a non-`drop` file importing a `drop` file; a `keep` file importing a `port` file that is not acknowledged in the coupling block (section 7); a stale or non-keep-to-port acknowledgement; a malformed table. Import detection covers absolute (`from tests.x import y`, `import tests.x`) and relative (`from .x import y`, `from . import x`, `from ..pkg import x`) forms.
 
@@ -245,6 +245,7 @@ Columns: path, static test-function count, disposition, oracle, reason, and the 
 | `app/tests/ingest/test_strict_freshness_messages.py` | 2 | port | `P-EVIDENCE` | SCOPE-AUDIT: strong reusable test oracles, stock-centric implementation; the oracle ports to the generalized envelope. | CSL-236 — lock the strict-freshness ``EdgarPipelineRunError`` messages. |
 | `app/tests/orchestrator/conftest.py` | 0 | keep | `SUPPORT-K` | A conftest follows the strongest disposition of its sibling tests; it stays while any sibling stays. | Orchestrator test isolation. |
 | `app/tests/orchestrator/test_api.py` | 21 | keep | `K-GATE` | These are the escalate-list control paths; fail-closed behaviour must stay proven in place. | WP5 builder smoke tests for the FastAPI shell — auth, the ladder/gate guard on /mode, |
+| `app/tests/orchestrator/test_breaker_alert_and_halt_flag.py` | 3 | keep | `K-GATE` | These are the escalate-list control paths; fail-closed behaviour must stay proven in place. | W3 review pins: a breaker trip saved beside a failed one still reaches the caller's alert; halt_set means the HALT write returned. |
 | `app/tests/orchestrator/test_breaker_sampling.py` | 3 | keep | `K-GATE` | These are the escalate-list control paths; fail-closed behaviour must stay proven in place. | BUG-058 — an unmeasured breaker signal must be visibly absent, never silently healthy. |
 | `app/tests/orchestrator/test_core.py` | 25 | keep | `K-GATE` | These are the escalate-list control paths; fail-closed behaviour must stay proven in place. | WP5 self-tests — proving the deterministic orchestrator core compiles and the happy |
 | `app/tests/orchestrator/test_g5_acceptance.py` | 36 | keep | `K-GATE` | These are the escalate-list control paths; fail-closed behaviour must stay proven in place. | G5 ACCEPTANCE SUITE — the mode-ladder guard (playbook §5 G5; Inv 1/2/7). |

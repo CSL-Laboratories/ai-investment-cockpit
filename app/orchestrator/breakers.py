@@ -292,6 +292,7 @@ class BreakerEngine:
                 else:
                     first_failure.add_note(f"breaker {name} also failed: {type(exc).__name__}")
         if first_failure is not None:
+            first_failure.system_events = events
             raise first_failure
         return events
 

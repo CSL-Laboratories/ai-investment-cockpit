@@ -95,6 +95,7 @@ def killswitch(st: OrchestratorState, *, actor: str, reason: str = "manual kills
         # 1. durable HALT flag FIRST — the gateway refuses to submit + arm refuses to arm
         #    once it is set. A write that raises (unwritable parent, full disk) must NOT skip
         #    cancel/disconnect/disarm/audit: record it, deny in-process, continue, re-raise below.
+        # halt_set = set_halt returned; a sentinel may exist after a failed write.
         halt_set = False
         try:
             set_halt(path, reason=reason)
