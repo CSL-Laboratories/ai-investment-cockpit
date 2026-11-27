@@ -10,7 +10,8 @@ import unittest
 from cockpit_spine import session as sess
 from cockpit_spine.audit import AuditChain, AuditError, verify_chain
 from cockpit_spine.tests.support.scripted import (
-    ScriptedSource, accepted, counter_clock, fail_closed, proposal_payload, quarantined,
+    ScriptedSource, accepted, bound_to_call, counter_clock, fail_closed, proposal_payload,
+    quarantined,
 )
 from successor.route_consumer import ACCEPTED, FAIL_CLOSED, DecisionOutcome
 from successor.route_consumer.profile import canonical_digest
@@ -770,7 +771,7 @@ class _HungThenAccepted:
     def fetch(self, *, request_id: str, mode: str, prompt: str):
         self.release.wait()
         try:
-            return accepted(proposal_payload())
+            return bound_to_call(accepted(proposal_payload()), request_id, prompt)
         finally:
             self.returned.set()
 

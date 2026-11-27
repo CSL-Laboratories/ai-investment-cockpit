@@ -418,6 +418,9 @@ class LimitOrderBook:
 
         A pure size DECREASE keeps priority on most venues, and ``reduce`` is that operation.
         This method is for anything else, and it always goes to the back.
+
+        ``new_qty`` is the size to REST, like ``RestingOrder.qty``. A strategy's
+        ``ReplaceOrder.new_qty`` is a total; ``quant.oms.resting_after_replace`` converts it.
         """
         existing = self._index.get(order_id)
         if existing is None:

@@ -29,9 +29,38 @@ def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _check_pin_shape(document: object) -> None:
+    if not isinstance(document, dict):
+        raise PinError("PIN.json: not an object")
+    source = document.get("source")
+    if not (
+        isinstance(source, dict)
+        and isinstance(source.get("repository"), str)
+        and isinstance(source.get("pull_request"), int)
+        and not isinstance(source.get("pull_request"), bool)
+        and isinstance(source.get("head_sha"), str)
+    ):
+        raise PinError("PIN.json: source is malformed")
+    vendored = document.get("vendored")
+    if not (
+        isinstance(vendored, dict)
+        and vendored
+        and all(
+            isinstance(entry, dict) and isinstance(entry.get("sha256"), str)
+            for entry in vendored.values()
+        )
+    ):
+        raise PinError("PIN.json: vendored is malformed")
+
+
 @cache
 def load_pin() -> dict[str, Any]:
-    return json.loads(PIN_PATH.read_text(encoding="utf-8"))
+    try:
+        document = json.loads(PIN_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError):
+        raise PinError("PIN.json: unreadable") from None
+    _check_pin_shape(document)
+    return document
 
 
 def pinned_head() -> str:
@@ -44,7 +73,10 @@ def read_vendored(key: str) -> bytes:
     entry = load_pin()["vendored"].get(key)
     if entry is None:
         raise PinError(f"{key}: not a pinned artifact")
-    data = (PACKAGE_DIR / key).read_bytes()
+    try:
+        data = (PACKAGE_DIR / key).read_bytes()
+    except OSError:
+        raise PinError(f"{key}: unreadable") from None
     actual = sha256_hex(data)
     if actual != entry["sha256"]:
         raise PinError(f"{key}: sha256 {actual} does not match pin {entry['sha256']}")
@@ -58,7 +90,13 @@ def verify_vendored() -> None:
 
 @cache
 def load_schema() -> dict[str, Any]:
-    return json.loads(read_vendored(SCHEMA_KEY).decode("utf-8"))
+    try:
+        schema = json.loads(read_vendored(SCHEMA_KEY).decode("utf-8"))
+    except (ValueError, RecursionError):
+        raise PinError(f"{SCHEMA_KEY}: not parseable JSON") from None
+    if not isinstance(schema, dict) or not isinstance(schema.get("$defs"), dict):
+        raise PinError(f"{SCHEMA_KEY}: has no $defs")
+    return schema
 
 
 def schema_defs() -> dict[str, Any]:

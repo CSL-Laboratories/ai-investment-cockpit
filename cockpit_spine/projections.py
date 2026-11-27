@@ -157,6 +157,8 @@ def _same(left: object, right: object) -> bool:
 
 
 def _pointer_get(document: Any, pointer: str) -> Any:
+    if not isinstance(pointer, str):
+        raise ProjectionError(f"bad pointer {pointer!r}")
     if pointer == "":
         return document
     if not pointer.startswith("/"):
@@ -267,7 +269,11 @@ def _entry_digest(entry: dict[str, Any]) -> str:
 
 
 def _read_source(root: Path, relative: str) -> bytes:
-    candidate = (root / relative).resolve()
+    try:
+        candidate = (root / relative).resolve()
+    except (OSError, RuntimeError, ValueError):
+        # A NUL in the path, or (before Python 3.13) a symlink loop.
+        raise ProjectionError(f"{relative}: unreadable") from None
     try:
         candidate.relative_to(root.resolve())
     except ValueError:
@@ -443,7 +449,7 @@ def load_registry(
 
     try:
         raw = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         raise ProjectionError("registry unreadable") from None
     if not isinstance(raw, dict) or raw.get("registry_version") != REGISTRY_VERSION:
         raise ProjectionError("registry version unsupported")
@@ -452,7 +458,12 @@ def load_registry(
         raise ProjectionError("registry has no projections")
     built: dict[str, Projection] = {}
     for entry in entries:
-        item = _build(entry, Path(root), vault_root)
+        try:
+            item = _build(entry, Path(root), vault_root)
+        except ProjectionError:
+            raise
+        except (AttributeError, KeyError, OSError, RecursionError, TypeError, ValueError):
+            raise ProjectionError("projection entry is malformed") from None
         if item.projection_id in built:
             raise ProjectionError(f"{item.projection_id}: duplicate id")
         built[item.projection_id] = item
